@@ -22,7 +22,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Colors
+# Source logging library
+source "$SCRIPT_DIR/scripts/lib/logging.sh"
+log_init "quick-start"
+
+# Colors for user prompts (logging uses its own colors)
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
@@ -60,6 +64,12 @@ AGENT_ID="$1"
 PROJECT="$2"
 BRANCH="$3"
 SPEC_FILE="${4:-}"
+
+log_debug "Arguments parsed:"
+log_debug "  AGENT_ID=$AGENT_ID"
+log_debug "  PROJECT=$PROJECT"
+log_debug "  BRANCH=$BRANCH"
+log_debug "  SPEC_FILE=$SPEC_FILE"
 
 # Project shortcuts - customize these for your organization
 # Any name not matching a shortcut is treated as a path under ~/git/
@@ -159,7 +169,8 @@ fi
 
 # Launch
 echo ""
-echo -e "${CYAN}Starting agent...${NC}"
+log_info "Starting agent..."
+log_debug "Launching: $SCRIPT_DIR/scripts/launch-agent.sh $AGENT_ID $PROJECT_PATH --config $SCRIPT_DIR/configs/aviad-claude.yaml --branch $BRANCH --spec $SPEC_FILE"
 echo ""
 
 exec "$SCRIPT_DIR/scripts/launch-agent.sh" "$AGENT_ID" "$PROJECT_PATH" \

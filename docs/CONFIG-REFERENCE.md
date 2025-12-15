@@ -316,3 +316,78 @@ Some config values can be overridden via command line:
 | `git.auto_push.enabled` | `--no-push` |
 | `agent.command` | `--interactive` |
 | `sandbox.upper_dir_base` | Set via environment |
+
+## Logging Configuration
+
+Kapsis includes comprehensive logging with file rotation. Logging is configured via environment variables (not in the YAML config file).
+
+### Log Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_LOG_LEVEL` | INFO | Minimum log level to output. Values: `DEBUG`, `INFO`, `WARN`, `ERROR` |
+| `KAPSIS_LOG_DIR` | ~/.kapsis/logs | Directory for log files |
+| `KAPSIS_LOG_TO_FILE` | true | Enable/disable file logging |
+| `KAPSIS_LOG_MAX_SIZE_MB` | 10 | Maximum log file size before rotation (in MB) |
+| `KAPSIS_LOG_MAX_FILES` | 5 | Number of rotated log files to keep |
+| `KAPSIS_LOG_CONSOLE` | true | Enable/disable console output |
+| `KAPSIS_LOG_TIMESTAMPS` | true | Include timestamps in log messages |
+| `KAPSIS_DEBUG` | (unset) | Shortcut to enable DEBUG level (set to any value) |
+
+### Log Files
+
+Each script creates its own log file:
+
+```
+~/.kapsis/logs/
+├── kapsis-launch-agent.log      # Main launch script
+├── kapsis-worktree-manager.log  # Git worktree operations
+├── kapsis-post-container-git.log # Post-container git ops
+├── kapsis-build-image.log       # Container builds
+├── kapsis-setup.log             # Setup script
+└── kapsis-entrypoint.log        # Container entrypoint (in container)
+```
+
+### Log Rotation
+
+When a log file exceeds `KAPSIS_LOG_MAX_SIZE_MB`, it is rotated:
+
+```
+kapsis-launch-agent.log      # Current log
+kapsis-launch-agent.log.1    # Previous (newest rotated)
+kapsis-launch-agent.log.2    # Older
+kapsis-launch-agent.log.3    # ...
+kapsis-launch-agent.log.4    # ...
+kapsis-launch-agent.log.5    # Oldest (will be deleted on next rotation)
+```
+
+### Debug Examples
+
+```bash
+# Enable debug logging for troubleshooting
+KAPSIS_DEBUG=1 ./scripts/launch-agent.sh 1 ~/project --task "test"
+
+# Debug with custom log directory
+KAPSIS_LOG_LEVEL=DEBUG KAPSIS_LOG_DIR=/tmp/kapsis-debug \
+  ./scripts/launch-agent.sh 1 ~/project --task "test"
+
+# Console-only logging (no file)
+KAPSIS_LOG_TO_FILE=false ./scripts/launch-agent.sh 1 ~/project --task "test"
+
+# View logs in real-time
+tail -f ~/.kapsis/logs/kapsis-launch-agent.log
+```
+
+### Log Format
+
+**Console format** (with colors):
+```
+[2025-01-15 10:30:45] [INFO] [launch-agent] Starting container...
+```
+
+**File format** (with caller context):
+```
+[2025-01-15 10:30:45] [INFO] [launch-agent] [main:142] Starting container...
+```
+
+The file format includes the function name and line number (`main:142`) to aid debugging.

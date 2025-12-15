@@ -126,13 +126,19 @@ RUN mkdir -p /home/${USERNAME}/.m2/repository \
 # Copy isolated Maven settings (blocks SNAPSHOTs and deploy)
 COPY maven/isolated-settings.xml /opt/kapsis/maven/settings.xml
 
+# Create lib directory and copy logging library
+RUN mkdir -p /opt/kapsis/lib
+COPY scripts/lib/logging.sh /opt/kapsis/lib/logging.sh
+
 # Copy entrypoint and helper scripts
 COPY scripts/entrypoint.sh /opt/kapsis/entrypoint.sh
 COPY scripts/init-git-branch.sh /opt/kapsis/init-git-branch.sh
 COPY scripts/post-exit-git.sh /opt/kapsis/post-exit-git.sh
 COPY scripts/switch-java.sh /opt/kapsis/switch-java.sh
 
-RUN chmod +x /opt/kapsis/*.sh
+# Make all scripts executable and readable
+RUN chmod 755 /opt/kapsis/*.sh /opt/kapsis/lib/*.sh && \
+    chmod 644 /opt/kapsis/maven/settings.xml
 
 #===============================================================================
 # ENVIRONMENT CONFIGURATION

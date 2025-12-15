@@ -24,6 +24,11 @@ configs/*-personal.yaml
 
 # Logs
 *.log
+logs/
+.kapsis/logs/
 
 # Test outputs
 tests/output/
+
+# Claude Code local settings
+.claude/

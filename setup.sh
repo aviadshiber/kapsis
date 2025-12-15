@@ -29,12 +29,18 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="${SCRIPT_DIR}/.setup.log"
 
+# Source logging library (setup.sh can run standalone so we need fallback)
+if [[ -f "$SCRIPT_DIR/scripts/lib/logging.sh" ]]; then
+    source "$SCRIPT_DIR/scripts/lib/logging.sh"
+    log_init "setup"
+fi
+
 # Minimum versions
 MIN_PODMAN_VERSION="4.0.0"
 MIN_GIT_VERSION="2.0.0"
 MIN_BASH_VERSION="3.2"
 
-# Colors
+# Colors (used for setup-specific formatting)
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -47,11 +53,12 @@ NC='\033[0m'
 # UTILITY FUNCTIONS
 #===============================================================================
 
-log_info() { echo -e "${CYAN}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}[✓]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[!]${NC} $*"; }
-log_error() { echo -e "${RED}[✗]${NC} $*" >&2; }
-log_step() { echo -e "\n${BOLD}${BLUE}▶ $*${NC}"; }
+# Custom logging functions for setup UI (keep these for UI consistency)
+setup_info() { echo -e "${CYAN}[INFO]${NC} $*"; log_debug "setup_info: $*" 2>/dev/null || true; }
+setup_success() { echo -e "${GREEN}[✓]${NC} $*"; log_debug "setup_success: $*" 2>/dev/null || true; }
+setup_warn() { echo -e "${YELLOW}[!]${NC} $*"; log_warn "$*" 2>/dev/null || true; }
+setup_error() { echo -e "${RED}[✗]${NC} $*" >&2; log_error "$*" 2>/dev/null || true; }
+log_step() { echo -e "\n${BOLD}${BLUE}▶ $*${NC}"; log_info "Step: $*" 2>/dev/null || true; }
 
 # Version comparison: returns 0 if $1 >= $2
 version_gte() {

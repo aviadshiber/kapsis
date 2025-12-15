@@ -35,7 +35,8 @@ test_anthropic_key_passed() {
 
     cleanup_container_test
 
-    assert_equals "$test_key" "$output" "ANTHROPIC_API_KEY should be passed"
+    # Use assert_contains since entrypoint outputs logging before the command
+    assert_contains "$output" "$test_key" "ANTHROPIC_API_KEY should be passed"
 }
 
 test_openai_key_passed() {
@@ -55,7 +56,8 @@ test_openai_key_passed() {
 
     cleanup_container_test
 
-    assert_equals "$test_key" "$output" "OPENAI_API_KEY should be passed"
+    # Use assert_contains since entrypoint outputs logging before the command
+    assert_contains "$output" "$test_key" "OPENAI_API_KEY should be passed"
 }
 
 test_kapsis_env_vars_set() {
@@ -204,8 +206,9 @@ test_env_isolation_between_agents() {
         kapsis-sandbox:latest \
         bash -c 'echo "${AGENT_SPECIFIC:-not_set}"' 2>&1) || true
 
-    assert_equals "agent1-data" "$output1" "Agent 1 should see its env"
-    assert_equals "not_set" "$output2" "Agent 2 should not see Agent 1's env"
+    # Use assert_contains since entrypoint outputs logging before the command
+    assert_contains "$output1" "agent1-data" "Agent 1 should see its env"
+    assert_contains "$output2" "not_set" "Agent 2 should not see Agent 1's env"
 }
 
 #===============================================================================

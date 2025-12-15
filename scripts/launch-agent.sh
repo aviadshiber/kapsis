@@ -34,6 +34,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KAPSIS_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Source logging library
+source "$SCRIPT_DIR/lib/logging.sh"
+log_init "launch-agent"
+
 # Bash 3.2 compatible uppercase conversion
 to_upper() {
     echo "$1" | tr '[:lower:]' '[:upper:]'
@@ -57,19 +61,11 @@ WORKTREE_PATH=""
 SANITIZED_GIT_PATH=""
 
 #===============================================================================
-# COLORS AND OUTPUT
+# COLORS AND OUTPUT (colors used for banner only)
 #===============================================================================
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m' # No Color
-
-log_info() { echo -e "${BLUE}[INFO]${NC} $*"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $*"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
+# Note: logging functions are provided by lib/logging.sh
 
 print_banner() {
     echo -e "${CYAN}"
@@ -213,11 +209,18 @@ parse_args() {
 # VALIDATION
 #===============================================================================
 validate_inputs() {
+    log_debug "Validating inputs..."
+    log_debug "  AGENT_ID=$AGENT_ID"
+    log_debug "  PROJECT_PATH=$PROJECT_PATH"
+    log_debug "  AGENT_NAME=$AGENT_NAME"
+    log_debug "  BRANCH=$BRANCH"
+
     # Validate project path
     PROJECT_PATH="$(cd "$PROJECT_PATH" 2>/dev/null && pwd)" || {
         log_error "Project path does not exist: $PROJECT_PATH"
         exit 1
     }
+    log_debug "Resolved PROJECT_PATH=$PROJECT_PATH"
 
     # Validate task input
     if [[ -z "$TASK_INLINE" && -z "$SPEC_FILE" && "$INTERACTIVE" != "true" ]]; then
@@ -240,12 +243,15 @@ validate_inputs() {
     fi
 
     # Check Podman is available
+    log_debug "Checking Podman availability..."
     if ! command -v podman &> /dev/null; then
         log_error "Podman is not installed or not in PATH"
         exit 1
     fi
+    log_debug "Podman found at: $(command -v podman)"
 
     # Check Podman machine is running
+    log_debug "Checking Podman machine status..."
     if ! podman machine inspect podman-machine-default &>/dev/null || \
        [[ "$(podman machine inspect podman-machine-default --format '{{.State}}')" != "running" ]]; then
         log_warn "Podman machine is not running. Attempting to start..."
@@ -253,15 +259,22 @@ validate_inputs() {
             log_error "Failed to start Podman machine. Please run: podman machine start"
             exit 1
         }
+        log_success "Podman machine started"
+    else
+        log_debug "Podman machine is running"
     fi
+    log_debug "Input validation completed successfully"
 }
 
 #===============================================================================
 # CONFIG RESOLUTION
 #===============================================================================
 resolve_config() {
+    log_debug "Resolving configuration..."
+
     # --config takes precedence
     if [[ -n "$CONFIG_FILE" ]]; then
+        log_debug "Using explicit config file: $CONFIG_FILE"
         if [[ ! -f "$CONFIG_FILE" ]]; then
             log_error "Config file not found: $CONFIG_FILE"
             exit 1
@@ -269,6 +282,7 @@ resolve_config() {
         # Extract agent name from config filename
         if [[ -z "$AGENT_NAME" ]]; then
             AGENT_NAME=$(basename "$CONFIG_FILE" .yaml)
+            log_debug "Extracted agent name from config: $AGENT_NAME"
         fi
         return
     fi
@@ -320,8 +334,11 @@ resolve_config() {
 # CONFIG PARSING (Simple YAML parsing with yq or fallback)
 #===============================================================================
 parse_config() {
+    log_debug "Parsing config file: $CONFIG_FILE"
+
     # Check if yq is available
     if command -v yq &> /dev/null; then
+        log_debug "Using yq for config parsing"
         AGENT_COMMAND=$(yq -r '.agent.command // "bash"' "$CONFIG_FILE")
         AGENT_WORKDIR=$(yq -r '.agent.workdir // "/workspace"' "$CONFIG_FILE")
         RESOURCE_MEMORY=$(yq -r '.resources.memory // "8g"' "$CONFIG_FILE")
@@ -355,6 +372,12 @@ parse_config() {
 
     # Expand ~ in paths
     SANDBOX_UPPER_BASE="${SANDBOX_UPPER_BASE/#\~/$HOME}"
+
+    log_debug "Config parsed successfully:"
+    log_debug "  AGENT_COMMAND=$AGENT_COMMAND"
+    log_debug "  RESOURCE_MEMORY=$RESOURCE_MEMORY"
+    log_debug "  RESOURCE_CPUS=$RESOURCE_CPUS"
+    log_debug "  IMAGE_NAME=$IMAGE_NAME"
 }
 
 #===============================================================================
@@ -629,14 +652,29 @@ build_container_command() {
 # MAIN EXECUTION
 #===============================================================================
 main() {
+    log_timer_start "total"
+    log_section "Starting Kapsis Agent Launch"
+
     print_banner
 
+    log_debug "Parsing command line arguments..."
     parse_args "$@"
+
+    log_timer_start "validation"
     validate_inputs
+    log_timer_end "validation"
+
+    log_timer_start "config"
     resolve_config
     parse_config
+    log_timer_end "config"
+
     generate_branch_name
+
+    log_timer_start "sandbox_setup"
     setup_sandbox
+    log_timer_end "sandbox_setup"
+
     generate_volume_mounts
     generate_env_vars
     build_container_command
@@ -668,9 +706,16 @@ main() {
     echo "└────────────────────────────────────────────────────────────────────┘"
     echo ""
 
+    log_info "Starting container..."
+    log_debug "Container command: ${CONTAINER_CMD[*]}"
+    log_timer_start "container"
+
     # Run the container
     "${CONTAINER_CMD[@]}"
     EXIT_CODE=$?
+
+    log_timer_end "container"
+    log_info "Container exited with code: $EXIT_CODE"
 
     echo ""
     echo "┌────────────────────────────────────────────────────────────────────┐"
@@ -679,12 +724,17 @@ main() {
     echo ""
 
     # Handle post-container operations based on sandbox mode
+    log_debug "Running post-container operations (mode: $SANDBOX_MODE)"
+    log_timer_start "post_container"
     if [[ "$SANDBOX_MODE" == "worktree" ]]; then
         post_container_worktree
     else
         post_container_overlay
     fi
+    log_timer_end "post_container"
 
+    log_timer_end "total"
+    log_finalize $EXIT_CODE
     exit $EXIT_CODE
 }
 
@@ -692,10 +742,14 @@ main() {
 # POST-CONTAINER: WORKTREE MODE
 #===============================================================================
 post_container_worktree() {
+    log_debug "Processing worktree post-container operations..."
+    log_debug "  WORKTREE_PATH=$WORKTREE_PATH"
+
     # Show changes summary
     cd "$WORKTREE_PATH"
     local changes
     changes=$(git status --porcelain 2>/dev/null || echo "")
+    log_debug "Git changes detected: $(echo "$changes" | wc -l | tr -d ' ') files"
 
     if [[ -n "$changes" ]]; then
         local changes_count
@@ -734,6 +788,9 @@ post_container_worktree() {
 # POST-CONTAINER: OVERLAY MODE (legacy)
 #===============================================================================
 post_container_overlay() {
+    log_debug "Processing overlay post-container operations..."
+    log_debug "  UPPER_DIR=$UPPER_DIR"
+
     # Show changes summary
     if [[ -d "$UPPER_DIR" ]]; then
         local changes_count

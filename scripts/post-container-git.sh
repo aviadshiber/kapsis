@@ -15,19 +15,16 @@
 
 set -euo pipefail
 
-#===============================================================================
-# COLORS
-#===============================================================================
-CYAN='\033[0;36m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
+# Script directory
+POST_GIT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-log_info() { echo -e "${CYAN}[POST-GIT]${NC} $*"; }
-log_success() { echo -e "${GREEN}[POST-GIT]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[POST-GIT]${NC} $*"; }
-log_error() { echo -e "${RED}[POST-GIT]${NC} $*" >&2; }
+# Source logging library (only if not already loaded)
+if [[ -z "${_KAPSIS_LOGGING_LOADED:-}" ]]; then
+    source "$POST_GIT_SCRIPT_DIR/lib/logging.sh"
+    log_init "post-container-git"
+fi
+
+# Note: logging functions are provided by lib/logging.sh
 
 #===============================================================================
 # CHECK FOR CHANGES
@@ -228,6 +225,15 @@ post_container_git() {
     local agent_id="${6:-unknown}"
     local sanitized_git="${7:-}"
 
+    log_debug "post_container_git called with:"
+    log_debug "  worktree_path=$worktree_path"
+    log_debug "  branch=$branch"
+    log_debug "  commit_message=$commit_message"
+    log_debug "  remote=$remote"
+    log_debug "  no_push=$no_push"
+    log_debug "  agent_id=$agent_id"
+    log_debug "  sanitized_git=$sanitized_git"
+
     echo ""
     echo "┌────────────────────────────────────────────────────────────────────┐"
     echo "│ POST-CONTAINER GIT OPERATIONS                                      │"
@@ -238,28 +244,35 @@ post_container_git() {
 
     # Sync index if sanitized git provided
     if [[ -n "$sanitized_git" && -d "$sanitized_git" ]]; then
+        log_debug "Syncing index from sanitized git..."
         sync_index_from_container "$worktree_path" "$sanitized_git"
     fi
 
     # Check for changes
+    log_debug "Checking for uncommitted changes..."
     if ! has_changes "$worktree_path"; then
         log_info "No changes to commit"
         return 0
     fi
+    log_debug "Changes detected, proceeding with commit"
 
     # Commit changes
+    log_debug "Committing changes..."
     if ! commit_changes "$worktree_path" "$commit_message" "$agent_id"; then
         log_warn "Commit failed"
         return 1
     fi
+    log_debug "Commit successful"
 
     # Push if not disabled
     if [[ "$no_push" != "true" ]]; then
+        log_debug "Pushing changes to remote..."
         if ! push_changes "$worktree_path" "$remote"; then
             log_warn "Push failed. Changes are committed locally."
             log_info "To push manually: cd $worktree_path && git push -u $remote $branch"
             return 1
         fi
+        log_debug "Push successful"
     else
         log_info "Skipping push (--no-push specified)"
         log_info "To push: cd $worktree_path && git push -u $remote $branch"

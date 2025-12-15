@@ -153,12 +153,53 @@ Pre-built configs available in `configs/` directory.
 | GE/Develocity cache | Remote cache disabled |
 | Host system | Podman rootless container |
 
+## Debugging & Logging
+
+Kapsis includes comprehensive logging to help debug issues.
+
+### Enable Debug Logging
+
+```bash
+# Option 1: Set KAPSIS_DEBUG
+KAPSIS_DEBUG=1 ./scripts/launch-agent.sh 1 ~/project --task "test"
+
+# Option 2: Set specific log level
+KAPSIS_LOG_LEVEL=DEBUG ./scripts/launch-agent.sh 1 ~/project --task "test"
+```
+
+### Log Files
+
+Logs are written to `~/.kapsis/logs/` with automatic rotation:
+
+```bash
+# View current session log
+tail -f ~/.kapsis/logs/kapsis-launch-agent.log
+
+# View all log files
+ls -la ~/.kapsis/logs/
+```
+
+### Log Configuration
+
+| Environment Variable | Default | Description |
+|---------------------|---------|-------------|
+| `KAPSIS_LOG_LEVEL` | INFO | Log level: DEBUG, INFO, WARN, ERROR |
+| `KAPSIS_LOG_DIR` | ~/.kapsis/logs | Log directory |
+| `KAPSIS_LOG_TO_FILE` | true | Enable file logging |
+| `KAPSIS_LOG_MAX_SIZE_MB` | 10 | Max file size before rotation |
+| `KAPSIS_LOG_MAX_FILES` | 5 | Number of rotated files to keep |
+| `KAPSIS_DEBUG` | (unset) | Set to any value to enable DEBUG level |
+
+See [docs/CONFIG-REFERENCE.md](docs/CONFIG-REFERENCE.md) for full configuration options.
+
 ## Project Structure
 
 ```
 kapsis/
 ├── agent-sandbox.yaml.template  # Config template
 ├── Containerfile                # Container image definition
+├── setup.sh                     # System setup and validation
+├── quick-start.sh               # Simplified agent launcher
 ├── configs/                     # Pre-built agent configs
 │   ├── claude.yaml
 │   ├── codex.yaml
@@ -167,11 +208,15 @@ kapsis/
 ├── scripts/
 │   ├── launch-agent.sh          # Main launch script
 │   ├── build-image.sh           # Build container image
+│   ├── worktree-manager.sh      # Git worktree management
+│   ├── post-container-git.sh    # Post-container git operations
 │   ├── merge-changes.sh         # Manual merge workflow
 │   ├── entrypoint.sh            # Container entrypoint
 │   ├── init-git-branch.sh       # Git branch initialization
 │   ├── post-exit-git.sh         # Post-exit commit/push
-│   └── switch-java.sh           # Java version switcher
+│   ├── switch-java.sh           # Java version switcher
+│   └── lib/
+│       └── logging.sh           # Shared logging library
 ├── maven/
 │   └── isolated-settings.xml    # Maven isolation settings
 ├── docs/

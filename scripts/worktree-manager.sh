@@ -16,25 +16,22 @@
 
 set -euo pipefail
 
+# Script directory
+WORKTREE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source logging library (only if not already loaded)
+if [[ -z "${_KAPSIS_LOGGING_LOADED:-}" ]]; then
+    source "$WORKTREE_SCRIPT_DIR/lib/logging.sh"
+    log_init "worktree-manager"
+fi
+
 #===============================================================================
 # CONFIGURATION
 #===============================================================================
 KAPSIS_WORKTREE_BASE="${KAPSIS_WORKTREE_BASE:-$HOME/.kapsis/worktrees}"
 KAPSIS_SANITIZED_GIT_BASE="${KAPSIS_SANITIZED_GIT_BASE:-$HOME/.kapsis/sanitized-git}"
 
-#===============================================================================
-# COLORS
-#===============================================================================
-CYAN='\033[0;36m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-RED='\033[0;31m'
-NC='\033[0m'
-
-log_info() { echo -e "${CYAN}[WORKTREE]${NC} $*"; }
-log_success() { echo -e "${GREEN}[WORKTREE]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[WORKTREE]${NC} $*"; }
-log_error() { echo -e "${RED}[WORKTREE]${NC} $*" >&2; }
+# Note: logging functions are provided by lib/logging.sh
 
 #===============================================================================
 # CREATE WORKTREE
@@ -47,6 +44,11 @@ create_worktree() {
     local agent_id="$2"
     local branch="$3"
 
+    log_debug "create_worktree called with:"
+    log_debug "  project_path=$project_path"
+    log_debug "  agent_id=$agent_id"
+    log_debug "  branch=$branch"
+
     # Validate inputs
     if [[ ! -d "$project_path/.git" ]]; then
         log_error "Project is not a git repository: $project_path"
@@ -56,47 +58,59 @@ create_worktree() {
     local project_name
     project_name=$(basename "$project_path")
     local worktree_path="${KAPSIS_WORKTREE_BASE}/${project_name}-${agent_id}"
+    log_debug "Computed worktree_path=$worktree_path"
 
     # Create base directory
     mkdir -p "$KAPSIS_WORKTREE_BASE"
+    log_debug "Ensured worktree base dir exists: $KAPSIS_WORKTREE_BASE"
 
     # Navigate to project
     cd "$project_path"
 
     # Check if worktree already exists
+    log_debug "Checking if worktree already exists..."
     if git worktree list | grep -q "$worktree_path"; then
         log_info "Reusing existing worktree: $worktree_path"
+        log_debug "Worktree found in: $(git worktree list | grep "$worktree_path")"
 
         # Ensure we're on the right branch
         cd "$worktree_path"
         local current_branch
         current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        log_debug "Current branch in worktree: $current_branch"
 
         if [[ "$current_branch" != "$branch" ]]; then
             log_info "Switching worktree from $current_branch to $branch"
             git checkout "$branch" 2>/dev/null || git checkout -b "$branch"
+            log_debug "Branch switch completed"
         fi
     else
         log_info "Creating worktree for branch: $branch"
 
         # Fetch to ensure we have latest refs
+        log_debug "Fetching from origin to get latest refs..."
         git fetch origin --prune 2>/dev/null || true
 
         # Check if branch exists remotely
+        log_debug "Checking if branch exists remotely..."
         if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             # Branch exists remotely - track it
             log_info "Tracking existing remote branch: origin/$branch"
+            log_debug "Running: git worktree add $worktree_path -b $branch origin/$branch"
             git worktree add "$worktree_path" -b "$branch" "origin/$branch" 2>/dev/null || \
             git worktree add "$worktree_path" "$branch"
         elif git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
             # Branch exists locally
             log_info "Using existing local branch: $branch"
+            log_debug "Running: git worktree add $worktree_path $branch"
             git worktree add "$worktree_path" "$branch"
         else
             # Create new branch from current HEAD
             log_info "Creating new branch: $branch"
+            log_debug "Running: git worktree add $worktree_path -b $branch"
             git worktree add "$worktree_path" -b "$branch"
         fi
+        log_debug "Worktree creation completed"
     fi
 
     log_success "Worktree ready: $worktree_path"
@@ -121,9 +135,16 @@ prepare_sanitized_git() {
     local agent_id="$2"
     local project_path="$3"
 
+    log_debug "prepare_sanitized_git called with:"
+    log_debug "  worktree_path=$worktree_path"
+    log_debug "  agent_id=$agent_id"
+    log_debug "  project_path=$project_path"
+
     local sanitized_dir="${KAPSIS_SANITIZED_GIT_BASE}/${agent_id}"
+    log_debug "sanitized_dir=$sanitized_dir"
 
     # Clean up any existing sanitized git
+    log_debug "Cleaning up existing sanitized git directory..."
     rm -rf "$sanitized_dir"
     mkdir -p "$sanitized_dir"
 
@@ -131,18 +152,22 @@ prepare_sanitized_git() {
     local gitdir_content
     gitdir_content=$(cat "$worktree_path/.git")
     local worktree_gitdir="${gitdir_content#gitdir: }"
+    log_debug "worktree_gitdir=$worktree_gitdir"
 
     # Find the parent .git directory (for shared objects)
     local parent_git="${project_path}/.git"
+    log_debug "parent_git=$parent_git"
 
     log_info "Creating sanitized git environment"
     log_info "  Worktree gitdir: $worktree_gitdir"
     log_info "  Parent .git: $parent_git"
 
     # Create directory structure
+    log_debug "Creating sanitized directory structure..."
     mkdir -p "$sanitized_dir/refs/heads"
     mkdir -p "$sanitized_dir/refs/remotes/origin"
     mkdir -p "$sanitized_dir/hooks"  # Empty! Critical for security
+    log_debug "Created refs/heads, refs/remotes/origin, and empty hooks directories"
 
     # Copy HEAD (current branch pointer)
     if [[ -f "$worktree_gitdir/HEAD" ]]; then

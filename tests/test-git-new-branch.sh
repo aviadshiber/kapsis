@@ -23,18 +23,30 @@ test_branch_flag_creates_branch() {
 
     local branch_name="feature/test-branch-$$"
 
-    # Run container with branch flag
+    # Run container with KAPSIS_BRANCH env var - entrypoint.sh handles branch creation
+    # The init_git_branch function in entrypoint creates/checks out the branch
     local output
-    output=$(run_in_container "
-        export KAPSIS_BRANCH='$branch_name'
-        source /opt/kapsis/scripts/entrypoint.sh 2>&1 || true
-        cd /workspace
-        git branch --show-current
-    ") || true
+    output=$(podman run --rm \
+        --name "$CONTAINER_TEST_ID" \
+        --hostname "$CONTAINER_TEST_ID" \
+        --userns=keep-id \
+        --device /dev/fuse \
+        --cap-add SYS_ADMIN \
+        --security-opt label=disable \
+        -v "$TEST_PROJECT:/lower:ro" \
+        -v "${CONTAINER_TEST_ID}-upper:/upper" \
+        -v "${CONTAINER_TEST_ID}-work:/work" \
+        -v "${CONTAINER_TEST_ID}-m2:/home/developer/.m2/repository" \
+        -e KAPSIS_AGENT_ID="$CONTAINER_TEST_ID" \
+        -e KAPSIS_PROJECT="test" \
+        -e KAPSIS_USE_FUSE_OVERLAY=true \
+        -e KAPSIS_BRANCH="$branch_name" \
+        kapsis-sandbox:latest \
+        bash -c "cd /workspace && git branch --show-current" 2>&1) || true
 
     cleanup_container_test
 
-    # Should have created the branch
+    # Should have created the branch (check output contains branch name)
     assert_contains "$output" "$branch_name" "Should be on the new branch"
 }
 
@@ -173,7 +185,8 @@ test_branch_env_var_passed() {
 
     cleanup_container_test
 
-    assert_equals "$branch_name" "$output" "KAPSIS_BRANCH should be set"
+    # Use assert_contains since entrypoint outputs logging before the command
+    assert_contains "$output" "$branch_name" "KAPSIS_BRANCH should be set"
 }
 
 test_branch_flag_validation() {

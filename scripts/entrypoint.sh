@@ -13,17 +13,33 @@ set -euo pipefail
 
 KAPSIS_HOME="${KAPSIS_HOME:-/opt/kapsis}"
 
-#===============================================================================
-# COLORS
-#===============================================================================
+# Source logging library
+# In container: /opt/kapsis/lib/logging.sh
+# On host (for testing): ./lib/logging.sh
+# Define colors (used by both logging library and print_welcome banner)
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-log_info() { echo -e "${CYAN}[KAPSIS]${NC} $*"; }
-log_success() { echo -e "${GREEN}[KAPSIS]${NC} $*"; }
-log_warn() { echo -e "${YELLOW}[KAPSIS]${NC} $*"; }
+if [[ -f "$KAPSIS_HOME/lib/logging.sh" ]]; then
+    # Configure logging for container environment
+    export KAPSIS_LOG_DIR="/tmp/kapsis-logs"
+    export KAPSIS_LOG_MAX_SIZE_MB=5
+    export KAPSIS_LOG_MAX_FILES=3
+    source "$KAPSIS_HOME/lib/logging.sh"
+    log_init "entrypoint"
+elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/logging.sh" ]]; then
+    source "$(dirname "${BASH_SOURCE[0]}")/lib/logging.sh"
+    log_init "entrypoint"
+else
+    # Fallback logging functions if library not available
+    log_info() { echo -e "${CYAN}[KAPSIS]${NC} $*"; }
+    log_success() { echo -e "${GREEN}[KAPSIS]${NC} $*"; }
+    log_warn() { echo -e "${YELLOW}[KAPSIS]${NC} $*"; }
+    log_error() { echo -e "\033[0;31m[KAPSIS]\033[0m $*" >&2; }
+    log_debug() { [[ -n "${KAPSIS_DEBUG:-}" ]] && echo -e "\033[0;90m[DEBUG]\033[0m $*"; }
+fi
 
 #===============================================================================
 # WORKTREE MODE SETUP
@@ -36,17 +52,22 @@ log_warn() { echo -e "${YELLOW}[KAPSIS]${NC} $*"; }
 # We set up git to use the sanitized environment.
 #===============================================================================
 setup_worktree_git() {
+    log_debug "setup_worktree_git: Checking for worktree mode..."
+
     # Check if we're in worktree mode
     if [[ ! -d "/workspace/.git-safe" ]]; then
+        log_debug "setup_worktree_git: /workspace/.git-safe not found, not in worktree mode"
         return 1
     fi
 
     log_info "Worktree mode: Setting up sanitized git environment"
+    log_debug "Found .git-safe directory"
 
     # Point git to sanitized directory
     export GIT_DIR=/workspace/.git-safe
     export GIT_WORK_TREE=/workspace
     export GIT_TEST_FSMONITOR=0
+    log_debug "Set GIT_DIR=$GIT_DIR, GIT_WORK_TREE=$GIT_WORK_TREE"
 
     # Link objects if mount exists
     if [[ -d "/workspace/.git-objects" ]]; then
@@ -330,39 +351,61 @@ print_welcome() {
 # MAIN
 #===============================================================================
 main() {
+    log_section "Kapsis Container Entrypoint Starting"
+    log_debug "KAPSIS_HOME=$KAPSIS_HOME"
+    log_debug "KAPSIS_AGENT_ID=${KAPSIS_AGENT_ID:-unset}"
+    log_debug "KAPSIS_PROJECT=${KAPSIS_PROJECT:-unset}"
+    log_debug "KAPSIS_BRANCH=${KAPSIS_BRANCH:-unset}"
+    log_debug "KAPSIS_SANDBOX_MODE=${KAPSIS_SANDBOX_MODE:-unset}"
+
     # Detect and set up sandbox mode
     local sandbox_mode="${KAPSIS_SANDBOX_MODE:-overlay}"
+    log_debug "Detected sandbox_mode=$sandbox_mode"
 
     if [[ "$sandbox_mode" == "worktree" ]] || setup_worktree_git; then
         # Worktree mode: git is already set up by host
         log_info "Sandbox mode: worktree"
+        log_debug "Setting up worktree mode environment"
 
+        log_timer_start "environment_setup"
         setup_environment
+        log_timer_end "environment_setup"
+
         # Skip init_git_branch - worktree already on correct branch
         print_welcome
 
         # Skip post-exit git trap - host handles commit/push
-        # Just run the command
+        log_debug "Post-exit git operations will be handled by host"
 
     else
         # Legacy overlay mode
         log_info "Sandbox mode: overlay"
+        log_debug "Setting up overlay mode environment"
 
         # Set up fuse-overlayfs if on macOS
+        log_timer_start "fuse_overlay_setup"
         setup_fuse_overlay
+        log_timer_end "fuse_overlay_setup"
 
+        log_timer_start "environment_setup"
         setup_environment
+        log_timer_end "environment_setup"
+
         init_git_branch
         print_welcome
 
         # Set trap for post-exit git operations (overlay mode only)
         trap post_exit_git EXIT
+        log_debug "Registered post_exit_git trap for EXIT signal"
     fi
 
     # Execute command
+    log_debug "About to execute command: $*"
     if [[ $# -eq 0 ]]; then
+        log_info "No command specified, launching interactive bash"
         exec bash
     else
+        log_info "Executing command: $1"
         exec "$@"
     fi
 }
