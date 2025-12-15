@@ -10,8 +10,9 @@
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/lib/test-framework.sh"
+# Get the tests directory and source framework
+TESTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$TESTS_DIR/lib/test-framework.sh"
 
 #===============================================================================
 # CONFIGURATION
@@ -21,15 +22,35 @@ CATEGORY=""
 QUICK_MODE=false
 VERBOSE=false
 
-# Test categories and their scripts
-declare -A TEST_CATEGORIES=(
-    ["agent"]="test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh"
-    ["filesystem"]="test-cow-isolation.sh test-upper-dir-isolation.sh test-host-unchanged.sh"
-    ["maven"]="test-maven-snapshot-block.sh test-maven-deploy-block.sh test-maven-repo-isolation.sh"
-    ["cache"]="test-ge-cache-isolation.sh test-parallel-build.sh"
-    ["git"]="test-git-new-branch.sh test-git-continue-branch.sh test-git-auto-commit-push.sh test-git-no-push.sh test-git-auto-branch.sh"
-    ["integration"]="test-parallel-agents.sh test-full-workflow.sh"
-)
+# Test categories (Bash 3.2 compatible)
+get_tests_for_category() {
+    local category="$1"
+    case "$category" in
+        agent)
+            echo "test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh"
+            ;;
+        filesystem)
+            echo "test-cow-isolation.sh test-upper-dir-isolation.sh test-host-unchanged.sh"
+            ;;
+        maven)
+            echo "test-maven-snapshot-block.sh test-maven-deploy-block.sh test-maven-repo-isolation.sh"
+            ;;
+        cache)
+            echo "test-ge-cache-isolation.sh test-parallel-build.sh"
+            ;;
+        git)
+            echo "test-git-new-branch.sh test-git-continue-branch.sh test-git-auto-commit-push.sh test-git-no-push.sh test-git-auto-branch.sh"
+            ;;
+        integration)
+            echo "test-parallel-agents.sh test-full-workflow.sh"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+ALL_CATEGORIES="agent filesystem maven cache git integration"
 
 # Quick tests (no container required)
 QUICK_TESTS="test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh"
@@ -60,7 +81,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --quick             Run quick tests (no containers)"
             echo "  -v, --verbose       Verbose output"
             echo ""
-            echo "Categories: ${!TEST_CATEGORIES[*]}"
+            echo "Categories: $ALL_CATEGORIES"
             exit 0
             ;;
         *)
@@ -99,18 +120,16 @@ main() {
         tests_to_run="$QUICK_TESTS"
         log_info "Running quick tests only"
     elif [[ -n "$CATEGORY" ]]; then
-        if [[ -v "TEST_CATEGORIES[$CATEGORY]" ]]; then
-            tests_to_run="${TEST_CATEGORIES[$CATEGORY]}"
-            log_info "Running category: $CATEGORY"
-        else
+        tests_to_run=$(get_tests_for_category "$CATEGORY") || {
             log_fail "Unknown category: $CATEGORY"
-            log_info "Available categories: ${!TEST_CATEGORIES[*]}"
+            log_info "Available categories: $ALL_CATEGORIES"
             exit 1
-        fi
+        }
+        log_info "Running category: $CATEGORY"
     else
         # Run all tests
-        for category in "${!TEST_CATEGORIES[@]}"; do
-            tests_to_run="$tests_to_run ${TEST_CATEGORIES[$category]}"
+        for category in $ALL_CATEGORIES; do
+            tests_to_run="$tests_to_run $(get_tests_for_category "$category")"
         done
         log_info "Running all tests"
     fi
@@ -124,13 +143,13 @@ main() {
 
     # Run each test
     for test_script in $tests_to_run; do
-        if [[ -f "$SCRIPT_DIR/$test_script" ]]; then
+        if [[ -f "$TESTS_DIR/$test_script" ]]; then
             echo ""
             echo "───────────────────────────────────────────────────────────────────"
             log_info "Running: $test_script"
             echo "───────────────────────────────────────────────────────────────────"
 
-            if "$SCRIPT_DIR/$test_script"; then
+            if "$TESTS_DIR/$test_script"; then
                 total_passed=$((total_passed + 1))
             else
                 total_failed=$((total_failed + 1))

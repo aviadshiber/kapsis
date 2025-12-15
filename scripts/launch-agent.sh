@@ -32,6 +32,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KAPSIS_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Bash 3.2 compatible uppercase conversion
+to_upper() {
+    echo "$1" | tr '[:lower:]' '[:upper:]'
+}
+
 #===============================================================================
 # DEFAULT VALUES
 #===============================================================================
@@ -504,7 +509,7 @@ main() {
 
     echo ""
     log_info "Agent Configuration:"
-    echo "  Agent:         ${AGENT_NAME^^} (${CONFIG_FILE})"
+    echo "  Agent:         $(to_upper "$AGENT_NAME") (${CONFIG_FILE})"
     echo "  Instance ID:   $AGENT_ID"
     echo "  Project:       $PROJECT_PATH"
     echo "  Image:         $IMAGE_NAME"
@@ -523,7 +528,7 @@ main() {
     fi
 
     echo "┌────────────────────────────────────────────────────────────────────┐"
-    printf "│ LAUNCHING %-56s │\n" "${AGENT_NAME^^}"
+    printf "│ LAUNCHING %-56s │\n" "$(to_upper "$AGENT_NAME")"
     echo "└────────────────────────────────────────────────────────────────────┘"
     echo ""
 

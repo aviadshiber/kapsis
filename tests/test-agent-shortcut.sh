@@ -59,13 +59,13 @@ test_agent_interactive() {
 }
 
 test_agent_display_in_banner() {
-    log_test "Testing agent name in launch banner"
+    log_test "Testing agent name in configuration summary"
 
     local output
     output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
-    # Check that the launch banner shows the agent name
-    assert_contains "$output" "LAUNCHING CLAUDE" "Launch banner should show agent name"
+    # In dry-run mode, check config summary shows agent (banner only shows during actual launch)
+    assert_contains "$output" "Agent:         CLAUDE" "Config summary should show agent name"
 }
 
 test_agent_in_config_summary() {
