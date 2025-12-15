@@ -260,7 +260,7 @@ main() {
     echo ""
 
     # Check prerequisites
-    if ! skip_if_no_container; then
+    if ! skip_if_no_overlay_rw; then
         echo "Skipping container tests - prerequisites not met"
         exit 0
     fi

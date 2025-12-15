@@ -105,44 +105,53 @@ test_multiple_branches_different_agents() {
 
     local branch1="feature/agent1-branch-$$"
     local branch2="feature/agent2-branch-$$"
-
-    # Setup two separate sandboxes
-    local sandbox1="$HOME/.ai-sandboxes/git-multi-1-$$"
-    local sandbox2="$HOME/.ai-sandboxes/git-multi-2-$$"
-    mkdir -p "$sandbox1/upper" "$sandbox1/work"
-    mkdir -p "$sandbox2/upper" "$sandbox2/work"
+    local agent1="git-multi-1-$$"
+    local agent2="git-multi-2-$$"
 
     # Agent 1 creates branch 1
-    podman run --rm \
-        --name "git-multi-1-$$" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        -e KAPSIS_BRANCH="$branch1" \
-        kapsis-sandbox:latest \
-        bash -c "cd /workspace && git checkout -b '$branch1' && echo 'agent1' > agent1.txt" 2>/dev/null || {
-            rm -rf "$sandbox1" "$sandbox2"
+    run_podman_isolated "$agent1" "cd /workspace && git checkout -b '$branch1' && echo 'agent1' > agent1.txt" \
+        -e KAPSIS_BRANCH="$branch1" 2>/dev/null || {
+            cleanup_isolated_container "$agent1"
+            cleanup_isolated_container "$agent2"
             return 0  # Skip if image missing
         }
 
     # Agent 2 creates branch 2
-    podman run --rm \
-        --name "git-multi-2-$$" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        -e KAPSIS_BRANCH="$branch2" \
-        kapsis-sandbox:latest \
-        bash -c "cd /workspace && git checkout -b '$branch2' && echo 'agent2' > agent2.txt" 2>/dev/null
+    run_podman_isolated "$agent2" "cd /workspace && git checkout -b '$branch2' && echo 'agent2' > agent2.txt" \
+        -e KAPSIS_BRANCH="$branch2" 2>/dev/null
 
-    # Verify each agent has its own file in its sandbox
-    if [[ -f "$sandbox1/upper/agent1.txt" ]] && [[ -f "$sandbox2/upper/agent2.txt" ]]; then
-        rm -rf "$sandbox1" "$sandbox2"
-        return 0
+    # Verify each agent has its own file (check upper volumes in fuse mode)
+    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
+        # Check files in upper volumes
+        local agent1_has_file
+        local agent2_has_file
+        agent1_has_file=$(podman run --rm -v "${agent1}-upper:/upper:ro" kapsis-sandbox:latest bash -c "test -f /upper/data/agent1.txt && echo YES || echo NO" 2>&1)
+        agent2_has_file=$(podman run --rm -v "${agent2}-upper:/upper:ro" kapsis-sandbox:latest bash -c "test -f /upper/data/agent2.txt && echo YES || echo NO" 2>&1)
+
+        cleanup_isolated_container "$agent1"
+        cleanup_isolated_container "$agent2"
+
+        if [[ "$agent1_has_file" == *"YES"* ]] && [[ "$agent2_has_file" == *"YES"* ]]; then
+            return 0
+        else
+            log_fail "Each agent should have its own file"
+            return 1
+        fi
     else
-        rm -rf "$sandbox1" "$sandbox2"
-        log_fail "Each agent should have its own file"
-        return 1
+        # Check files in upper directories (native overlay)
+        local sandbox1="$HOME/.ai-sandboxes/$agent1"
+        local sandbox2="$HOME/.ai-sandboxes/$agent2"
+
+        if [[ -f "$sandbox1/upper/agent1.txt" ]] && [[ -f "$sandbox2/upper/agent2.txt" ]]; then
+            cleanup_isolated_container "$agent1"
+            cleanup_isolated_container "$agent2"
+            return 0
+        else
+            cleanup_isolated_container "$agent1"
+            cleanup_isolated_container "$agent2"
+            log_fail "Each agent should have its own file"
+            return 1
+        fi
     fi
 }
 
@@ -196,7 +205,7 @@ main() {
     echo ""
 
     # Check prerequisites
-    if ! skip_if_no_container; then
+    if ! skip_if_no_overlay_rw; then
         echo "Skipping container tests - prerequisites not met"
         exit 0
     fi

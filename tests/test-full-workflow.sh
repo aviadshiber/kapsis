@@ -27,43 +27,31 @@ run_workflow() {
     local branch="$2"
     local task="$3"
 
-    local sandbox="$HOME/.ai-sandboxes/$agent_id"
-    mkdir -p "$sandbox/upper" "$sandbox/work"
+    run_podman_isolated "$agent_id" "
+        cd /workspace
 
-    podman run --rm \
-        --name "$agent_id" \
-        --hostname "$agent_id" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-        -v "${agent_id}-m2:/home/developer/.m2/repository" \
-        -e KAPSIS_AGENT_ID="$agent_id" \
+        # Configure git
+        git config user.email 'kapsis@test.com'
+        git config user.name 'Kapsis Agent'
+
+        # Create branch
+        git checkout -b \"$branch\" 2>/dev/null || git checkout \"$branch\"
+
+        # Make changes based on task
+        echo \"// Task: $task\" >> src/main/java/Main.java
+        echo 'Changes made by agent' > agent-changes.txt
+
+        # Stage and commit
+        git add -A
+        git commit -m \"feat: $task\"
+
+        # Show result
+        git log --oneline -1
+        echo 'Workflow complete'
+    " \
         -e KAPSIS_PROJECT="test-project" \
         -e KAPSIS_BRANCH="$branch" \
-        -e KAPSIS_TASK="$task" \
-        kapsis-sandbox:latest \
-        bash -c "
-            cd /workspace
-
-            # Configure git
-            git config user.email 'kapsis@test.com'
-            git config user.name 'Kapsis Agent'
-
-            # Create branch
-            git checkout -b '$branch' 2>/dev/null || git checkout '$branch'
-
-            # Make changes based on task
-            echo '// Task: $task' >> src/main/java/Main.java
-            echo 'Changes made by agent' > agent-changes.txt
-
-            # Stage and commit
-            git add -A
-            git commit -m 'feat: $task'
-
-            # Show result
-            git log --oneline -1
-            echo 'Workflow complete'
-        " 2>&1
+        -e KAPSIS_TASK="$task"
 }
 
 #===============================================================================
@@ -80,8 +68,7 @@ test_complete_workflow_success() {
     output=$(run_workflow "$agent_id" "$branch" "implement feature X") || true
 
     # Cleanup
-    podman volume rm "${agent_id}-m2" 2>/dev/null || true
-    rm -rf "$HOME/.ai-sandboxes/$agent_id"
+    cleanup_isolated_container "$agent_id"
 
     assert_contains "$output" "Workflow complete" "Workflow should complete"
 }
@@ -90,23 +77,15 @@ test_workflow_creates_branch() {
     log_test "Testing workflow creates branch"
 
     local agent_id="kapsis-branch-wf-$$"
-    local sandbox="$HOME/.ai-sandboxes/$agent_id"
-    mkdir -p "$sandbox/upper" "$sandbox/work"
 
     local output
-    output=$(podman run --rm \
-        --name "$agent_id" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-        kapsis-sandbox:latest \
-        bash -c "
-            cd /workspace
-            git checkout -b feature/wf-branch
-            git branch --show-current
-        " 2>&1) || true
+    output=$(run_podman_isolated "$agent_id" "
+        cd /workspace
+        git checkout -b feature/wf-branch
+        git branch --show-current
+    ") || true
 
-    rm -rf "$sandbox"
+    cleanup_isolated_container "$agent_id"
 
     assert_contains "$output" "feature/wf-branch" "Should create branch"
 }
@@ -115,28 +94,20 @@ test_workflow_commits_changes() {
     log_test "Testing workflow commits changes"
 
     local agent_id="kapsis-commit-wf-$$"
-    local sandbox="$HOME/.ai-sandboxes/$agent_id"
-    mkdir -p "$sandbox/upper" "$sandbox/work"
 
     local output
-    output=$(podman run --rm \
-        --name "$agent_id" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-        kapsis-sandbox:latest \
-        bash -c "
-            cd /workspace
-            git config user.email 'test@test.com'
-            git config user.name 'Test'
-            git checkout -b feature/commit-test
-            echo 'change' > change.txt
-            git add change.txt
-            git commit -m 'Test commit'
-            git log --oneline -1
-        " 2>&1) || true
+    output=$(run_podman_isolated "$agent_id" "
+        cd /workspace
+        git config user.email 'test@test.com'
+        git config user.name 'Test'
+        git checkout -b feature/commit-test
+        echo 'change' > change.txt
+        git add change.txt
+        git commit -m 'Test commit'
+        git log --oneline -1
+    ") || true
 
-    rm -rf "$sandbox"
+    cleanup_isolated_container "$agent_id"
 
     assert_contains "$output" "Test commit" "Should create commit"
 }
@@ -145,25 +116,17 @@ test_workflow_preserves_host() {
     log_test "Testing workflow preserves host files"
 
     local agent_id="kapsis-preserve-wf-$$"
-    local sandbox="$HOME/.ai-sandboxes/$agent_id"
-    mkdir -p "$sandbox/upper" "$sandbox/work"
 
     # Record original state
     local original_main
     original_main=$(cat "$TEST_PROJECT/src/main/java/Main.java")
 
     # Run workflow that modifies file
-    podman run --rm \
-        --name "$agent_id" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-        kapsis-sandbox:latest \
-        bash -c "
-            echo 'MODIFIED' >> /workspace/src/main/java/Main.java
-        " 2>/dev/null || true
+    run_podman_isolated "$agent_id" "
+        echo 'MODIFIED' >> /workspace/src/main/java/Main.java
+    " 2>/dev/null || true
 
-    rm -rf "$sandbox"
+    cleanup_isolated_container "$agent_id"
 
     # Verify host unchanged
     local current_main
@@ -241,23 +204,15 @@ test_workflow_cleanup_on_error() {
     log_test "Testing cleanup happens on container error"
 
     local agent_id="kapsis-error-wf-$$"
-    local sandbox="$HOME/.ai-sandboxes/$agent_id"
-    mkdir -p "$sandbox/upper" "$sandbox/work"
 
     # Run container that exits with error
-    podman run --rm \
-        --name "$agent_id" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-        kapsis-sandbox:latest \
-        bash -c "exit 1" 2>/dev/null || true
+    run_podman_isolated "$agent_id" "exit 1" 2>/dev/null || true
 
     # Container should not be left running
     local running
     running=$(podman ps -q --filter "name=$agent_id" | wc -l)
 
-    rm -rf "$sandbox"
+    cleanup_isolated_container "$agent_id"
 
     if [[ "$running" -eq 0 ]]; then
         return 0
@@ -272,22 +227,14 @@ test_workflow_env_propagation() {
     log_test "Testing environment variables propagate through workflow"
 
     local agent_id="kapsis-env-wf-$$"
-    local sandbox="$HOME/.ai-sandboxes/$agent_id"
-    mkdir -p "$sandbox/upper" "$sandbox/work"
 
     local output
-    output=$(ANTHROPIC_API_KEY="test-key" podman run --rm \
-        --name "$agent_id" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
+    output=$(ANTHROPIC_API_KEY="test-key" run_podman_isolated "$agent_id" \
+        'echo "KEY=${ANTHROPIC_API_KEY:0:4}... TASK=$KAPSIS_TASK"' \
         -e ANTHROPIC_API_KEY \
-        -e KAPSIS_AGENT_ID="$agent_id" \
-        -e KAPSIS_TASK="test task" \
-        kapsis-sandbox:latest \
-        bash -c 'echo "KEY=${ANTHROPIC_API_KEY:0:4}... TASK=$KAPSIS_TASK"' 2>&1) || true
+        -e KAPSIS_TASK="test task") || true
 
-    rm -rf "$sandbox"
+    cleanup_isolated_container "$agent_id"
 
     assert_contains "$output" "test..." "API key should be passed (truncated)"
     assert_contains "$output" "test task" "Task should be passed"
@@ -305,7 +252,7 @@ main() {
     echo ""
 
     # Check prerequisites
-    if ! skip_if_no_container; then
+    if ! skip_if_no_overlay_rw; then
         echo "Skipping container tests - prerequisites not met"
         exit 0
     fi

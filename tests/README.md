@@ -73,6 +73,29 @@ This directory contains tests to validate the isolation guarantees and functiona
   - Podman machine running (`podman machine start`)
   - Kapsis image built (`./scripts/build-image.sh`)
 
+## Platform Notes
+
+### macOS Limitation
+Container tests that require read-write overlay mounts will fail on macOS due to a virtio-fs limitation. When Podman on macOS uses the `:O` (overlay) mount option, the overlay is created as **read-only** because virtio-fs doesn't support the full overlay semantics.
+
+**Affected tests** (require Linux for full testing):
+- test-cow-isolation.sh
+- test-host-unchanged.sh
+- test-maven-snapshot-block.sh
+- test-agent-id-unique.sh
+- test-git-new-branch.sh
+- test-git-auto-commit-push.sh
+- test-full-workflow.sh
+
+**Tests that work on macOS**:
+- All quick tests (7 scripts, 50 tests)
+- test-security-no-root.sh
+- test-env-api-keys.sh
+- test-cleanup-sandbox.sh
+- test-parallel-agents.sh
+
+For full test coverage, run container tests on Linux or in a Linux VM.
+
 ## Running Container Tests
 
 ```bash

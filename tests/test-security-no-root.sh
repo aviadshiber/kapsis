@@ -27,7 +27,10 @@ test_not_running_as_root() {
 
     cleanup_container_test
 
-    assert_not_contains "$output" "root" "Should not run as root"
+    # Get just the last line (the actual whoami output, not banner)
+    local username
+    username=$(echo "$output" | tail -1)
+    assert_not_equals "root" "$username" "Should not run as root"
 }
 
 test_uid_not_zero() {
@@ -40,7 +43,10 @@ test_uid_not_zero() {
 
     cleanup_container_test
 
-    assert_not_equals "0" "$output" "UID should not be 0"
+    # Get just the last line (the actual id output, not banner)
+    local uid
+    uid=$(echo "$output" | tail -1)
+    assert_not_equals "0" "$uid" "UID should not be 0"
 }
 
 test_cannot_sudo() {
@@ -72,9 +78,11 @@ test_userns_keep_id() {
     local host_uid
     host_uid=$(id -u)
 
-    # Get container UID
+    # Get container UID (last line of output is the actual id -u result)
+    local output
+    output=$(run_in_container "id -u")
     local container_uid
-    container_uid=$(run_in_container "id -u")
+    container_uid=$(echo "$output" | tail -1)
 
     cleanup_container_test
 
@@ -87,14 +95,16 @@ test_files_owned_by_user() {
 
     setup_container_test "sec-owner"
 
-    # Check file ownership
+    # Check file ownership (last line of output is the result)
     local output
     output=$(run_in_container "ls -la /workspace/pom.xml | awk '{print \$3}'")
+    local owner
+    owner=$(echo "$output" | tail -1)
 
     cleanup_container_test
 
     # Should be owned by developer or the mapped user
-    if [[ "$output" != "root" ]]; then
+    if [[ "$owner" != "root" ]]; then
         return 0
     else
         log_fail "Files should not be owned by root"

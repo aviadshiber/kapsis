@@ -26,19 +26,81 @@ log_success() { echo -e "${GREEN}[KAPSIS]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[KAPSIS]${NC} $*"; }
 
 #===============================================================================
+# FUSE-OVERLAYFS SETUP (for macOS true CoW support)
+#===============================================================================
+setup_fuse_overlay() {
+    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-false}" != "true" ]]; then
+        return
+    fi
+
+    log_info "Setting up fuse-overlayfs for true Copy-on-Write..."
+
+    # Verify required mounts exist
+    if [[ ! -d "/lower" ]]; then
+        log_warn "KAPSIS_USE_FUSE_OVERLAY=true but /lower not mounted. Skipping overlay setup."
+        return
+    fi
+
+    # Create overlay directories
+    mkdir -p /upper/data /work/data /workspace 2>/dev/null || true
+
+    # Mount fuse-overlayfs
+    if fuse-overlayfs -o lowerdir=/lower,upperdir=/upper/data,workdir=/work/data /workspace 2>/dev/null; then
+        log_success "fuse-overlayfs mounted successfully"
+        log_info "  Lower (read-only): /lower"
+        log_info "  Upper (writes):    /upper/data"
+        log_info "  Merged view:       /workspace"
+
+        # Git workaround: Copy .git directory to upper layer to avoid cross-device link issues
+        # Git creates lock files that require same-filesystem linking
+        if [[ -d /lower/.git ]] && [[ ! -d /upper/data/.git ]]; then
+            log_info "Copying .git directory to upper layer for git compatibility..."
+            # Use rsync-like copy that handles missing files gracefully
+            cp -a /lower/.git /upper/data/.git 2>&1 | grep -v "No such file" || true
+            # Verify the copy worked
+            if [[ -d /upper/data/.git/objects ]]; then
+                log_success ".git directory copied successfully"
+                # Set GIT_DIR to point to the upper layer copy to avoid cross-device link issues
+                export GIT_DIR=/upper/data/.git
+                export GIT_WORK_TREE=/workspace
+                export GIT_TEST_FSMONITOR=0
+                log_info "Git configured: GIT_DIR=/upper/data/.git GIT_WORK_TREE=/workspace"
+            else
+                log_warn "Failed to copy .git directory"
+            fi
+        elif [[ -d /upper/data/.git ]]; then
+            # .git already exists in upper (from previous run)
+            export GIT_DIR=/upper/data/.git
+            export GIT_WORK_TREE=/workspace
+            export GIT_TEST_FSMONITOR=0
+            log_info "Using existing .git in upper layer"
+        fi
+    else
+        log_warn "fuse-overlayfs mount failed. Falling back to /lower as workspace."
+        # Create symlink as fallback
+        rm -rf /workspace 2>/dev/null || true
+        ln -s /lower /workspace 2>/dev/null || true
+    fi
+}
+
+#===============================================================================
 # ENVIRONMENT SETUP
 #===============================================================================
 setup_environment() {
     log_info "Initializing environment..."
 
-    # Source SDKMAN
+    # Source SDKMAN (disable strict mode temporarily for external scripts)
     if [[ -f "$SDKMAN_DIR/bin/sdkman-init.sh" ]]; then
+        set +u
         source "$SDKMAN_DIR/bin/sdkman-init.sh"
+        set -u
     fi
 
-    # Source NVM
+    # Source NVM (disable strict mode temporarily for external scripts)
     if [[ -f "$NVM_DIR/nvm.sh" ]]; then
+        set +u
         source "$NVM_DIR/nvm.sh"
+        set -u
     fi
 
     # Apply isolated Maven settings
@@ -217,6 +279,9 @@ print_welcome() {
 # MAIN
 #===============================================================================
 main() {
+    # First, set up fuse-overlayfs if on macOS (before any workspace access)
+    setup_fuse_overlay
+
     setup_environment
     init_git_branch
     print_welcome

@@ -43,6 +43,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Text processing
     less \
     vim-tiny \
+    # Filesystem overlay (for macOS CoW support)
+    fuse-overlayfs \
+    fuse3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Create symlinks for common tool names
@@ -103,7 +106,11 @@ ARG USER_ID=1000
 ARG GROUP_ID=1000
 ARG USERNAME=developer
 
-RUN groupadd -g ${GROUP_ID} ${USERNAME} && \
+# Remove existing ubuntu user/group (Ubuntu 24.04 has UID/GID 1000 taken)
+# Then create our developer user with the requested UID/GID
+RUN userdel -r ubuntu 2>/dev/null || true && \
+    groupdel ubuntu 2>/dev/null || true && \
+    groupadd -g ${GROUP_ID} ${USERNAME} && \
     useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ${USERNAME}
 
 # Create directories for Maven and Gradle with correct ownership
