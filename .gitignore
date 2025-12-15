@@ -1,0 +1,27 @@
+# Kapsis .gitignore
+
+# User configuration (contains secrets/paths)
+agent-sandbox.yaml
+
+# Sandbox directories
+.ai-sandboxes/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# macOS
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Logs
+*.log
+
+# Test outputs
+tests/output/

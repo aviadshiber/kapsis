@@ -1,0 +1,38 @@
+# Kapsis Configuration - Interactive Shell
+# Use with: ./scripts/launch-agent.sh 1 ~/project --config configs/interactive.yaml --interactive
+
+agent:
+  # Just drop into bash for manual exploration
+  command: "bash"
+  workdir: /workspace
+
+filesystem:
+  include:
+    - ~/.zshrc
+    - ~/.bashrc
+    - ~/.gitconfig
+    - ~/.ssh
+    - ~/.vimrc
+    # Add any agent configs you might want to test
+    - ~/.claude
+    - ~/.claude.json
+
+environment:
+  passthrough:
+    - ANTHROPIC_API_KEY
+    - OPENAI_API_KEY
+  set:
+    MAVEN_OPTS: "-Xmx4g -XX:+UseG1GC"
+
+resources:
+  memory: 8g
+  cpus: 4
+
+maven:
+  mirror_url: "https://artifactory-build.taboolasyndication.com/artifactory/products-virtual"
+  block_remote_snapshots: true
+  block_deploy: true
+
+git:
+  auto_push:
+    enabled: false  # Manual control in interactive mode
