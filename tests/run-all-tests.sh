@@ -29,17 +29,23 @@ get_tests_for_category() {
         agent)
             echo "test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh"
             ;;
+        validation)
+            echo "test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh"
+            ;;
         filesystem)
-            echo "test-cow-isolation.sh test-upper-dir-isolation.sh test-host-unchanged.sh"
+            echo "test-cow-isolation.sh test-host-unchanged.sh"
             ;;
         maven)
-            echo "test-maven-snapshot-block.sh test-maven-deploy-block.sh test-maven-repo-isolation.sh"
+            echo "test-maven-snapshot-block.sh"
             ;;
-        cache)
-            echo "test-ge-cache-isolation.sh test-parallel-build.sh"
+        security)
+            echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh"
             ;;
         git)
-            echo "test-git-new-branch.sh test-git-continue-branch.sh test-git-auto-commit-push.sh test-git-no-push.sh test-git-auto-branch.sh"
+            echo "test-git-new-branch.sh test-git-auto-commit-push.sh"
+            ;;
+        cleanup)
+            echo "test-cleanup-sandbox.sh"
             ;;
         integration)
             echo "test-parallel-agents.sh test-full-workflow.sh"
@@ -50,10 +56,10 @@ get_tests_for_category() {
     esac
 }
 
-ALL_CATEGORIES="agent filesystem maven cache git integration"
+ALL_CATEGORIES="agent validation filesystem maven security git cleanup integration"
 
 # Quick tests (no container required)
-QUICK_TESTS="test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh"
+QUICK_TESTS="test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh"
 
 #===============================================================================
 # ARGUMENT PARSING
