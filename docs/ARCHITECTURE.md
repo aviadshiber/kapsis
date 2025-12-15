@@ -116,6 +116,77 @@ Podman Configuration:
 - Resource limits prevent runaway builds
 - Network access preserved for downloads
 
+## Sandbox Modes
+
+Kapsis supports two sandbox modes for different use cases:
+
+### Overlay Mode (Legacy)
+
+The original isolation method using fuse-overlayfs:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│  Container with fuse-overlayfs                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────┐   │
+│  │  /workspace (merged view)                                               │   │
+│  │  ├── lower: host project (read-only)                                    │   │
+│  │  ├── upper: changes go here                                             │   │
+│  │  └── work: overlay metadata                                             │   │
+│  └─────────────────────────────────────────────────────────────────────────┘   │
+│  + .git directory copied to upper layer (workaround)                           │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Auto-selected when:** No `--branch` flag OR project is not a git repository
+
+### Worktree Mode (New, Recommended)
+
+Uses git worktrees for simpler branch management with container security:
+
+```
+HOST (Trusted)                          CONTAINER (Untrusted)
+─────────────────────────────────────   ─────────────────────────────────
+~/project/.git/  (PROTECTED)
+    ↓
+git worktree add
+    ↓
+~/.kapsis/worktrees/project-agent-1/    /workspace (bind mount)
+├── .git (file) ──────────────────────→ ├── .git-safe/ (sanitized, ro)
+├── src/                                │   ├── config (minimal)
+├── pom.xml                             │   ├── objects → (ro link)
+└── ...                                 │   └── hooks/ (EMPTY)
+                                        ├── src/
+                                        └── pom.xml
+    ↓                                       ↓
+Post-container: git commit/push         Agent makes changes
+(on HOST with full git access)          (restricted git env)
+```
+
+**Auto-selected when:** `--branch` flag provided AND project is a git repository
+
+**Security features:**
+- Worktrees created on HOST (trusted environment)
+- Container receives sanitized .git view (read-only)
+- Empty hooks directory prevents hook-based attacks
+- Objects mounted read-only prevents corruption
+- Git commit/push runs on HOST after container exits
+
+**Advantages over overlay mode:**
+- No fuse-overlayfs permission issues
+- No .git copy workaround needed
+- Native git operations
+- Simpler cleanup (`git worktree remove`)
+- No `--cap-add SYS_ADMIN` required
+
+### Mode Selection
+
+| Condition | Mode Selected |
+|-----------|---------------|
+| `--branch` + `.git` exists | Worktree mode |
+| No `.git` or no `--branch` | Overlay mode |
+| `--worktree-mode` flag | Force worktree |
+| `--overlay-mode` flag | Force overlay |
+
 ## Data Flow
 
 ### Launch Flow

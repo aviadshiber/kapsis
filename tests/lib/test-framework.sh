@@ -778,3 +778,124 @@ cleanup_isolated_container() {
         rm -rf "$sandbox" 2>/dev/null || true
     fi
 }
+
+#===============================================================================
+# WORKTREE TEST HELPERS
+#===============================================================================
+
+# Global worktree test state
+WORKTREE_TEST_ID=""
+WORKTREE_TEST_PATH=""
+WORKTREE_SANITIZED_GIT=""
+
+# setup_worktree_test <test_name> <branch>
+# Sets up a worktree test environment
+setup_worktree_test() {
+    local test_name="${1:-test}"
+    local branch="${2:-feature/test-$test_name}"
+
+    WORKTREE_TEST_ID="kapsis-wt-test-${test_name}-$$"
+    WORKTREE_TEST_PATH="$HOME/.kapsis/worktrees/test-project-${WORKTREE_TEST_ID}"
+    WORKTREE_SANITIZED_GIT="$HOME/.kapsis/sanitized-git/${WORKTREE_TEST_ID}"
+
+    log_info "Worktree test setup: $WORKTREE_TEST_ID"
+
+    # Source worktree manager
+    source "$KAPSIS_ROOT/scripts/worktree-manager.sh"
+
+    # Create worktree
+    WORKTREE_TEST_PATH=$(create_worktree "$TEST_PROJECT" "$WORKTREE_TEST_ID" "$branch")
+
+    # Create sanitized git
+    WORKTREE_SANITIZED_GIT=$(prepare_sanitized_git "$WORKTREE_TEST_PATH" "$WORKTREE_TEST_ID" "$TEST_PROJECT")
+
+    log_info "  Worktree: $WORKTREE_TEST_PATH"
+    log_info "  Sanitized git: $WORKTREE_SANITIZED_GIT"
+}
+
+# run_in_worktree_container <command> [extra_args...]
+# Runs a command in a worktree-mode container
+run_in_worktree_container() {
+    local command="$1"
+    shift
+
+    local objects_path="$TEST_PROJECT/.git/objects"
+
+    podman run --rm \
+        --userns=keep-id \
+        --security-opt label=disable \
+        -v "$WORKTREE_TEST_PATH:/workspace" \
+        -v "$WORKTREE_SANITIZED_GIT:/workspace/.git-safe:ro" \
+        -v "$objects_path:/workspace/.git-objects:ro" \
+        -v "${WORKTREE_TEST_ID}-m2:/home/developer/.m2/repository" \
+        -e KAPSIS_AGENT_ID="$WORKTREE_TEST_ID" \
+        -e KAPSIS_SANDBOX_MODE="worktree" \
+        -e KAPSIS_WORKTREE_MODE="true" \
+        "$@" \
+        kapsis-sandbox:latest \
+        bash -c "$command" 2>&1
+}
+
+# cleanup_worktree_test
+# Cleans up a worktree test environment
+cleanup_worktree_test() {
+    if [[ -z "$WORKTREE_TEST_ID" ]]; then
+        return
+    fi
+
+    log_info "Worktree test cleanup: $WORKTREE_TEST_ID"
+
+    # Source worktree manager if not already
+    source "$KAPSIS_ROOT/scripts/worktree-manager.sh" 2>/dev/null || true
+
+    # Cleanup worktree and sanitized git
+    cleanup_worktree "$TEST_PROJECT" "$WORKTREE_TEST_ID" 2>/dev/null || true
+
+    # Remove any named volumes
+    podman volume rm "${WORKTREE_TEST_ID}-m2" 2>/dev/null || true
+
+    # Reset state
+    WORKTREE_TEST_ID=""
+    WORKTREE_TEST_PATH=""
+    WORKTREE_SANITIZED_GIT=""
+}
+
+# assert_worktree_exists <path> <message>
+# Asserts that a worktree exists at the given path
+assert_worktree_exists() {
+    local path="$1"
+    local message="${2:-Worktree should exist}"
+
+    if [[ -d "$path" ]] && [[ -f "$path/.git" ]]; then
+        return 0
+    else
+        log_fail "$message"
+        log_info "  Expected worktree at: $path"
+        return 1
+    fi
+}
+
+# assert_sanitized_git_secure <path> <message>
+# Asserts that a sanitized git directory is properly secured
+assert_sanitized_git_secure() {
+    local path="$1"
+    local message="${2:-Sanitized git should be secure}"
+
+    # Check hooks directory is empty
+    local hooks_count
+    hooks_count=$(find "$path/hooks" -type f 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ "$hooks_count" -gt 0 ]]; then
+        log_fail "$message - hooks directory not empty"
+        log_info "  Found $hooks_count hook files"
+        return 1
+    fi
+
+    # Check config exists
+    if [[ ! -f "$path/config" ]]; then
+        log_fail "$message - no config file"
+        return 1
+    fi
+
+    return 0
+}

@@ -26,7 +26,56 @@ log_success() { echo -e "${GREEN}[KAPSIS]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[KAPSIS]${NC} $*"; }
 
 #===============================================================================
-# FUSE-OVERLAYFS SETUP (for macOS true CoW support)
+# WORKTREE MODE SETUP
+#
+# In worktree mode, the host has already created:
+# - /workspace (mounted worktree directory)
+# - /workspace/.git-safe (sanitized git directory, read-only)
+# - /workspace/.git-objects (shared objects, read-only)
+#
+# We set up git to use the sanitized environment.
+#===============================================================================
+setup_worktree_git() {
+    # Check if we're in worktree mode
+    if [[ ! -d "/workspace/.git-safe" ]]; then
+        return 1
+    fi
+
+    log_info "Worktree mode: Setting up sanitized git environment"
+
+    # Point git to sanitized directory
+    export GIT_DIR=/workspace/.git-safe
+    export GIT_WORK_TREE=/workspace
+    export GIT_TEST_FSMONITOR=0
+
+    # Link objects if mount exists
+    if [[ -d "/workspace/.git-objects" ]]; then
+        # Create symlink from sanitized git to mounted objects
+        ln -sf /workspace/.git-objects "$GIT_DIR/objects" 2>/dev/null || true
+        log_info "  Objects: linked to /workspace/.git-objects"
+    fi
+
+    # Verify security: hooks directory must be empty
+    local hooks_count
+    hooks_count=$(find "$GIT_DIR/hooks" -type f 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$hooks_count" -gt 0 ]]; then
+        log_warn "WARNING: Hooks directory is not empty ($hooks_count files) - clearing for security"
+        rm -rf "$GIT_DIR/hooks"/*
+    fi
+
+    log_info "  GIT_DIR: $GIT_DIR"
+    log_info "  GIT_WORK_TREE: $GIT_WORK_TREE"
+
+    # Read metadata if available
+    if [[ -f "$GIT_DIR/kapsis-meta" ]]; then
+        log_info "  Worktree metadata found"
+    fi
+
+    return 0
+}
+
+#===============================================================================
+# FUSE-OVERLAYFS SETUP (for macOS true CoW support, legacy mode)
 #===============================================================================
 setup_fuse_overlay() {
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-false}" != "true" ]]; then
@@ -267,11 +316,13 @@ print_welcome() {
     echo ""
     echo "Agent ID:    ${KAPSIS_AGENT_ID:-unknown}"
     echo "Project:     ${KAPSIS_PROJECT:-unknown}"
+    echo "Sandbox:     ${KAPSIS_SANDBOX_MODE:-overlay}"
     echo "Workspace:   /workspace"
     [[ -n "${KAPSIS_BRANCH:-}" ]] && echo "Branch:      ${KAPSIS_BRANCH}"
     [[ -f "/task-spec.md" ]] && echo "Spec File:   /task-spec.md"
     echo ""
     echo "Maven settings: $KAPSIS_HOME/maven/settings.xml (isolation enabled)"
+    [[ "${KAPSIS_WORKTREE_MODE:-}" == "true" ]] && echo "Git:         using sanitized .git-safe (hooks disabled)"
     echo ""
 }
 
@@ -279,15 +330,34 @@ print_welcome() {
 # MAIN
 #===============================================================================
 main() {
-    # First, set up fuse-overlayfs if on macOS (before any workspace access)
-    setup_fuse_overlay
+    # Detect and set up sandbox mode
+    local sandbox_mode="${KAPSIS_SANDBOX_MODE:-overlay}"
 
-    setup_environment
-    init_git_branch
-    print_welcome
+    if [[ "$sandbox_mode" == "worktree" ]] || setup_worktree_git; then
+        # Worktree mode: git is already set up by host
+        log_info "Sandbox mode: worktree"
 
-    # Set trap for post-exit git operations
-    trap post_exit_git EXIT
+        setup_environment
+        # Skip init_git_branch - worktree already on correct branch
+        print_welcome
+
+        # Skip post-exit git trap - host handles commit/push
+        # Just run the command
+
+    else
+        # Legacy overlay mode
+        log_info "Sandbox mode: overlay"
+
+        # Set up fuse-overlayfs if on macOS
+        setup_fuse_overlay
+
+        setup_environment
+        init_git_branch
+        print_welcome
+
+        # Set trap for post-exit git operations (overlay mode only)
+        trap post_exit_git EXIT
+    fi
 
     # Execute command
     if [[ $# -eq 0 ]]; then

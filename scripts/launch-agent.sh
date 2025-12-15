@@ -19,6 +19,8 @@
 #   --no-push             Commit but don't push
 #   --interactive         Force interactive shell mode
 #   --dry-run             Show what would be executed without running
+#   --worktree-mode       Force worktree mode (git worktrees, simpler cleanup)
+#   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
 #
 # Examples:
 #   ./launch-agent.sh 1 ~/project --agent claude --task "fix failing tests"
@@ -50,6 +52,9 @@ NO_PUSH=false
 INTERACTIVE=false
 DRY_RUN=false
 IMAGE_NAME="kapsis-sandbox:latest"
+SANDBOX_MODE=""  # auto-detect, worktree, or overlay
+WORKTREE_PATH=""
+SANITIZED_GIT_PATH=""
 
 #===============================================================================
 # COLORS AND OUTPUT
@@ -99,6 +104,8 @@ Options:
   --no-push             Create branch and commit, but don't push
   --interactive         Force interactive shell mode (ignores agent.command)
   --dry-run             Show what would be executed without running
+  --worktree-mode       Force worktree mode (requires git repo + branch)
+  --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
   -h, --help            Show this help message
 
 Available Agents:
@@ -181,6 +188,14 @@ parse_args() {
                 ;;
             --dry-run)
                 DRY_RUN=true
+                shift
+                ;;
+            --worktree-mode)
+                SANDBOX_MODE="worktree"
+                shift
+                ;;
+            --overlay-mode)
+                SANDBOX_MODE="overlay"
                 shift
                 ;;
             -h|--help)
@@ -343,9 +358,69 @@ parse_config() {
 }
 
 #===============================================================================
-# SANDBOX SETUP
+# SANDBOX MODE DETECTION
+#===============================================================================
+detect_sandbox_mode() {
+    # If mode explicitly set, use it
+    if [[ -n "$SANDBOX_MODE" ]]; then
+        log_info "Sandbox mode: $SANDBOX_MODE (explicit)"
+        return
+    fi
+
+    # Auto-detect: use worktree if git repo + branch specified
+    if [[ -n "$BRANCH" ]] && [[ -d "$PROJECT_PATH/.git" ]]; then
+        SANDBOX_MODE="worktree"
+        log_info "Sandbox mode: worktree (auto-detected: git repo + branch)"
+    else
+        SANDBOX_MODE="overlay"
+        log_info "Sandbox mode: overlay (auto-detected: no branch or not git repo)"
+    fi
+}
+
+#===============================================================================
+# SANDBOX SETUP (dispatches to mode-specific setup)
 #===============================================================================
 setup_sandbox() {
+    detect_sandbox_mode
+
+    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
+        setup_worktree_sandbox
+    else
+        setup_overlay_sandbox
+    fi
+}
+
+#===============================================================================
+# WORKTREE SANDBOX SETUP
+#===============================================================================
+setup_worktree_sandbox() {
+    local project_name
+    project_name=$(basename "$PROJECT_PATH")
+    SANDBOX_ID="${project_name}-${AGENT_ID}"
+
+    log_info "Setting up worktree sandbox: $SANDBOX_ID"
+
+    # Source the worktree manager
+    source "$SCRIPT_DIR/worktree-manager.sh"
+
+    # Create worktree on host
+    WORKTREE_PATH=$(create_worktree "$PROJECT_PATH" "$AGENT_ID" "$BRANCH")
+
+    # Prepare sanitized git for container
+    SANITIZED_GIT_PATH=$(prepare_sanitized_git "$WORKTREE_PATH" "$AGENT_ID" "$PROJECT_PATH")
+
+    # Get objects path for read-only mount
+    OBJECTS_PATH=$(get_objects_path "$PROJECT_PATH")
+
+    log_info "  Worktree: $WORKTREE_PATH"
+    log_info "  Sanitized git: $SANITIZED_GIT_PATH"
+    log_info "  Objects: $OBJECTS_PATH (read-only)"
+}
+
+#===============================================================================
+# OVERLAY SANDBOX SETUP (legacy)
+#===============================================================================
+setup_overlay_sandbox() {
     local project_name
     project_name=$(basename "$PROJECT_PATH")
     SANDBOX_ID="${project_name}-${AGENT_ID}"
@@ -353,7 +428,7 @@ setup_sandbox() {
     UPPER_DIR="${SANDBOX_DIR}/upper"
     WORK_DIR="${SANDBOX_DIR}/work"
 
-    log_info "Setting up sandbox: $SANDBOX_ID"
+    log_info "Setting up overlay sandbox: $SANDBOX_ID"
 
     mkdir -p "$UPPER_DIR" "$WORK_DIR"
 
@@ -362,9 +437,54 @@ setup_sandbox() {
 }
 
 #===============================================================================
-# VOLUME MOUNTS GENERATION
+# VOLUME MOUNTS GENERATION (dispatches to mode-specific)
 #===============================================================================
 generate_volume_mounts() {
+    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
+        generate_volume_mounts_worktree
+    else
+        generate_volume_mounts_overlay
+    fi
+}
+
+#===============================================================================
+# WORKTREE VOLUME MOUNTS
+#===============================================================================
+generate_volume_mounts_worktree() {
+    VOLUME_MOUNTS=()
+
+    # Mount worktree directly (no overlay needed!)
+    VOLUME_MOUNTS+=("-v" "${WORKTREE_PATH}:/workspace")
+
+    # Mount sanitized git as read-only
+    VOLUME_MOUNTS+=("-v" "${SANITIZED_GIT_PATH}:/workspace/.git-safe:ro")
+
+    # Mount objects directory read-only
+    VOLUME_MOUNTS+=("-v" "${OBJECTS_PATH}:/workspace/.git-objects:ro")
+
+    # Maven repository (isolated per agent)
+    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")
+
+    # Gradle cache (isolated per agent)
+    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-gradle:/home/developer/.gradle")
+
+    # GE workspace (isolated per agent)
+    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-ge:/home/developer/.m2/.gradle-enterprise")
+
+    # Spec file (if provided)
+    if [[ -n "$SPEC_FILE" ]]; then
+        SPEC_FILE_ABS="$(cd "$(dirname "$SPEC_FILE")" && pwd)/$(basename "$SPEC_FILE")"
+        VOLUME_MOUNTS+=("-v" "${SPEC_FILE_ABS}:/task-spec.md:ro")
+    fi
+
+    # Filesystem whitelist from config
+    generate_filesystem_includes
+}
+
+#===============================================================================
+# OVERLAY VOLUME MOUNTS (legacy)
+#===============================================================================
+generate_volume_mounts_overlay() {
     VOLUME_MOUNTS=()
 
     # Project with CoW overlay
@@ -386,6 +506,13 @@ generate_volume_mounts() {
     fi
 
     # Filesystem whitelist from config
+    generate_filesystem_includes
+}
+
+#===============================================================================
+# FILESYSTEM INCLUDES (common to both modes)
+#===============================================================================
+generate_filesystem_includes() {
     if [[ -n "$FILESYSTEM_INCLUDES" ]]; then
         while IFS= read -r path; do
             [[ -z "$path" ]] && continue
@@ -418,7 +545,14 @@ generate_env_vars() {
     # Set explicit environment variables
     ENV_VARS+=("-e" "KAPSIS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_PROJECT=$(basename "$PROJECT_PATH")")
-    ENV_VARS+=("-e" "KAPSIS_SANDBOX_DIR=${SANDBOX_DIR}")
+    ENV_VARS+=("-e" "KAPSIS_SANDBOX_MODE=${SANDBOX_MODE}")
+
+    # Mode-specific variables
+    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_WORKTREE_MODE=true")
+    else
+        ENV_VARS+=("-e" "KAPSIS_SANDBOX_DIR=${SANDBOX_DIR}")
+    fi
 
     if [[ -n "$BRANCH" ]]; then
         ENV_VARS+=("-e" "KAPSIS_BRANCH=${BRANCH}")
@@ -514,7 +648,9 @@ main() {
     echo "  Project:       $PROJECT_PATH"
     echo "  Image:         $IMAGE_NAME"
     echo "  Resources:     ${RESOURCE_MEMORY} RAM, ${RESOURCE_CPUS} CPUs"
+    echo "  Sandbox Mode:  $SANDBOX_MODE"
     [[ -n "$BRANCH" ]] && echo "  Branch:        $BRANCH"
+    [[ "$SANDBOX_MODE" == "worktree" ]] && echo "  Worktree:      $WORKTREE_PATH"
     [[ -n "$SPEC_FILE" ]] && echo "  Spec File:     $SPEC_FILE"
     [[ -n "$TASK_INLINE" ]] && echo "  Task:          ${TASK_INLINE:0:50}..."
     echo ""
@@ -542,6 +678,62 @@ main() {
     echo "└────────────────────────────────────────────────────────────────────┘"
     echo ""
 
+    # Handle post-container operations based on sandbox mode
+    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
+        post_container_worktree
+    else
+        post_container_overlay
+    fi
+
+    exit $EXIT_CODE
+}
+
+#===============================================================================
+# POST-CONTAINER: WORKTREE MODE
+#===============================================================================
+post_container_worktree() {
+    # Show changes summary
+    cd "$WORKTREE_PATH"
+    local changes
+    changes=$(git status --porcelain 2>/dev/null || echo "")
+
+    if [[ -n "$changes" ]]; then
+        local changes_count
+        changes_count=$(echo "$changes" | wc -l | tr -d ' ')
+        log_success "Agent made $changes_count file change(s)"
+        echo ""
+        echo "Changed files:"
+        echo "$changes" | head -20 | sed 's/^/  /'
+        echo ""
+
+        # Run post-container git operations on HOST
+        source "$SCRIPT_DIR/post-container-git.sh"
+        post_container_git \
+            "$WORKTREE_PATH" \
+            "$BRANCH" \
+            "$GIT_COMMIT_MSG" \
+            "$GIT_REMOTE" \
+            "$NO_PUSH" \
+            "$AGENT_ID" \
+            "$SANITIZED_GIT_PATH"
+    else
+        log_info "No file changes detected"
+    fi
+
+    echo ""
+    echo "Worktree location: $WORKTREE_PATH"
+    echo ""
+    echo "To continue working:"
+    echo "  cd $WORKTREE_PATH"
+    echo ""
+    echo "To cleanup worktree:"
+    echo "  cd $PROJECT_PATH && git worktree remove $WORKTREE_PATH"
+}
+
+#===============================================================================
+# POST-CONTAINER: OVERLAY MODE (legacy)
+#===============================================================================
+post_container_overlay() {
     # Show changes summary
     if [[ -d "$UPPER_DIR" ]]; then
         local changes_count
@@ -567,8 +759,6 @@ main() {
             log_info "No file changes detected"
         fi
     fi
-
-    exit $EXIT_CODE
 }
 
 # Run main
