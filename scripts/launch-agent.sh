@@ -10,7 +10,8 @@
 #   ./launch-agent.sh <agent-id> <project-path> [options]
 #
 # Options:
-#   --config <file>       Config file (default: ./agent-sandbox.yaml)
+#   --agent <name>        Agent shortcut: claude, codex, aider, interactive
+#   --config <file>       Config file (overrides --agent)
 #   --task <description>  Inline task description
 #   --spec <file>         Task specification file (markdown)
 #   --branch <name>       Git branch to work on (creates or continues)
@@ -20,9 +21,9 @@
 #   --dry-run             Show what would be executed without running
 #
 # Examples:
-#   ./launch-agent.sh 1 ~/project --task "fix failing tests"
-#   ./launch-agent.sh 1 ~/project --spec ./specs/feature.md
-#   ./launch-agent.sh 1 ~/project --branch feature/DEV-123 --spec ./task.md
+#   ./launch-agent.sh 1 ~/project --agent claude --task "fix failing tests"
+#   ./launch-agent.sh 1 ~/project --agent codex --spec ./specs/feature.md
+#   ./launch-agent.sh 1 ~/project --agent aider --branch feature/DEV-123 --spec ./task.md
 #===============================================================================
 
 set -euo pipefail
@@ -34,6 +35,7 @@ KAPSIS_ROOT="$(dirname "$SCRIPT_DIR")"
 #===============================================================================
 # DEFAULT VALUES
 #===============================================================================
+AGENT_NAME=""
 CONFIG_FILE=""
 TASK_INLINE=""
 SPEC_FILE=""
@@ -82,7 +84,9 @@ Arguments:
   project-path    Path to the project directory to work on
 
 Options:
-  --config <file>       Config file (default: ./agent-sandbox.yaml or ~/.config/kapsis/default.yaml)
+  --agent <name>        Agent to use: claude, codex, aider, interactive
+                        (shortcut for --config configs/<name>.yaml)
+  --config <file>       Config file (overrides --agent)
   --task <description>  Inline task description (for simple tasks)
   --spec <file>         Task specification file (for complex tasks)
   --branch <name>       Git branch to work on (creates new or continues existing)
@@ -91,6 +95,12 @@ Options:
   --interactive         Force interactive shell mode (ignores agent.command)
   --dry-run             Show what would be executed without running
   -h, --help            Show this help message
+
+Available Agents:
+  claude                Claude Code (requires ANTHROPIC_API_KEY)
+  codex                 OpenAI Codex CLI (requires OPENAI_API_KEY)
+  aider                 Aider (requires OPENAI_API_KEY or ANTHROPIC_API_KEY)
+  interactive           Interactive bash shell (no AI)
 
 Task Input (one required unless --interactive):
   --task "description"  Inline task for simple requests
@@ -132,6 +142,10 @@ parse_args() {
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
+            --agent)
+                AGENT_NAME="$2"
+                shift 2
+                ;;
             --config)
                 CONFIG_FILE="$2"
                 shift 2
@@ -226,33 +240,59 @@ validate_inputs() {
 # CONFIG RESOLUTION
 #===============================================================================
 resolve_config() {
+    # --config takes precedence
     if [[ -n "$CONFIG_FILE" ]]; then
         if [[ ! -f "$CONFIG_FILE" ]]; then
             log_error "Config file not found: $CONFIG_FILE"
             exit 1
         fi
+        # Extract agent name from config filename
+        if [[ -z "$AGENT_NAME" ]]; then
+            AGENT_NAME=$(basename "$CONFIG_FILE" .yaml)
+        fi
         return
     fi
 
-    # Resolution order
+    # --agent shortcut: look for configs/<agent>.yaml
+    if [[ -n "$AGENT_NAME" ]]; then
+        local agent_config="$KAPSIS_ROOT/configs/${AGENT_NAME}.yaml"
+        if [[ -f "$agent_config" ]]; then
+            CONFIG_FILE="$agent_config"
+            log_info "Using agent: ${AGENT_NAME}"
+            return
+        else
+            log_error "Unknown agent: $AGENT_NAME"
+            log_error "Available agents: claude, codex, aider, interactive"
+            log_error "Or use --config for custom config file"
+            exit 1
+        fi
+    fi
+
+    # Resolution order (when no --agent or --config specified)
     local config_locations=(
         "./agent-sandbox.yaml"
         "./.kapsis/config.yaml"
         "$PROJECT_PATH/agent-sandbox.yaml"
         "$PROJECT_PATH/.kapsis/config.yaml"
         "$HOME/.config/kapsis/default.yaml"
-        "$KAPSIS_ROOT/agent-sandbox.yaml.template"
+        "$KAPSIS_ROOT/configs/claude.yaml"
     )
 
     for loc in "${config_locations[@]}"; do
         if [[ -f "$loc" ]]; then
             CONFIG_FILE="$loc"
-            log_info "Using config: $CONFIG_FILE"
+            # Extract agent name from config path
+            if [[ -z "$AGENT_NAME" ]]; then
+                AGENT_NAME=$(basename "$CONFIG_FILE" .yaml)
+            fi
+            log_info "Using agent: ${AGENT_NAME} (${CONFIG_FILE})"
             return
         fi
     done
 
-    log_error "No config file found. Create agent-sandbox.yaml or use --config"
+    log_error "No config file found."
+    log_error "Use --agent <name> or --config <file>"
+    log_error "Available agents: claude, codex, aider, interactive"
     exit 1
 }
 
@@ -464,12 +504,11 @@ main() {
 
     echo ""
     log_info "Agent Configuration:"
-    echo "  Agent ID:      $AGENT_ID"
+    echo "  Agent:         ${AGENT_NAME^^} (${CONFIG_FILE})"
+    echo "  Instance ID:   $AGENT_ID"
     echo "  Project:       $PROJECT_PATH"
-    echo "  Config:        $CONFIG_FILE"
     echo "  Image:         $IMAGE_NAME"
-    echo "  Memory:        $RESOURCE_MEMORY"
-    echo "  CPUs:          $RESOURCE_CPUS"
+    echo "  Resources:     ${RESOURCE_MEMORY} RAM, ${RESOURCE_CPUS} CPUs"
     [[ -n "$BRANCH" ]] && echo "  Branch:        $BRANCH"
     [[ -n "$SPEC_FILE" ]] && echo "  Spec File:     $SPEC_FILE"
     [[ -n "$TASK_INLINE" ]] && echo "  Task:          ${TASK_INLINE:0:50}..."
@@ -484,7 +523,7 @@ main() {
     fi
 
     echo "┌────────────────────────────────────────────────────────────────────┐"
-    echo "│ LAUNCHING AGENT                                                    │"
+    printf "│ LAUNCHING %-56s │\n" "${AGENT_NAME^^}"
     echo "└────────────────────────────────────────────────────────────────────┘"
     echo ""
 
