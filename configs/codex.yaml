@@ -24,7 +24,7 @@ resources:
   cpus: 4
 
 maven:
-  mirror_url: "https://artifactory-build.taboolasyndication.com/artifactory/products-virtual"
+  mirror_url: "https://artifactory.example.org/artifactory/releases"
   block_remote_snapshots: true
   block_deploy: true
 

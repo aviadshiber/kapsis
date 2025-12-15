@@ -152,16 +152,18 @@ generate_pr_url() {
     echo "│ CREATE PULL REQUEST                                                │"
     echo "└────────────────────────────────────────────────────────────────────┘"
 
-    if [[ "$remote_url" == *"bitbucket"* ]] || [[ "$remote_url" == *"taboolasyndication"* ]]; then
-        # Bitbucket
+    if [[ "$remote_url" == *"bitbucket"* ]]; then
+        # Bitbucket Cloud
         local repo_path
         repo_path=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
+        echo "  https://bitbucket.org/${repo_path}/pull-requests/new?source=${branch}"
+
+    elif [[ "$remote_url" == ssh://* ]] || [[ "$remote_url" == https://*git* ]]; then
+        # Generic Bitbucket Server / self-hosted git
         local base_url
-        if [[ "$remote_url" == *"taboolasyndication"* ]]; then
-            base_url="https://git.taboolasyndication.com"
-        else
-            base_url="https://bitbucket.org"
-        fi
+        base_url=$(echo "$remote_url" | sed -E 's|^(https?://[^/]+).*|\1|' | sed -E 's|^ssh://([^@]+@)?([^:/]+).*|https://\2|')
+        local repo_path
+        repo_path=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
         echo "  ${base_url}/${repo_path}/pull-requests/new?source=${branch}"
 
     elif [[ "$remote_url" == *"github"* ]]; then

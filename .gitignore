@@ -2,6 +2,8 @@
 
 # User configuration (contains secrets/paths)
 agent-sandbox.yaml
+configs/aviad-*.yaml
+configs/*-personal.yaml
 
 # Sandbox directories
 .ai-sandboxes/

@@ -101,8 +101,8 @@ resources:
 # MAVEN ISOLATION SETTINGS
 #===============================================================================
 maven:
-  # Corporate mirror URL (from discovery)
-  mirror_url: "https://artifactory-build.taboolasyndication.com/artifactory/products-virtual"
+  # Corporate mirror URL (customize for your organization)
+  mirror_url: "https://artifactory.example.org/artifactory/releases"
 
   # Block SNAPSHOT downloads from remote (recommended: true)
   block_remote_snapshots: true
@@ -114,8 +114,8 @@ maven:
 # GRADLE ENTERPRISE / DEVELOCITY SETTINGS
 #===============================================================================
 gradle_enterprise:
-  # Server URL (from discovery)
-  server_url: "https://gradle-enterprise.taboolasyndication.com/"
+  # Server URL (customize for your organization)
+  server_url: "https://ge.example.org/"
 
   # Keep build scans for observability (recommended: true)
   build_scans_enabled: true
