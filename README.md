@@ -1,6 +1,12 @@
-# Kapsis
+<p align="center">
+  <img src="assets/kapsis-logo.png" alt="Kapsis Logo" width="300">
+</p>
 
-**Hermetically Isolated AI Agent Sandbox for Parallel Development**
+<h1 align="center">Kapsis</h1>
+
+<p align="center">
+  <strong>Hermetically Isolated AI Agent Sandbox for Parallel Development</strong>
+</p>
 
 Kapsis enables running multiple AI coding agents in parallel on the same Maven project with complete isolation. Each agent runs in a Podman container with Copy-on-Write filesystem, ensuring Agent A's work cannot affect Agent B.
 
@@ -18,7 +24,7 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 
 ```bash
 # 1. Clone Kapsis
-git clone https://github.com/your-org/kapsis.git
+git clone https://github.com/aviadshiber/kapsis.git
 cd kapsis
 
 # 2. Build the container image
