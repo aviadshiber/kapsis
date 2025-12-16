@@ -204,50 +204,33 @@ Pre-built configs available in `configs/` directory.
 | GE/Develocity cache | Remote cache disabled |
 | Host system | Podman rootless container |
 
-## Debugging & Logging
+## Troubleshooting
 
-Kapsis includes comprehensive logging to help debug issues.
-
-### Enable Debug Logging
+### Debug Logging
 
 ```bash
-# Option 1: Set KAPSIS_DEBUG
+# Enable debug output
 KAPSIS_DEBUG=1 ./scripts/launch-agent.sh 1 ~/project --task "test"
 
-# Option 2: Set specific log level
-KAPSIS_LOG_LEVEL=DEBUG ./scripts/launch-agent.sh 1 ~/project --task "test"
+# View logs
+tail -f ~/.kapsis/logs/kapsis-launch-agent.log
 ```
 
-### Log Files
-
-Logs are written to `~/.kapsis/logs/` with automatic rotation:
+### Run Tests
 
 ```bash
-# View current session log
-tail -f ~/.kapsis/logs/kapsis-launch-agent.log
-
-# View all log files
-ls -la ~/.kapsis/logs/
+./tests/run-all-tests.sh --quick    # Fast validation (~10s)
+./tests/run-all-tests.sh -q         # All tests, quiet output
 ```
 
-### Log Configuration
-
-| Environment Variable | Default | Description |
-|---------------------|---------|-------------|
-| `KAPSIS_LOG_LEVEL` | INFO | Log level: DEBUG, INFO, WARN, ERROR |
-| `KAPSIS_LOG_DIR` | ~/.kapsis/logs | Log directory |
-| `KAPSIS_LOG_TO_FILE` | true | Enable file logging |
-| `KAPSIS_LOG_MAX_SIZE_MB` | 10 | Max file size before rotation |
-| `KAPSIS_LOG_MAX_FILES` | 5 | Number of rotated files to keep |
-| `KAPSIS_DEBUG` | (unset) | Set to any value to enable DEBUG level |
-
-See [docs/CONFIG-REFERENCE.md](docs/CONFIG-REFERENCE.md) for full configuration options.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full logging configuration and test framework documentation.
 
 ## Project Structure
 
 ```
 kapsis/
 ├── agent-sandbox.yaml.template  # Config template
+├── CONTRIBUTING.md              # Testing & logging guide
 ├── Containerfile                # Container image definition
 ├── setup.sh                     # System setup and validation
 ├── quick-start.sh               # Simplified agent launcher

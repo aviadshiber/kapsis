@@ -245,11 +245,7 @@ test_workflow_env_propagation() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Full Workflow Integration"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Full Workflow Integration"
 
     # Check prerequisites
     if ! skip_if_no_overlay_rw; then

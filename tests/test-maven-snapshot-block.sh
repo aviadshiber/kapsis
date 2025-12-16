@@ -260,11 +260,7 @@ EOF
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Maven SNAPSHOT Blocking"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Maven SNAPSHOT Blocking"
 
     # Check prerequisites
     if ! skip_if_no_overlay_rw; then

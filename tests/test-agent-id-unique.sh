@@ -256,11 +256,7 @@ test_reuse_after_cleanup() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Agent ID Uniqueness"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Agent ID Uniqueness"
 
     # Check prerequisites
     if ! skip_if_no_overlay_rw; then

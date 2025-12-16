@@ -235,11 +235,7 @@ test_task_in_commit_message() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Git Auto Commit and Push"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Git Auto Commit and Push"
 
     # Check prerequisites
     if ! skip_if_no_overlay_rw; then

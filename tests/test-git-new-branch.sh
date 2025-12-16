@@ -211,11 +211,7 @@ test_branch_flag_validation() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Git New Branch"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Git New Branch"
 
     # Check prerequisites
     if ! skip_if_no_overlay_rw; then

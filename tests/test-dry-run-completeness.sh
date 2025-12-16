@@ -150,11 +150,7 @@ test_dry_run_shows_cpu_limit() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Dry Run Completeness"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Dry Run Completeness"
 
     # Setup
     setup_test_project

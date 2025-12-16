@@ -84,11 +84,7 @@ test_agent_in_config_summary() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Agent Shortcut (--agent flag)"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Agent Shortcut (--agent flag)"
 
     # Setup
     setup_test_project

@@ -187,11 +187,7 @@ test_workspace_readable() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Copy-on-Write Isolation"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Copy-on-Write Isolation"
 
     # Check prerequisites
     if ! skip_if_no_overlay_rw; then

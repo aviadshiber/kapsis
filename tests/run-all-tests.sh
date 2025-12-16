@@ -4,6 +4,7 @@
 #
 # Usage:
 #   ./run-all-tests.sh                    # Run all tests
+#   ./run-all-tests.sh -q                 # Quiet mode (pass/fail only)
 #   ./run-all-tests.sh --category agent   # Run only agent tests
 #   ./run-all-tests.sh --quick            # Run quick tests only (no containers)
 #===============================================================================
@@ -21,6 +22,8 @@ source "$TESTS_DIR/lib/test-framework.sh"
 CATEGORY=""
 QUICK_MODE=false
 VERBOSE=false
+QUIET_MODE_FLAG=false
+FAILED_SCRIPTS=()  # Track failed test scripts for re-run command
 
 # Test categories (Bash 3.2 compatible)
 get_tests_for_category() {
@@ -75,6 +78,11 @@ while [[ $# -gt 0 ]]; do
             QUICK_MODE=true
             shift
             ;;
+        -q|--quiet)
+            QUIET_MODE_FLAG=true
+            export KAPSIS_TEST_QUIET=true
+            shift
+            ;;
         -v|--verbose)
             VERBOSE=true
             shift
@@ -85,6 +93,7 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --category <name>   Run only tests in category"
             echo "  --quick             Run quick tests (no containers)"
+            echo "  -q, --quiet         Quiet mode (only show pass/fail)"
             echo "  -v, --verbose       Verbose output"
             echo ""
             echo "Categories: $ALL_CATEGORIES"
@@ -102,21 +111,28 @@ done
 #===============================================================================
 
 main() {
-    echo ""
-    echo "╔═══════════════════════════════════════════════════════════════════╗"
-    echo "║                    KAPSIS TEST SUITE                              ║"
-    echo "╚═══════════════════════════════════════════════════════════════════╝"
-    echo ""
+    # Header (suppress in quiet mode)
+    if [[ "$QUIET_MODE_FLAG" != "true" ]]; then
+        echo ""
+        echo "╔═══════════════════════════════════════════════════════════════════╗"
+        echo "║                    KAPSIS TEST SUITE                              ║"
+        echo "╚═══════════════════════════════════════════════════════════════════╝"
+        echo ""
+    fi
 
     # Check prerequisites (unless quick mode)
     if [[ "$QUICK_MODE" != "true" ]]; then
-        log_info "Checking prerequisites..."
+        if [[ "$QUIET_MODE_FLAG" != "true" ]]; then
+            log_info "Checking prerequisites..."
+        fi
         if ! check_prerequisites; then
             log_fail "Prerequisites not met"
             exit 3
         fi
     else
-        log_info "Quick mode - skipping container prerequisites"
+        if [[ "$QUIET_MODE_FLAG" != "true" ]]; then
+            log_info "Quick mode - skipping container prerequisites"
+        fi
     fi
 
     # Determine which tests to run
@@ -124,44 +140,48 @@ main() {
 
     if [[ "$QUICK_MODE" == "true" ]]; then
         tests_to_run="$QUICK_TESTS"
-        log_info "Running quick tests only"
+        [[ "$QUIET_MODE_FLAG" != "true" ]] && log_info "Running quick tests only"
     elif [[ -n "$CATEGORY" ]]; then
         tests_to_run=$(get_tests_for_category "$CATEGORY") || {
             log_fail "Unknown category: $CATEGORY"
             log_info "Available categories: $ALL_CATEGORIES"
             exit 1
         }
-        log_info "Running category: $CATEGORY"
+        [[ "$QUIET_MODE_FLAG" != "true" ]] && log_info "Running category: $CATEGORY"
     else
         # Run all tests
         for category in $ALL_CATEGORIES; do
             tests_to_run="$tests_to_run $(get_tests_for_category "$category")"
         done
-        log_info "Running all tests"
+        [[ "$QUIET_MODE_FLAG" != "true" ]] && log_info "Running all tests"
     fi
 
-    echo ""
+    [[ "$QUIET_MODE_FLAG" != "true" ]] && echo ""
 
     # Track overall results
     local total_passed=0
     local total_failed=0
     local total_skipped=0
 
-    # Run each test
+    # Run each test script
     for test_script in $tests_to_run; do
         if [[ -f "$TESTS_DIR/$test_script" ]]; then
-            echo ""
-            echo "───────────────────────────────────────────────────────────────────"
-            log_info "Running: $test_script"
-            echo "───────────────────────────────────────────────────────────────────"
+            if [[ "$QUIET_MODE_FLAG" != "true" ]]; then
+                echo ""
+                echo "───────────────────────────────────────────────────────────────────"
+                log_info "Running: $test_script"
+                echo "───────────────────────────────────────────────────────────────────"
+            fi
 
-            if "$TESTS_DIR/$test_script"; then
+            # Run test with quiet mode passed via env var
+            if KAPSIS_TEST_QUIET="$QUIET_MODE_FLAG" "$TESTS_DIR/$test_script"; then
                 total_passed=$((total_passed + 1))
             else
                 total_failed=$((total_failed + 1))
+                FAILED_SCRIPTS+=("$test_script")
             fi
         else
-            log_skip "$test_script (not implemented)"
+            [[ "$QUIET_MODE_FLAG" != "true" ]] && log_skip "$test_script (not implemented)"
             total_skipped=$((total_skipped + 1))
         fi
     done
@@ -183,6 +203,21 @@ main() {
         exit 0
     else
         echo -e "${RED}Some test scripts failed.${NC}"
+
+        # Show failed scripts and re-run command
+        if [[ ${#FAILED_SCRIPTS[@]} -gt 0 ]]; then
+            echo ""
+            echo "Failed test scripts:"
+            for script in "${FAILED_SCRIPTS[@]}"; do
+                echo -e "  ${RED}✗${NC} $script"
+            done
+
+            echo ""
+            echo "Re-run failed scripts with full output:"
+            for script in "${FAILED_SCRIPTS[@]}"; do
+                echo "  $TESTS_DIR/$script"
+            done
+        fi
         exit 1
     fi
 }

@@ -87,11 +87,7 @@ test_empty_agent_name() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Unknown Agent Error Handling"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Unknown Agent Error Handling"
 
     # Setup
     setup_test_project

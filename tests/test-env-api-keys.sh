@@ -915,11 +915,7 @@ EOF
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Environment API Keys"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Environment API Keys"
 
     # Check prerequisites
     if ! skip_if_no_container; then

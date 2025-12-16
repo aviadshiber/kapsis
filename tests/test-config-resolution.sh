@@ -153,11 +153,7 @@ test_resolution_order_logging() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Config Resolution Order"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Config Resolution Order"
 
     # Setup
     setup_test_project

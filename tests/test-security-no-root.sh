@@ -237,11 +237,7 @@ test_no_privileged_mode() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Security - No Root"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Security - No Root"
 
     # Check prerequisites - use skip_if_no_overlay_rw to properly set KAPSIS_USE_FUSE_OVERLAY
     # on macOS where native overlay is read-only

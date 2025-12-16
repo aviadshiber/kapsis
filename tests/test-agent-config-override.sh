@@ -128,11 +128,7 @@ test_config_resources_applied() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Config Override (--config vs --agent)"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Config Override (--config vs --agent)"
 
     # Setup
     setup_test_project

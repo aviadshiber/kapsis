@@ -259,11 +259,7 @@ test_cleanup_with_overlay_unmount() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Cleanup Sandbox"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Cleanup Sandbox"
 
     # Check prerequisites
     if ! skip_if_no_container; then

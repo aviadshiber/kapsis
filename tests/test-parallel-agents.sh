@@ -286,11 +286,7 @@ test_resource_limits_per_agent() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Parallel Agents"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Parallel Agents"
 
     # Check prerequisites
     if ! skip_if_no_container; then

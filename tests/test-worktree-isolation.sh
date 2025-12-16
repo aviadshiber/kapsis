@@ -266,11 +266,7 @@ test_worktree_cleanup() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Worktree Isolation"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Worktree Isolation"
 
     # Check prerequisites
     if ! skip_if_no_container; then

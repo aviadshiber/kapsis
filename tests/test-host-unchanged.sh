@@ -253,11 +253,7 @@ test_multiple_container_runs() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Host Filesystem Unchanged"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Host Filesystem Unchanged"
 
     # Check prerequisites
     if ! skip_if_no_overlay_rw; then

@@ -116,11 +116,7 @@ test_path_with_special_chars() {
 #===============================================================================
 
 main() {
-    echo ""
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo "TEST: Path with Spaces and Special Characters"
-    echo "═══════════════════════════════════════════════════════════════════"
-    echo ""
+    print_test_header "Path with Spaces and Special Characters"
 
     # Setup
     setup_test_project

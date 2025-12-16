@@ -20,6 +20,11 @@ TESTS_RUN=0
 TESTS_PASSED=0
 TESTS_FAILED=0
 CURRENT_TEST=""
+FAILED_TESTS=()  # Track names of failed tests for re-run command
+
+# Quiet mode - only show pass/fail, suppress verbose output
+# Set via: KAPSIS_TEST_QUIET=1 or export before sourcing
+QUIET_MODE="${KAPSIS_TEST_QUIET:-false}"
 
 # Paths
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -31,15 +36,70 @@ TEST_PROJECT="$HOME/.kapsis-test-project"
 #===============================================================================
 # OUTPUT FUNCTIONS
 #===============================================================================
-log_test() { echo -e "${BLUE}[TEST]${NC} $*"; }
+# In quiet mode, only PASS/FAIL are shown; other output is suppressed
+
+log_test() {
+    [[ "$QUIET_MODE" == "true" || "$QUIET_MODE" == "1" ]] && return
+    echo -e "${BLUE}[TEST]${NC} $*"
+}
+
 log_pass() { echo -e "${GREEN}[PASS]${NC} $*"; }
 log_fail() { echo -e "${RED}[FAIL]${NC} $*"; }
-log_skip() { echo -e "${YELLOW}[SKIP]${NC} $*"; }
-log_info() { echo -e "${CYAN}[INFO]${NC} $*"; }
+
+log_skip() {
+    [[ "$QUIET_MODE" == "true" || "$QUIET_MODE" == "1" ]] && return
+    echo -e "${YELLOW}[SKIP]${NC} $*"
+}
+
+log_info() {
+    [[ "$QUIET_MODE" == "true" || "$QUIET_MODE" == "1" ]] && return
+    echo -e "${CYAN}[INFO]${NC} $*"
+}
+
+# log_quiet - only shown in quiet mode (for minimal output)
+log_quiet() {
+    [[ "$QUIET_MODE" != "true" && "$QUIET_MODE" != "1" ]] && return
+    echo -e "$*"
+}
+
+# print_test_header <title>
+# Prints a test script header. Suppressed in quiet mode.
+print_test_header() {
+    _is_quiet && return
+    local title="$1"
+    echo ""
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo "TEST: $title"
+    echo "═══════════════════════════════════════════════════════════════════"
+    echo ""
+}
 
 #===============================================================================
 # ASSERTIONS
 #===============================================================================
+
+# Helper to check if in quiet mode
+_is_quiet() {
+    [[ "$QUIET_MODE" == "true" || "$QUIET_MODE" == "1" ]]
+}
+
+# Helper to log failure details
+# In quiet mode: shows main failure message only (so you know WHY it failed)
+# In verbose mode: shows failure message + details (Expected/Actual values)
+_log_failure() {
+    local message="$1"
+    shift
+
+    # Always show the main failure message - you need to know WHY it failed
+    log_fail "$message"
+
+    # In verbose mode, also show the details (Expected/Actual values)
+    if ! _is_quiet; then
+        for detail in "$@"; do
+            log_info "  $detail"
+        done
+    fi
+}
 
 # assert_equals <expected> <actual> <message>
 assert_equals() {
@@ -50,9 +110,7 @@ assert_equals() {
     if [[ "$expected" == "$actual" ]]; then
         return 0
     else
-        log_fail "$message"
-        log_info "  Expected: $expected"
-        log_info "  Actual:   $actual"
+        _log_failure "$message" "Expected: $expected" "Actual:   $actual"
         return 1
     fi
 }
@@ -66,8 +124,7 @@ assert_not_equals() {
     if [[ "$unexpected" != "$actual" ]]; then
         return 0
     else
-        log_fail "$message"
-        log_info "  Value should not be: $unexpected"
+        _log_failure "$message" "Value should not be: $unexpected"
         return 1
     fi
 }
@@ -81,9 +138,7 @@ assert_contains() {
     if [[ "$haystack" == *"$needle"* ]]; then
         return 0
     else
-        log_fail "$message"
-        log_info "  Looking for: $needle"
-        log_info "  In: ${haystack:0:200}..."
+        _log_failure "$message" "Looking for: $needle" "In: ${haystack:0:200}..."
         return 1
     fi
 }
@@ -97,8 +152,7 @@ assert_not_contains() {
     if [[ "$haystack" != *"$needle"* ]]; then
         return 0
     else
-        log_fail "$message"
-        log_info "  Should not contain: $needle"
+        _log_failure "$message" "Should not contain: $needle"
         return 1
     fi
 }
@@ -111,8 +165,7 @@ assert_file_exists() {
     if [[ -f "$path" ]]; then
         return 0
     else
-        log_fail "$message"
-        log_info "  Missing file: $path"
+        _log_failure "$message" "Missing file: $path"
         return 1
     fi
 }
@@ -125,8 +178,7 @@ assert_file_not_exists() {
     if [[ ! -f "$path" ]]; then
         return 0
     else
-        log_fail "$message"
-        log_info "  File exists but shouldn't: $path"
+        _log_failure "$message" "File exists but shouldn't: $path"
         return 1
     fi
 }
@@ -139,8 +191,7 @@ assert_dir_exists() {
     if [[ -d "$path" ]]; then
         return 0
     else
-        log_fail "$message"
-        log_info "  Missing directory: $path"
+        _log_failure "$message" "Missing directory: $path"
         return 1
     fi
 }
@@ -154,9 +205,7 @@ assert_exit_code() {
     if [[ "$expected" -eq "$actual" ]]; then
         return 0
     else
-        log_fail "$message"
-        log_info "  Expected exit code: $expected"
-        log_info "  Actual exit code:   $actual"
+        _log_failure "$message" "Expected exit code: $expected" "Actual exit code:   $actual"
         return 1
     fi
 }
@@ -169,8 +218,7 @@ assert_command_succeeds() {
     if eval "$command" >/dev/null 2>&1; then
         return 0
     else
-        log_fail "$message"
-        log_info "  Command failed: $command"
+        _log_failure "$message" "Command failed: $command"
         return 1
     fi
 }
@@ -183,8 +231,7 @@ assert_command_fails() {
     if ! eval "$command" >/dev/null 2>&1; then
         return 0
     else
-        log_fail "$message"
-        log_info "  Command should have failed: $command"
+        _log_failure "$message" "Command should have failed: $command"
         return 1
     fi
 }
@@ -199,7 +246,9 @@ run_test() {
     CURRENT_TEST="$test_func"
     TESTS_RUN=$((TESTS_RUN + 1))
 
-    log_test "Running: $test_func"
+    if ! _is_quiet; then
+        log_test "Running: $test_func"
+    fi
 
     if $test_func; then
         log_pass "$test_func"
@@ -208,6 +257,7 @@ run_test() {
     else
         log_fail "$test_func"
         TESTS_FAILED=$((TESTS_FAILED + 1))
+        FAILED_TESTS+=("$test_func")
         return 1
     fi
 }
@@ -221,6 +271,7 @@ skip_test() {
 }
 
 # print_summary
+# Shows test results. In quiet mode, also shows re-run command for failed tests.
 print_summary() {
     echo ""
     echo "═══════════════════════════════════════════════════════════════════"
@@ -236,8 +287,30 @@ print_summary() {
         return 0
     else
         echo -e "${RED}Some tests failed.${NC}"
+
+        # Show failed tests list
+        if [[ ${#FAILED_TESTS[@]} -gt 0 ]]; then
+            echo ""
+            echo "Failed tests:"
+            for test in "${FAILED_TESTS[@]}"; do
+                echo -e "  ${RED}✗${NC} $test"
+            done
+
+            # In quiet mode, suggest re-running with verbose output
+            if _is_quiet; then
+                echo ""
+                echo "Re-run with full output to see details:"
+                echo "  $0"
+            fi
+        fi
         return 1
     fi
+}
+
+# get_failed_tests
+# Returns space-separated list of failed test function names
+get_failed_tests() {
+    echo "${FAILED_TESTS[*]}"
 }
 
 #===============================================================================
