@@ -443,6 +443,180 @@ EOF
 }
 
 #===============================================================================
+# REGRESSION TESTS - BUGS FOUND IN SESSION 2025-12-16
+#===============================================================================
+
+test_environment_set_variables() {
+    log_test "Testing environment.set variables are passed to container"
+
+    local test_config="$TEST_PROJECT/.kapsis-env-set-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  set:
+    CUSTOM_PATH: "/custom/path"
+    MY_SETTING: "my-value"
+EOF
+
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    rm -f "$test_config"
+
+    # Both set variables should appear in the command
+    assert_contains "$output" "CUSTOM_PATH=/custom/path" "CUSTOM_PATH should be set"
+    assert_contains "$output" "MY_SETTING=my-value" "MY_SETTING should be set"
+}
+
+test_secret_masking_alphanumeric() {
+    log_test "Testing secret masking includes alphanumeric variable names"
+
+    local test_config="$TEST_PROJECT/.kapsis-mask-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  passthrough:
+    - CONTEXT7_API_KEY
+    - GRAFANA_READONLY_TOKEN
+EOF
+
+    # Set test values
+    export CONTEXT7_API_KEY="ctx7-secret-value"
+    export GRAFANA_READONLY_TOKEN="graf-secret-value"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    unset CONTEXT7_API_KEY GRAFANA_READONLY_TOKEN
+    rm -f "$test_config"
+
+    # Secret values should NOT appear in output (masked)
+    assert_not_contains "$output" "ctx7-secret-value" "CONTEXT7_API_KEY value should be masked"
+    assert_not_contains "$output" "graf-secret-value" "GRAFANA_READONLY_TOKEN value should be masked"
+
+    # Variable names with ***MASKED*** should appear
+    assert_contains "$output" "CONTEXT7_API_KEY=***MASKED***" "CONTEXT7_API_KEY should be masked"
+    assert_contains "$output" "GRAFANA_READONLY_TOKEN=***MASKED***" "GRAFANA_READONLY_TOKEN should be masked"
+}
+
+test_filesystem_mounts_preserve_paths() {
+    log_test "Testing filesystem mounts preserve absolute paths for symlinks"
+
+    local test_config="$TEST_PROJECT/.kapsis-mount-path-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+filesystem:
+  include:
+    - ~/.local
+    - ~/.config
+EOF
+
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    rm -f "$test_config"
+
+    # Mounts should use absolute paths (same source and target)
+    # NOT remapped to /home/developer (which breaks symlinks)
+    local expected_home="${HOME}"
+
+    if echo "$output" | grep -q "${expected_home}/.local:${expected_home}/.local"; then
+        return 0
+    else
+        log_fail "Filesystem mounts should preserve absolute paths (got remapped to /home/developer)"
+        return 1
+    fi
+}
+
+test_image_flag_priority() {
+    log_test "Testing --image flag takes priority over config"
+
+    local test_config="$TEST_PROJECT/.kapsis-image-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+image:
+  name: "config-image"
+  tag: "v1"
+EOF
+
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --image "my-custom-image:latest" --task "test" --dry-run 2>&1) || true
+
+    rm -f "$test_config"
+
+    # --image flag should override config
+    assert_contains "$output" "my-custom-image:latest" "--image flag should take priority"
+    assert_not_contains "$output" "config-image:v1" "Config image should be overridden"
+}
+
+test_yq_v4_filesystem_parsing() {
+    log_test "Testing yq v4 compatibility for filesystem.include parsing"
+
+    local test_config="$TEST_PROJECT/.kapsis-yq-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+filesystem:
+  include:
+    - ~/.gitconfig
+    - ~/.ssh
+environment:
+  passthrough:
+    - HOME
+    - USER
+EOF
+
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    rm -f "$test_config"
+
+    # Should parse multiple items without yq errors
+    assert_contains "$output" "DRY RUN" "Should complete without yq parsing errors"
+    # Check that both mounts appear
+    if echo "$output" | grep -q ".gitconfig" && echo "$output" | grep -q ".ssh"; then
+        return 0
+    else
+        log_fail "filesystem.include should parse multiple items correctly"
+        return 1
+    fi
+}
+
+test_environment_passthrough_parsing() {
+    log_test "Testing yq v4 compatibility for environment.passthrough parsing"
+
+    local test_config="$TEST_PROJECT/.kapsis-passthrough-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  passthrough:
+    - TEST_VAR1
+    - TEST_VAR2
+    - TEST_VAR3
+EOF
+
+    export TEST_VAR1="value1"
+    export TEST_VAR2="value2"
+    export TEST_VAR3="value3"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    unset TEST_VAR1 TEST_VAR2 TEST_VAR3
+    rm -f "$test_config"
+
+    # All three variables should be passed through
+    assert_contains "$output" "TEST_VAR1=value1" "TEST_VAR1 should be passed through"
+    assert_contains "$output" "TEST_VAR2=value2" "TEST_VAR2 should be passed through"
+    assert_contains "$output" "TEST_VAR3=value3" "TEST_VAR3 should be passed through"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -484,6 +658,14 @@ main() {
     run_test test_volume_mount_before_image
     run_test test_agent_command_included
     run_test test_interactive_mode_uses_bash
+
+    # Regression tests - bugs found 2025-12-16
+    run_test test_environment_set_variables
+    run_test test_secret_masking_alphanumeric
+    run_test test_filesystem_mounts_preserve_paths
+    run_test test_image_flag_priority
+    run_test test_yq_v4_filesystem_parsing
+    run_test test_environment_passthrough_parsing
 
     # Cleanup
     cleanup_test_project
