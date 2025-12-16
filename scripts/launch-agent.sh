@@ -400,10 +400,10 @@ parse_config() {
         GIT_COMMIT_MSG=$(yq -r '.git.auto_push.commit_message // "feat: AI agent changes"' "$CONFIG_FILE")
 
         # Parse filesystem includes
-        FILESYSTEM_INCLUDES=$(yq -r '.filesystem.include[]? // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
+        FILESYSTEM_INCLUDES=$(yq '.filesystem.include[]' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse environment passthrough
-        ENV_PASSTHROUGH=$(yq -r '.environment.passthrough[]? // empty' "$CONFIG_FILE" 2>/dev/null || echo "")
+        ENV_PASSTHROUGH=$(yq '.environment.passthrough[]' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse environment set
         ENV_SET=$(yq -r '.environment.set // {}' "$CONFIG_FILE" 2>/dev/null || echo "{}")
@@ -597,9 +597,9 @@ generate_filesystem_includes() {
             [[ -z "$path" ]] && continue
             expanded_path="${path/#\~/$HOME}"
             if [[ -e "$expanded_path" ]]; then
-                # Map to same relative path in container home
-                container_path="${path/#\~//home/developer}"
-                VOLUME_MOUNTS+=("-v" "${expanded_path}:${container_path}:ro")
+                # Mount to same absolute path to preserve symlinks
+                # (e.g., Claude CLI has absolute symlink ~/.local/bin/claude -> /Users/.../versions/...)
+                VOLUME_MOUNTS+=("-v" "${expanded_path}:${expanded_path}:ro")
             fi
         done <<< "$FILESYSTEM_INCLUDES"
     fi
@@ -679,6 +679,26 @@ generate_env_vars() {
 
     if [[ -n "$TASK_INLINE" ]]; then
         ENV_VARS+=("-e" "KAPSIS_TASK=${TASK_INLINE}")
+    fi
+
+    # Process explicit set environment variables from config
+    if [[ -n "$ENV_SET" ]] && [[ "$ENV_SET" != "{}" ]]; then
+        log_debug "Processing environment.set variables..."
+        # Parse set variables as key=value pairs (yq props format: "KEY = value")
+        local set_vars
+        set_vars=$(yq -o=props '.environment.set' "$CONFIG_FILE" 2>/dev/null | grep -v '^#' || echo "")
+        if [[ -n "$set_vars" ]]; then
+            while IFS= read -r line; do
+                [[ -z "$line" ]] && continue
+                # Parse "KEY = value" format
+                local key value
+                key=$(echo "$line" | cut -d'=' -f1 | xargs)
+                value=$(echo "$line" | cut -d'=' -f2- | xargs)
+                if [[ -n "$key" ]]; then
+                    ENV_VARS+=("-e" "${key}=${value}")
+                fi
+            done <<< "$set_vars"
+        fi
     fi
 }
 
@@ -797,7 +817,8 @@ main() {
         # Sanitize sensitive env vars in output (mask API keys and tokens)
         local sanitized_cmd="${CONTAINER_CMD[*]}"
         # Mask any -e VAR=value where VAR contains KEY, TOKEN, SECRET, PASSWORD, CREDENTIALS
-        sanitized_cmd=$(echo "$sanitized_cmd" | sed -E 's/(-e [A-Z_]*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS)[A-Z_]*)=[^ ]*/\1=***MASKED***/gi')
+        # Pattern includes alphanumeric + underscore for var names like CONTEXT7_API_KEY
+        sanitized_cmd=$(echo "$sanitized_cmd" | sed -E 's/(-e [A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS)[A-Za-z0-9_]*)=[^ ]*/\1=***MASKED***/gi')
         echo "$sanitized_cmd"
         echo ""
         exit 0
