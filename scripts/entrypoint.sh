@@ -142,8 +142,9 @@ setup_staged_config_overlays() {
                 log_debug "CoW overlay: ${relative_path}"
             else
                 # Fallback: copy if overlay fails
+                # Use "$src/." to copy CONTENTS, not the directory itself (avoids nested structure)
                 log_warn "Overlay failed for ${relative_path}, falling back to copy"
-                cp -r "$src" "$dst" 2>/dev/null || true
+                cp -r "$src/." "$dst/" 2>/dev/null || true
                 chmod -R u+w "$dst" 2>/dev/null || true
             fi
         else
