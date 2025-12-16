@@ -724,21 +724,25 @@ build_container_command() {
     # Add volume mounts
     CONTAINER_CMD+=("${VOLUME_MOUNTS[@]}")
 
+    # Add inline task spec mount if needed (must be before image name)
+    if [[ -n "$TASK_INLINE" ]] && [[ "$INTERACTIVE" != "true" ]]; then
+        INLINE_SPEC_FILE=$(mktemp)
+        echo "$TASK_INLINE" > "$INLINE_SPEC_FILE"
+        CONTAINER_CMD+=("-v" "${INLINE_SPEC_FILE}:/task-spec.md:ro")
+    fi
+
     # Add environment variables
     CONTAINER_CMD+=("${ENV_VARS[@]}")
 
     # Add image
     CONTAINER_CMD+=("$IMAGE_NAME")
 
-    # Add command
+    # Add agent command
     if [[ "$INTERACTIVE" == "true" ]]; then
         CONTAINER_CMD+=("bash")
-    elif [[ -n "$TASK_INLINE" ]]; then
-        # Create temp spec file for inline task
-        INLINE_SPEC_FILE=$(mktemp)
-        echo "$TASK_INLINE" > "$INLINE_SPEC_FILE"
-        # Re-add spec mount
-        CONTAINER_CMD=("${CONTAINER_CMD[@]}" "-v" "${INLINE_SPEC_FILE}:/task-spec.md:ro")
+    elif [[ -n "$AGENT_COMMAND" ]] && [[ "$AGENT_COMMAND" != "bash" ]]; then
+        # Pass agent command to container (use bash -c for complex commands)
+        CONTAINER_CMD+=("bash" "-c" "$AGENT_COMMAND")
     fi
 }
 
