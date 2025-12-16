@@ -151,6 +151,7 @@ Options:
   --no-push             Create branch and commit, but don't push
   --interactive         Force interactive shell mode (ignores agent.command)
   --dry-run             Show what would be executed without running
+  --image <name>        Container image to use (e.g., kapsis-claude-cli:latest)
   --worktree-mode       Force worktree mode (requires git repo + branch)
   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
   -h, --help            Show this help message
@@ -236,6 +237,10 @@ parse_args() {
             --dry-run)
                 DRY_RUN=true
                 shift
+                ;;
+            --image)
+                IMAGE_NAME="$2"
+                shift 2
                 ;;
             --worktree-mode)
                 SANDBOX_MODE="worktree"
@@ -395,7 +400,10 @@ parse_config() {
         RESOURCE_MEMORY=$(yq -r '.resources.memory // "8g"' "$CONFIG_FILE")
         RESOURCE_CPUS=$(yq -r '.resources.cpus // "4"' "$CONFIG_FILE")
         SANDBOX_UPPER_BASE=$(yq -r '.sandbox.upper_dir_base // "~/.ai-sandboxes"' "$CONFIG_FILE")
-        IMAGE_NAME=$(yq -r '.image.name // "kapsis-sandbox"' "$CONFIG_FILE"):$(yq -r '.image.tag // "latest"' "$CONFIG_FILE")
+        # Only override image if not set via --image flag
+        if [[ "$IMAGE_NAME" == "kapsis-sandbox:latest" ]]; then
+            IMAGE_NAME=$(yq -r '.image.name // "kapsis-sandbox"' "$CONFIG_FILE"):$(yq -r '.image.tag // "latest"' "$CONFIG_FILE")
+        fi
         GIT_REMOTE=$(yq -r '.git.auto_push.remote // "origin"' "$CONFIG_FILE")
         GIT_COMMIT_MSG=$(yq -r '.git.auto_push.commit_message // "feat: AI agent changes"' "$CONFIG_FILE")
 
