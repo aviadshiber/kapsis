@@ -54,15 +54,27 @@ environment:
   # Secrets retrieved from system keychain (macOS Keychain / Linux secret-tool)
   # These are queried automatically at launch - no manual 'export' needed!
   # Priority: passthrough > keychain (passthrough wins if both configured)
+  #
+  # Options:
+  #   service: (required) Exact keychain service name
+  #   account: (optional) Keychain account (supports ${VAR} expansion)
+  #   inject_to_file: (optional) Also write credential to file path in container
+  #   mode: (optional) File permissions for inject_to_file (default: 0600)
   keychain:
-    # Example: Claude Code API key (stored by 'claude login')
+    # Example: API key as environment variable only
     ANTHROPIC_API_KEY:
-      service: "Claude Code-credentials"
+      service: "anthropic-api"
+
+    # Example: OAuth credentials written to file (agent-agnostic)
+    AGENT_OAUTH_CREDENTIALS:
+      service: "my-agent-credentials"
+      inject_to_file: "~/.config/my-agent/credentials.json"
+      mode: "0600"
 
     # Example: Service token with account name
     BITBUCKET_TOKEN:
       service: "my-bitbucket-token"
-      account: "${USER}"  # Optional, supports variable expansion
+      account: "${USER}"  # Supports variable expansion
 
   # Variables to pass from host to container
   # Values are taken from host environment
@@ -345,10 +357,48 @@ Kapsis can automatically retrieve secrets from your system's native secret store
 ```yaml
 environment:
   keychain:
+    # Environment variable only
     ENV_VAR_NAME:
       service: "keychain-service-name"  # Required: exact service name
       account: "optional-account"        # Optional: keychain account (supports ${VAR} expansion)
+
+    # Environment variable + file injection (agent-agnostic)
+    AGENT_CREDENTIALS:
+      service: "my-agent-creds"          # Required: keychain service name
+      inject_to_file: "~/.agent/creds"   # Optional: also write to this file in container
+      mode: "0600"                        # Optional: file permissions (default: 0600)
 ```
+
+### File Injection (Agent-Agnostic)
+
+The `inject_to_file` option allows credentials to be written to files inside the container. This is **agent-agnostic** - it works for any agent that needs file-based credentials:
+
+```yaml
+environment:
+  keychain:
+    # Claude Code OAuth (file-based)
+    CLAUDE_OAUTH_CREDENTIALS:
+      service: "Claude Code-credentials"
+      inject_to_file: "~/.claude/.credentials.json"
+      mode: "0600"
+
+    # Codex credentials (hypothetical)
+    CODEX_AUTH:
+      service: "codex-credentials"
+      inject_to_file: "~/.codex/auth.json"
+
+    # Aider config (hypothetical)
+    AIDER_API_KEY:
+      service: "aider-openai"
+      inject_to_file: "~/.aider/api_key"
+```
+
+**How it works:**
+1. At launch, the secret is retrieved from keychain and set as an environment variable
+2. The entrypoint reads `KAPSIS_CREDENTIAL_FILES` metadata
+3. For each entry with `inject_to_file`, the credential is written to that file path
+4. The environment variable is then **unset** (so child processes can't read it)
+5. The agent reads credentials from the file as expected
 
 ### Priority Order
 
