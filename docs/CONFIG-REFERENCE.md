@@ -418,7 +418,128 @@ Some config values can be overridden via command line:
 |--------|--------------|
 | `git.auto_push.enabled` | `--no-push` |
 | `agent.command` | `--interactive` |
+| `image.name:image.tag` | `--image <name:tag>` |
 | `sandbox.upper_dir_base` | Set via environment |
+
+## Agent Profiles
+
+Agent profiles define how to install and configure specific AI agents in container images. This solves cross-platform compatibility issues (macOS binaries won't run in Linux containers).
+
+### Profile Location
+
+Agent profiles are stored in `configs/agents/`:
+
+```
+configs/agents/
+├── claude-cli.yaml    # Official Claude Code CLI
+├── claude-api.yaml    # Anthropic Python SDK
+└── aider.yaml         # Aider AI pair programmer
+```
+
+### Profile Schema
+
+```yaml
+# configs/agents/claude-cli.yaml
+name: claude-cli
+description: Claude Code CLI (official Anthropic)
+version: latest
+
+# Installation method (choose one)
+install:
+  npm: "@anthropic-ai/claude-code"    # NPM global install
+  # pip: "anthropic"                  # Pip install
+  # script: |                         # Custom script
+  #   curl -fsSL https://example.com/install.sh | bash
+
+# Dependencies (validated at build time)
+dependencies:
+  - nodejs >= 18
+
+# Authentication requirements
+auth:
+  required:
+    - name: ANTHROPIC_API_KEY
+      description: "Anthropic API key"
+      keychain:
+        macos:
+          service: "Claude Code-credentials"
+        linux:
+          service: "anthropic-api-key"
+  optional:
+    - name: CLAUDE_CODE_OAUTH_TOKEN
+      description: "OAuth token for headless mode"
+
+# Config files to mount from host
+config_mounts:
+  - source: ~/.claude.json
+    target: ~/.claude.json
+  - source: ~/.claude
+    target: ~/.claude
+
+# Command template
+command: >
+  claude --dangerously-skip-permissions -p "$(cat ${TASK_SPEC})"
+
+# Resource recommendations
+resources:
+  memory_min: 4g
+  memory_recommended: 8g
+  cpus_min: 2
+  cpus_recommended: 4
+```
+
+### Building Agent Images
+
+Use `build-agent-image.sh` to create agent-specific container images:
+
+```bash
+# Build Claude CLI image
+./scripts/build-agent-image.sh claude-cli
+# Creates: kapsis-claude-cli:latest
+
+# Build Aider image
+./scripts/build-agent-image.sh aider
+# Creates: kapsis-aider:latest
+
+# List available profiles
+./scripts/build-agent-image.sh --help
+```
+
+### Using Agent Images
+
+```bash
+# Method 1: --image flag (highest priority)
+./scripts/launch-agent.sh 1 ~/project \
+    --image kapsis-claude-cli:latest \
+    --task "implement feature"
+
+# Method 2: In config file
+# image:
+#   name: kapsis-claude-cli
+#   tag: latest
+```
+
+### Creating Custom Profiles
+
+1. Copy an existing profile:
+   ```bash
+   cp configs/agents/claude-cli.yaml configs/agents/my-agent.yaml
+   ```
+
+2. Edit the profile with your agent's installation method and command
+
+3. Build the image:
+   ```bash
+   ./scripts/build-agent-image.sh my-agent
+   ```
+
+### Image Priority
+
+When determining which image to use:
+
+1. **`--image` flag** - Highest priority (command line)
+2. **Config file** (`image.name:image.tag`) - From YAML config
+3. **Default** (`kapsis-sandbox:latest`) - Base image without agent
 
 ## Logging Configuration
 

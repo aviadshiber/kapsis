@@ -13,11 +13,13 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 ## Features
 
 - **Agent Agnostic** - Works with Claude Code, Codex CLI, Aider, Gemini CLI, or any CLI-based agent
+- **Agent Profiles** - Pre-built agent configurations with automatic container installation
 - **Config-Driven** - Single YAML file defines agent command and filesystem whitelist
 - **Copy-on-Write Filesystem** - Project files use overlay mounts (reads from host, writes isolated)
 - **Maven Isolation** - Per-agent `.m2/repository`, blocked remote SNAPSHOTs, blocked deploy
 - **Build Cache Isolation** - Gradle Enterprise remote cache disabled, per-agent local cache
 - **Git Workflow** - Optional branch-based workflow with PR review feedback loop
+- **Keychain Integration** - Automatic secret retrieval from macOS Keychain / Linux secret-tool
 - **Rootless Containers** - Security-hardened Podman rootless mode
 
 ## Quick Start
@@ -37,6 +39,47 @@ cp agent-sandbox.yaml.template agent-sandbox.yaml
 # 4. Run an agent
 ./scripts/launch-agent.sh 1 ~/project --task "fix failing tests"
 ```
+
+## Agent Profiles
+
+Kapsis includes pre-built agent profiles that install the agent directly into the container image. This solves cross-platform compatibility issues (e.g., macOS binaries won't run in Linux containers).
+
+### Build an Agent Image
+
+```bash
+# Build Claude CLI agent image
+./scripts/build-agent-image.sh claude-cli
+
+# Build Aider agent image
+./scripts/build-agent-image.sh aider
+
+# List available profiles
+./scripts/build-agent-image.sh --help
+```
+
+### Use the Agent Image
+
+```bash
+# Use the pre-built agent image
+./scripts/launch-agent.sh 1 ~/project \
+    --image kapsis-claude-cli:latest \
+    --task "implement rate limiting"
+
+# Or specify in config
+# image:
+#   name: kapsis-claude-cli
+#   tag: latest
+```
+
+### Available Profiles
+
+| Profile | Agent | Installation |
+|---------|-------|--------------|
+| `claude-cli` | Claude Code CLI | `npm install -g @anthropic-ai/claude-code` |
+| `claude-api` | Anthropic Python SDK | `pip install anthropic` |
+| `aider` | Aider AI Pair Programmer | `pip install aider-chat` |
+
+Profiles are defined in `configs/agents/`. Create custom profiles by copying an existing one.
 
 ## Usage
 
@@ -208,14 +251,19 @@ kapsis/
 ├── Containerfile                # Container image definition
 ├── setup.sh                     # System setup and validation
 ├── quick-start.sh               # Simplified agent launcher
-├── configs/                     # Pre-built agent configs
-│   ├── claude.yaml
+├── configs/
+│   ├── agents/                  # Agent profile definitions
+│   │   ├── claude-cli.yaml      # Claude Code CLI via npm
+│   │   ├── claude-api.yaml      # Anthropic Python SDK
+│   │   └── aider.yaml           # Aider AI pair programmer
+│   ├── claude.yaml              # User configs (reference profiles)
 │   ├── codex.yaml
 │   ├── aider.yaml
 │   └── interactive.yaml
 ├── scripts/
 │   ├── launch-agent.sh          # Main launch script
-│   ├── build-image.sh           # Build container image
+│   ├── build-image.sh           # Build base container image
+│   ├── build-agent-image.sh     # Build agent-specific images
 │   ├── worktree-manager.sh      # Git worktree management
 │   ├── post-container-git.sh    # Post-container git operations
 │   ├── merge-changes.sh         # Manual merge workflow
@@ -230,7 +278,9 @@ kapsis/
 ├── docs/
 │   ├── ARCHITECTURE.md
 │   ├── CONFIG-REFERENCE.md
-│   └── GIT-WORKFLOW.md
+│   ├── GIT-WORKFLOW.md
+│   └── designs/                 # Architecture design documents
+│       └── agent-profiles-architecture.md
 └── tests/                       # Validation tests
 ```
 
