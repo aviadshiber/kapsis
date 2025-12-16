@@ -508,8 +508,8 @@ EOF
     assert_contains "$output" "GRAFANA_READONLY_TOKEN=***MASKED***" "GRAFANA_READONLY_TOKEN should be masked"
 }
 
-test_filesystem_mounts_preserve_paths() {
-    log_test "Testing filesystem mounts preserve absolute paths for symlinks"
+test_filesystem_mounts_home_paths_staged() {
+    log_test "Testing home paths use staging pattern (mounted to /kapsis-staging/)"
 
     local test_config="$TEST_PROJECT/.kapsis-mount-path-test.yaml"
     cat > "$test_config" << 'EOF'
@@ -526,14 +526,16 @@ EOF
 
     rm -f "$test_config"
 
-    # Mounts should use absolute paths (same source and target)
-    # NOT remapped to /home/developer (which breaks symlinks)
+    # Home paths should be mounted to /kapsis-staging/ (staging pattern)
+    # Then entrypoint copies them to container's $HOME (preserving symlinks)
     local expected_home="${HOME}"
 
-    if echo "$output" | grep -q "${expected_home}/.local:${expected_home}/.local"; then
+    # Check that staging pattern is used
+    if echo "$output" | grep -q "/kapsis-staging/.local"; then
         return 0
     else
-        log_fail "Filesystem mounts should preserve absolute paths (got remapped to /home/developer)"
+        log_fail "Home paths should use staging pattern (mount to /kapsis-staging/)"
+        echo "Output: $output"
         return 1
     fi
 }
@@ -954,7 +956,7 @@ main() {
     # Regression tests - bugs found 2025-12-16
     run_test test_environment_set_variables
     run_test test_secret_masking_alphanumeric
-    run_test test_filesystem_mounts_preserve_paths
+    run_test test_filesystem_mounts_home_paths_staged
     run_test test_image_flag_priority
     run_test test_yq_v4_filesystem_parsing
     run_test test_environment_passthrough_parsing
