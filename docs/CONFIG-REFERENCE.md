@@ -123,6 +123,33 @@ maven:
   block_deploy: true
 
 #===============================================================================
+# MAVEN AUTHENTICATION
+#===============================================================================
+# Kapsis supports automatic Maven/Artifactory authentication via the
+# DOCKER_ARTIFACTORY_TOKEN environment variable.
+#
+# Token Format: base64(username:password)
+#
+# The entrypoint.sh automatically decodes this token into:
+#   - KAPSIS_MAVEN_USERNAME
+#   - KAPSIS_MAVEN_PASSWORD
+#
+# These are then used by Maven's isolated-settings.xml for authentication.
+#
+# Example setup:
+#   export DOCKER_ARTIFACTORY_TOKEN=$(echo -n "user:pass" | base64)
+#   ./scripts/launch-agent.sh 1 ~/project --task "build"
+#
+# In your config:
+environment:
+  passthrough:
+    - DOCKER_ARTIFACTORY_TOKEN  # Decoded by entrypoint.sh
+  set:
+    KAPSIS_MAVEN_MIRROR_URL: "https://artifactory.company.com/maven-virtual"
+    # NOTE: KAPSIS_MAVEN_USERNAME and KAPSIS_MAVEN_PASSWORD are auto-set
+    # from DOCKER_ARTIFACTORY_TOKEN - do NOT set them manually
+
+#===============================================================================
 # GRADLE ENTERPRISE / DEVELOCITY
 #===============================================================================
 gradle_enterprise:
@@ -136,6 +163,19 @@ gradle_enterprise:
   # Disable remote build cache
   # Default: true (RECOMMENDED for isolation)
   remote_cache_disabled: true
+
+# NOTE: The Gradle Enterprise Maven extension is pre-cached in the container
+# image during build. This is necessary because Maven extensions resolve
+# BEFORE settings.xml is processed, so they cannot use authenticated mirrors.
+#
+# The pre-cached extensions are automatically copied to the user's
+# .m2/repository at container startup by entrypoint.sh.
+#
+# Currently pre-cached versions:
+#   - com.gradle:gradle-enterprise-maven-extension:1.20
+#   - com.gradle:common-custom-user-data-maven-extension:1.12.5
+#
+# To update versions, modify the ARGs in Containerfile and rebuild the image.
 
 #===============================================================================
 # SANDBOX BEHAVIOR

@@ -43,6 +43,7 @@ This directory contains tests to validate the isolation guarantees and functiona
 | | test-host-unchanged.sh | 9 | Ready |
 | **Maven Isolation** | | | |
 | | test-maven-snapshot-block.sh | 6 | Ready |
+| | test-maven-auth.sh | 10 | Ready |
 | **Security** | | | |
 | | test-security-no-root.sh | 11 | Ready |
 | | test-agent-id-unique.sh | 6 | Ready |
