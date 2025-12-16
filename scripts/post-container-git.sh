@@ -24,7 +24,13 @@ if [[ -z "${_KAPSIS_LOGGING_LOADED:-}" ]]; then
     log_init "post-container-git"
 fi
 
+# Source status reporting library (only if not already loaded)
+if [[ -z "${_KAPSIS_STATUS_LOADED:-}" ]]; then
+    source "$POST_GIT_SCRIPT_DIR/lib/status.sh"
+fi
+
 # Note: logging functions are provided by lib/logging.sh
+# Note: status functions are provided by lib/status.sh
 
 #===============================================================================
 # CHECK FOR CHANGES
@@ -130,7 +136,11 @@ push_changes() {
 # GENERATE PR URL
 #
 # Outputs a clickable URL to create a PR for the branch.
+# Also sets the global PR_URL variable for status reporting.
 #===============================================================================
+# Global variable for PR URL (set by generate_pr_url, used by status reporting)
+PR_URL=""
+
 generate_pr_url() {
     local worktree_path="$1"
     local branch="$2"
@@ -149,11 +159,12 @@ generate_pr_url() {
     echo "│ CREATE PULL REQUEST                                                │"
     echo "└────────────────────────────────────────────────────────────────────┘"
 
+    local pr_url=""
     if [[ "$remote_url" == *"bitbucket"* ]]; then
         # Bitbucket Cloud
         local repo_path
         repo_path=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
-        echo "  https://bitbucket.org/${repo_path}/pull-requests/new?source=${branch}"
+        pr_url="https://bitbucket.org/${repo_path}/pull-requests/new?source=${branch}"
 
     elif [[ "$remote_url" == ssh://* ]] || [[ "$remote_url" == https://*git* ]]; then
         # Generic Bitbucket Server / self-hosted git
@@ -161,20 +172,25 @@ generate_pr_url() {
         base_url=$(echo "$remote_url" | sed -E 's|^(https?://[^/]+).*|\1|' | sed -E 's|^ssh://([^@]+@)?([^:/]+).*|https://\2|')
         local repo_path
         repo_path=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
-        echo "  ${base_url}/${repo_path}/pull-requests/new?source=${branch}"
+        pr_url="${base_url}/${repo_path}/pull-requests/new?source=${branch}"
 
     elif [[ "$remote_url" == *"github"* ]]; then
         # GitHub
         local repo_path
         repo_path=$(echo "$remote_url" | sed -E 's|.*github\.com[:/](.*)\.git|\1|' | sed 's/\.git$//')
-        echo "  https://github.com/${repo_path}/compare/${branch}?expand=1"
+        pr_url="https://github.com/${repo_path}/compare/${branch}?expand=1"
 
     elif [[ "$remote_url" == *"gitlab"* ]]; then
         # GitLab
         local repo_path
         repo_path=$(echo "$remote_url" | sed -E 's|.*gitlab\.com[:/](.*)\.git|\1|' | sed 's/\.git$//')
-        echo "  https://gitlab.com/${repo_path}/-/merge_requests/new?merge_request[source_branch]=${branch}"
+        pr_url="https://gitlab.com/${repo_path}/-/merge_requests/new?merge_request[source_branch]=${branch}"
+    fi
 
+    if [[ -n "$pr_url" ]]; then
+        echo "  $pr_url"
+        # Set global variable for status reporting
+        PR_URL="$pr_url"
     else
         echo "  (Unable to generate PR URL for this remote)"
     fi
@@ -256,6 +272,9 @@ post_container_git() {
     fi
     log_debug "Changes detected, proceeding with commit"
 
+    # Update status: committing phase
+    status_phase "committing" 92 "Staging and committing changes"
+
     # Commit changes
     log_debug "Committing changes..."
     if ! commit_changes "$worktree_path" "$commit_message" "$agent_id"; then
@@ -266,6 +285,9 @@ post_container_git() {
 
     # Push if not disabled
     if [[ "$no_push" != "true" ]]; then
+        # Update status: pushing phase
+        status_phase "pushing" 97 "Pushing to remote"
+
         log_debug "Pushing changes to remote..."
         if ! push_changes "$worktree_path" "$remote"; then
             log_warn "Push failed. Changes are committed locally."

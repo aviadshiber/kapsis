@@ -38,6 +38,9 @@ KAPSIS_ROOT="$(dirname "$SCRIPT_DIR")"
 source "$SCRIPT_DIR/lib/logging.sh"
 log_init "launch-agent"
 
+# Source status reporting library
+source "$SCRIPT_DIR/lib/status.sh"
+
 # Bash 3.2 compatible uppercase conversion
 to_upper() {
     echo "$1" | tr '[:lower:]' '[:upper:]'
@@ -545,6 +548,11 @@ generate_volume_mounts_worktree() {
     # Mount worktree directly (no overlay needed!)
     VOLUME_MOUNTS+=("-v" "${WORKTREE_PATH}:/workspace")
 
+    # Status reporting directory (shared between host and container)
+    local status_dir="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
+    mkdir -p "$status_dir" 2>/dev/null || true
+    VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
+
     # Mount sanitized git as read-only
     VOLUME_MOUNTS+=("-v" "${SANITIZED_GIT_PATH}:/workspace/.git-safe:ro")
 
@@ -578,6 +586,11 @@ generate_volume_mounts_overlay() {
 
     # Project with CoW overlay
     VOLUME_MOUNTS+=("-v" "${PROJECT_PATH}:/workspace:O,upperdir=${UPPER_DIR},workdir=${WORK_DIR}")
+
+    # Status reporting directory (shared between host and container)
+    local status_dir="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
+    mkdir -p "$status_dir" 2>/dev/null || true
+    VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
 
     # Maven repository (isolated per agent)
     VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")
@@ -730,6 +743,11 @@ generate_env_vars() {
     ENV_VARS+=("-e" "KAPSIS_PROJECT=$(basename "$PROJECT_PATH")")
     ENV_VARS+=("-e" "KAPSIS_SANDBOX_MODE=${SANDBOX_MODE}")
 
+    # Status reporting environment variables (for container to update status)
+    ENV_VARS+=("-e" "KAPSIS_STATUS_PROJECT=$(basename "$PROJECT_PATH")")
+    ENV_VARS+=("-e" "KAPSIS_STATUS_AGENT_ID=${AGENT_ID}")
+    ENV_VARS+=("-e" "KAPSIS_STATUS_BRANCH=${BRANCH:-}")
+
     # Mode-specific variables
     if [[ "$SANDBOX_MODE" == "worktree" ]]; then
         ENV_VARS+=("-e" "KAPSIS_WORKTREE_MODE=true")
@@ -853,10 +871,17 @@ main() {
     validate_inputs
     log_timer_end "validation"
 
+    # Initialize status reporting (after we have PROJECT_PATH and AGENT_ID)
+    local project_name
+    project_name=$(basename "$PROJECT_PATH")
+    status_init "$project_name" "$AGENT_ID" "$BRANCH" "" ""
+    status_phase "initializing" 5 "Inputs validated"
+
     log_timer_start "config"
     resolve_config
     parse_config
     log_timer_end "config"
+    status_phase "initializing" 10 "Configuration loaded"
 
     generate_branch_name
 
@@ -864,9 +889,14 @@ main() {
     setup_sandbox
     log_timer_end "sandbox_setup"
 
+    # Update status with sandbox mode and worktree path now that we know them
+    status_init "$project_name" "$AGENT_ID" "$BRANCH" "$SANDBOX_MODE" "${WORKTREE_PATH:-}"
+    status_phase "preparing" 18 "Sandbox ready"
+
     generate_volume_mounts
     generate_env_vars
     build_container_command
+    status_phase "preparing" 20 "Container configured"
 
     echo ""
     log_info "Agent Configuration:"
@@ -903,6 +933,7 @@ main() {
     log_info "Starting container..."
     log_debug "Container command: ${CONTAINER_CMD[*]}"
     log_timer_start "container"
+    status_phase "starting" 22 "Launching container"
 
     # Run the container
     "${CONTAINER_CMD[@]}"
@@ -910,6 +941,7 @@ main() {
 
     log_timer_end "container"
     log_info "Container exited with code: $EXIT_CODE"
+    status_phase "running" 90 "Agent completed (exit code: $EXIT_CODE)"
 
     echo ""
     echo "┌────────────────────────────────────────────────────────────────────┐"
@@ -929,12 +961,23 @@ main() {
 
     log_timer_end "total"
     log_finalize $EXIT_CODE
+
+    # Final status update
+    if [[ "$EXIT_CODE" -eq 0 ]]; then
+        status_complete 0 "" "${PR_URL:-}"
+    else
+        status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
+    fi
+
     exit $EXIT_CODE
 }
 
 #===============================================================================
 # POST-CONTAINER: WORKTREE MODE
 #===============================================================================
+# PR_URL is set by post_container_git and used for status reporting
+PR_URL=""
+
 post_container_worktree() {
     log_debug "Processing worktree post-container operations..."
     log_debug "  WORKTREE_PATH=$WORKTREE_PATH"
@@ -956,6 +999,7 @@ post_container_worktree() {
 
         # Run post-container git operations on HOST
         source "$SCRIPT_DIR/post-container-git.sh"
+        # post_container_git sets PR_URL global variable
         post_container_git \
             "$WORKTREE_PATH" \
             "$BRANCH" \

@@ -237,6 +237,80 @@ Post-container: git commit/push         Agent makes changes
            └── Agent continues from remote state
 ```
 
+### Status Reporting Flow
+
+Kapsis provides JSON-based status reporting for external monitoring:
+
+```
+1. launch-agent.sh
+   │
+   ├─→ status_init()              → initializing (0%)
+   │   └── Creates ~/.kapsis/status/kapsis-{project}-{agent_id}.json
+   │
+   ├─→ Validate inputs            → initializing (5%)
+   ├─→ Parse config               → initializing (10%)
+   ├─→ Setup sandbox              → preparing (18%)
+   ├─→ Configure container        → preparing (20%)
+   ├─→ Launch container           → starting (22%)
+   │
+   ├─→ entrypoint.sh (in container)
+   │   └─→ status_phase()         → running (25%)
+   │       └── Agent executes task
+   │
+   ├─→ Agent exits                → running (90%)
+   │
+   ├─→ post-container-git.sh (on host)
+   │   ├─→ commit_changes()       → committing (92%)
+   │   └─→ push_changes()         → pushing (97%)
+   │
+   └─→ status_complete()          → complete (100%)
+       └── exit_code, error, pr_url recorded
+```
+
+**Status File Schema:**
+
+```json
+{
+  "version": "1.0",
+  "agent_id": "1",
+  "project": "products",
+  "branch": "feature/DEV-123",
+  "sandbox_mode": "worktree",
+  "phase": "running",
+  "progress": 50,
+  "message": "Agent executing task",
+  "started_at": "2025-12-16T14:30:00Z",
+  "updated_at": "2025-12-16T14:35:00Z",
+  "exit_code": null,
+  "error": null,
+  "worktree_path": "/Users/user/.kapsis/worktrees/products-1",
+  "pr_url": null
+}
+```
+
+**Container-to-Host Communication:**
+
+```
+HOST                                    CONTAINER
+~/.kapsis/status/  ←──volume mount──→  /kapsis-status/
+     ↓                                       ↓
+kapsis-products-1.json              /kapsis-status/kapsis-products-1.json
+     ↑                                       ↑
+External tools poll                  Agent writes updates
+```
+
+**Phases:**
+
+| Phase | Progress | Location | Description |
+|-------|----------|----------|-------------|
+| `initializing` | 0-10% | launch-agent.sh | Validating inputs, config |
+| `preparing` | 10-20% | launch-agent.sh | Creating sandbox, volumes |
+| `starting` | 20-25% | launch-agent.sh | Launching container |
+| `running` | 25-90% | entrypoint.sh | Agent executing task |
+| `committing` | 90-95% | post-container-git.sh | Staging and committing |
+| `pushing` | 95-99% | post-container-git.sh | Pushing to remote |
+| `complete` | 100% | launch-agent.sh | Final status |
+
 ## Volume Mounts
 
 | Mount | Source | Target | Mode |
@@ -245,6 +319,7 @@ Post-container: git commit/push         Agent makes changes
 | Maven Repo | `kapsis-{id}-m2` | `~/.m2/repository` | volume |
 | Gradle Cache | `kapsis-{id}-gradle` | `~/.gradle` | volume |
 | GE Workspace | `kapsis-{id}-ge` | `~/.m2/.gradle-enterprise` | volume |
+| Status Dir | `~/.kapsis/status` | `/kapsis-status` | bind |
 | Git Config | `~/.gitconfig` | `~/.gitconfig` | `:ro` |
 | SSH Keys | `~/.ssh` | `~/.ssh` | `:ro` |
 | Agent Config | `~/.claude` | `~/.claude` | `:ro` |
@@ -340,6 +415,17 @@ resources:
 - Native overlay diff requires Linux kernel 5.11+
 - macOS uses applehv abstraction (slightly slower)
 - Large file operations may be slower due to CoW
+
+## Cleanup
+
+After agent work completes, use the cleanup script to reclaim disk space:
+
+```bash
+./scripts/kapsis-cleanup.sh --dry-run    # Preview
+./scripts/kapsis-cleanup.sh --all        # Clean everything
+```
+
+See [CLEANUP.md](CLEANUP.md) for full documentation on cleanup options, what gets cleaned, and handling permission issues.
 
 ## Troubleshooting
 

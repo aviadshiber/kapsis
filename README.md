@@ -20,6 +20,7 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 - **Build Cache Isolation** - Gradle Enterprise remote cache disabled, per-agent local cache
 - **Git Workflow** - Optional branch-based workflow with PR review feedback loop
 - **Keychain Integration** - Automatic secret retrieval from macOS Keychain / Linux secret-tool
+- **Status Reporting** - JSON-based progress tracking for external monitoring
 - **Rootless Containers** - Security-hardened Podman rootless mode
 
 ## Quick Start
@@ -137,6 +138,24 @@ Profiles are defined in `configs/agents/`. Create custom profiles by copying an 
 wait
 ```
 
+### Monitor Agent Progress
+
+```bash
+# List all running agents
+./scripts/kapsis-status.sh
+
+# Get specific agent status
+./scripts/kapsis-status.sh products 1
+
+# Watch mode (live updates)
+./scripts/kapsis-status.sh --watch
+
+# JSON output for scripting
+./scripts/kapsis-status.sh --json
+```
+
+Status files are written to `~/.kapsis/status/` in JSON format, enabling external tools to monitor agent progress.
+
 ## Configuration
 
 Create `agent-sandbox.yaml` from the template:
@@ -204,6 +223,17 @@ Pre-built configs available in `configs/` directory.
 | GE/Develocity cache | Remote cache disabled |
 | Host system | Podman rootless container |
 
+## Cleanup
+
+Reclaim disk space after agent work:
+
+```bash
+./scripts/kapsis-cleanup.sh --dry-run    # Preview
+./scripts/kapsis-cleanup.sh --all        # Clean everything
+```
+
+See [docs/CLEANUP.md](docs/CLEANUP.md) for full options and troubleshooting.
+
 ## Troubleshooting
 
 ### Debug Logging
@@ -245,6 +275,8 @@ kapsis/
 │   └── interactive.yaml
 ├── scripts/
 │   ├── launch-agent.sh          # Main launch script
+│   ├── kapsis-status.sh         # Status query CLI tool
+│   ├── kapsis-cleanup.sh        # Cleanup and reclaim disk space
 │   ├── build-image.sh           # Build base container image
 │   ├── build-agent-image.sh     # Build agent-specific images
 │   ├── worktree-manager.sh      # Git worktree management
@@ -255,7 +287,9 @@ kapsis/
 │   ├── post-exit-git.sh         # Post-exit commit/push
 │   ├── switch-java.sh           # Java version switcher
 │   └── lib/
-│       └── logging.sh           # Shared logging library
+│       ├── logging.sh           # Shared logging library
+│       ├── status.sh            # Status reporting library
+│       └── json-utils.sh        # JSON parsing utilities
 ├── maven/
 │   └── isolated-settings.xml    # Maven isolation settings
 ├── docs/

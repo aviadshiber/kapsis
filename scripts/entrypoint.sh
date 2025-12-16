@@ -41,6 +41,14 @@ else
     log_debug() { [[ -n "${KAPSIS_DEBUG:-}" ]] && echo -e "\033[0;90m[DEBUG]\033[0m $*"; }
 fi
 
+# Source status reporting library if available
+# In container, status files are written to /kapsis-status (mounted from host)
+if [[ -f "$KAPSIS_HOME/lib/status.sh" ]]; then
+    source "$KAPSIS_HOME/lib/status.sh"
+elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/status.sh" ]]; then
+    source "$(dirname "${BASH_SOURCE[0]}")/lib/status.sh"
+fi
+
 #===============================================================================
 # CREDENTIAL FILE INJECTION (Agent-Agnostic)
 #
@@ -546,6 +554,18 @@ main() {
         # Set trap for post-exit git operations (overlay mode only)
         trap post_exit_git EXIT
         log_debug "Registered post_exit_git trap for EXIT signal"
+    fi
+
+    # Update status to running phase (container-side)
+    # Initialize from environment variables passed by launch-agent.sh
+    if [[ -n "${KAPSIS_STATUS_PROJECT:-}" && -n "${KAPSIS_STATUS_AGENT_ID:-}" ]]; then
+        status_init \
+            "${KAPSIS_STATUS_PROJECT}" \
+            "${KAPSIS_STATUS_AGENT_ID}" \
+            "${KAPSIS_STATUS_BRANCH:-}" \
+            "${KAPSIS_SANDBOX_MODE:-overlay}" \
+            ""
+        status_phase "running" 25 "Agent starting execution"
     fi
 
     # Execute command

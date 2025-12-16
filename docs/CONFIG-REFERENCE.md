@@ -705,3 +705,124 @@ tail -f ~/.kapsis/logs/kapsis-launch-agent.log
 ```
 
 The file format includes the function name and line number (`main:142`) to aid debugging.
+
+## Status Reporting Configuration
+
+Kapsis provides JSON-based status reporting for monitoring agent progress. This is configured via environment variables.
+
+### Status Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_STATUS_ENABLED` | true | Enable/disable status reporting |
+| `KAPSIS_STATUS_DIR` | ~/.kapsis/status | Directory for status files |
+| `KAPSIS_STATUS_VERSION` | 1.0 | JSON schema version |
+
+### Status File Location
+
+Status files are created at: `~/.kapsis/status/kapsis-{project}-{agent_id}.json`
+
+Example: `~/.kapsis/status/kapsis-products-1.json`
+
+### Query Status with CLI
+
+```bash
+# List all agents
+./scripts/kapsis-status.sh
+
+# Get specific agent
+./scripts/kapsis-status.sh <project> <agent-id>
+
+# Watch mode (live updates every 2s)
+./scripts/kapsis-status.sh --watch
+
+# JSON output for scripting
+./scripts/kapsis-status.sh --json
+
+# Clean up old completed status files (>24h)
+./scripts/kapsis-status.sh --cleanup
+```
+
+### Status File Schema
+
+```json
+{
+  "version": "1.0",
+  "agent_id": "1",
+  "project": "products",
+  "branch": "feature/DEV-123",
+  "sandbox_mode": "worktree",
+  "phase": "running",
+  "progress": 50,
+  "message": "Agent executing task",
+  "started_at": "2025-12-16T14:30:00Z",
+  "updated_at": "2025-12-16T14:35:00Z",
+  "exit_code": null,
+  "error": null,
+  "worktree_path": "/Users/user/.kapsis/worktrees/products-1",
+  "pr_url": null
+}
+```
+
+### Phase Definitions
+
+| Phase | Progress | Description |
+|-------|----------|-------------|
+| `initializing` | 0-10% | Validating inputs, loading config |
+| `preparing` | 10-20% | Creating sandbox, setting up volumes |
+| `starting` | 20-25% | Launching container |
+| `running` | 25-90% | Agent executing task |
+| `committing` | 90-95% | Staging and committing changes |
+| `pushing` | 95-99% | Pushing to remote |
+| `complete` | 100% | Task finished |
+
+### Scripting Examples
+
+**Wait for agent completion:**
+
+```bash
+#!/bin/bash
+project="products"
+agent_id="1"
+
+while true; do
+    status=$(./scripts/kapsis-status.sh "$project" "$agent_id" --json 2>/dev/null)
+    phase=$(echo "$status" | grep -o '"phase": *"[^"]*"' | cut -d'"' -f4)
+
+    if [[ "$phase" == "complete" ]]; then
+        exit_code=$(echo "$status" | grep -o '"exit_code": *[0-9]*' | grep -o '[0-9]*')
+        echo "Agent completed with exit code: $exit_code"
+        exit "$exit_code"
+    fi
+
+    sleep 5
+done
+```
+
+**Monitor multiple agents:**
+
+```bash
+# Get all active agents as JSON
+./scripts/kapsis-status.sh --json | python3 -c "
+import json, sys
+data = json.load(sys.stdin)
+active = [a for a in data if a['phase'] != 'complete']
+print(f'{len(active)} agents running')
+for a in active:
+    print(f\"  {a['project']}/{a['agent_id']}: {a['phase']} ({a['progress']}%)\")
+"
+```
+
+### Disabling Status Reporting
+
+To disable status reporting entirely:
+
+```bash
+KAPSIS_STATUS_ENABLED=false ./scripts/launch-agent.sh 1 ~/project --task "test"
+```
+
+---
+
+## Cleanup
+
+For cleanup configuration and usage, see [CLEANUP.md](CLEANUP.md).

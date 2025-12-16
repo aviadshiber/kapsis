@@ -321,3 +321,14 @@ If agent made no file changes:
 - Check spec file was mounted correctly
 - Verify agent command is correct
 - Check upper directory: `ls ~/.ai-sandboxes/project-1/upper/`
+
+## Cleanup
+
+After completing work on a branch or PR:
+
+```bash
+./scripts/kapsis-cleanup.sh --project products    # Clean project artifacts
+cd ~/project && git worktree prune                # Prune git worktree refs
+```
+
+See [CLEANUP.md](CLEANUP.md) for full cleanup documentation.
