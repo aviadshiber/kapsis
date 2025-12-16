@@ -15,8 +15,13 @@ filesystem:
     - ~/.zshrc
 
 environment:
-  passthrough:
-    - ANTHROPIC_API_KEY
+  # Retrieve API key from system keychain (macOS Keychain / Linux secret-tool)
+  keychain:
+    ANTHROPIC_API_KEY:
+      service: "Claude Code-credentials"
+  # Alternative: Use passthrough if you prefer to export ANTHROPIC_API_KEY manually
+  # passthrough:
+  #   - ANTHROPIC_API_KEY
   set:
     MAVEN_OPTS: "-Xmx4g -XX:+UseG1GC"
 

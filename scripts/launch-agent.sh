@@ -77,6 +77,57 @@ print_banner() {
 }
 
 #===============================================================================
+# SECRET STORE HELPERS (macOS Keychain, Linux secret-tool)
+#===============================================================================
+
+# Detect the current OS for secret store selection
+detect_os() {
+    case "$(uname -s)" in
+        Darwin*) echo "macos" ;;
+        Linux*)  echo "linux" ;;
+        *)       echo "unknown" ;;
+    esac
+}
+
+# Query system secret store for a credential
+# Usage: query_secret_store "service" ["account"]
+# Returns: credential on stdout, exit 1 if not found
+# Supports: macOS Keychain, Linux secret-tool
+query_secret_store() {
+    local service="$1"
+    local account="${2:-}"
+    local os
+    os="$(detect_os)"
+
+    case "$os" in
+        macos)
+            # macOS Keychain via security command
+            if [[ -n "$account" ]]; then
+                security find-generic-password -s "$service" -a "$account" -w 2>/dev/null
+            else
+                security find-generic-password -s "$service" -w 2>/dev/null
+            fi
+            ;;
+        linux)
+            # Linux secret-tool (GNOME Keyring / KDE Wallet)
+            if ! command -v secret-tool &>/dev/null; then
+                log_warn "secret-tool not found - install libsecret-tools"
+                return 1
+            fi
+            if [[ -n "$account" ]]; then
+                secret-tool lookup service "$service" account "$account" 2>/dev/null
+            else
+                secret-tool lookup service "$service" 2>/dev/null
+            fi
+            ;;
+        *)
+            log_warn "Unsupported OS for secret store: $os"
+            return 1
+            ;;
+    esac
+}
+
+#===============================================================================
 # USAGE
 #===============================================================================
 usage() {
@@ -356,6 +407,10 @@ parse_config() {
 
         # Parse environment set
         ENV_SET=$(yq -r '.environment.set // {}' "$CONFIG_FILE" 2>/dev/null || echo "{}")
+
+        # Parse keychain mappings for secret store lookups
+        # Output format: VAR_NAME|service|account per line
+        ENV_KEYCHAIN=$(yq '.environment.keychain // {} | to_entries | .[] | .key + "|" + .value.service + "|" + (.value.account // "")' "$CONFIG_FILE" 2>/dev/null || echo "")
     else
         log_warn "yq not found. Using default config values."
         AGENT_COMMAND="bash"
@@ -368,6 +423,7 @@ parse_config() {
         FILESYSTEM_INCLUDES=""
         ENV_PASSTHROUGH="ANTHROPIC_API_KEY"
         ENV_SET="{}"
+        ENV_KEYCHAIN=""
     fi
 
     # Expand ~ in paths
@@ -565,6 +621,44 @@ generate_env_vars() {
         done <<< "$ENV_PASSTHROUGH"
     fi
 
+    # Process keychain-backed environment variables
+    if [[ -n "$ENV_KEYCHAIN" ]]; then
+        log_info "Resolving secrets from system keychain..."
+        while IFS='|' read -r var_name service account; do
+            [[ -z "$var_name" || -z "$service" ]] && continue
+
+            # Expand variables in account (e.g., ${USER})
+            if [[ -n "$account" ]]; then
+                account=$(eval echo "$account" 2>/dev/null || echo "$account")
+            fi
+
+            # Skip if already set via passthrough
+            local already_set=false
+            if [[ ${#ENV_VARS[@]} -gt 0 ]]; then
+                for existing in "${ENV_VARS[@]}"; do
+                    if [[ "$existing" == "${var_name}="* ]]; then
+                        already_set=true
+                        break
+                    fi
+                done
+            fi
+
+            if [[ "$already_set" == "true" ]]; then
+                log_debug "Skipping $var_name - already set via passthrough"
+                continue
+            fi
+
+            # Query secret store (keychain/secret-tool)
+            local value
+            if value=$(query_secret_store "$service" "$account"); then
+                ENV_VARS+=("-e" "${var_name}=${value}")
+                log_success "Loaded $var_name from secret store (service: $service)"
+            else
+                log_warn "Secret not found: $service (for $var_name)"
+            fi
+        done <<< "$ENV_KEYCHAIN"
+    fi
+
     # Set explicit environment variables
     ENV_VARS+=("-e" "KAPSIS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_PROJECT=$(basename "$PROJECT_PATH")")
@@ -696,7 +790,11 @@ main() {
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "DRY RUN - Command that would be executed:"
         echo ""
-        echo "${CONTAINER_CMD[*]}"
+        # Sanitize sensitive env vars in output (mask API keys and tokens)
+        local sanitized_cmd="${CONTAINER_CMD[*]}"
+        # Mask any -e VAR=value where VAR contains KEY, TOKEN, SECRET, PASSWORD, CREDENTIALS
+        sanitized_cmd=$(echo "$sanitized_cmd" | sed -E 's/(-e [A-Z_]*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS)[A-Z_]*)=[^ ]*/\1=***MASKED***/gi')
+        echo "$sanitized_cmd"
         echo ""
         exit 0
     fi

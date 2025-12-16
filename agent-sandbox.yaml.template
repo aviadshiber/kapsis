@@ -89,6 +89,23 @@ environment:
     MAVEN_OPTS: "-Xmx4g -XX:+UseG1GC"
     # JAVA_HOME: "/usr/lib/jvm/java-17"
 
+  # Variables retrieved from system secret store (macOS Keychain, Linux secret-tool)
+  # These are queried at launch time and injected into the container
+  # Priority: passthrough > keychain (passthrough wins if same var in both)
+  keychain:
+    # Example: Claude Code API key stored in macOS Keychain
+    # ANTHROPIC_API_KEY:
+    #   service: "Claude Code-credentials"   # Exact keychain service name
+    #
+    # Example: Git token with account name
+    # GIT_TOKEN:
+    #   service: "my-git-token"              # Service name as stored in keychain
+    #   account: "${USER}"                   # Optional: keychain account (supports variable expansion)
+    #
+    # Example: OpenAI key
+    # OPENAI_API_KEY:
+    #   service: "openai-api-key"
+
 #===============================================================================
 # RESOURCE LIMITS
 #===============================================================================

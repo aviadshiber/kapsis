@@ -51,10 +51,23 @@ filesystem:
 # ENVIRONMENT VARIABLES
 #===============================================================================
 environment:
+  # Secrets retrieved from system keychain (macOS Keychain / Linux secret-tool)
+  # These are queried automatically at launch - no manual 'export' needed!
+  # Priority: passthrough > keychain (passthrough wins if both configured)
+  keychain:
+    # Example: Claude Code API key (stored by 'claude login')
+    ANTHROPIC_API_KEY:
+      service: "Claude Code-credentials"
+
+    # Example: Service token with account name
+    BITBUCKET_TOKEN:
+      service: "my-bitbucket-token"
+      account: "${USER}"  # Optional, supports variable expansion
+
   # Variables to pass from host to container
   # Values are taken from host environment
+  # Takes priority over keychain if same variable in both
   passthrough:
-    - ANTHROPIC_API_KEY
     - OPENAI_API_KEY
     - GITHUB_TOKEN
 
@@ -214,8 +227,9 @@ filesystem:
     - ~/.claude
 
 environment:
-  passthrough:
-    - ANTHROPIC_API_KEY
+  keychain:
+    ANTHROPIC_API_KEY:
+      service: "Claude Code-credentials"
 ```
 
 ### Multi-Agent Setup
@@ -227,7 +241,9 @@ agent:
 filesystem:
   include: [~/.claude, ~/.gitconfig, ~/.ssh]
 environment:
-  passthrough: [ANTHROPIC_API_KEY]
+  keychain:
+    ANTHROPIC_API_KEY:
+      service: "Claude Code-credentials"
 ```
 
 ```yaml
@@ -237,7 +253,7 @@ agent:
 filesystem:
   include: [~/.codex, ~/.gitconfig, ~/.ssh]
 environment:
-  passthrough: [OPENAI_API_KEY]
+  passthrough: [OPENAI_API_KEY]  # Or use keychain if stored
 ```
 
 ### Enterprise Setup with Full Isolation
@@ -255,9 +271,21 @@ filesystem:
     - ~/.m2/settings-security.xml
 
 environment:
+  # Secrets from keychain - no manual exports needed
+  keychain:
+    ANTHROPIC_API_KEY:
+      service: "Claude Code-credentials"
+    BITBUCKET_TOKEN:
+      service: "my-bitbucket-token"
+      account: "${USER}"
+    GRADLE_ENTERPRISE_ACCESS_KEY:
+      service: "gradle-enterprise-key"
+
+  # Non-secrets from host environment
   passthrough:
-    - ANTHROPIC_API_KEY
-    - GRADLE_ENTERPRISE_ACCESS_KEY
+    - HOME
+    - USER
+
   set:
     MAVEN_OPTS: "-Xmx6g -XX:+UseG1GC -XX:MaxGCPauseMillis=200"
     KAPSIS_MAVEN_USERNAME: "${ARTIFACTORY_USER}"
@@ -293,6 +321,81 @@ git:
       Branch: {branch}
       Timestamp: {timestamp}
 ```
+
+## Keychain Integration
+
+Kapsis can automatically retrieve secrets from your system's native secret store at launch time, eliminating the need for manual `export` commands.
+
+### Supported Platforms
+
+| Platform | Secret Store | Command Used |
+|----------|--------------|--------------|
+| macOS | Keychain | `security find-generic-password` |
+| Linux | GNOME Keyring / KDE Wallet | `secret-tool lookup` |
+
+### How It Works
+
+1. At launch, Kapsis parses the `keychain` section of your config
+2. For each entry, it queries the system secret store using the service name (and optional account)
+3. Retrieved secrets are passed to the container as environment variables
+4. Secrets are **never logged** - dry-run output shows `***MASKED***`
+
+### Configuration Schema
+
+```yaml
+environment:
+  keychain:
+    ENV_VAR_NAME:
+      service: "keychain-service-name"  # Required: exact service name
+      account: "optional-account"        # Optional: keychain account (supports ${VAR} expansion)
+```
+
+### Priority Order
+
+When the same variable appears in multiple sections:
+
+1. **`passthrough`** - Highest priority (from host environment)
+2. **`keychain`** - Retrieved from secret store
+3. **`set`** - Lowest priority (static values)
+
+This allows you to override keychain values by exporting an environment variable.
+
+### Common Service Names
+
+| Tool | Service Name | How to Store |
+|------|--------------|--------------|
+| Claude Code | `Claude Code-credentials` | Run `claude login` |
+| OpenAI | `openai-api-key` | Manual: see below |
+| GitHub | `github-token` | Manual: see below |
+
+### Storing Secrets
+
+**macOS Keychain:**
+
+```bash
+# Store a secret
+security add-generic-password -s "my-service-name" -a "$USER" -w "secret-value"
+
+# Verify it works
+security find-generic-password -s "my-service-name" -a "$USER" -w
+```
+
+**Linux (secret-tool):**
+
+```bash
+# Store a secret
+echo -n "secret-value" | secret-tool store --label="My Service" service "my-service-name" account "$USER"
+
+# Verify it works
+secret-tool lookup service "my-service-name" account "$USER"
+```
+
+### Security Notes
+
+- Secrets are retrieved at launch time and passed directly to the container
+- Secrets are **never written to disk** during the launch process
+- Dry-run mode masks all sensitive environment variables (`***MASKED***`)
+- Container processes cannot access the host keychain
 
 ## Environment Variable Substitution
 

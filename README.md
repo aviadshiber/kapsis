@@ -111,8 +111,16 @@ filesystem:
     - ~/.claude
 
 environment:
+  # Secrets from system keychain (macOS Keychain / Linux secret-tool)
+  # No manual 'export' needed - retrieved automatically at launch!
+  keychain:
+    ANTHROPIC_API_KEY:
+      service: "Claude Code-credentials"  # As stored by 'claude login'
+
+  # Non-secret variables from host environment
   passthrough:
-    - ANTHROPIC_API_KEY
+    - HOME
+    - USER
 
 resources:
   memory: 8g

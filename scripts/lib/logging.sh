@@ -271,13 +271,9 @@ _log() {
         echo "$file_formatted" >> "$_KAPSIS_LOG_FILE_PATH" 2>/dev/null
     fi
 
-    # Write to console
+    # Write to console (always to stderr to avoid polluting stdout for command substitution)
     if [[ "$KAPSIS_LOG_CONSOLE" == "true" ]]; then
-        if [[ "$level" == "ERROR" ]]; then
-            echo -e "$console_formatted" >&2
-        else
-            echo -e "$console_formatted"
-        fi
+        echo -e "$console_formatted" >&2
     fi
 }
 
@@ -332,9 +328,9 @@ log_success() {
         echo "$file_formatted" >> "$_KAPSIS_LOG_FILE_PATH" 2>/dev/null
     fi
 
-    # Write to console
+    # Write to console (always to stderr to avoid polluting stdout for command substitution)
     if [[ "$KAPSIS_LOG_CONSOLE" == "true" ]]; then
-        echo -e "$console_formatted"
+        echo -e "$console_formatted" >&2
     fi
 }
 

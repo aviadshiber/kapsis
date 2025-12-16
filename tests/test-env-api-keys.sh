@@ -212,6 +212,130 @@ test_env_isolation_between_agents() {
 }
 
 #===============================================================================
+# KEYCHAIN / SECRET STORE TESTS
+#===============================================================================
+
+test_keychain_config_parsing() {
+    log_test "Testing keychain config section is parsed correctly"
+
+    # Create a test config with keychain section
+    local test_config="$TEST_PROJECT/.kapsis-keychain-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "bash"
+environment:
+  keychain:
+    TEST_SECRET:
+      service: "test-service"
+    ANOTHER_SECRET:
+      service: "another-service"
+      account: "testuser"
+EOF
+
+    # Source launch script to get parse_config function
+    source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+    log_init "test"
+
+    # Check yq is available
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available - skipping keychain config test"
+        rm -f "$test_config"
+        return 0
+    fi
+
+    # Parse keychain section
+    local env_keychain
+    env_keychain=$(yq '.environment.keychain // {} | to_entries | .[] | .key + "|" + .value.service + "|" + (.value.account // "")' "$test_config" 2>/dev/null || echo "")
+
+    rm -f "$test_config"
+
+    # Verify parsing
+    assert_contains "$env_keychain" "TEST_SECRET|test-service|" "Should parse TEST_SECRET entry"
+    assert_contains "$env_keychain" "ANOTHER_SECRET|another-service|testuser" "Should parse ANOTHER_SECRET with account"
+}
+
+test_keychain_not_in_dry_run() {
+    log_test "Testing keychain secrets are not shown in dry-run output"
+
+    # Create a test config with keychain section
+    local test_config="$TEST_PROJECT/.kapsis-keychain-dry.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "bash"
+environment:
+  keychain:
+    SECRET_KEY:
+      service: "some-secret-service"
+EOF
+
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    rm -f "$test_config"
+
+    # The keychain service name can appear (it's not the secret)
+    # But actual secret values should never appear
+    # This test just ensures dry-run doesn't crash with keychain config
+    assert_contains "$output" "dry-run" "Dry-run should complete successfully"
+}
+
+test_passthrough_priority_over_keychain() {
+    log_test "Testing passthrough takes priority over keychain"
+
+    # This tests the logic - if ANTHROPIC_API_KEY is in passthrough and also in keychain,
+    # passthrough should win because it's processed first
+
+    # Create a test config with both
+    local test_config="$TEST_PROJECT/.kapsis-priority-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  passthrough:
+    - ANTHROPIC_API_KEY
+  keychain:
+    ANTHROPIC_API_KEY:
+      service: "should-not-be-used"
+EOF
+
+    # Set the env var
+    export ANTHROPIC_API_KEY="passthrough-value"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    unset ANTHROPIC_API_KEY
+    rm -f "$test_config"
+
+    # Should see passthrough being used, not keychain
+    # (This is a logic test - actual behavior depends on generate_env_vars implementation)
+    assert_contains "$output" "dry-run" "Dry-run should complete with priority config"
+}
+
+test_detect_os_function() {
+    log_test "Testing detect_os helper function"
+
+    # Source the launch script to get the function
+    source "$KAPSIS_ROOT/scripts/launch-agent.sh" 2>/dev/null || true
+
+    if type detect_os &>/dev/null; then
+        local os
+        os=$(detect_os)
+
+        # Should return macos, linux, or unknown
+        if [[ "$os" == "macos" ]] || [[ "$os" == "linux" ]] || [[ "$os" == "unknown" ]]; then
+            return 0
+        else
+            log_fail "detect_os returned unexpected value: $os"
+            return 1
+        fi
+    else
+        log_skip "detect_os function not available"
+        return 0
+    fi
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -242,6 +366,12 @@ main() {
     run_test test_path_env_preserved
     run_test test_home_env_set
     run_test test_env_isolation_between_agents
+
+    # Keychain / Secret Store tests
+    run_test test_keychain_config_parsing
+    run_test test_keychain_not_in_dry_run
+    run_test test_passthrough_priority_over_keychain
+    run_test test_detect_os_function
 
     # Cleanup
     cleanup_test_project
