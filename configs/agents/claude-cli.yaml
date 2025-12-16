@@ -1,64 +1,31 @@
 # Claude Code CLI Agent Profile
+# Official Anthropic CLI for Claude Code
 #
-# Official Anthropic Claude Code CLI for Linux containers.
-# Installed via npm from @anthropic-ai/claude-code.
-#
-# Authentication:
-#   - ANTHROPIC_API_KEY: Required for API access
-#   - CLAUDE_CODE_OAUTH_TOKEN: Optional, for headless mode (from 'claude setup-token')
-#
-# Build the agent-specific image:
-#   ./scripts/build-agent-image.sh claude-cli
-#
-# Usage:
-#   ./scripts/launch-agent.sh 1 ~/git/products --agent claude-cli --task "Your task"
+# Build: ./scripts/build-agent-image.sh claude-cli
+# Result: kapsis-claude-cli:latest
 
 name: claude-cli
 description: Claude Code CLI (official Anthropic)
 version: latest
 
-# Installation method
 install:
   npm: "@anthropic-ai/claude-code"
 
-# Dependencies (validated at build time)
 dependencies:
   - nodejs >= 18
 
-# Authentication requirements
 auth:
   required:
     - name: ANTHROPIC_API_KEY
       description: "Anthropic API key for Claude"
       keychain:
-        macos:
-          service: "Claude Code-credentials"
-        linux:
-          service: "anthropic-api-key"
-  optional:
-    - name: CLAUDE_CODE_OAUTH_TOKEN
-      description: "OAuth token for headless mode (run 'claude setup-token' on host)"
-      keychain:
-        macos:
-          service: "claude-oauth-token"
+        macos: "anthropic-api-key"
+        linux: "anthropic-api-key"
 
-# Config files to mount from host (read-only)
 config_mounts:
   - source: ~/.claude.json
     target: ~/.claude.json
   - source: ~/.claude
     target: ~/.claude
 
-# Command to execute (${TASK_SPEC} replaced with task file path)
-command: >
-  claude --dangerously-skip-permissions -p "$(cat ${TASK_SPEC})"
-
-# Working directory inside container
-workdir: /workspace
-
-# Resource recommendations
-resources:
-  memory_min: 4g
-  memory_recommended: 8g
-  cpus_min: 2
-  cpus_recommended: 4
+command: claude --dangerously-skip-permissions

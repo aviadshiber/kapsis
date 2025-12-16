@@ -1,61 +1,37 @@
-# Aider Agent Profile
+# Aider AI Agent Profile
+# AI pair programming in your terminal
 #
-# Aider is an AI pair programming tool that works with multiple LLM providers.
-# https://aider.chat
-#
-# Supports Claude, OpenAI, and local models.
-#
-# Build the agent-specific image:
-#   ./scripts/build-agent-image.sh aider
-#
-# Usage:
-#   ./scripts/launch-agent.sh 1 ~/git/products --agent aider --task "Your task"
+# Build: ./scripts/build-agent-image.sh aider
+# Result: kapsis-aider:latest
 
 name: aider
-description: Aider AI pair programmer
+description: Aider - AI pair programming in your terminal
 version: latest
 
-# Installation method
 install:
-  pip: aider-chat
+  pip: "aider-chat"
 
-# Dependencies
 dependencies:
-  - python >= 3.9
+  - python3 >= 3.9
   - git
 
-# Authentication requirements (at least one provider)
 auth:
-  optional:
+  required:
     - name: ANTHROPIC_API_KEY
-      description: "For Claude models"
+      description: "Anthropic API key (for Claude models)"
       keychain:
-        macos:
-          service: "Claude Code-credentials"
+        macos: "anthropic-api-key"
+        linux: "anthropic-api-key"
+  optional:
     - name: OPENAI_API_KEY
-      description: "For OpenAI/GPT models"
+      description: "OpenAI API key (for GPT models)"
       keychain:
-        macos:
-          service: "openai-api-key"
+        macos: "openai-api-key"
+        linux: "openai-api-key"
 
-# Config files to mount
 config_mounts:
   - source: ~/.aider.conf.yml
     target: ~/.aider.conf.yml
     optional: true
-  - source: ~/.gitconfig
-    target: ~/.gitconfig
 
-# Command to execute (--yes for non-interactive)
-command: >
-  aider --yes --message-file ${TASK_SPEC}
-
-# Working directory
-workdir: /workspace
-
-# Resource recommendations
-resources:
-  memory_min: 2g
-  memory_recommended: 4g
-  cpus_min: 1
-  cpus_recommended: 2
+command: aider --yes-always

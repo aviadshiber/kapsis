@@ -34,6 +34,36 @@ KAPSIS_SANITIZED_GIT_BASE="${KAPSIS_SANITIZED_GIT_BASE:-$HOME/.kapsis/sanitized-
 # Note: logging functions are provided by lib/logging.sh
 
 #===============================================================================
+# GIT COMMAND HELPER
+#
+# Runs a git command, captures output, logs it, and returns exit code.
+# Prevents git output from polluting stdout while preserving it in logs.
+#
+# Usage: run_git <command> [args...]
+# Returns: exit code of git command
+#===============================================================================
+run_git() {
+    local git_output
+    local git_exit_code
+
+    # Capture both stdout and stderr
+    git_output=$("$@" 2>&1) && git_exit_code=0 || git_exit_code=$?
+
+    # Log the output (goes to log file, not stdout)
+    if [[ -n "$git_output" ]]; then
+        log_debug "git command: $*"
+        log_debug "git output: $git_output"
+    fi
+
+    # Log failure if non-zero exit
+    if [[ $git_exit_code -ne 0 ]]; then
+        log_debug "git command failed with exit code: $git_exit_code"
+    fi
+
+    return $git_exit_code
+}
+
+#===============================================================================
 # CREATE WORKTREE
 #
 # Creates a git worktree for an agent on the host filesystem.
@@ -81,7 +111,7 @@ create_worktree() {
 
         if [[ "$current_branch" != "$branch" ]]; then
             log_info "Switching worktree from $current_branch to $branch"
-            git checkout "$branch" 2>/dev/null || git checkout -b "$branch"
+            run_git git checkout "$branch" || run_git git checkout -b "$branch"
             log_debug "Branch switch completed"
         fi
     else
@@ -97,18 +127,18 @@ create_worktree() {
             # Branch exists remotely - track it
             log_info "Tracking existing remote branch: origin/$branch"
             log_debug "Running: git worktree add $worktree_path -b $branch origin/$branch"
-            git worktree add "$worktree_path" -b "$branch" "origin/$branch" 2>/dev/null || \
-            git worktree add "$worktree_path" "$branch"
+            run_git git worktree add "$worktree_path" -b "$branch" "origin/$branch" || \
+            run_git git worktree add "$worktree_path" "$branch"
         elif git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
             # Branch exists locally
             log_info "Using existing local branch: $branch"
             log_debug "Running: git worktree add $worktree_path $branch"
-            git worktree add "$worktree_path" "$branch"
+            run_git git worktree add "$worktree_path" "$branch"
         else
             # Create new branch from current HEAD
             log_info "Creating new branch: $branch"
             log_debug "Running: git worktree add $worktree_path -b $branch"
-            git worktree add "$worktree_path" -b "$branch"
+            run_git git worktree add "$worktree_path" -b "$branch"
         fi
         log_debug "Worktree creation completed"
     fi
