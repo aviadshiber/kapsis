@@ -290,7 +290,7 @@ setup_environment() {
     fi
 
     # Decode DOCKER_ARTIFACTORY_TOKEN into username/password for Maven
-    # Token format: base64(username:password) - used by Taboola Artifactory
+    # Token format: base64(username:password)
     if [[ -n "${DOCKER_ARTIFACTORY_TOKEN:-}" ]] && [[ -z "${KAPSIS_MAVEN_USERNAME:-}" ]]; then
         local decoded
         decoded=$(echo "$DOCKER_ARTIFACTORY_TOKEN" | base64 -d 2>/dev/null || true)
