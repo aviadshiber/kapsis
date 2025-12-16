@@ -92,19 +92,27 @@ environment:
   # Variables retrieved from system secret store (macOS Keychain, Linux secret-tool)
   # These are queried at launch time and injected into the container
   # Priority: passthrough > keychain (passthrough wins if same var in both)
+  #
+  # Options:
+  #   service: (required) Exact keychain service name
+  #   account: (optional) Keychain account (supports ${USER} expansion)
+  #   inject_to_file: (optional) Also write credential to file path in container
+  #   mode: (optional) File permissions for inject_to_file (default: 0600)
   keychain:
-    # Example: Claude Code API key stored in macOS Keychain
+    # Example: API key as environment variable only
     # ANTHROPIC_API_KEY:
-    #   service: "Claude Code-credentials"   # Exact keychain service name
+    #   service: "anthropic-api"
     #
-    # Example: Git token with account name
+    # Example: OAuth credentials written to file (agent-agnostic pattern)
+    # AGENT_OAUTH_CREDENTIALS:
+    #   service: "my-agent-credentials"
+    #   inject_to_file: "~/.config/my-agent/credentials.json"
+    #   mode: "0600"
+    #
+    # Example: Token with account name
     # GIT_TOKEN:
-    #   service: "my-git-token"              # Service name as stored in keychain
-    #   account: "${USER}"                   # Optional: keychain account (supports variable expansion)
-    #
-    # Example: OpenAI key
-    # OPENAI_API_KEY:
-    #   service: "openai-api-key"
+    #   service: "my-git-token"
+    #   account: "${USER}"
 
 #===============================================================================
 # RESOURCE LIMITS

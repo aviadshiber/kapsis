@@ -42,39 +42,53 @@ else
 fi
 
 #===============================================================================
-# CLAUDE OAUTH INJECTION
+# CREDENTIAL FILE INJECTION (Agent-Agnostic)
 #
-# If CLAUDE_OAUTH_CREDENTIALS is set (from host keychain), store it in the
-# container's secret store so Claude Code can authenticate.
+# Writes environment variables to files based on KAPSIS_CREDENTIAL_FILES.
+# This is agent-agnostic - works for Claude, Codex, Aider, or any agent
+# that needs file-based credentials.
+#
+# Format: VAR_NAME|file_path|mode (comma-separated for multiple)
+# Example: CLAUDE_OAUTH|~/.claude/.credentials.json|0600,OPENAI_KEY|~/.config/openai/key|0600
 #===============================================================================
-inject_claude_oauth() {
-    if [[ -z "${CLAUDE_OAUTH_CREDENTIALS:-}" ]]; then
-        log_debug "No Claude OAuth credentials to inject"
+inject_credential_files() {
+    if [[ -z "${KAPSIS_CREDENTIAL_FILES:-}" ]]; then
+        log_debug "No credential files to inject"
         return 0
     fi
 
-    log_info "Injecting Claude OAuth credentials..."
+    log_info "Injecting credentials to files..."
 
-    # On Linux, Claude Code uses secret-tool (GNOME Keyring)
-    if command -v secret-tool &>/dev/null; then
-        # Store in GNOME Keyring / KDE Wallet
-        echo -n "$CLAUDE_OAUTH_CREDENTIALS" | secret-tool store --label="Claude Code Credentials" \
-            service "Claude Code-credentials" 2>/dev/null && {
-            log_debug "OAuth stored in secret-tool"
-            return 0
-        }
-    fi
+    # Split comma-separated list
+    IFS=',' read -ra creds <<< "$KAPSIS_CREDENTIAL_FILES"
 
-    # Fallback: write to file-based credential store
-    # Claude Code stores OAuth in ~/.claude/.credentials.json
-    local cred_file="${HOME}/.claude/.credentials.json"
-    mkdir -p "${HOME}/.claude" 2>/dev/null || true
-    echo "$CLAUDE_OAUTH_CREDENTIALS" > "$cred_file"
-    chmod 600 "$cred_file"
-    log_debug "OAuth stored in $cred_file"
+    for entry in "${creds[@]}"; do
+        IFS='|' read -r var_name file_path file_mode <<< "$entry"
+        [[ -z "$var_name" || -z "$file_path" ]] && continue
 
-    # Unset the env var so it's not visible to child processes
-    unset CLAUDE_OAUTH_CREDENTIALS
+        # Get the value from the environment variable
+        local value="${!var_name:-}"
+        if [[ -z "$value" ]]; then
+            log_debug "Skipping $var_name - not set"
+            continue
+        fi
+
+        # Expand ~ in file path
+        file_path="${file_path/#\~/$HOME}"
+
+        # Create parent directory
+        mkdir -p "$(dirname "$file_path")" 2>/dev/null || true
+
+        # Write the credential to file
+        echo "$value" > "$file_path"
+        chmod "${file_mode:-0600}" "$file_path"
+        log_debug "Injected $var_name to $file_path"
+
+        # Unset the env var so it's not visible to child processes
+        unset "$var_name"
+    done
+
+    log_success "Credential files injected"
 }
 
 #===============================================================================
@@ -468,8 +482,9 @@ main() {
     # This must happen before setup_environment so agent configs are available
     setup_staged_config_overlays
 
-    # Inject OAuth credentials from host keychain if available
-    inject_claude_oauth
+    # Inject credentials to files (agent-agnostic)
+    # Reads KAPSIS_CREDENTIAL_FILES env var set by launch-agent.sh
+    inject_credential_files
 
     if [[ "$sandbox_mode" == "worktree" ]] || setup_worktree_git; then
         # Worktree mode: git is already set up by host

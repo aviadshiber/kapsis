@@ -417,8 +417,10 @@ parse_config() {
         ENV_SET=$(yq -r '.environment.set // {}' "$CONFIG_FILE" 2>/dev/null || echo "{}")
 
         # Parse keychain mappings for secret store lookups
-        # Output format: VAR_NAME|service|account per line
-        ENV_KEYCHAIN=$(yq '.environment.keychain // {} | to_entries | .[] | .key + "|" + .value.service + "|" + (.value.account // "")' "$CONFIG_FILE" 2>/dev/null || echo "")
+        # Output format: VAR_NAME|service|account|inject_to_file|mode per line
+        # inject_to_file: optional file path to write the secret to (agent-agnostic)
+        # mode: optional file permissions (default 0600)
+        ENV_KEYCHAIN=$(yq '.environment.keychain // {} | to_entries | .[] | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600")' "$CONFIG_FILE" 2>/dev/null || echo "")
     else
         log_warn "yq not found. Using default config values."
         AGENT_COMMAND="bash"
@@ -667,9 +669,12 @@ generate_env_vars() {
     fi
 
     # Process keychain-backed environment variables
+    # Track credentials that need file injection (agent-agnostic)
+    local CREDENTIAL_FILES=""
+
     if [[ -n "$ENV_KEYCHAIN" ]]; then
         log_info "Resolving secrets from system keychain..."
-        while IFS='|' read -r var_name service account; do
+        while IFS='|' read -r var_name service account inject_to_file file_mode; do
             [[ -z "$var_name" || -z "$service" ]] && continue
 
             # Expand variables in account (e.g., ${USER})
@@ -698,10 +703,26 @@ generate_env_vars() {
             if value=$(query_secret_store "$service" "$account"); then
                 ENV_VARS+=("-e" "${var_name}=${value}")
                 log_success "Loaded $var_name from secret store (service: $service)"
+
+                # Track file injection if specified (agent-agnostic credential injection)
+                if [[ -n "$inject_to_file" ]]; then
+                    # Format: VAR_NAME|file_path|mode (comma-separated list)
+                    if [[ -n "$CREDENTIAL_FILES" ]]; then
+                        CREDENTIAL_FILES="${CREDENTIAL_FILES},${var_name}|${inject_to_file}|${file_mode:-0600}"
+                    else
+                        CREDENTIAL_FILES="${var_name}|${inject_to_file}|${file_mode:-0600}"
+                    fi
+                    log_debug "Will inject $var_name to file: $inject_to_file"
+                fi
             else
                 log_warn "Secret not found: $service (for $var_name)"
             fi
         done <<< "$ENV_KEYCHAIN"
+    fi
+
+    # Pass credential file injection metadata to entrypoint (agent-agnostic)
+    if [[ -n "$CREDENTIAL_FILES" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_CREDENTIAL_FILES=${CREDENTIAL_FILES}")
     fi
 
     # Set explicit environment variables
