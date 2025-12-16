@@ -599,17 +599,54 @@ generate_volume_mounts_overlay() {
 #===============================================================================
 # FILESYSTEM INCLUDES (common to both modes)
 #===============================================================================
+# Uses staging-and-copy pattern for home directory files:
+# 1. Mount host files to /kapsis-staging/<name> (read-only)
+# 2. Entrypoint copies to container $HOME (writable)
+# This avoids overlay permission issues with restrictive host directories.
+#===============================================================================
+STAGED_CONFIGS=""  # Comma-separated list of relative paths staged for copying
+
 generate_filesystem_includes() {
+    local staging_dir="/kapsis-staging"
+    STAGED_CONFIGS=""
+
     if [[ -n "$FILESYSTEM_INCLUDES" ]]; then
         while IFS= read -r path; do
             [[ -z "$path" ]] && continue
             expanded_path="${path/#\~/$HOME}"
-            if [[ -e "$expanded_path" ]]; then
-                # Mount to same absolute path to preserve symlinks
-                # (e.g., Claude CLI has absolute symlink ~/.local/bin/claude -> /Users/.../versions/...)
+
+            if [[ ! -e "$expanded_path" ]]; then
+                log_debug "Skipping non-existent path: ${expanded_path}"
+                continue
+            fi
+
+            # Home directory paths: use staging-and-copy pattern
+            if [[ "$path" == "~"* ]] || [[ "$expanded_path" == "$HOME"* ]]; then
+                # Extract relative path (e.g., .claude, .gitconfig)
+                relative_path="${expanded_path#$HOME/}"
+                staging_path="${staging_dir}/${relative_path}"
+
+                # Mount to staging directory (read-only)
+                VOLUME_MOUNTS+=("-v" "${expanded_path}:${staging_path}:ro")
+                log_debug "Staged for copy: ${expanded_path} -> ${staging_path}"
+
+                # Track for entrypoint to copy
+                if [[ -n "$STAGED_CONFIGS" ]]; then
+                    STAGED_CONFIGS="${STAGED_CONFIGS},${relative_path}"
+                else
+                    STAGED_CONFIGS="${relative_path}"
+                fi
+            else
+                # Non-home absolute paths: mount directly (read-only)
                 VOLUME_MOUNTS+=("-v" "${expanded_path}:${expanded_path}:ro")
+                log_debug "Direct mount (ro): ${expanded_path}"
             fi
         done <<< "$FILESYSTEM_INCLUDES"
+    fi
+
+    # Export staged configs for entrypoint
+    if [[ -n "$STAGED_CONFIGS" ]]; then
+        log_debug "Staged configs for copy: ${STAGED_CONFIGS}"
     fi
 }
 
@@ -687,6 +724,11 @@ generate_env_vars() {
 
     if [[ -n "$TASK_INLINE" ]]; then
         ENV_VARS+=("-e" "KAPSIS_TASK=${TASK_INLINE}")
+    fi
+
+    # Pass staged configs for entrypoint to copy to $HOME
+    if [[ -n "$STAGED_CONFIGS" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_STAGED_CONFIGS=${STAGED_CONFIGS}")
     fi
 
     # Process explicit set environment variables from config

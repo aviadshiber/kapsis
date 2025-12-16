@@ -42,6 +42,108 @@ else
 fi
 
 #===============================================================================
+# CLAUDE OAUTH INJECTION
+#
+# If CLAUDE_OAUTH_CREDENTIALS is set (from host keychain), store it in the
+# container's secret store so Claude Code can authenticate.
+#===============================================================================
+inject_claude_oauth() {
+    if [[ -z "${CLAUDE_OAUTH_CREDENTIALS:-}" ]]; then
+        log_debug "No Claude OAuth credentials to inject"
+        return 0
+    fi
+
+    log_info "Injecting Claude OAuth credentials..."
+
+    # On Linux, Claude Code uses secret-tool (GNOME Keyring)
+    if command -v secret-tool &>/dev/null; then
+        # Store in GNOME Keyring / KDE Wallet
+        echo -n "$CLAUDE_OAUTH_CREDENTIALS" | secret-tool store --label="Claude Code Credentials" \
+            service "Claude Code-credentials" 2>/dev/null && {
+            log_debug "OAuth stored in secret-tool"
+            return 0
+        }
+    fi
+
+    # Fallback: write to file-based credential store
+    # Claude Code stores OAuth in ~/.claude/.credentials.json
+    local cred_file="${HOME}/.claude/.credentials.json"
+    mkdir -p "${HOME}/.claude" 2>/dev/null || true
+    echo "$CLAUDE_OAUTH_CREDENTIALS" > "$cred_file"
+    chmod 600 "$cred_file"
+    log_debug "OAuth stored in $cred_file"
+
+    # Unset the env var so it's not visible to child processes
+    unset CLAUDE_OAUTH_CREDENTIALS
+}
+
+#===============================================================================
+# STAGED CONFIG OVERLAY
+#
+# Host config files are mounted to /kapsis-staging/ (read-only).
+# We create a fuse-overlayfs mount to make them writable via CoW:
+# - Lower layer: /kapsis-staging/<path> (host files, read-only)
+# - Upper layer: /kapsis-upper/<path> (container writes)
+# - Merged view: $HOME/<path> (transparent CoW)
+#
+# This preserves true Copy-on-Write: reads from host, writes isolated.
+#===============================================================================
+setup_staged_config_overlays() {
+    local staging_dir="/kapsis-staging"
+    local upper_base="/kapsis-upper"
+    local work_base="/kapsis-work"
+
+    if [[ -z "${KAPSIS_STAGED_CONFIGS:-}" ]]; then
+        log_debug "No staged configs to overlay"
+        return 0
+    fi
+
+    log_info "Setting up CoW overlays for staged configs..."
+
+    # Create base directories for upper and work layers
+    mkdir -p "$upper_base" "$work_base" 2>/dev/null || true
+
+    # Split comma-separated list
+    IFS=',' read -ra configs <<< "$KAPSIS_STAGED_CONFIGS"
+
+    for relative_path in "${configs[@]}"; do
+        local src="${staging_dir}/${relative_path}"
+        local dst="${HOME}/${relative_path}"
+        local upper="${upper_base}/${relative_path}"
+        local work="${work_base}/${relative_path}"
+
+        if [[ ! -e "$src" ]]; then
+            log_debug "Staged config not found: $src"
+            continue
+        fi
+
+        # Create directories
+        mkdir -p "$upper" "$work" "$(dirname "$dst")" 2>/dev/null || true
+
+        if [[ -d "$src" ]]; then
+            # Directory: create overlay mount
+            mkdir -p "$dst" 2>/dev/null || true
+
+            if fuse-overlayfs -o "lowerdir=${src},upperdir=${upper},workdir=${work}" "$dst" 2>/dev/null; then
+                log_debug "CoW overlay: ${relative_path}"
+            else
+                # Fallback: copy if overlay fails
+                log_warn "Overlay failed for ${relative_path}, falling back to copy"
+                cp -r "$src" "$dst" 2>/dev/null || true
+                chmod -R u+w "$dst" 2>/dev/null || true
+            fi
+        else
+            # File: copy (no overlay for individual files)
+            cp "$src" "$dst" 2>/dev/null || true
+            chmod u+w "$dst" 2>/dev/null || true
+            log_debug "Copied file: ${relative_path}"
+        fi
+    done
+
+    log_success "Staged configs ready (CoW where possible)"
+}
+
+#===============================================================================
 # WORKTREE MODE SETUP
 #
 # In worktree mode, the host has already created:
@@ -361,6 +463,13 @@ main() {
     # Detect and set up sandbox mode
     local sandbox_mode="${KAPSIS_SANDBOX_MODE:-overlay}"
     log_debug "Detected sandbox_mode=$sandbox_mode"
+
+    # Set up CoW overlays for staged configs from /kapsis-staging/
+    # This must happen before setup_environment so agent configs are available
+    setup_staged_config_overlays
+
+    # Inject OAuth credentials from host keychain if available
+    inject_claude_oauth
 
     if [[ "$sandbox_mode" == "worktree" ]] || setup_worktree_git; then
         # Worktree mode: git is already set up by host
