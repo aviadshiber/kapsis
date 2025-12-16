@@ -117,6 +117,31 @@ RUN if [ -n "$AGENT_PIP" ]; then \
     fi
 
 #===============================================================================
+# PRE-CACHE GRADLE ENTERPRISE EXTENSION
+#===============================================================================
+# GE extension resolves BEFORE settings.xml, so it can't use our mirror/auth.
+# Pre-download to local repo during build so it's available at runtime.
+# These artifacts are on Maven Central (public).
+ARG GE_EXT_VERSION=1.20
+ARG GE_CCUD_VERSION=1.12.5
+
+RUN mkdir -p /tmp/ge-cache && cd /tmp/ge-cache && \
+    # Create minimal pom to resolve the extensions
+    echo '<?xml version="1.0" encoding="UTF-8"?>' > pom.xml && \
+    echo '<project><modelVersion>4.0.0</modelVersion>' >> pom.xml && \
+    echo '<groupId>kapsis</groupId><artifactId>ge-cache</artifactId><version>1.0</version>' >> pom.xml && \
+    echo '<dependencies>' >> pom.xml && \
+    echo "  <dependency><groupId>com.gradle</groupId><artifactId>gradle-enterprise-maven-extension</artifactId><version>${GE_EXT_VERSION}</version></dependency>" >> pom.xml && \
+    echo "  <dependency><groupId>com.gradle</groupId><artifactId>common-custom-user-data-maven-extension</artifactId><version>${GE_CCUD_VERSION}</version></dependency>" >> pom.xml && \
+    echo '</dependencies></project>' >> pom.xml && \
+    # Download to global location that will be copied to user's .m2 later
+    mvn -B dependency:resolve dependency:resolve-plugins -Dmaven.repo.local=/opt/kapsis/m2-cache && \
+    # Remove _remote.repositories tracking files to prevent repository ID validation errors
+    # These files cause "cached from a remote repository ID that is unavailable" errors
+    find /opt/kapsis/m2-cache -name "_remote.repositories" -delete && \
+    rm -rf /tmp/ge-cache
+
+#===============================================================================
 # NON-ROOT USER SETUP
 #===============================================================================
 ARG USER_ID=1000
@@ -131,6 +156,8 @@ RUN userdel -r ubuntu 2>/dev/null || true && \
     useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ${USERNAME}
 
 # Create directories for Maven and Gradle with correct ownership
+# Note: .m2/repository is mounted as a named volume at runtime, so we don't pre-populate here.
+# The entrypoint.sh copies pre-cached GE extensions from /opt/kapsis/m2-cache at startup.
 RUN mkdir -p /home/${USERNAME}/.m2/repository \
              /home/${USERNAME}/.gradle \
              /home/${USERNAME}/.m2/.gradle-enterprise \

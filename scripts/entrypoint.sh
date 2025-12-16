@@ -289,6 +289,30 @@ setup_environment() {
         set -u
     fi
 
+    # Decode DOCKER_ARTIFACTORY_TOKEN into username/password for Maven
+    # Token format: base64(username:password) - used by Taboola Artifactory
+    if [[ -n "${DOCKER_ARTIFACTORY_TOKEN:-}" ]] && [[ -z "${KAPSIS_MAVEN_USERNAME:-}" ]]; then
+        local decoded
+        decoded=$(echo "$DOCKER_ARTIFACTORY_TOKEN" | base64 -d 2>/dev/null || true)
+        if [[ "$decoded" == *":"* ]]; then
+            export KAPSIS_MAVEN_USERNAME="${decoded%%:*}"
+            export KAPSIS_MAVEN_PASSWORD="${decoded#*:}"
+            log_info "Artifactory credentials: decoded from DOCKER_ARTIFACTORY_TOKEN"
+        fi
+    fi
+
+    # Pre-populate Maven local repo with GE extensions from image cache
+    # This is needed because the .m2/repository is a named volume that shadows the image contents
+    if [[ -d "$KAPSIS_HOME/m2-cache" ]]; then
+        local user_m2="$HOME/.m2/repository"
+        mkdir -p "$user_m2"
+        # Only copy if GE extension not already present (avoid overwriting on restart)
+        if [[ ! -f "$user_m2/com/gradle/gradle-enterprise-maven-extension/1.20/gradle-enterprise-maven-extension-1.20.jar" ]]; then
+            cp -r "$KAPSIS_HOME/m2-cache/"* "$user_m2/" 2>/dev/null || true
+            log_info "Gradle Enterprise extension: pre-populated from image cache"
+        fi
+    fi
+
     # Apply isolated Maven settings
     if [[ -f "$KAPSIS_HOME/maven/settings.xml" ]]; then
         export MAVEN_ARGS="${MAVEN_ARGS:-} -s $KAPSIS_HOME/maven/settings.xml"

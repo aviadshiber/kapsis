@@ -86,7 +86,24 @@ environment:
 
   # Variables to set explicitly (override host values)
   set:
+    # Maven JVM settings (scale down from typical 10g for parallel agents)
     MAVEN_OPTS: "-Xmx4g -XX:+UseG1GC"
+
+    # REQUIRED: Maven mirror URL for isolated-settings.xml
+    # This env var is substituted in maven/isolated-settings.xml
+    # Without it, Maven falls back to public Maven Central!
+    KAPSIS_MAVEN_MIRROR_URL: "https://repo1.maven.org/maven2"
+    # Example for corporate Artifactory:
+    # KAPSIS_MAVEN_MIRROR_URL: "https://artifactory.example.org/artifactory/releases"
+
+    # REQUIRED for authenticated mirrors: Maven username (literal value, NOT keychain)
+    # Keychain lookups return the password field, not the account name!
+    # KAPSIS_MAVEN_USERNAME: "your-username"
+
+    # RECOMMENDED: Belt-and-suspenders SNAPSHOT blocking
+    # Works together with isolated-settings.xml SNAPSHOT disable
+    MAVEN_ARGS: "--no-snapshot-updates"
+
     # JAVA_HOME: "/usr/lib/jvm/java-17"
 
   # Variables retrieved from system secret store (macOS Keychain, Linux secret-tool)
@@ -99,6 +116,13 @@ environment:
   #   inject_to_file: (optional) Also write credential to file path in container
   #   mode: (optional) File permissions for inject_to_file (default: 0600)
   keychain:
+    # REQUIRED for corporate Maven mirrors: Artifactory PASSWORD only
+    # NOTE: Only store PASSWORD in keychain - USERNAME should be in environment.set
+    #       (keychain lookup returns the password field, not the account name!)
+    # KAPSIS_MAVEN_PASSWORD:
+    #   service: "my-artifactory"
+    #   account: "${USER}"
+
     # Example: API key as environment variable only
     # ANTHROPIC_API_KEY:
     #   service: "anthropic-api"
@@ -125,14 +149,23 @@ resources:
 #===============================================================================
 # MAVEN ISOLATION SETTINGS
 #===============================================================================
+# IMPORTANT: These settings define intent, but actual isolation is enforced via:
+#   1. maven/isolated-settings.xml (uses env vars below)
+#   2. KAPSIS_MAVEN_MIRROR_URL env var (set in environment.set above)
+#   3. KAPSIS_MAVEN_USERNAME/PASSWORD env vars (set in environment.keychain above)
+#   4. MAVEN_ARGS env var for --no-snapshot-updates flag
+#
 maven:
   # Corporate mirror URL (customize for your organization)
+  # NOTE: Also set KAPSIS_MAVEN_MIRROR_URL in environment.set section!
   mirror_url: "https://artifactory.example.org/artifactory/releases"
 
   # Block SNAPSHOT downloads from remote (recommended: true)
+  # Enforced via isolated-settings.xml + MAVEN_ARGS=--no-snapshot-updates
   block_remote_snapshots: true
 
   # Block deploy operations (recommended: true)
+  # Enforced via kapsis-block-deploy profile in isolated-settings.xml
   block_deploy: true
 
 #===============================================================================

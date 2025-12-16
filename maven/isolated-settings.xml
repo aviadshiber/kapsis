@@ -37,7 +37,7 @@
             <name>Kapsis Artifactory Mirror (Releases Only)</name>
             <mirrorOf>*</mirrorOf>
             <!-- This URL should be overridden by environment or config -->
-            <url>${env.KAPSIS_MAVEN_MIRROR_URL:-https://repo1.maven.org/maven2}</url>
+            <url>${env.KAPSIS_MAVEN_MIRROR_URL}</url>
         </mirror>
     </mirrors>
 
@@ -53,7 +53,7 @@
                 <repository>
                     <id>kapsis-central</id>
                     <name>Kapsis Isolated Central</name>
-                    <url>${env.KAPSIS_MAVEN_MIRROR_URL:-https://repo1.maven.org/maven2}</url>
+                    <url>${env.KAPSIS_MAVEN_MIRROR_URL}</url>
                     <releases>
                         <enabled>true</enabled>
                         <updatePolicy>daily</updatePolicy>
@@ -74,7 +74,7 @@
                 <pluginRepository>
                     <id>kapsis-central-plugins</id>
                     <name>Kapsis Isolated Plugin Repository</name>
-                    <url>${env.KAPSIS_MAVEN_MIRROR_URL:-https://repo1.maven.org/maven2}</url>
+                    <url>${env.KAPSIS_MAVEN_MIRROR_URL}</url>
                     <releases>
                         <enabled>true</enabled>
                     </releases>
