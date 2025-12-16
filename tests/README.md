@@ -46,7 +46,7 @@ This directory contains tests to validate the isolation guarantees and functiona
 | **Security** | | | |
 | | test-security-no-root.sh | 11 | Ready |
 | | test-agent-id-unique.sh | 6 | Ready |
-| | test-env-api-keys.sh | 10 | Ready |
+| | test-env-api-keys.sh | 33 | Ready |
 | **Git Workflow** | | | |
 | | test-git-new-branch.sh | 7 | Ready |
 | | test-git-auto-commit-push.sh | 9 | Ready |
@@ -61,10 +61,10 @@ This directory contains tests to validate the isolation guarantees and functiona
 | Priority | Tests | Status |
 |----------|-------|--------|
 | P0 (Critical) | 40 | Ready |
-| P1 (Important) | 37 | Ready |
+| P1 (Important) | 60 | Ready |
 | P2 (Robustness) | 37 | Ready |
 | P3 (Integration) | 16 | Ready |
-| **Total** | **130** | **Ready** |
+| **Total** | **153** | **Ready** |
 
 ## Prerequisites
 

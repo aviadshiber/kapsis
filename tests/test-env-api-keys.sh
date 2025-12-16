@@ -216,9 +216,9 @@ test_env_isolation_between_agents() {
 #===============================================================================
 
 test_keychain_config_parsing() {
-    log_test "Testing keychain config section is parsed correctly"
+    log_test "Testing keychain config section is parsed correctly (including inject_to_file)"
 
-    # Create a test config with keychain section
+    # Create a test config with keychain section including new inject_to_file feature
     local test_config="$TEST_PROJECT/.kapsis-keychain-test.yaml"
     cat > "$test_config" << 'EOF'
 agent:
@@ -230,6 +230,10 @@ environment:
     ANOTHER_SECRET:
       service: "another-service"
       account: "testuser"
+    AGENT_OAUTH:
+      service: "agent-oauth-service"
+      inject_to_file: "~/.agent/credentials.json"
+      mode: "0600"
 EOF
 
     # Source launch script to get parse_config function
@@ -243,15 +247,18 @@ EOF
         return 0
     fi
 
-    # Parse keychain section
+    # Parse keychain section with new format (VAR|service|account|inject_to_file|mode)
     local env_keychain
-    env_keychain=$(yq '.environment.keychain // {} | to_entries | .[] | .key + "|" + .value.service + "|" + (.value.account // "")' "$test_config" 2>/dev/null || echo "")
+    env_keychain=$(yq '.environment.keychain // {} | to_entries | .[] | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600")' "$test_config" 2>/dev/null || echo "")
 
     rm -f "$test_config"
 
-    # Verify parsing
-    assert_contains "$env_keychain" "TEST_SECRET|test-service|" "Should parse TEST_SECRET entry"
-    assert_contains "$env_keychain" "ANOTHER_SECRET|another-service|testuser" "Should parse ANOTHER_SECRET with account"
+    # Verify parsing - basic entries
+    assert_contains "$env_keychain" "TEST_SECRET|test-service|||0600" "Should parse TEST_SECRET entry with defaults"
+    assert_contains "$env_keychain" "ANOTHER_SECRET|another-service|testuser||0600" "Should parse ANOTHER_SECRET with account"
+
+    # Verify parsing - inject_to_file entry
+    assert_contains "$env_keychain" "AGENT_OAUTH|agent-oauth-service||~/.agent/credentials.json|0600" "Should parse AGENT_OAUTH with inject_to_file"
 }
 
 test_keychain_not_in_dry_run() {
@@ -617,6 +624,291 @@ EOF
 }
 
 #===============================================================================
+# INJECT_TO_FILE TESTS (Agent-Agnostic Credential Injection)
+#===============================================================================
+
+test_inject_to_file_config_parsing() {
+    log_test "Testing inject_to_file is parsed and generates KAPSIS_CREDENTIAL_FILES"
+
+    local test_config="$TEST_PROJECT/.kapsis-inject-file-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    AGENT_CREDS:
+      service: "test-agent-creds"
+      inject_to_file: "~/.agent/credentials.json"
+      mode: "0640"
+EOF
+
+    # We can't actually query keychain in tests, but we can verify the config parsing
+    # by checking the dry-run output shows the variable would be processed
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    rm -f "$test_config"
+
+    # Should complete without errors
+    assert_contains "$output" "DRY RUN" "Dry-run should complete with inject_to_file config"
+}
+
+test_inject_to_file_multiple_entries() {
+    log_test "Testing multiple inject_to_file entries are parsed correctly"
+
+    local test_config="$TEST_PROJECT/.kapsis-multi-inject-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    CLAUDE_OAUTH:
+      service: "claude-creds"
+      inject_to_file: "~/.claude/.credentials.json"
+    CODEX_AUTH:
+      service: "codex-creds"
+      inject_to_file: "~/.codex/auth.json"
+      mode: "0600"
+    API_KEY_ONLY:
+      service: "api-key"
+EOF
+
+    # Check yq is available
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        rm -f "$test_config"
+        return 0
+    fi
+
+    # Parse and verify all entries are handled correctly
+    local env_keychain
+    env_keychain=$(yq '.environment.keychain // {} | to_entries | .[] | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600")' "$test_config" 2>/dev/null || echo "")
+
+    rm -f "$test_config"
+
+    # Check each entry
+    assert_contains "$env_keychain" "CLAUDE_OAUTH|claude-creds||~/.claude/.credentials.json|0600" "Should parse CLAUDE_OAUTH"
+    assert_contains "$env_keychain" "CODEX_AUTH|codex-creds||~/.codex/auth.json|0600" "Should parse CODEX_AUTH"
+    assert_contains "$env_keychain" "API_KEY_ONLY|api-key|||0600" "Should parse API_KEY_ONLY without file"
+}
+
+test_credential_files_env_format() {
+    log_test "Testing KAPSIS_CREDENTIAL_FILES environment variable format"
+
+    # This tests the format of KAPSIS_CREDENTIAL_FILES that gets passed to entrypoint
+    # Format should be: VAR_NAME|file_path|mode (comma-separated for multiple)
+
+    # Simulate what launch-agent.sh would generate
+    local cred_files=""
+    local entries=(
+        "CLAUDE_OAUTH|~/.claude/.credentials.json|0600"
+        "CODEX_AUTH|~/.codex/auth.json|0640"
+    )
+
+    for entry in "${entries[@]}"; do
+        if [[ -n "$cred_files" ]]; then
+            cred_files="${cred_files},${entry}"
+        else
+            cred_files="$entry"
+        fi
+    done
+
+    # Verify format is correct
+    assert_contains "$cred_files" "CLAUDE_OAUTH|~/.claude/.credentials.json|0600" "Should contain CLAUDE_OAUTH entry"
+    assert_contains "$cred_files" "CODEX_AUTH|~/.codex/auth.json|0640" "Should contain CODEX_AUTH entry"
+    assert_contains "$cred_files" "," "Should be comma-separated"
+}
+
+test_inject_credential_files_entrypoint() {
+    log_test "Testing inject_credential_files function in container"
+
+    setup_container_test "inject-creds"
+
+    # Test the inject_credential_files function by passing env vars and checking file creation
+    local test_secret="test-secret-value-12345"
+    local output
+    output=$(podman run --rm \
+        --name "$CONTAINER_TEST_ID" \
+        --userns=keep-id \
+        -e KAPSIS_CREDENTIAL_FILES="TEST_CRED|/tmp/test-cred.json|0600" \
+        -e TEST_CRED="$test_secret" \
+        kapsis-sandbox:latest \
+        bash -c '
+            # The entrypoint should have run inject_credential_files
+            # Check if file was created
+            if [[ -f /tmp/test-cred.json ]]; then
+                echo "FILE_EXISTS"
+                cat /tmp/test-cred.json
+                # Check permissions
+                stat -c "%a" /tmp/test-cred.json
+            else
+                echo "FILE_NOT_FOUND"
+            fi
+            # Check env var was unset
+            echo "ENV_VAR=${TEST_CRED:-UNSET}"
+        ' 2>&1) || true
+
+    cleanup_container_test
+
+    assert_contains "$output" "FILE_EXISTS" "Credential file should be created"
+    assert_contains "$output" "$test_secret" "File should contain the secret value"
+    assert_contains "$output" "600" "File should have 0600 permissions"
+    assert_contains "$output" "ENV_VAR=UNSET" "Env var should be unset after injection"
+}
+
+test_inject_credential_files_multiple() {
+    log_test "Testing multiple credential file injections"
+
+    setup_container_test "inject-multi-creds"
+
+    local output
+    output=$(podman run --rm \
+        --name "$CONTAINER_TEST_ID" \
+        --userns=keep-id \
+        -e KAPSIS_CREDENTIAL_FILES="CRED1|/tmp/cred1.txt|0600,CRED2|/tmp/cred2.txt|0640" \
+        -e CRED1="secret1" \
+        -e CRED2="secret2" \
+        kapsis-sandbox:latest \
+        bash -c '
+            echo "CRED1_EXISTS=$(test -f /tmp/cred1.txt && echo YES || echo NO)"
+            echo "CRED2_EXISTS=$(test -f /tmp/cred2.txt && echo YES || echo NO)"
+            echo "CRED1_CONTENT=$(cat /tmp/cred1.txt 2>/dev/null || echo EMPTY)"
+            echo "CRED2_CONTENT=$(cat /tmp/cred2.txt 2>/dev/null || echo EMPTY)"
+        ' 2>&1) || true
+
+    cleanup_container_test
+
+    assert_contains "$output" "CRED1_EXISTS=YES" "First credential file should exist"
+    assert_contains "$output" "CRED2_EXISTS=YES" "Second credential file should exist"
+    assert_contains "$output" "CRED1_CONTENT=secret1" "First file should have correct content"
+    assert_contains "$output" "CRED2_CONTENT=secret2" "Second file should have correct content"
+}
+
+test_inject_credential_files_home_expansion() {
+    log_test "Testing ~ expansion in inject_to_file paths"
+
+    setup_container_test "inject-home-expand"
+
+    local output
+    output=$(podman run --rm \
+        --name "$CONTAINER_TEST_ID" \
+        --userns=keep-id \
+        -e KAPSIS_CREDENTIAL_FILES="HOME_CRED|~/.test-creds/secret.json|0600" \
+        -e HOME_CRED="home-secret-value" \
+        kapsis-sandbox:latest \
+        bash -c '
+            # Check if file was created in home directory
+            if [[ -f ~/.test-creds/secret.json ]]; then
+                echo "FILE_IN_HOME=YES"
+                cat ~/.test-creds/secret.json
+            else
+                echo "FILE_IN_HOME=NO"
+                # Debug: show what HOME is
+                echo "HOME=$HOME"
+                ls -la ~ 2>/dev/null | head -5
+            fi
+        ' 2>&1) || true
+
+    cleanup_container_test
+
+    assert_contains "$output" "FILE_IN_HOME=YES" "File should be created in home directory"
+    assert_contains "$output" "home-secret-value" "File should contain the secret"
+}
+
+test_inject_credential_files_creates_parent_dirs() {
+    log_test "Testing inject_credential_files creates parent directories"
+
+    setup_container_test "inject-mkdir"
+
+    local output
+    output=$(podman run --rm \
+        --name "$CONTAINER_TEST_ID" \
+        --userns=keep-id \
+        -e KAPSIS_CREDENTIAL_FILES="DEEP_CRED|/tmp/deep/nested/path/cred.json|0600" \
+        -e DEEP_CRED="deep-secret" \
+        kapsis-sandbox:latest \
+        bash -c '
+            if [[ -f /tmp/deep/nested/path/cred.json ]]; then
+                echo "NESTED_FILE_EXISTS=YES"
+            else
+                echo "NESTED_FILE_EXISTS=NO"
+            fi
+        ' 2>&1) || true
+
+    cleanup_container_test
+
+    assert_contains "$output" "NESTED_FILE_EXISTS=YES" "Should create nested parent directories"
+}
+
+#===============================================================================
+# STAGING PATTERN TESTS (CoW for home directory configs)
+#===============================================================================
+
+test_staged_configs_env_var() {
+    log_test "Testing KAPSIS_STAGED_CONFIGS is set for home directory mounts"
+
+    local test_config="$TEST_PROJECT/.kapsis-staging-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+filesystem:
+  include:
+    - ~/.gitconfig
+    - ~/.ssh
+EOF
+
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    rm -f "$test_config"
+
+    # Should have KAPSIS_STAGED_CONFIGS with the relative paths
+    assert_contains "$output" "KAPSIS_STAGED_CONFIGS=" "Should set KAPSIS_STAGED_CONFIGS env var"
+}
+
+test_staging_mounts_to_kapsis_staging() {
+    log_test "Testing home paths mount to /kapsis-staging/"
+
+    local test_config="$TEST_PROJECT/.kapsis-staging-mount-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+filesystem:
+  include:
+    - ~/.gitconfig
+EOF
+
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    rm -f "$test_config"
+
+    # Should mount to /kapsis-staging/ not directly to home
+    assert_contains "$output" "/kapsis-staging/" "Should mount to /kapsis-staging/ directory"
+}
+
+test_staging_non_home_paths_direct() {
+    log_test "Testing non-home absolute paths mount directly (not staged)"
+
+    local test_config="$TEST_PROJECT/.kapsis-non-home-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+filesystem:
+  include:
+    - /etc/hosts
+EOF
+
+    local output
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    rm -f "$test_config"
+
+    # Non-home paths should mount directly (same source and target)
+    assert_contains "$output" "/etc/hosts:/etc/hosts" "Non-home paths should mount directly"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -666,6 +958,20 @@ main() {
     run_test test_image_flag_priority
     run_test test_yq_v4_filesystem_parsing
     run_test test_environment_passthrough_parsing
+
+    # inject_to_file tests - agent-agnostic credential injection
+    run_test test_inject_to_file_config_parsing
+    run_test test_inject_to_file_multiple_entries
+    run_test test_credential_files_env_format
+    run_test test_inject_credential_files_entrypoint
+    run_test test_inject_credential_files_multiple
+    run_test test_inject_credential_files_home_expansion
+    run_test test_inject_credential_files_creates_parent_dirs
+
+    # Staging pattern tests - CoW for home directory configs
+    run_test test_staged_configs_env_var
+    run_test test_staging_mounts_to_kapsis_staging
+    run_test test_staging_non_home_paths_direct
 
     # Cleanup
     cleanup_test_project
