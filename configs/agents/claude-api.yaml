@@ -1,0 +1,54 @@
+# Claude API Agent Profile (Python SDK)
+#
+# Lightweight agent using Anthropic Python SDK directly.
+# No CLI needed - just API calls.
+#
+# Pros:
+#   - Smaller footprint than full CLI
+#   - Simpler authentication (just ANTHROPIC_API_KEY)
+#   - Works in any Python environment
+#
+# Build the agent-specific image:
+#   ./scripts/build-agent-image.sh claude-api
+#
+# Usage:
+#   ./scripts/launch-agent.sh 1 ~/git/products --agent claude-api --task "Your task"
+
+name: claude-api
+description: Claude via Python SDK (lightweight)
+version: latest
+
+# Installation method
+install:
+  pip: anthropic
+
+# Dependencies
+dependencies:
+  - python >= 3.9
+
+# Authentication requirements
+auth:
+  required:
+    - name: ANTHROPIC_API_KEY
+      description: "Anthropic API key"
+      keychain:
+        macos:
+          service: "Claude Code-credentials"
+        linux:
+          service: "anthropic-api-key"
+
+# No config mounts needed - SDK reads from environment
+
+# Command to execute
+command: >
+  python3 /opt/kapsis/agents/claude-api-agent.py ${TASK_SPEC}
+
+# Working directory
+workdir: /workspace
+
+# Resource recommendations (lighter than CLI)
+resources:
+  memory_min: 2g
+  memory_recommended: 4g
+  cpus_min: 1
+  cpus_recommended: 2

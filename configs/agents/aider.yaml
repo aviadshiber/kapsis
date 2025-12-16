@@ -1,0 +1,61 @@
+# Aider Agent Profile
+#
+# Aider is an AI pair programming tool that works with multiple LLM providers.
+# https://aider.chat
+#
+# Supports Claude, OpenAI, and local models.
+#
+# Build the agent-specific image:
+#   ./scripts/build-agent-image.sh aider
+#
+# Usage:
+#   ./scripts/launch-agent.sh 1 ~/git/products --agent aider --task "Your task"
+
+name: aider
+description: Aider AI pair programmer
+version: latest
+
+# Installation method
+install:
+  pip: aider-chat
+
+# Dependencies
+dependencies:
+  - python >= 3.9
+  - git
+
+# Authentication requirements (at least one provider)
+auth:
+  optional:
+    - name: ANTHROPIC_API_KEY
+      description: "For Claude models"
+      keychain:
+        macos:
+          service: "Claude Code-credentials"
+    - name: OPENAI_API_KEY
+      description: "For OpenAI/GPT models"
+      keychain:
+        macos:
+          service: "openai-api-key"
+
+# Config files to mount
+config_mounts:
+  - source: ~/.aider.conf.yml
+    target: ~/.aider.conf.yml
+    optional: true
+  - source: ~/.gitconfig
+    target: ~/.gitconfig
+
+# Command to execute (--yes for non-interactive)
+command: >
+  aider --yes --message-file ${TASK_SPEC}
+
+# Working directory
+workdir: /workspace
+
+# Resource recommendations
+resources:
+  memory_min: 2g
+  memory_recommended: 4g
+  cpus_min: 1
+  cpus_recommended: 2

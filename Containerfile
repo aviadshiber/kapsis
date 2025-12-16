@@ -94,10 +94,27 @@ RUN mkdir -p $NVM_DIR && \
         npm install -g pnpm@9.15.3"
 
 #===============================================================================
-# AI AGENT CLI TOOLS (Optional - can be mounted from host)
+# AI AGENT CLI TOOLS (Build-time installation)
 #===============================================================================
-# Claude Code - install if ANTHROPIC_API_KEY will be available
-# RUN bash -c "source $NVM_DIR/nvm.sh && npm install -g @anthropic-ai/claude-code"
+# Agents can be installed at build time via build args.
+# This creates agent-specific images (e.g., kapsis-claude:latest)
+#
+# Usage:
+#   podman build --build-arg AGENT_NPM="@anthropic-ai/claude-code" -t kapsis-claude .
+#   podman build --build-arg AGENT_PIP="anthropic aider-chat" -t kapsis-aider .
+
+ARG AGENT_NPM=""
+ARG AGENT_PIP=""
+
+# Install npm-based agents (Claude Code, etc.)
+RUN if [ -n "$AGENT_NPM" ]; then \
+        bash -c "source $NVM_DIR/nvm.sh && npm install -g $AGENT_NPM"; \
+    fi
+
+# Install pip-based agents (Anthropic SDK, Aider, etc.)
+RUN if [ -n "$AGENT_PIP" ]; then \
+        pip3 install --no-cache-dir $AGENT_PIP; \
+    fi
 
 #===============================================================================
 # NON-ROOT USER SETUP
@@ -135,6 +152,9 @@ COPY scripts/entrypoint.sh /opt/kapsis/entrypoint.sh
 COPY scripts/init-git-branch.sh /opt/kapsis/init-git-branch.sh
 COPY scripts/post-exit-git.sh /opt/kapsis/post-exit-git.sh
 COPY scripts/switch-java.sh /opt/kapsis/switch-java.sh
+
+# Create agents directory for custom agent wrapper scripts
+RUN mkdir -p /opt/kapsis/agents && chown ${USER_ID}:${GROUP_ID} /opt/kapsis/agents
 
 # Make all scripts executable and readable
 RUN chmod 755 /opt/kapsis/*.sh /opt/kapsis/lib/*.sh && \
