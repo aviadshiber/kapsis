@@ -121,26 +121,67 @@ create_worktree() {
         log_debug "Fetching from origin to get latest refs..."
         git fetch origin --prune 2>/dev/null || true
 
+        # Check if branch is already checked out in main working directory
+        local main_branch
+        main_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        if [[ "$main_branch" == "$branch" ]]; then
+            log_error "Branch '$branch' is currently checked out in the main repository"
+            log_error "Worktrees cannot share a branch with the main working directory"
+            log_error ""
+            log_error "To fix this, either:"
+            log_error "  1. Switch the main repo to a different branch first:"
+            log_error "     cd $project_path && git checkout main"
+            log_error "  2. Or use a different branch name for the worktree"
+            return 1
+        fi
+
         # Check if branch exists remotely
         log_debug "Checking if branch exists remotely..."
+        local worktree_created=false
         if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             # Branch exists remotely - track it
             log_info "Tracking existing remote branch: origin/$branch"
             log_debug "Running: git worktree add $worktree_path -b $branch origin/$branch"
-            run_git git worktree add "$worktree_path" -b "$branch" "origin/$branch" || \
-            run_git git worktree add "$worktree_path" "$branch"
+            if run_git git worktree add "$worktree_path" -b "$branch" "origin/$branch"; then
+                worktree_created=true
+            elif run_git git worktree add "$worktree_path" "$branch"; then
+                worktree_created=true
+            fi
         elif git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
             # Branch exists locally
             log_info "Using existing local branch: $branch"
             log_debug "Running: git worktree add $worktree_path $branch"
-            run_git git worktree add "$worktree_path" "$branch"
+            if run_git git worktree add "$worktree_path" "$branch"; then
+                worktree_created=true
+            fi
         else
             # Create new branch from current HEAD
             log_info "Creating new branch: $branch"
             log_debug "Running: git worktree add $worktree_path -b $branch"
-            run_git git worktree add "$worktree_path" -b "$branch"
+            if run_git git worktree add "$worktree_path" -b "$branch"; then
+                worktree_created=true
+            fi
         fi
-        log_debug "Worktree creation completed"
+        log_debug "Worktree creation attempt completed"
+    fi
+
+    # Verify worktree was actually created
+    if [[ ! -d "$worktree_path" ]]; then
+        log_error "Worktree directory was not created: $worktree_path"
+        log_error "This can happen when:"
+        log_error "  1. The branch is already checked out elsewhere (including main repo)"
+        log_error "  2. There's a git lock file preventing operations"
+        log_error "  3. Insufficient disk space or permissions"
+        log_error ""
+        log_error "Check 'git worktree list' in $project_path for existing worktrees"
+        return 1
+    fi
+
+    if [[ ! -f "$worktree_path/.git" ]]; then
+        log_error "Worktree directory exists but .git file is missing: $worktree_path"
+        log_error "The worktree may be corrupted. Try running:"
+        log_error "  cd $project_path && git worktree prune && git worktree remove $worktree_path --force"
+        return 1
     fi
 
     log_success "Worktree ready: $worktree_path"

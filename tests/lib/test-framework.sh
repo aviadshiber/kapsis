@@ -236,6 +236,36 @@ assert_command_fails() {
     fi
 }
 
+# assert_true <condition> <message>
+# Evaluates a bash condition and passes if it's true
+# Example: assert_true "[[ -x '$file' ]]" "File should be executable"
+assert_true() {
+    local condition="$1"
+    local message="${2:-Condition should be true}"
+
+    if eval "$condition"; then
+        return 0
+    else
+        _log_failure "$message" "Condition failed: $condition"
+        return 1
+    fi
+}
+
+# assert_false <condition> <message>
+# Evaluates a bash condition and passes if it's false
+# Example: assert_false "[[ -f '$file' ]]" "File should not exist"
+assert_false() {
+    local condition="$1"
+    local message="${2:-Condition should be false}"
+
+    if ! eval "$condition"; then
+        return 0
+    else
+        _log_failure "$message" "Condition should have been false: $condition"
+        return 1
+    fi
+}
+
 #===============================================================================
 # TEST EXECUTION
 #===============================================================================

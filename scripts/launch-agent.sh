@@ -885,6 +885,18 @@ main() {
 
     generate_branch_name
 
+    # Run pre-flight validation for worktree mode
+    if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]]; then
+        log_timer_start "preflight"
+        source "$SCRIPT_DIR/preflight-check.sh"
+        if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"; then
+            status_complete 1 "Pre-flight check failed"
+            exit 1
+        fi
+        log_timer_end "preflight"
+        status_phase "initializing" 15 "Pre-flight check passed"
+    fi
+
     log_timer_start "sandbox_setup"
     setup_sandbox
     log_timer_end "sandbox_setup"
