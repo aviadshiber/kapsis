@@ -36,14 +36,14 @@ jobs:
       - name: Run ShellCheck
         run: |
           # Run ShellCheck on all shell scripts
-          # Using severity level: error, warning, info, style
-          # Excluding some common patterns that may be intentional
+          # -S warning: Only fail on warning level and above (not info/style)
+          # Other config from .shellcheckrc
           failed=0
 
           while IFS= read -r script; do
             if [[ -n "$script" ]]; then
               echo "::group::Checking $script"
-              if ! shellcheck -x -s bash -S warning "$script"; then
+              if ! shellcheck -S warning "$script"; then
                 failed=1
               fi
               echo "::endgroup::"
