@@ -14,14 +14,12 @@ The repository includes a GitHub Actions workflow (`.github/workflows/ci.yml`) t
 |-----|-------------|------|
 | **lint** | Runs ShellCheck on all shell scripts | Always |
 | **quick-tests** | Runs fast tests (no container) | After lint passes |
-| **container-tests** | Runs full container test suite | Only on main branch or labeled PRs |
+| **container-tests** | Runs full container test suite | Only on merge to main |
 | **ci-success** | Summary job for branch protection | Always |
 
-### Triggering Container Tests on PRs
+### Container Tests
 
-Container tests are skipped on PRs by default (they take ~30+ minutes). To run them:
-1. Add the label `run-container-tests` to your PR
-2. Container tests will run on the next commit or workflow re-run
+Container tests only run after merge to main (not on PRs) because they take ~30+ minutes to build the container image and run the full test suite. This keeps PR feedback fast while ensuring thorough testing on main.
 
 ## Branch Protection Rules
 
