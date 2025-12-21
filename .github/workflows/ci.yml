@@ -98,8 +98,6 @@ jobs:
     name: Container Tests
     runs-on: ubuntu-latest
     needs: quick-tests
-    # Only run container tests on main branch or when explicitly requested
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || contains(github.event.pull_request.labels.*.name, 'run-container-tests')
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -155,7 +153,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, quick-tests]
+    needs: [lint, quick-tests, container-tests]
     if: always()
     steps:
       - name: Check all jobs passed
@@ -166,6 +164,10 @@ jobs:
           fi
           if [[ "${{ needs.quick-tests.result }}" != "success" ]]; then
             echo "Quick tests job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.container-tests.result }}" != "success" ]]; then
+            echo "Container tests job failed"
             exit 1
           fi
           echo "All required CI checks passed!"
