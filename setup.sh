@@ -28,6 +28,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LOG_FILE="${SCRIPT_DIR}/.setup.log"
+export LOG_FILE  # Used by logging functions
 
 # Source logging library (setup.sh can run standalone so we need fallback)
 if [[ -f "$SCRIPT_DIR/scripts/lib/logging.sh" ]]; then
@@ -140,8 +141,10 @@ check_result() {
 }
 
 check_os() {
-    local os=$(detect_os)
-    local arch=$(detect_arch)
+    local os
+    local arch
+    os=$(detect_os)
+    arch=$(detect_arch)
 
     case "$os" in
         macos)
@@ -176,7 +179,8 @@ check_git() {
         return
     fi
 
-    local version=$(git --version | sed 's/git version //' | cut -d' ' -f1)
+    local version
+    version=$(git --version | sed 's/git version //' | cut -d' ' -f1)
 
     if version_gte "$version" "$MIN_GIT_VERSION"; then
         check_result pass "Git" "Version $version"
@@ -193,7 +197,8 @@ check_podman() {
         return
     fi
 
-    local version=$(podman --version | awk '{print $3}')
+    local version
+    version=$(podman --version | awk '{print $3}')
 
     if version_gte "$version" "$MIN_PODMAN_VERSION"; then
         check_result pass "Podman" "Version $version"
@@ -204,7 +209,8 @@ check_podman() {
 }
 
 check_podman_machine() {
-    local os=$(detect_os)
+    local os
+    os=$(detect_os)
 
     if [[ "$os" != "macos" ]]; then
         check_result pass "Podman Machine" "Not required on Linux"
@@ -217,7 +223,8 @@ check_podman_machine() {
     fi
 
     # Check if any machine exists
-    local machines=$(podman machine list --format '{{.Name}}' 2>/dev/null || echo "")
+    local machines
+    machines=$(podman machine list --format '{{.Name}}' 2>/dev/null || echo "")
 
     if [[ -z "$machines" ]]; then
         check_result fail "Podman Machine" "No machine configured" \
@@ -226,20 +233,23 @@ check_podman_machine() {
     fi
 
     # Check if machine is running
-    local running=$(podman machine list --format '{{.Name}} {{.Running}}' 2>/dev/null | grep -i "true" || echo "")
+    local running
+    running=$(podman machine list --format '{{.Name}} {{.Running}}' 2>/dev/null | grep -i "true" || echo "")
 
     if [[ -z "$running" ]]; then
         check_result warn "Podman Machine" "Machine exists but not running" \
             "Run: podman machine start"
     else
-        local machine_name=$(echo "$running" | awk '{print $1}')
+        local machine_name
+        machine_name=$(echo "$running" | awk '{print $1}')
         check_result pass "Podman Machine" "Running: $machine_name"
     fi
 }
 
 check_yq() {
     if command_exists yq; then
-        local version=$(yq --version 2>/dev/null | head -1)
+        local version
+        version=$(yq --version 2>/dev/null | head -1)
         check_result pass "yq" "Installed ($version)"
     else
         check_result warn "yq" "Not installed (optional)" \
@@ -256,7 +266,8 @@ check_ssh_keys() {
         return
     fi
 
-    local key_count=$(ls -1 "$ssh_dir"/*.pub 2>/dev/null | wc -l | tr -d ' ')
+    local key_count
+    key_count=$(ls -1 "$ssh_dir"/*.pub 2>/dev/null | wc -l | tr -d ' ')
 
     if [[ "$key_count" -eq 0 ]]; then
         check_result warn "SSH Keys" "No public keys found in ~/.ssh" \
@@ -267,8 +278,10 @@ check_ssh_keys() {
 }
 
 check_git_config() {
-    local name=$(git config --global user.name 2>/dev/null || echo "")
-    local email=$(git config --global user.email 2>/dev/null || echo "")
+    local name
+    local email
+    name=$(git config --global user.name 2>/dev/null || echo "")
+    email=$(git config --global user.email 2>/dev/null || echo "")
 
     if [[ -z "$name" ]] || [[ -z "$email" ]]; then
         check_result warn "Git Config" "User name/email not configured" \
@@ -368,7 +381,8 @@ check_container_image() {
         return
     fi
 
-    local image_exists=$(podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E "^kapsis-sandbox:" || echo "")
+    local image_exists
+    image_exists=$(podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E "^kapsis-sandbox:" || echo "")
 
     if [[ -n "$image_exists" ]]; then
         check_result pass "Container Image" "Built: $image_exists"
@@ -452,14 +466,16 @@ install_podman_macos() {
     fi
 
     # Initialize machine if needed
-    local machines=$(podman machine list --format '{{.Name}}' 2>/dev/null || echo "")
+    local machines
+    machines=$(podman machine list --format '{{.Name}}' 2>/dev/null || echo "")
     if [[ -z "$machines" ]]; then
         log_info "Initializing Podman machine..."
         podman machine init --cpus 4 --memory 8192 --disk-size 100
     fi
 
     # Start machine if not running
-    local running=$(podman machine list --format '{{.Running}}' 2>/dev/null | grep -i "true" || echo "")
+    local running
+    running=$(podman machine list --format '{{.Running}}' 2>/dev/null | grep -i "true" || echo "")
     if [[ -z "$running" ]]; then
         log_info "Starting Podman machine..."
         podman machine start
@@ -494,7 +510,8 @@ install_git() {
         return 0
     fi
 
-    local os=$(detect_os)
+    local os
+    os=$(detect_os)
 
     case "$os" in
         macos)
@@ -520,7 +537,8 @@ install_yq() {
         return 0
     fi
 
-    local os=$(detect_os)
+    local os
+    os=$(detect_os)
 
     case "$os" in
         macos)
@@ -533,7 +551,8 @@ install_yq() {
                 sudo snap install yq
             else
                 # Download binary
-                local arch=$(detect_arch)
+                local arch
+                arch=$(detect_arch)
                 local yq_url="https://github.com/mikefarah/yq/releases/latest/download/yq_linux_${arch}"
                 sudo curl -fsSL "$yq_url" -o /usr/local/bin/yq
                 sudo chmod +x /usr/local/bin/yq
@@ -543,7 +562,8 @@ install_yq() {
 }
 
 run_install() {
-    local os=$(detect_os)
+    local os
+    os=$(detect_os)
 
     log_step "Installing Dependencies"
 
@@ -582,7 +602,8 @@ build_container_image() {
 
     # Make sure Podman is ready
     if [[ "$(detect_os)" == "macos" ]]; then
-        local running=$(podman machine list --format '{{.Running}}' 2>/dev/null | grep -i "true" || echo "")
+        local running
+        running=$(podman machine list --format '{{.Running}}' 2>/dev/null | grep -i "true" || echo "")
         if [[ -z "$running" ]]; then
             log_info "Starting Podman machine..."
             podman machine start || true
