@@ -28,7 +28,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Determine version
         id: version
@@ -67,7 +67,7 @@ jobs:
     needs: validate
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y shellcheck jq
@@ -88,7 +88,7 @@ jobs:
     needs: [validate, test]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install Podman
         run: |
@@ -108,7 +108,7 @@ jobs:
           podman save kapsis:$VERSION | gzip > kapsis-$VERSION.tar.gz
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: container-image
           path: kapsis-*.tar.gz
@@ -120,10 +120,10 @@ jobs:
     needs: [validate, test, build]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Download container image
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: container-image
 

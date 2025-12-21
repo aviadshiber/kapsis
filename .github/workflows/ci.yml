@@ -17,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
@@ -62,7 +62,7 @@ jobs:
     needs: lint
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Install test dependencies
         run: |
@@ -102,7 +102,7 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || contains(github.event.pull_request.labels.*.name, 'run-container-tests')
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Configure git for tests
         run: |
