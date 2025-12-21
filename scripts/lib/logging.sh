@@ -254,7 +254,8 @@ _log() {
     local timestamp=""
     [[ "$KAPSIS_LOG_TIMESTAMPS" == "true" ]] && timestamp="[$(date '+%Y-%m-%d %H:%M:%S')] "
 
-    local context="$(_get_caller_context 2)"
+    local context
+    context="$(_get_caller_context 2)"
     local prefix="[${_KAPSIS_LOG_SCRIPT_NAME:-kapsis}]"
 
     # File format (no colors, includes context)
@@ -312,7 +313,8 @@ log_success() {
     local timestamp=""
     [[ "$KAPSIS_LOG_TIMESTAMPS" == "true" ]] && timestamp="[$(date '+%Y-%m-%d %H:%M:%S')] "
 
-    local context="$(_get_caller_context 1)"
+    local context
+    context="$(_get_caller_context 1)"
     local prefix="[${_KAPSIS_LOG_SCRIPT_NAME:-kapsis}]"
 
     # File format
@@ -396,7 +398,8 @@ log_timer_end() {
     local timer_name="${1:-default}"
     local var_name="_KAPSIS_TIMER_${timer_name}"
     local start_time="${!var_name:-$(date +%s)}"
-    local end_time=$(date +%s)
+    local end_time
+    end_time=$(date +%s)
     local elapsed=$((end_time - start_time))
     log_info "Timer [${timer_name}]: ${elapsed}s elapsed"
 }

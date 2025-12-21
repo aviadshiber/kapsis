@@ -19,7 +19,8 @@ NC='\033[0m'
 TESTS_RUN=0
 TESTS_PASSED=0
 TESTS_FAILED=0
-CURRENT_TEST=""
+CURRENT_TEST=""  # exported for use by test functions
+export CURRENT_TEST
 FAILED_TESTS=()  # Track names of failed tests for re-run command
 
 # Quiet mode - only show pass/fail, suppress verbose output
@@ -449,6 +450,10 @@ check_prerequisites() {
 
 # capture_output <command>
 # Captures stdout, stderr, and exit code
+# Results are exported for use by callers:
+#   CAPTURED_STDOUT - captured standard output
+#   CAPTURED_STDERR - captured standard error
+#   CAPTURED_EXIT_CODE - exit code of the command
 capture_output() {
     local cmd="$1"
     local stdout_file
@@ -465,6 +470,7 @@ capture_output() {
     CAPTURED_STDOUT=$(cat "$stdout_file")
     CAPTURED_STDERR=$(cat "$stderr_file")
     CAPTURED_EXIT_CODE=$exit_code
+    export CAPTURED_STDOUT CAPTURED_STDERR CAPTURED_EXIT_CODE
 
     rm -f "$stdout_file" "$stderr_file"
 }
