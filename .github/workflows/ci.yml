@@ -114,7 +114,10 @@ jobs:
       - name: Install Podman
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman fuse-overlayfs slirp4netns
+          sudo apt-get install -y podman fuse-overlayfs slirp4netns jq
+          # Install yq for YAML parsing
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
 
       - name: Configure Podman for rootless
         run: |
