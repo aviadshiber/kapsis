@@ -75,14 +75,16 @@ log_info "Building image: $FULL_IMAGE"
 log_info "Context: $KAPSIS_ROOT"
 echo ""
 
-# Ensure Podman machine is running
-log_debug "Checking Podman machine status..."
-if ! podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null | grep -q "running"; then
-    log_info "Starting Podman machine..."
-    podman machine start podman-machine-default
-    log_debug "Podman machine started"
-else
-    log_debug "Podman machine already running"
+# Ensure Podman machine is running (macOS only - Linux runs Podman natively)
+if [[ "$(uname)" == "Darwin" ]]; then
+    log_debug "Checking Podman machine status..."
+    if ! podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null | grep -q "running"; then
+        log_info "Starting Podman machine..."
+        podman machine start podman-machine-default
+        log_debug "Podman machine started"
+    else
+        log_debug "Podman machine already running"
+    fi
 fi
 
 # Build image
