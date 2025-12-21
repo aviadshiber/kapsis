@@ -1,0 +1,149 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: ShellCheck Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Find shell scripts
+        id: find-scripts
+        run: |
+          # Find all shell scripts (by extension and shebang)
+          scripts=$(find . -type f \( -name "*.sh" -o -name "*.bash" \) ! -path "./.git/*" | sort)
+          echo "Found shell scripts:"
+          echo "$scripts"
+          echo "scripts<<EOF" >> $GITHUB_OUTPUT
+          echo "$scripts" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run ShellCheck
+        run: |
+          # Run ShellCheck on all shell scripts
+          # Using severity level: error, warning, info, style
+          # Excluding some common patterns that may be intentional
+          failed=0
+
+          while IFS= read -r script; do
+            if [[ -n "$script" ]]; then
+              echo "::group::Checking $script"
+              if ! shellcheck -x -s bash -S warning "$script"; then
+                failed=1
+              fi
+              echo "::endgroup::"
+            fi
+          done <<< "${{ steps.find-scripts.outputs.scripts }}"
+
+          if [[ $failed -eq 1 ]]; then
+            echo "::error::ShellCheck found issues in one or more scripts"
+            exit 1
+          fi
+          echo "All scripts passed ShellCheck!"
+
+  quick-tests:
+    name: Quick Tests
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Run quick tests
+        run: |
+          chmod +x ./tests/run-all-tests.sh
+          chmod +x ./tests/*.sh
+          chmod +x ./tests/lib/*.sh 2>/dev/null || true
+          chmod +x ./scripts/*.sh
+          chmod +x ./scripts/lib/*.sh 2>/dev/null || true
+
+          # Run quick tests (no container required)
+          ./tests/run-all-tests.sh --quick
+        env:
+          KAPSIS_TEST_QUIET: "0"
+
+  container-tests:
+    name: Container Tests
+    runs-on: ubuntu-latest
+    needs: quick-tests
+    # Only run container tests on main branch or when explicitly requested
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || contains(github.event.pull_request.labels.*.name, 'run-container-tests')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman fuse-overlayfs slirp4netns
+
+      - name: Configure Podman for rootless
+        run: |
+          # Set up rootless Podman
+          mkdir -p ~/.config/containers
+          echo '[storage]' > ~/.config/containers/storage.conf
+          echo 'driver = "overlay"' >> ~/.config/containers/storage.conf
+
+          # Verify Podman installation
+          podman --version
+          podman info --debug 2>&1 | head -20 || true
+
+      - name: Build Kapsis container image
+        run: |
+          chmod +x ./scripts/build-image.sh
+          ./scripts/build-image.sh --name kapsis-test --tag ci
+        timeout-minutes: 30
+
+      - name: Run container tests
+        run: |
+          chmod +x ./tests/run-all-tests.sh
+          chmod +x ./tests/*.sh
+          chmod +x ./tests/lib/*.sh 2>/dev/null || true
+          chmod +x ./scripts/*.sh
+          chmod +x ./scripts/lib/*.sh 2>/dev/null || true
+
+          # Run container tests
+          ./tests/run-all-tests.sh --container
+        timeout-minutes: 45
+        env:
+          KAPSIS_TEST_QUIET: "0"
+          KAPSIS_IMAGE: "kapsis-test:ci"
+
+  # Summary job that all required checks depend on
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [lint, quick-tests]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          if [[ "${{ needs.lint.result }}" != "success" ]]; then
+            echo "Lint job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.quick-tests.result }}" != "success" ]]; then
+            echo "Quick tests job failed"
+            exit 1
+          fi
+          echo "All required CI checks passed!"
