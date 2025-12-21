@@ -35,8 +35,8 @@ jobs:
   container-scan:
     name: Container Vulnerability Scan
     runs-on: ubuntu-latest
-    # Only run on main branch or scheduled runs to avoid build time on PRs
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || github.event_name == 'schedule'
+    # Only run on merge to main (not on PRs) to save build time
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6

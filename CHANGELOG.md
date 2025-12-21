@@ -9,13 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - GitHub Actions CI/CD pipeline with ShellCheck and tests
-- Branch protection setup script
+- Branch protection setup script for enforcing PR-only merges
 - Security policy (SECURITY.md)
 - Dependabot configuration for automated updates
-- CodeQL security scanning
 - Container vulnerability scanning with Trivy
+- Secret detection with TruffleHog
 - Issue and PR templates
 - Pre-commit hooks configuration
+- CODEOWNERS file for automatic review requests
+
+### Fixed
+- ShellCheck warnings in all shell scripts
+- Podman machine checks now only run on macOS (Linux runs natively)
+- Dry-run mode properly skips container and pre-flight checks
+- yq raw output mode for proper YAML parsing
+
+### Changed
+- Container tests and security scans only run on merge to main (not on PRs)
+- CI Success job properly gates all required checks
 
 ## [1.0.0] - 2024-XX-XX
 

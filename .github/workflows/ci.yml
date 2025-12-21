@@ -98,8 +98,8 @@ jobs:
     name: Container Tests
     runs-on: ubuntu-latest
     needs: quick-tests
-    # Only run container tests on main branch or when explicitly requested
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' || contains(github.event.pull_request.labels.*.name, 'run-container-tests')
+    # Only run on merge to main (not on PRs)
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -114,7 +114,10 @@ jobs:
       - name: Install Podman
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman fuse-overlayfs slirp4netns
+          sudo apt-get install -y podman fuse-overlayfs slirp4netns jq
+          # Install yq for YAML parsing
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
 
       - name: Configure Podman for rootless
         run: |
@@ -152,7 +155,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, quick-tests]
+    needs: [lint, quick-tests, container-tests]
     if: always()
     steps:
       - name: Check all jobs passed
@@ -163,6 +166,11 @@ jobs:
           fi
           if [[ "${{ needs.quick-tests.result }}" != "success" ]]; then
             echo "Quick tests job failed"
+            exit 1
+          fi
+          # Container tests only run on main, allow skipped on PRs
+          if [[ "${{ needs.container-tests.result }}" != "success" && "${{ needs.container-tests.result }}" != "skipped" ]]; then
+            echo "Container tests job failed"
             exit 1
           fi
           echo "All required CI checks passed!"
