@@ -84,7 +84,7 @@ test_config_not_found_error() {
 
     output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" \
         --config "/nonexistent/path/config.yaml" \
-        --task "test" 2>&1) || exit_code=$?
+        --task "test" --dry-run 2>&1) || exit_code=$?
 
     assert_not_equals 0 "$exit_code" "Should fail when config not found"
     assert_contains "$output" "not found" "Should indicate file not found"

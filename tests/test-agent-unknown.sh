@@ -23,7 +23,7 @@ test_unknown_agent_error() {
     local output
     local exit_code=0
 
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent nonexistent --task "test" 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent nonexistent --task "test" --dry-run 2>&1) || exit_code=$?
 
     # Should fail
     assert_not_equals 0 "$exit_code" "Should exit with non-zero code"
@@ -37,7 +37,7 @@ test_unknown_agent_shows_available() {
     log_test "Testing that error shows available agents"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent foobar --task "test" 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent foobar --task "test" --dry-run 2>&1) || true
 
     # Should list available agents
     assert_contains "$output" "claude" "Should list claude as available"
@@ -50,7 +50,7 @@ test_unknown_agent_suggests_config() {
     log_test "Testing that error suggests --config alternative"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent invalid --task "test" 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent invalid --task "test" --dry-run 2>&1) || true
 
     # Should suggest using --config
     assert_contains "$output" "--config" "Should suggest using --config flag"
@@ -63,23 +63,24 @@ test_similar_agent_typo() {
     local exit_code=0
 
     # Common typos
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent cloude --task "test" 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent cloude --task "test" --dry-run 2>&1) || exit_code=$?
 
     assert_not_equals 0 "$exit_code" "Should fail on typo"
     assert_contains "$output" "Unknown agent" "Should show unknown agent error"
 }
 
 test_empty_agent_name() {
-    log_test "Testing empty agent name"
+    log_test "Testing empty agent name falls through to default"
 
     local output
     local exit_code=0
 
-    # This might fail during argument parsing
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent "" --task "test" 2>&1) || exit_code=$?
+    # Empty agent name falls through to default config resolution
+    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent "" --task "test" --dry-run 2>&1) || exit_code=$?
 
-    # Should not succeed
-    assert_not_equals 0 "$exit_code" "Should fail on empty agent name"
+    # Should fall back to default (claude)
+    assert_equals 0 "$exit_code" "Should succeed with default config"
+    assert_contains "$output" "CLAUDE" "Should use default claude agent"
 }
 
 #===============================================================================

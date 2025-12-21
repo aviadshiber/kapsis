@@ -301,26 +301,32 @@ validate_inputs() {
         fi
     fi
 
-    # Check Podman is available
-    log_debug "Checking Podman availability..."
-    if ! command -v podman &> /dev/null; then
-        log_error "Podman is not installed or not in PATH"
-        exit 1
-    fi
-    log_debug "Podman found at: $(command -v podman)"
-
-    # Check Podman machine is running
-    log_debug "Checking Podman machine status..."
-    if ! podman machine inspect podman-machine-default &>/dev/null || \
-       [[ "$(podman machine inspect podman-machine-default --format '{{.State}}')" != "running" ]]; then
-        log_warn "Podman machine is not running. Attempting to start..."
-        podman machine start podman-machine-default || {
-            log_error "Failed to start Podman machine. Please run: podman machine start"
+    # Check Podman is available (skip in dry-run mode)
+    if [[ "$DRY_RUN" != "true" ]]; then
+        log_debug "Checking Podman availability..."
+        if ! command -v podman &> /dev/null; then
+            log_error "Podman is not installed or not in PATH"
             exit 1
-        }
-        log_success "Podman machine started"
+        fi
+        log_debug "Podman found at: $(command -v podman)"
+
+        # Check Podman machine is running (macOS only)
+        if [[ "$(uname)" == "Darwin" ]]; then
+            log_debug "Checking Podman machine status..."
+            if ! podman machine inspect podman-machine-default &>/dev/null || \
+               [[ "$(podman machine inspect podman-machine-default --format '{{.State}}')" != "running" ]]; then
+                log_warn "Podman machine is not running. Attempting to start..."
+                podman machine start podman-machine-default || {
+                    log_error "Failed to start Podman machine. Please run: podman machine start"
+                    exit 1
+                }
+                log_success "Podman machine started"
+            else
+                log_debug "Podman machine is running"
+            fi
+        fi
     else
-        log_debug "Podman machine is running"
+        log_debug "Skipping Podman checks (dry-run mode)"
     fi
     log_debug "Input validation completed successfully"
 }
@@ -412,10 +418,10 @@ parse_config() {
         GIT_COMMIT_MSG=$(yq -r '.git.auto_push.commit_message // "feat: AI agent changes"' "$CONFIG_FILE")
 
         # Parse filesystem includes
-        FILESYSTEM_INCLUDES=$(yq '.filesystem.include[]' "$CONFIG_FILE" 2>/dev/null || echo "")
+        FILESYSTEM_INCLUDES=$(yq -r '.filesystem.include[]' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse environment passthrough
-        ENV_PASSTHROUGH=$(yq '.environment.passthrough[]' "$CONFIG_FILE" 2>/dev/null || echo "")
+        ENV_PASSTHROUGH=$(yq -r '.environment.passthrough[]' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse environment set
         ENV_SET=$(yq -r '.environment.set // {}' "$CONFIG_FILE" 2>/dev/null || echo "{}")
@@ -886,8 +892,8 @@ main() {
 
     generate_branch_name
 
-    # Run pre-flight validation for worktree mode
-    if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]]; then
+    # Run pre-flight validation for worktree mode (skip in dry-run)
+    if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]] && [[ "$DRY_RUN" != "true" ]]; then
         log_timer_start "preflight"
         source "$SCRIPT_DIR/preflight-check.sh"
         if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"; then
