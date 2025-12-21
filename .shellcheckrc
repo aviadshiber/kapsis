@@ -1,0 +1,23 @@
+# ShellCheck configuration
+# https://github.com/koalaman/shellcheck/wiki/Directive
+
+# Default shell dialect
+shell=bash
+
+# Enable external sourcing
+external-sources=true
+
+# Severity threshold (error, warning, info, style)
+# CI uses 'warning', local development can use 'info' for more feedback
+severity=warning
+
+# Excluded checks (use sparingly and document reasons)
+# SC1090: Can't follow non-constant source - unavoidable with dynamic sourcing
+# SC1091: Not following sourced file - external dependencies
+disable=SC1090,SC1091
+
+# Enable optional checks
+enable=add-default-case
+enable=avoid-nullary-conditions
+enable=check-unassigned-uppercase
+enable=quote-safe-variables
