@@ -399,6 +399,7 @@ parse_config() {
     if command -v yq &> /dev/null; then
         log_debug "Using yq for config parsing"
         AGENT_COMMAND=$(yq -r '.agent.command // "bash"' "$CONFIG_FILE")
+        export AGENT_WORKDIR
         AGENT_WORKDIR=$(yq -r '.agent.workdir // "/workspace"' "$CONFIG_FILE")
         RESOURCE_MEMORY=$(yq -r '.resources.memory // "8g"' "$CONFIG_FILE")
         RESOURCE_CPUS=$(yq -r '.resources.cpus // "4"' "$CONFIG_FILE")
@@ -427,7 +428,7 @@ parse_config() {
     else
         log_warn "yq not found. Using default config values."
         AGENT_COMMAND="bash"
-        AGENT_WORKDIR="/workspace"
+        export AGENT_WORKDIR="/workspace"
         RESOURCE_MEMORY="8g"
         RESOURCE_CPUS="4"
         SANDBOX_UPPER_BASE="$HOME/.ai-sandboxes"

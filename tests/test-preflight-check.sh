@@ -13,6 +13,7 @@
 # - Spec file validation
 # - Worktree conflict detection
 #===============================================================================
+# shellcheck disable=SC1090  # Dynamic source paths are intentional in tests
 
 set -euo pipefail
 

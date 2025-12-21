@@ -9,6 +9,7 @@
 # - Multiple parallel agents have separate files
 # - Exit code and PR URL captured correctly
 #===============================================================================
+# shellcheck disable=SC1090  # Dynamic source paths are intentional in tests
 
 set -euo pipefail
 

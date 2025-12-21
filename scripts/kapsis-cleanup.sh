@@ -43,7 +43,6 @@ PROJECT_FILTER=""
 AGENT_FILTER=""
 
 # Colors
-RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
@@ -114,7 +113,8 @@ format_size() {
 get_dir_size() {
     local dir="$1"
     if [[ -d "$dir" ]]; then
-        local kb=$(du -sk "$dir" 2>/dev/null | cut -f1)
+        local kb
+        kb=$(du -sk "$dir" 2>/dev/null | cut -f1)
         echo $((${kb:-0} * 1024))
     else
         echo 0
@@ -163,7 +163,8 @@ clean_worktrees() {
 
     for worktree in "$WORKTREE_DIR"/*; do
         [[ -d "$worktree" ]] || continue
-        local name=$(basename "$worktree")
+        local name
+        name=$(basename "$worktree")
 
         # Apply filters
         if [[ -n "$PROJECT_FILTER" ]] && [[ ! "$name" =~ ^${PROJECT_FILTER}- ]]; then
@@ -173,16 +174,20 @@ clean_worktrees() {
             continue
         fi
 
-        local size=$(get_dir_size "$worktree")
-        local size_human=$(format_size "$size")
+        local size
+        size=$(get_dir_size "$worktree")
+        local size_human
+        size_human=$(format_size "$size")
 
         if [[ "$DRY_RUN" == "true" ]]; then
             print_item "worktree" "$name" "$size_human"
         else
             # Find the original git repo to prune from
             if [[ -f "$worktree/.git" ]]; then
-                local git_dir=$(cat "$worktree/.git" | grep "gitdir:" | cut -d' ' -f2-)
-                local main_repo=$(dirname "$(dirname "$git_dir")")
+                local git_dir
+                git_dir=$(grep "gitdir:" "$worktree/.git" | cut -d' ' -f2-)
+                local main_repo
+                main_repo=$(dirname "$(dirname "$git_dir")")
                 if [[ -d "$main_repo/.git" ]]; then
                     git -C "$main_repo" worktree remove "$worktree" --force 2>/dev/null || rm -rf "$worktree"
                 else
@@ -222,7 +227,8 @@ clean_sandboxes() {
 
     for sandbox in "$SANDBOX_DIR"/*; do
         [[ -d "$sandbox" ]] || continue
-        local name=$(basename "$sandbox")
+        local name
+        name=$(basename "$sandbox")
 
         # Skip non-kapsis sandboxes (those not matching pattern)
         if [[ ! "$name" =~ ^[a-zA-Z0-9._-]+-[0-9]+$ ]] && [[ ! "$name" =~ ^\.kapsis- ]] && [[ ! "$name" =~ ^kapsis- ]]; then
@@ -244,8 +250,10 @@ clean_sandboxes() {
             fi
         fi
 
-        local size=$(get_dir_size "$sandbox")
-        local size_human=$(format_size "$size")
+        local size
+        size=$(get_dir_size "$sandbox")
+        local size_human
+        size_human=$(format_size "$size")
 
         if [[ "$DRY_RUN" == "true" ]]; then
             print_item "sandbox" "$name" "$size_human"
@@ -317,7 +325,8 @@ clean_status() {
 
     for status_file in "$STATUS_DIR"/kapsis-*.json; do
         [[ -f "$status_file" ]] || continue
-        local name=$(basename "$status_file")
+        local name
+        name=$(basename "$status_file")
 
         # Apply project filter
         if [[ -n "$PROJECT_FILTER" ]] && [[ ! "$name" =~ ^kapsis-${PROJECT_FILTER}- ]]; then
@@ -325,14 +334,17 @@ clean_status() {
         fi
 
         # Check if completed (only clean completed status files)
-        local phase=$(grep -o '"phase"[[:space:]]*:[[:space:]]*"[^"]*"' "$status_file" 2>/dev/null | cut -d'"' -f4 || echo "")
+        local phase
+        phase=$(grep -o '"phase"[[:space:]]*:[[:space:]]*"[^"]*"' "$status_file" 2>/dev/null | cut -d'"' -f4 || echo "")
         if [[ "$phase" != "complete" ]] && [[ "$CLEAN_ALL" != "true" ]]; then
             log_debug "Skipping active status file: $name (phase: $phase)"
             continue
         fi
 
-        local size=$(stat -f%z "$status_file" 2>/dev/null || stat -c%s "$status_file" 2>/dev/null || echo 0)
-        local size_human=$(format_size "$size")
+        local size
+        size=$(stat -f%z "$status_file" 2>/dev/null || stat -c%s "$status_file" 2>/dev/null || echo 0)
+        local size_human
+        size_human=$(format_size "$size")
 
         if [[ "$DRY_RUN" == "true" ]]; then
             print_item "status" "$name" "$size_human"
@@ -368,15 +380,18 @@ clean_sanitized_git() {
 
     for git_dir in "$SANITIZED_GIT_DIR"/*; do
         [[ -d "$git_dir" ]] || continue
-        local name=$(basename "$git_dir")
+        local name
+        name=$(basename "$git_dir")
 
         # Apply project filter
         if [[ -n "$PROJECT_FILTER" ]] && [[ ! "$name" =~ ^${PROJECT_FILTER}- ]]; then
             continue
         fi
 
-        local size=$(get_dir_size "$git_dir")
-        local size_human=$(format_size "$size")
+        local size
+        size=$(get_dir_size "$git_dir")
+        local size_human
+        size_human=$(format_size "$size")
 
         if [[ "$DRY_RUN" == "true" ]]; then
             print_item "sanitized-git" "$name" "$size_human"
@@ -410,7 +425,8 @@ clean_containers() {
     local count=0
 
     # Get stopped kapsis containers
-    local containers=$(podman ps -a --filter "name=kapsis" --filter "status=exited" --filter "status=created" --format "{{.Names}}" 2>/dev/null || true)
+    local containers
+    containers=$(podman ps -a --filter "name=kapsis" --filter "status=exited" --filter "status=created" --format "{{.Names}}" 2>/dev/null || true)
 
     if [[ -z "$containers" ]]; then
         echo "  No stopped containers to clean"
@@ -455,7 +471,8 @@ clean_volumes() {
     local total_size=0
 
     # Get kapsis volumes
-    local volumes=$(podman volume ls --format "{{.Name}}" 2>/dev/null | grep -E "^kapsis-" || true)
+    local volumes
+    volumes=$(podman volume ls --format "{{.Name}}" 2>/dev/null | grep -E "^kapsis-" || true)
 
     if [[ -z "$volumes" ]]; then
         echo "  No volumes to clean"
@@ -471,12 +488,14 @@ clean_volumes() {
         fi
 
         # Get volume size (approximate)
-        local mount_point=$(podman volume inspect "$volume" --format "{{.Mountpoint}}" 2>/dev/null || echo "")
+        local mount_point
+        mount_point=$(podman volume inspect "$volume" --format "{{.Mountpoint}}" 2>/dev/null || echo "")
         local size=0
         if [[ -n "$mount_point" ]] && [[ -d "$mount_point" ]]; then
             size=$(get_dir_size "$mount_point")
         fi
-        local size_human=$(format_size "$size")
+        local size_human
+        size_human=$(format_size "$size")
 
         if [[ "$DRY_RUN" == "true" ]]; then
             print_item "volume" "$volume" "$size_human"
@@ -513,9 +532,12 @@ clean_logs() {
     # Find log files older than 7 days
     while IFS= read -r log_file; do
         [[ -z "$log_file" ]] && continue
-        local name=$(basename "$log_file")
-        local size=$(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null || echo 0)
-        local size_human=$(format_size "$size")
+        local name
+        name=$(basename "$log_file")
+        local size
+        size=$(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null || echo 0)
+        local size_human
+        size_human=$(format_size "$size")
 
         if [[ "$DRY_RUN" == "true" ]]; then
             print_item "log" "$name" "$size_human"
