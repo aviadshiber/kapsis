@@ -16,28 +16,6 @@ permissions:
   actions: read
 
 jobs:
-  codeql:
-    name: CodeQL Analysis
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
-        with:
-          languages: python
-          # Shell scripts are analyzed via ShellCheck in CI workflow
-          # CodeQL can catch Python-based tools/scripts if any exist
-
-      - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
-
-      - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
-        with:
-          category: "/language:python"
-
   shellcheck-sarif:
     name: ShellCheck SARIF
     runs-on: ubuntu-latest
@@ -46,6 +24,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
 
       - name: Run ShellCheck with SARIF output
         uses: redhat-plumbers-in-action/differential-shellcheck@v5

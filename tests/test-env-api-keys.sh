@@ -528,8 +528,6 @@ EOF
 
     # Home paths should be mounted to /kapsis-staging/ (staging pattern)
     # Then entrypoint copies them to container's $HOME (preserving symlinks)
-    local expected_home="${HOME}"
-
     # Check that staging pattern is used
     if echo "$output" | grep -q "/kapsis-staging/.local"; then
         return 0

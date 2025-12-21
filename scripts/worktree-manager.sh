@@ -137,30 +137,22 @@ create_worktree() {
 
         # Check if branch exists remotely
         log_debug "Checking if branch exists remotely..."
-        local worktree_created=false
         if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
             # Branch exists remotely - track it
             log_info "Tracking existing remote branch: origin/$branch"
             log_debug "Running: git worktree add $worktree_path -b $branch origin/$branch"
-            if run_git git worktree add "$worktree_path" -b "$branch" "origin/$branch"; then
-                worktree_created=true
-            elif run_git git worktree add "$worktree_path" "$branch"; then
-                worktree_created=true
-            fi
+            run_git git worktree add "$worktree_path" -b "$branch" "origin/$branch" ||
+                run_git git worktree add "$worktree_path" "$branch" || true
         elif git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
             # Branch exists locally
             log_info "Using existing local branch: $branch"
             log_debug "Running: git worktree add $worktree_path $branch"
-            if run_git git worktree add "$worktree_path" "$branch"; then
-                worktree_created=true
-            fi
+            run_git git worktree add "$worktree_path" "$branch" || true
         else
             # Create new branch from current HEAD
             log_info "Creating new branch: $branch"
             log_debug "Running: git worktree add $worktree_path -b $branch"
-            if run_git git worktree add "$worktree_path" -b "$branch"; then
-                worktree_created=true
-            fi
+            run_git git worktree add "$worktree_path" -b "$branch" || true
         fi
         log_debug "Worktree creation attempt completed"
     fi

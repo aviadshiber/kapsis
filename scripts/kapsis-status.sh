@@ -341,7 +341,7 @@ main() {
     fi
 
     if [[ "$watch_mode" == "true" ]]; then
-        watch_all
+        watch_all 2
         return 0
     fi
 

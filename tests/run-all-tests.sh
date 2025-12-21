@@ -21,7 +21,7 @@ source "$TESTS_DIR/lib/test-framework.sh"
 
 CATEGORY=""
 QUICK_MODE=false
-VERBOSE=false
+export VERBOSE=false
 QUIET_MODE_FLAG=false
 FAILED_SCRIPTS=()  # Track failed test scripts for re-run command
 
@@ -84,7 +84,7 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         -v|--verbose)
-            VERBOSE=true
+            export VERBOSE=true
             shift
             ;;
         -h|--help)

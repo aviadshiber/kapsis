@@ -139,7 +139,7 @@ push_changes() {
 # Also sets the global PR_URL variable for status reporting.
 #===============================================================================
 # Global variable for PR URL (set by generate_pr_url, used by status reporting)
-PR_URL=""
+export PR_URL=""
 
 generate_pr_url() {
     local worktree_path="$1"

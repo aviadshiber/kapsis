@@ -73,7 +73,9 @@ if [[ ! -f "$PROFILE_PATH" ]]; then
     log_error "Agent profile not found: $PROFILE_PATH"
     echo ""
     echo "Available profiles:"
-    ls -1 "$KAPSIS_ROOT/configs/agents/"*.yaml 2>/dev/null | xargs -I{} basename {} .yaml | sed 's/^/  /'
+    for profile in "$KAPSIS_ROOT/configs/agents/"*.yaml; do
+        [[ -f "$profile" ]] && echo "  $(basename "$profile" .yaml)"
+    done
     exit 1
 fi
 

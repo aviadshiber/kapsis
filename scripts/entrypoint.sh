@@ -284,6 +284,10 @@ setup_fuse_overlay() {
 setup_environment() {
     log_info "Initializing environment..."
 
+    # Set default paths for SDKMAN and NVM if not set
+    SDKMAN_DIR="${SDKMAN_DIR:-$HOME/.sdkman}"
+    NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+
     # Source SDKMAN (disable strict mode temporarily for external scripts)
     if [[ -f "$SDKMAN_DIR/bin/sdkman-init.sh" ]]; then
         set +u
