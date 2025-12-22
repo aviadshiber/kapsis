@@ -5,6 +5,12 @@
 <h1 align="center">Kapsis</h1>
 
 <p align="center">
+  <a href="https://github.com/aviadshiber/kapsis/actions/workflows/ci.yml"><img src="https://github.com/aviadshiber/kapsis/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/aviadshiber/kapsis/actions/workflows/security.yml"><img src="https://github.com/aviadshiber/kapsis/actions/workflows/security.yml/badge.svg" alt="Security"></a>
+  <img src="https://img.shields.io/badge/commits-signed-brightgreen" alt="Signed Commits">
+</p>
+
+<p align="center">
   <strong>Hermetically Isolated AI Agent Sandbox for Parallel Development</strong>
 </p>
 
