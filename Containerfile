@@ -61,10 +61,11 @@ ENV SDKMAN_DIR=/opt/sdkman
 RUN curl -s "https://get.sdkman.io?rcupdate=false" | bash
 
 # Install Java 17 (default) and Java 8
+# Note: Use current SDKMAN versions - check with 'sdk list java' if build fails
 RUN bash -c "source $SDKMAN_DIR/bin/sdkman-init.sh && \
-    sdk install java 17.0.9-tem && \
-    sdk install java 8.0.392-tem && \
-    sdk default java 17.0.9-tem"
+    sdk install java 17.0.17-tem && \
+    sdk install java 8.0.472-tem && \
+    sdk default java 17.0.17-tem"
 
 # Set Java environment
 ENV JAVA_HOME=/opt/sdkman/candidates/java/current
