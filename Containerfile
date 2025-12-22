@@ -17,7 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     git \
     jq \
-    yq \
     unzip \
     zip \
     ca-certificates \
@@ -50,6 +49,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Create symlinks for common tool names
 RUN ln -sf /usr/bin/fdfind /usr/bin/fd
+
+# Install yq (Mike Farah's yq) - not available in Ubuntu 24.04 apt repos
+RUN wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 && \
+    chmod +x /usr/local/bin/yq
 
 #===============================================================================
 # JAVA INSTALLATION (SDKMAN for multiple versions)
