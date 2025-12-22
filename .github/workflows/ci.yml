@@ -144,8 +144,8 @@ jobs:
           chmod +x ./scripts/*.sh
           chmod +x ./scripts/lib/*.sh 2>/dev/null || true
 
-          # Run container tests
-          ./tests/run-all-tests.sh --container
+          # Run all tests (includes container tests)
+          ./tests/run-all-tests.sh
         timeout-minutes: 45
         env:
           KAPSIS_TEST_QUIET: "0"
