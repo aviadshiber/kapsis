@@ -15,11 +15,12 @@
 #   ./scripts/setup-github-protection.sh [OPTIONS]
 #
 # Options:
-#   --branch BRANCH    Branch to protect (default: main)
-#   --require-reviews  Require at least 1 PR review (default: disabled)
-#   --review-count N   Number of required reviews (default: 1)
-#   --dry-run          Show what would be done without making changes
-#   --help             Show this help message
+#   --branch BRANCH         Branch to protect (default: main)
+#   --require-reviews       Require at least 1 PR review (default: disabled)
+#   --review-count N        Number of required reviews (default: 1)
+#   --require-signed        Require signed commits (default: disabled)
+#   --dry-run               Show what would be done without making changes
+#   --help                  Show this help message
 
 set -euo pipefail
 
@@ -34,6 +35,7 @@ NC='\033[0m' # No Color
 BRANCH="main"
 REQUIRE_REVIEWS=false
 REVIEW_COUNT=1
+REQUIRE_SIGNED=false
 DRY_RUN=false
 
 # Parse arguments
@@ -50,6 +52,10 @@ while [[ $# -gt 0 ]]; do
         --review-count)
             REVIEW_COUNT="$2"
             shift 2
+            ;;
+        --require-signed)
+            REQUIRE_SIGNED=true
+            shift
             ;;
         --dry-run)
             DRY_RUN=true
@@ -166,6 +172,29 @@ EOF
     echo "$rules"
 }
 
+# Enable signed commits requirement (separate API call)
+enable_signed_commits() {
+    if [[ "$REQUIRE_SIGNED" != "true" ]]; then
+        return 0
+    fi
+
+    log_info "Enabling signed commits requirement..."
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_warn "[DRY RUN] Would enable signed commits requirement"
+        return 0
+    fi
+
+    if gh api \
+        --method POST \
+        "repos/{owner}/{repo}/branches/$BRANCH/protection/required_signatures" \
+        > /dev/null 2>&1; then
+        log_success "Signed commits requirement enabled!"
+    else
+        log_warn "Could not enable signed commits (may require admin token or already enabled)"
+    fi
+}
+
 # Apply protection rules
 apply_protection() {
     local rules
@@ -212,6 +241,9 @@ show_summary() {
         echo "  - At least $REVIEW_COUNT PR review(s) required"
         echo "  - Stale reviews are dismissed on new pushes"
     fi
+    if [[ "$REQUIRE_SIGNED" == "true" ]]; then
+        echo "  - Signed commits required"
+    fi
     echo ""
     echo "CI workflow: .github/workflows/ci.yml"
     echo "Required check: 'CI Success'"
@@ -231,6 +263,7 @@ main() {
     check_prerequisites
     get_current_rules
     apply_protection
+    enable_signed_commits
 
     if [[ "$DRY_RUN" != "true" ]]; then
         show_summary
