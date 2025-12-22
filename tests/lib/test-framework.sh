@@ -422,14 +422,17 @@ check_prerequisites() {
         missing+=("yq")
     fi
 
-    # Check Kapsis image
-    if ! podman image exists kapsis-sandbox:latest 2>/dev/null; then
-        missing+=("kapsis-sandbox image (run ./scripts/build-image.sh)")
+    # Check Kapsis image (use KAPSIS_IMAGE env var if set)
+    local image_name="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
+    if ! podman image exists "$image_name" 2>/dev/null; then
+        missing+=("$image_name image (run ./scripts/build-image.sh)")
     fi
 
-    # Check Podman machine
-    if ! podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null | grep -q "running"; then
-        missing+=("podman machine (run: podman machine start)")
+    # Check Podman machine (macOS only - Linux runs Podman natively)
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if ! podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null | grep -q "running"; then
+            missing+=("podman machine (run: podman machine start)")
+        fi
     fi
 
     if [[ ${#missing[@]} -gt 0 ]]; then
