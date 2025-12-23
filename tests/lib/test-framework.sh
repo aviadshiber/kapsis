@@ -575,7 +575,7 @@ setup_container_test() {
     mkdir -p "$CONTAINER_TEST_SANDBOX/work"
 
     # Make upper and work directories world-writable for rootless Podman
-    # Without --userns=keep-id, the container user may have different UID
+    # Even with --userns=keep-id, overlay mount internals may need broader permissions
     chmod 777 "$CONTAINER_TEST_UPPER" "$CONTAINER_TEST_SANDBOX/work"
 
     log_info "Container test setup: $CONTAINER_TEST_ID"
@@ -661,19 +661,12 @@ run_in_container() {
             $KAPSIS_TEST_IMAGE \
             bash -c "$command" 2>&1
     else
-        # Overlay-based isolation (native Linux)
-        # On Linux, run as root (--user=0) to avoid permission issues with overlay
-        # macOS uses --userns=keep-id for proper UID mapping with Podman machine
-        local user_opt=""
-        if [[ "$_TEST_OS" == "Darwin" ]]; then
-            user_opt="--userns=keep-id"
-        else
-            user_opt="--user=0"
-        fi
+        # Native overlay mode - only used when check_overlay_rw_support() passes
+        # SECURITY: Always use --userns=keep-id for rootless, non-privileged containers
         podman run --rm \
             --name "$CONTAINER_TEST_ID" \
             --hostname "$CONTAINER_TEST_ID" \
-            $user_opt \
+            --userns=keep-id \
             --memory=2g \
             --cpus=2 \
             --security-opt label=disable \
@@ -862,8 +855,12 @@ skip_if_no_container() {
 }
 
 # check_overlay_rw_support
-# Checks if overlay mounts are read-write (they're read-only on macOS with virtio-fs)
-# This test is platform-agnostic - it just checks if the overlay actually works.
+# Checks if native overlay mounts are read-write with --userns=keep-id (rootless security)
+# On macOS with virtio-fs, native overlay is read-only, so we fall back to fuse-overlayfs.
+# On Linux, native overlay may also have permission issues with rootless Podman.
+#
+# SECURITY: Always test with --userns=keep-id to ensure the solution maintains
+# the rootless, non-privileged container model that Kapsis requires for agent sandboxing.
 check_overlay_rw_support() {
     # Create test directories
     local test_dir="$HOME/.kapsis-overlay-test-$$"
@@ -871,20 +868,11 @@ check_overlay_rw_support() {
     chmod 777 "$test_dir/lower" "$test_dir/upper" "$test_dir/work"
     echo "test" > "$test_dir/lower/test.txt"
 
-    # Try to write via overlay mount
+    # Try to write via native overlay mount with --userns=keep-id (rootless security model)
     # Override entrypoint to avoid its verbose output interfering with our test
-    # On Linux, run as root (--user=0) to avoid permission issues with overlay
-    # macOS uses --userns=keep-id for proper UID mapping with Podman machine
-    local user_opt=""
-    if [[ "$_TEST_OS" == "Darwin" ]]; then
-        user_opt="--userns=keep-id"
-    else
-        user_opt="--user=0"
-    fi
-
     local result
     result=$(podman run --rm \
-        $user_opt \
+        --userns=keep-id \
         --security-opt label=disable \
         --entrypoint="" \
         -v "$test_dir/lower:/workspace:O,upperdir=$test_dir/upper,workdir=$test_dir/work" \
@@ -899,10 +887,10 @@ check_overlay_rw_support() {
     rm -rf "$test_dir"
 
     if [[ "$result" == *"SUCCESS"* ]]; then
-        log_info "Native overlay is writable - using native overlay mode"
+        log_info "Native overlay is writable with --userns=keep-id - using native overlay mode"
         return 0
     else
-        log_info "Native overlay failed - will use fuse-overlayfs"
+        log_info "Native overlay failed with --userns=keep-id - will use fuse-overlayfs"
         return 1
     fi
 }
@@ -954,19 +942,12 @@ run_podman_isolated() {
             $KAPSIS_TEST_IMAGE \
             bash -c "$command" 2>&1
     else
-        # Native overlay (Linux)
-        # On Linux, run as root (--user=0) to avoid permission issues with overlay
-        # macOS uses --userns=keep-id for proper UID mapping with Podman machine
-        local user_opt=""
-        if [[ "$_TEST_OS" == "Darwin" ]]; then
-            user_opt="--userns=keep-id"
-        else
-            user_opt="--user=0"
-        fi
+        # Native overlay mode - only used when check_overlay_rw_support() passes
+        # SECURITY: Always use --userns=keep-id for rootless, non-privileged containers
         podman run --rm \
             --name "$container_id" \
             --hostname "$container_id" \
-            $user_opt \
+            --userns=keep-id \
             --security-opt label=disable \
             -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
             -v "${container_id}-m2:/home/developer/.m2/repository" \

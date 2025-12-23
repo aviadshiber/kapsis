@@ -20,13 +20,6 @@ source "$SCRIPT_DIR/lib/test-framework.sh"
 test_not_running_as_root() {
     log_test "Testing container does not run as root"
 
-    # On Linux with native overlay, we run as root for write access
-    # This test is only relevant for fuse-overlayfs mode (macOS)
-    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" != "true" ]] && [[ "$(uname)" != "Darwin" ]]; then
-        log_info "Skipping on Linux - native overlay requires root for write access"
-        return 0
-    fi
-
     setup_container_test "sec-noroot"
 
     local output
@@ -42,13 +35,6 @@ test_not_running_as_root() {
 
 test_uid_not_zero() {
     log_test "Testing UID is not 0"
-
-    # On Linux with native overlay, we run as root for write access
-    # This test is only relevant for fuse-overlayfs mode (macOS)
-    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" != "true" ]] && [[ "$(uname)" != "Darwin" ]]; then
-        log_info "Skipping on Linux - native overlay requires root for write access"
-        return 0
-    fi
 
     setup_container_test "sec-uid"
 
@@ -86,13 +72,6 @@ test_cannot_sudo() {
 test_userns_keep_id() {
     log_test "Testing userns=keep-id maps to non-root user"
 
-    # On Linux with native overlay, we run as root for write access
-    # This test is only relevant for fuse-overlayfs mode (macOS)
-    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" != "true" ]] && [[ "$(uname)" != "Darwin" ]]; then
-        log_info "Skipping on Linux - native overlay requires root for write access"
-        return 0
-    fi
-
     setup_container_test "sec-userns"
 
     # Get container UID (last line of output is the actual id -u result)
@@ -122,13 +101,6 @@ test_userns_keep_id() {
 
 test_files_owned_by_user() {
     log_test "Testing files in workspace owned by user"
-
-    # On Linux with native overlay, we run as root for write access
-    # This test is only relevant for fuse-overlayfs mode (macOS)
-    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" != "true" ]] && [[ "$(uname)" != "Darwin" ]]; then
-        log_info "Skipping on Linux - native overlay requires root for write access"
-        return 0
-    fi
 
     setup_container_test "sec-owner"
 
