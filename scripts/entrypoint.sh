@@ -255,6 +255,14 @@ setup_fuse_overlay() {
             # Verify the copy worked
             if [[ -d /upper/data/.git/objects ]]; then
                 log_success ".git directory copied successfully"
+
+                # Clear hooks directory to prevent "cannot run" errors from hooks
+                # that reference interpreters not available in the container
+                if [[ -d /upper/data/.git/hooks ]]; then
+                    rm -rf /upper/data/.git/hooks/*
+                    log_debug "Cleared git hooks directory for container compatibility"
+                fi
+
                 # Set GIT_DIR to point to the upper layer copy to avoid cross-device link issues
                 export GIT_DIR=/upper/data/.git
                 export GIT_WORK_TREE=/workspace
@@ -265,6 +273,10 @@ setup_fuse_overlay() {
             fi
         elif [[ -d /upper/data/.git ]]; then
             # .git already exists in upper (from previous run)
+            # Clear hooks on reuse too in case they were added
+            if [[ -d /upper/data/.git/hooks ]]; then
+                rm -rf /upper/data/.git/hooks/*
+            fi
             export GIT_DIR=/upper/data/.git
             export GIT_WORK_TREE=/workspace
             export GIT_TEST_FSMONITOR=0
