@@ -154,7 +154,7 @@ git worktree add
 ├── .git (file) ──────────────────────→ ├── .git-safe/ (sanitized, ro)
 ├── src/                                │   ├── config (minimal)
 ├── pom.xml                             │   ├── objects → (ro link)
-└── ...                                 │   └── hooks/ (EMPTY)
+└── ...                                 │   └── hooks/ (sandbox isolated)
                                         ├── src/
                                         └── pom.xml
     ↓                                       ↓
@@ -167,7 +167,7 @@ Post-container: git commit/push         Agent makes changes
 **Security features:**
 - Worktrees created on HOST (trusted environment)
 - Container receives sanitized .git view (read-only)
-- Empty hooks directory prevents hook-based attacks
+- Hooks run in sandbox isolation (cannot affect host)
 - Objects mounted read-only prevents corruption
 - Git commit/push runs on HOST after container exits
 
