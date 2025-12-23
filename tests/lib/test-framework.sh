@@ -23,6 +23,11 @@ CURRENT_TEST=""  # exported for use by test functions
 export CURRENT_TEST
 FAILED_TESTS=()  # Track names of failed tests for re-run command
 
+# Assertion failure tracking
+# Because errexit is suspended inside 'if' statements, assertions returning non-zero
+# don't cause the test function to exit. We track failures here and check after.
+_ASSERTION_FAILED=false
+
 # Quiet mode - only show pass/fail, suppress verbose output
 # Set via: KAPSIS_TEST_QUIET=1 or export before sourcing
 QUIET_MODE="${KAPSIS_TEST_QUIET:-false}"
@@ -133,12 +138,16 @@ _is_quiet() {
     [[ "$QUIET_MODE" == "true" || "$QUIET_MODE" == "1" ]]
 }
 
-# Helper to log failure details
+# Helper to mark assertion as failed and log details
+# ALWAYS use this for assertion failures - it ensures consistent failure tracking
 # In quiet mode: shows main failure message only (so you know WHY it failed)
 # In verbose mode: shows failure message + details (Expected/Actual values)
 _log_failure() {
     local message="$1"
     shift
+
+    # Mark that an assertion failed (checked by run_test)
+    _ASSERTION_FAILED=true
 
     # Always show the main failure message - you need to know WHY it failed
     log_fail "$message"
@@ -326,11 +335,20 @@ run_test() {
     CURRENT_TEST="$test_func"
     TESTS_RUN=$((TESTS_RUN + 1))
 
+    # Reset assertion failure tracking
+    _ASSERTION_FAILED=false
+
     if ! _is_quiet; then
         log_test "Running: $test_func"
     fi
 
-    if $test_func; then
+    # Run the test function
+    local test_exit_code=0
+    $test_func || test_exit_code=$?
+
+    # Check both explicit return code AND assertion failures
+    # (errexit is suspended inside 'if', so assertions return 1 but don't exit)
+    if [[ $test_exit_code -eq 0 ]] && [[ "$_ASSERTION_FAILED" != "true" ]]; then
         log_pass "$test_func"
         TESTS_PASSED=$((TESTS_PASSED + 1))
         return 0
@@ -731,8 +749,7 @@ assert_file_in_upper() {
         if [[ "$result" == *"EXISTS"* ]]; then
             return 0
         else
-            log_fail "$message"
-            log_info "  Expected file in upper: $relative_path"
+            _log_failure "$message" "Expected file in upper: $relative_path"
             return 1
         fi
     else
@@ -742,9 +759,7 @@ assert_file_in_upper() {
         if [[ -f "$full_path" ]]; then
             return 0
         else
-            log_fail "$message"
-            log_info "  Expected file in upper: $relative_path"
-            log_info "  Full path: $full_path"
+            _log_failure "$message" "Expected file in upper: $relative_path" "Full path: $full_path"
             return 1
         fi
     fi
@@ -767,8 +782,7 @@ assert_file_not_in_upper() {
         if [[ "$result" == *"NOTFOUND"* ]]; then
             return 0
         else
-            log_fail "$message"
-            log_info "  File should not exist in upper: $relative_path"
+            _log_failure "$message" "File should not exist in upper: $relative_path"
             return 1
         fi
     else
@@ -778,8 +792,7 @@ assert_file_not_in_upper() {
         if [[ ! -f "$full_path" ]]; then
             return 0
         else
-            log_fail "$message"
-            log_info "  File should not exist in upper: $relative_path"
+            _log_failure "$message" "File should not exist in upper: $relative_path"
             return 1
         fi
     fi
@@ -799,13 +812,11 @@ assert_host_file_unchanged() {
         if [[ "$actual_content" == "$expected_content" ]]; then
             return 0
         else
-            log_fail "$message"
-            log_info "  File content changed: $relative_path"
+            _log_failure "$message" "File content changed: $relative_path"
             return 1
         fi
     else
-        log_fail "$message"
-        log_info "  File missing on host: $relative_path"
+        _log_failure "$message" "File missing on host: $relative_path"
         return 1
     fi
 }
@@ -839,6 +850,14 @@ skip_if_no_container() {
 # check_overlay_rw_support
 # Checks if overlay mounts are read-write (they're read-only on macOS with virtio-fs)
 check_overlay_rw_support() {
+    # On Linux, native overlay should always work
+    # Only macOS needs the fallback to fuse-overlayfs
+    if [[ "$_TEST_OS" == "Linux" ]]; then
+        log_info "Linux detected - using native overlay (recommended)"
+        return 0
+    fi
+
+    # On macOS, test if overlay is writable (virtio-fs makes it read-only)
     # Create test directories
     local test_dir="$HOME/.kapsis-overlay-test-$$"
     mkdir -p "$test_dir/lower" "$test_dir/upper" "$test_dir/work"
@@ -1036,8 +1055,7 @@ assert_worktree_exists() {
     if [[ -d "$path" ]] && [[ -f "$path/.git" ]]; then
         return 0
     else
-        log_fail "$message"
-        log_info "  Expected worktree at: $path"
+        _log_failure "$message" "Expected worktree at: $path"
         return 1
     fi
 }
@@ -1053,14 +1071,13 @@ assert_sanitized_git_secure() {
     hooks_count=$(find "$path/hooks" -type f 2>/dev/null | wc -l | tr -d ' ')
 
     if [[ "$hooks_count" -gt 0 ]]; then
-        log_fail "$message - hooks directory not empty"
-        log_info "  Found $hooks_count hook files"
+        _log_failure "$message - hooks directory not empty" "Found $hooks_count hook files"
         return 1
     fi
 
     # Check config exists
     if [[ ! -f "$path/config" ]]; then
-        log_fail "$message - no config file"
+        _log_failure "$message - no config file"
         return 1
     fi
 

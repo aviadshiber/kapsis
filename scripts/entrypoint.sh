@@ -221,6 +221,38 @@ setup_worktree_git() {
 }
 
 #===============================================================================
+# GIT HOOKS CONFIGURATION
+#
+# Git hooks may reference interpreters/tools not available in the container,
+# causing "cannot run X: No such file or directory" errors. By default, we
+# disable hooks to prevent these errors. Users can enable hooks if their
+# container image has the required tooling.
+#===============================================================================
+configure_git_hooks() {
+    local git_dir="${GIT_DIR:-/upper/data/.git}"
+
+    if [[ "${KAPSIS_ENABLE_HOOKS:-false}" == "true" ]]; then
+        # User explicitly wants hooks enabled - assume they've configured
+        # the container with necessary tools
+        log_info "Git hooks enabled (KAPSIS_ENABLE_HOOKS=true)"
+        return 0
+    fi
+
+    # Disable hooks by redirecting to empty directory
+    # This prevents "cannot run" errors while preserving original hooks
+    local empty_hooks_dir="$git_dir/hooks-disabled"
+    mkdir -p "$empty_hooks_dir" 2>/dev/null || true
+
+    # Use git config to redirect hooks path (safer than deleting hooks)
+    if [[ -d "$git_dir" ]]; then
+        git config --file "$git_dir/config" core.hooksPath "$empty_hooks_dir" 2>/dev/null || true
+        log_warn "Git hooks disabled in sandbox (hooks may reference unavailable tools)"
+        log_info "  To enable hooks: set KAPSIS_ENABLE_HOOKS=true"
+        log_info "  Original hooks preserved in: $git_dir/hooks/"
+    fi
+}
+
+#===============================================================================
 # FUSE-OVERLAYFS SETUP (for macOS true CoW support, legacy mode)
 #===============================================================================
 setup_fuse_overlay() {
@@ -255,11 +287,15 @@ setup_fuse_overlay() {
             # Verify the copy worked
             if [[ -d /upper/data/.git/objects ]]; then
                 log_success ".git directory copied successfully"
+
                 # Set GIT_DIR to point to the upper layer copy to avoid cross-device link issues
                 export GIT_DIR=/upper/data/.git
                 export GIT_WORK_TREE=/workspace
                 export GIT_TEST_FSMONITOR=0
                 log_info "Git configured: GIT_DIR=/upper/data/.git GIT_WORK_TREE=/workspace"
+
+                # Handle git hooks - they may reference interpreters not in container
+                configure_git_hooks
             else
                 log_warn "Failed to copy .git directory"
             fi
@@ -269,6 +305,9 @@ setup_fuse_overlay() {
             export GIT_WORK_TREE=/workspace
             export GIT_TEST_FSMONITOR=0
             log_info "Using existing .git in upper layer"
+
+            # Handle git hooks on reuse too
+            configure_git_hooks
         fi
     else
         log_warn "fuse-overlayfs mount failed. Falling back to /lower as workspace."

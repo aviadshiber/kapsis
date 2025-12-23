@@ -1,0 +1,4 @@
+# Allow all GitHub workflow files
+!.github/**
+!.github/workflows/**
+!.github/workflows/*.yml
