@@ -201,13 +201,8 @@ setup_worktree_git() {
         log_info "  Objects: linked to /workspace/.git-objects"
     fi
 
-    # Verify security: hooks directory must be empty
-    local hooks_count
-    hooks_count=$(find "$GIT_DIR/hooks" -type f 2>/dev/null | wc -l | tr -d ' ')
-    if [[ "$hooks_count" -gt 0 ]]; then
-        log_warn "WARNING: Hooks directory is not empty ($hooks_count files) - clearing for security"
-        rm -rf "$GIT_DIR/hooks"/*
-    fi
+    # Configure git hooks (disable by default for container compatibility)
+    configure_git_hooks
 
     log_info "  GIT_DIR: $GIT_DIR"
     log_info "  GIT_WORK_TREE: $GIT_WORK_TREE"
@@ -294,23 +289,17 @@ setup_fuse_overlay() {
                 export GIT_TEST_FSMONITOR=0
                 log_info "Git configured: GIT_DIR=/upper/data/.git GIT_WORK_TREE=/workspace"
 
-                # Handle git hooks - they may reference interpreters not in container
                 configure_git_hooks
             else
                 log_warn "Failed to copy .git directory"
             fi
         elif [[ -d /upper/data/.git ]]; then
             # .git already exists in upper (from previous run)
-            # Clear hooks on reuse too in case they were added
-            if [[ -d /upper/data/.git/hooks ]]; then
-                rm -rf /upper/data/.git/hooks/*
-            fi
             export GIT_DIR=/upper/data/.git
             export GIT_WORK_TREE=/workspace
             export GIT_TEST_FSMONITOR=0
             log_info "Using existing .git in upper layer"
 
-            # Handle git hooks on reuse too
             configure_git_hooks
         fi
     else

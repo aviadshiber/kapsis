@@ -849,11 +849,15 @@ skip_if_no_container() {
 
 # check_overlay_rw_support
 # Checks if overlay mounts are read-write (they're read-only on macOS with virtio-fs)
+# For container tests, we use fuse-overlayfs on both Linux and macOS for consistent behavior.
+# This ensures the entrypoint sets up /workspace properly with CoW isolation.
 check_overlay_rw_support() {
-    # On Linux, native overlay should always work
-    # Only macOS needs the fallback to fuse-overlayfs
+    # Always use fuse-overlayfs for container tests to ensure consistent behavior
+    # across platforms and proper workspace setup by the entrypoint.
+    # Native overlay is faster but requires different entrypoint handling.
     if [[ "$_TEST_OS" == "Linux" ]]; then
-        log_info "Linux detected - using native overlay (recommended)"
+        log_info "Linux detected - using fuse-overlayfs for consistent test behavior"
+        export KAPSIS_USE_FUSE_OVERLAY=true
         return 0
     fi
 
