@@ -69,6 +69,20 @@ get_file_size() {
     fi
 }
 
+# Get MD5 hash of file (macOS uses 'md5', Linux uses 'md5sum')
+get_file_md5() {
+    local file="$1"
+    if [[ ! -f "$file" ]]; then
+        echo ""
+        return 1
+    fi
+    if [[ "$_TEST_OS" == "Darwin" ]]; then
+        md5 -q "$file" 2>/dev/null
+    else
+        md5sum "$file" 2>/dev/null | cut -d' ' -f1
+    fi
+}
+
 #===============================================================================
 # OUTPUT FUNCTIONS
 #===============================================================================

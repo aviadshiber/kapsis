@@ -17,12 +17,18 @@ source "$SCRIPT_DIR/lib/test-framework.sh"
 
 # Records checksums of all files in test project
 record_file_checksums() {
-    find "$TEST_PROJECT" -type f -exec md5 {} \; 2>/dev/null | sort > "$TEST_PROJECT/../checksums-before.txt"
+    # Use cross-platform get_file_md5 from test-framework.sh
+    while IFS= read -r -d '' file; do
+        echo "$(get_file_md5 "$file")  $file"
+    done < <(find "$TEST_PROJECT" -type f -print0 2>/dev/null) | sort > "$TEST_PROJECT/../checksums-before.txt"
 }
 
 # Compares current checksums with recorded ones
 verify_file_checksums() {
-    find "$TEST_PROJECT" -type f -exec md5 {} \; 2>/dev/null | sort > "$TEST_PROJECT/../checksums-after.txt"
+    # Use cross-platform get_file_md5 from test-framework.sh
+    while IFS= read -r -d '' file; do
+        echo "$(get_file_md5 "$file")  $file"
+    done < <(find "$TEST_PROJECT" -type f -print0 2>/dev/null) | sort > "$TEST_PROJECT/../checksums-after.txt"
     diff -q "$TEST_PROJECT/../checksums-before.txt" "$TEST_PROJECT/../checksums-after.txt" >/dev/null 2>&1
 }
 

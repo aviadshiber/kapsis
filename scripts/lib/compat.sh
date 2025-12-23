@@ -69,3 +69,24 @@ is_macos() {
 is_linux() {
     [[ "$_KAPSIS_OS" == "Linux" ]]
 }
+
+#-------------------------------------------------------------------------------
+# get_file_md5 <file>
+#
+# Returns MD5 hash of file. Works on both macOS and Linux.
+# macOS uses 'md5', Linux uses 'md5sum'.
+#-------------------------------------------------------------------------------
+get_file_md5() {
+    local file="$1"
+
+    if [[ ! -f "$file" ]]; then
+        echo ""
+        return 1
+    fi
+
+    if [[ "$_KAPSIS_OS" == "Darwin" ]]; then
+        md5 -q "$file" 2>/dev/null
+    else
+        md5sum "$file" 2>/dev/null | cut -d' ' -f1
+    fi
+}
