@@ -301,6 +301,10 @@ setup_fuse_overlay() {
             fi
         elif [[ -d /upper/data/.git ]]; then
             # .git already exists in upper (from previous run)
+            # Clear hooks on reuse too in case they were added
+            if [[ -d /upper/data/.git/hooks ]]; then
+                rm -rf /upper/data/.git/hooks/*
+            fi
             export GIT_DIR=/upper/data/.git
             export GIT_WORK_TREE=/workspace
             export GIT_TEST_FSMONITOR=0
