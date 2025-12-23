@@ -739,17 +739,14 @@ assert_file_in_upper() {
     local message="${2:-File should exist in upper directory}"
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
-        # fuse-overlayfs: check file in upper volume (data subdir)
-        local result
-        result=$(podman run --rm \
-            -v "${CONTAINER_TEST_ID}-upper:/upper:ro" \
-            $KAPSIS_TEST_IMAGE \
-            bash -c "test -f '/upper/data/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
+        # fuse-overlayfs with host directories: check file in upper/data subdir on host
+        # The entrypoint's setup_fuse_overlay() puts files at /upper/data/
+        local full_path="$CONTAINER_TEST_UPPER/data/$relative_path"
 
-        if [[ "$result" == *"EXISTS"* ]]; then
+        if [[ -f "$full_path" ]]; then
             return 0
         else
-            _log_failure "$message" "Expected file in upper: $relative_path"
+            _log_failure "$message" "Expected file in upper: $relative_path" "Full path: $full_path"
             return 1
         fi
     else
@@ -772,14 +769,10 @@ assert_file_not_in_upper() {
     local message="${2:-File should not exist in upper directory}"
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
-        # fuse-overlayfs: check file NOT in upper volume
-        local result
-        result=$(podman run --rm \
-            -v "${CONTAINER_TEST_ID}-upper:/upper:ro" \
-            $KAPSIS_TEST_IMAGE \
-            bash -c "test -f '/upper/data/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
+        # fuse-overlayfs with host directories: check file NOT in upper/data subdir
+        local full_path="$CONTAINER_TEST_UPPER/data/$relative_path"
 
-        if [[ "$result" == *"NOTFOUND"* ]]; then
+        if [[ ! -f "$full_path" ]]; then
             return 0
         else
             _log_failure "$message" "File should not exist in upper: $relative_path"
