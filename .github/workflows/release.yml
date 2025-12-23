@@ -1,5 +1,9 @@
 name: Release
 
+# Creates a GitHub release when a version tag is pushed
+# This workflow is typically triggered automatically by auto-release.yml after a merge to main
+# Can also be triggered manually via workflow_dispatch for pre-releases or hotfixes
+
 on:
   push:
     tags:

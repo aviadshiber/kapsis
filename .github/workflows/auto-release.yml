@@ -1,0 +1,307 @@
+name: Auto Release
+
+# Automatically creates a release on each successful merge to main
+# Uses Conventional Commits to determine version bump type:
+#   - feat: or feat(scope): → Minor version bump
+#   - fix: or fix(scope): → Patch version bump
+#   - BREAKING CHANGE: or type!: → Major version bump
+#   - Other types (docs, chore, refactor, etc.) → Patch bump
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Force version bump type'
+        required: false
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+        default: auto
+      skip_release:
+        description: 'Skip creating release (just update version)'
+        required: false
+        type: boolean
+        default: false
+
+# Prevent concurrent releases
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # Check if we should create a release
+  check:
+    name: Check Release Conditions
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      last_tag: ${{ steps.check.outputs.last_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Check release conditions
+        id: check
+        run: |
+          # Skip if this push was from the auto-release workflow itself
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          if [[ "$COMMIT_MSG" == *"[skip ci]"* ]] || [[ "$COMMIT_MSG" == *"[auto-release]"* ]]; then
+            echo "Skipping: commit from auto-release workflow"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Skip if this is a tag push (handled by release.yml)
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "Skipping: tag push (handled by release.yml)"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get the last release tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "last_tag=$LAST_TAG" >> $GITHUB_OUTPUT
+
+          if [[ -z "$LAST_TAG" ]]; then
+            echo "No previous tags found - will create initial release"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            # Check if there are commits since the last tag
+            COMMITS_SINCE=$(git rev-list "${LAST_TAG}..HEAD" --count)
+            if [[ "$COMMITS_SINCE" -gt 0 ]]; then
+              echo "Found $COMMITS_SINCE commits since $LAST_TAG"
+              echo "should_release=true" >> $GITHUB_OUTPUT
+            else
+              echo "No new commits since $LAST_TAG"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  # Wait for CI to complete successfully
+  wait-for-ci:
+    name: Wait for CI
+    runs-on: ubuntu-latest
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
+    steps:
+      - name: Wait for CI workflow
+        uses: fountainhead/action-wait-for-check@v1.2.0
+        id: wait-for-ci
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          checkName: CI Success
+          ref: ${{ github.sha }}
+          timeoutSeconds: 600
+          intervalSeconds: 30
+
+      - name: Fail if CI failed
+        if: steps.wait-for-ci.outputs.conclusion != 'success'
+        run: |
+          echo "::error::CI workflow did not succeed (status: ${{ steps.wait-for-ci.outputs.conclusion }})"
+          exit 1
+
+  # Determine version bump and create release
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [check, wait-for-ci]
+    if: needs.check.outputs.should_release == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Get current version
+        id: current
+        run: |
+          if [[ -f VERSION ]]; then
+            VERSION=$(cat VERSION | tr -d '[:space:]')
+          else
+            VERSION="0.0.0"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION"
+
+      - name: Analyze commits for version bump
+        id: analyze
+        run: |
+          LAST_TAG="${{ needs.check.outputs.last_tag }}"
+          BUMP_TYPE="patch"  # Default to patch
+
+          # If manual trigger with specific bump type
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.bump_type }}" != "auto" ]]; then
+            BUMP_TYPE="${{ inputs.bump_type }}"
+            echo "Using manual bump type: $BUMP_TYPE"
+            echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Analyze commits since last tag (or all commits if no tag)
+          if [[ -n "$LAST_TAG" ]]; then
+            COMMITS=$(git log "${LAST_TAG}..HEAD" --pretty=format:"%s" --no-merges)
+          else
+            COMMITS=$(git log --pretty=format:"%s" --no-merges -50)
+          fi
+
+          echo "Analyzing commits:"
+          echo "$COMMITS"
+          echo ""
+
+          # Check for breaking changes first (highest priority)
+          if echo "$COMMITS" | grep -qiE "^[a-z]+(\(.+\))?!:|BREAKING[ -]CHANGE"; then
+            BUMP_TYPE="major"
+            echo "Found BREAKING CHANGE - major bump"
+          # Check for features
+          elif echo "$COMMITS" | grep -qiE "^feat(\(.+\))?:"; then
+            BUMP_TYPE="minor"
+            echo "Found feat commits - minor bump"
+          # Everything else is a patch
+          else
+            BUMP_TYPE="patch"
+            echo "No feat or breaking changes - patch bump"
+          fi
+
+          echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+
+      - name: Calculate new version
+        id: newversion
+        run: |
+          CURRENT="${{ steps.current.outputs.version }}"
+          BUMP="${{ steps.analyze.outputs.bump_type }}"
+
+          # Parse current version
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          # Calculate new version
+          case "$BUMP" in
+            major)
+              NEW_VERSION="$((MAJOR + 1)).0.0"
+              ;;
+            minor)
+              NEW_VERSION="${MAJOR}.$((MINOR + 1)).0"
+              ;;
+            patch)
+              NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+              ;;
+          esac
+
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Bumping $CURRENT -> $NEW_VERSION ($BUMP)"
+
+      - name: Update VERSION file
+        run: |
+          echo "${{ steps.newversion.outputs.new_version }}" > VERSION
+          echo "Updated VERSION file to: $(cat VERSION)"
+
+      - name: Update CHANGELOG
+        run: |
+          NEW_VERSION="${{ steps.newversion.outputs.new_version }}"
+          PREV_VERSION="${{ steps.current.outputs.version }}"
+          TODAY=$(date +%Y-%m-%d)
+
+          # Check if CHANGELOG.md exists
+          if [[ ! -f CHANGELOG.md ]]; then
+            echo "No CHANGELOG.md found, skipping changelog update"
+            exit 0
+          fi
+
+          # Check if there's an [Unreleased] section
+          if ! grep -q "## \[Unreleased\]" CHANGELOG.md; then
+            echo "No [Unreleased] section found, skipping changelog update"
+            exit 0
+          fi
+
+          # Get the repository URL for links
+          REPO_URL="https://github.com/${{ github.repository }}"
+
+          # Create updated changelog
+          # 1. Replace [Unreleased] header with new version, keeping a new [Unreleased] section
+          # 2. Update the comparison links at the bottom
+          awk -v ver="$NEW_VERSION" -v date="$TODAY" -v prev="$PREV_VERSION" -v repo="$REPO_URL" '
+            BEGIN { in_links = 0 }
+
+            # When we hit the [Unreleased] header, add new version header after it
+            /^## \[Unreleased\]/ {
+              print "## [Unreleased]"
+              print ""
+              print "## [" ver "] - " date
+              next
+            }
+
+            # Detect when we reach the links section at the bottom
+            /^\[Unreleased\]:/ {
+              in_links = 1
+              print "[Unreleased]: " repo "/compare/v" ver "...HEAD"
+              next
+            }
+
+            # Skip old version links, we will regenerate them
+            in_links && /^\[[0-9]+\.[0-9]+\.[0-9]+\]:/ {
+              next
+            }
+
+            # End of file - add the new version link
+            END {
+              print "[" ver "]: " repo "/compare/v" prev "...v" ver
+              print "[" prev "]: " repo "/releases/tag/v" prev
+            }
+
+            { print }
+          ' CHANGELOG.md > CHANGELOG.md.tmp
+
+          mv CHANGELOG.md.tmp CHANGELOG.md
+          echo "Updated CHANGELOG.md for version $NEW_VERSION"
+          echo "--- Updated CHANGELOG.md ---"
+          head -30 CHANGELOG.md
+
+      - name: Commit version changes
+        run: |
+          NEW_VERSION="${{ steps.newversion.outputs.new_version }}"
+          git add VERSION CHANGELOG.md
+          git commit -m "chore(release): bump version to ${NEW_VERSION} [auto-release]" || {
+            echo "No changes to commit"
+            exit 0
+          }
+
+      - name: Create and push tag
+        run: |
+          NEW_VERSION="${{ steps.newversion.outputs.new_version }}"
+
+          # Push the version commit
+          git push origin HEAD
+
+          # Create and push the tag
+          git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+          git push origin "v${NEW_VERSION}"
+
+          echo "Created and pushed tag v${NEW_VERSION}"
+
+      - name: Release Summary
+        run: |
+          NEW_VERSION="${{ steps.newversion.outputs.new_version }}"
+          BUMP="${{ steps.analyze.outputs.bump_type }}"
+          echo "## Auto-Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: v${NEW_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bump Type**: ${BUMP}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The release workflow will now build and publish the release." >> $GITHUB_STEP_SUMMARY
