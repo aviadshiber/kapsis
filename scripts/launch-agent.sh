@@ -1058,7 +1058,8 @@ post_container_overlay() {
             log_success "Agent made $changes_count file change(s)"
             echo ""
             echo "Changed files:"
-            find "$UPPER_DIR" -type f -printf "  %P\n" 2>/dev/null | head -20
+            # Cross-platform: -printf is GNU-specific, use sed to strip prefix
+            find "$UPPER_DIR" -type f 2>/dev/null | sed "s|^${UPPER_DIR}/|  |" | head -20
             echo ""
             echo "Upper directory: $UPPER_DIR"
             echo ""
