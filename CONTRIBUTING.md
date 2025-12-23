@@ -380,11 +380,13 @@ BREAKING CHANGE: Config files must now use YAML format instead of JSON."
 ### Release Workflow
 
 1. **Merge PR to main** → CI runs tests
-2. **Auto-release workflow** → Analyzes commits, determines version bump
-3. **Updates VERSION** → Commits new version
-4. **Updates CHANGELOG** → Moves `[Unreleased]` to new version
+2. **CI completes successfully** → Triggers Auto Release via `workflow_run`
+3. **Analyzes commits** → Scans commits since last tag for conventional commit patterns
+4. **Determines version** → Calculates new version based on commit types (feat → minor, fix → patch, breaking → major)
 5. **Creates git tag** → Pushes `v{X.Y.Z}` tag
 6. **Release workflow triggers** → Builds container, creates GitHub Release
+
+> **Note:** Since `main` is a protected branch, the Auto Release workflow creates only the git tag. Git tags are the source of truth for versioning.
 
 ### Manual Releases
 
@@ -412,4 +414,4 @@ When adding changes to your PR, update the `[Unreleased]` section in `CHANGELOG.
 - Your bug fix description
 ```
 
-The release workflow will automatically move these entries to the new version section when creating a release.
+> **Note:** Since `main` is protected, changelog entries remain in `[Unreleased]` until manually moved. Periodically, a maintainer should update the changelog to move entries to released version sections based on git tags.

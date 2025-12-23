@@ -1,11 +1,14 @@
 name: Auto Release
 
-# Automatically creates a release on each successful CI run on main
+# Automatically creates a release tag on each successful CI run on main
 # Uses Conventional Commits to determine version bump type:
 #   - feat: or feat(scope): → Minor version bump
 #   - fix: or fix(scope): → Patch version bump
 #   - BREAKING CHANGE: or type!: → Major version bump
 #   - Other types (docs, chore, refactor, etc.) → Patch bump
+#
+# Note: Since main is a protected branch, this workflow only creates tags.
+# Git tags are the source of truth for versioning.
 
 on:
   # Triggered automatically when CI workflow completes on main
@@ -131,13 +134,16 @@ jobs:
       - name: Get current version
         id: current
         run: |
-          if [[ -f VERSION ]]; then
-            VERSION=$(cat VERSION | tr -d '[:space:]')
+          # Get version from the last tag (source of truth)
+          LAST_TAG="${{ needs.check.outputs.last_tag }}"
+          if [[ -n "$LAST_TAG" ]]; then
+            # Strip 'v' prefix if present
+            VERSION="${LAST_TAG#v}"
           else
             VERSION="0.0.0"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          echo "Current version: $VERSION"
+          echo "Current version: $VERSION (from tag: ${LAST_TAG:-none})"
 
       - name: Analyze commits for version bump
         id: analyze
@@ -205,89 +211,13 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "Bumping $CURRENT -> $NEW_VERSION ($BUMP)"
 
-      - name: Update VERSION file
-        run: |
-          echo "${{ steps.newversion.outputs.new_version }}" > VERSION
-          echo "Updated VERSION file to: $(cat VERSION)"
-
-      - name: Update CHANGELOG
-        run: |
-          NEW_VERSION="${{ steps.newversion.outputs.new_version }}"
-          PREV_VERSION="${{ steps.current.outputs.version }}"
-          TODAY=$(date +%Y-%m-%d)
-
-          # Check if CHANGELOG.md exists
-          if [[ ! -f CHANGELOG.md ]]; then
-            echo "No CHANGELOG.md found, skipping changelog update"
-            exit 0
-          fi
-
-          # Check if there's an [Unreleased] section
-          if ! grep -q "## \[Unreleased\]" CHANGELOG.md; then
-            echo "No [Unreleased] section found, skipping changelog update"
-            exit 0
-          fi
-
-          # Get the repository URL for links
-          REPO_URL="https://github.com/${{ github.repository }}"
-
-          # Create updated changelog
-          # 1. Replace [Unreleased] header with new version, keeping a new [Unreleased] section
-          # 2. Update the comparison links at the bottom
-          awk -v ver="$NEW_VERSION" -v date="$TODAY" -v prev="$PREV_VERSION" -v repo="$REPO_URL" '
-            BEGIN { in_links = 0 }
-
-            # When we hit the [Unreleased] header, add new version header after it
-            /^## \[Unreleased\]/ {
-              print "## [Unreleased]"
-              print ""
-              print "## [" ver "] - " date
-              next
-            }
-
-            # Detect when we reach the links section at the bottom
-            /^\[Unreleased\]:/ {
-              in_links = 1
-              print "[Unreleased]: " repo "/compare/v" ver "...HEAD"
-              next
-            }
-
-            # Skip old version links, we will regenerate them
-            in_links && /^\[[0-9]+\.[0-9]+\.[0-9]+\]:/ {
-              next
-            }
-
-            # End of file - add the new version link
-            END {
-              print "[" ver "]: " repo "/compare/v" prev "...v" ver
-              print "[" prev "]: " repo "/releases/tag/v" prev
-            }
-
-            { print }
-          ' CHANGELOG.md > CHANGELOG.md.tmp
-
-          mv CHANGELOG.md.tmp CHANGELOG.md
-          echo "Updated CHANGELOG.md for version $NEW_VERSION"
-          echo "--- Updated CHANGELOG.md ---"
-          head -30 CHANGELOG.md
-
-      - name: Commit version changes
-        run: |
-          NEW_VERSION="${{ steps.newversion.outputs.new_version }}"
-          git add VERSION CHANGELOG.md
-          git commit -m "chore(release): bump version to ${NEW_VERSION} [auto-release]" || {
-            echo "No changes to commit"
-            exit 0
-          }
+      # Release tag is created from current HEAD. Git tags are the source of truth.
 
       - name: Create and push tag
         run: |
           NEW_VERSION="${{ steps.newversion.outputs.new_version }}"
 
-          # Push the version commit to main
-          git push origin main
-
-          # Create and push the tag
+          # Create annotated tag from current HEAD (no commit needed)
           git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
           git push origin "v${NEW_VERSION}"
 
@@ -296,10 +226,12 @@ jobs:
       - name: Release Summary
         run: |
           NEW_VERSION="${{ steps.newversion.outputs.new_version }}"
+          PREV_VERSION="${{ steps.current.outputs.version }}"
           BUMP="${{ steps.analyze.outputs.bump_type }}"
           echo "## Auto-Release Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: v${NEW_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **New Version**: v${NEW_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Previous Version**: v${PREV_VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "- **Bump Type**: ${BUMP}" >> $GITHUB_STEP_SUMMARY
           echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
