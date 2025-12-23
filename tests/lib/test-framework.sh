@@ -456,6 +456,11 @@ EOF
     git add -A
     git commit -q -m "Initial test project"
 
+    # Make directories writable for fuse-overlayfs compatibility
+    # With --userns=keep-id, fuse-overlayfs needs write permission on directories
+    # to perform copy-up operations when creating files in existing directories
+    chmod -R a+rwX .
+
     log_info "Test project ready"
 }
 
