@@ -104,26 +104,53 @@ test_force_remove_running() {
     log_test "Testing running container can be force removed"
 
     local container_name="kapsis-force-test-$$"
-    local sandbox="$HOME/.ai-sandboxes/$container_name"
-    mkdir -p "$sandbox/upper" "$sandbox/work"
 
-    # Start long-running container
-    podman run -d \
-        --name "$container_name" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-        $KAPSIS_TEST_IMAGE \
-        sleep 300 2>/dev/null || {
-            rm -rf "$sandbox"
-            return 0  # Skip if image missing
-        }
+    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
+        # fuse-overlayfs mode: use named volume
+        podman volume create "${container_name}-overlay" 2>/dev/null || true
 
-    # Force remove
-    local exit_code=0
-    podman rm -f "$container_name" 2>/dev/null || exit_code=$?
+        # Start long-running container with fuse-overlayfs
+        podman run -d \
+            --name "$container_name" \
+            --userns=keep-id \
+            --device /dev/fuse \
+            --cap-add SYS_ADMIN \
+            --security-opt label=disable \
+            -v "$TEST_PROJECT:/lower:ro" \
+            -v "${container_name}-overlay:/overlay" \
+            -e KAPSIS_USE_FUSE_OVERLAY=true \
+            $KAPSIS_TEST_IMAGE \
+            sleep 300 2>/dev/null || {
+                podman volume rm "${container_name}-overlay" 2>/dev/null || true
+                return 0  # Skip if image missing
+            }
 
-    rm -rf "$sandbox"
+        # Force remove
+        local exit_code=0
+        podman rm -f "$container_name" 2>/dev/null || exit_code=$?
+        podman volume rm "${container_name}-overlay" 2>/dev/null || true
+    else
+        # Native overlay mode
+        local sandbox="$HOME/.ai-sandboxes/$container_name"
+        mkdir -p "$sandbox/upper" "$sandbox/work"
+
+        # Start long-running container
+        podman run -d \
+            --name "$container_name" \
+            --userns=keep-id \
+            --security-opt label=disable \
+            -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
+            $KAPSIS_TEST_IMAGE \
+            sleep 300 2>/dev/null || {
+                rm -rf "$sandbox"
+                return 0  # Skip if image missing
+            }
+
+        # Force remove
+        local exit_code=0
+        podman rm -f "$container_name" 2>/dev/null || exit_code=$?
+        rm -rf "$sandbox"
+    fi
 
     if [[ $exit_code -eq 0 ]]; then
         return 0
@@ -261,8 +288,8 @@ test_cleanup_with_overlay_unmount() {
 main() {
     print_test_header "Cleanup Sandbox"
 
-    # Check prerequisites
-    if ! skip_if_no_container; then
+    # Check prerequisites - need writable overlay for tests that write to /workspace
+    if ! skip_if_no_overlay_rw; then
         echo "Skipping container tests - prerequisites not met"
         exit 0
     fi
