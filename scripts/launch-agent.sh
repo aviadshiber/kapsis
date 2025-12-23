@@ -58,7 +58,8 @@ AUTO_BRANCH=false
 NO_PUSH=false
 INTERACTIVE=false
 DRY_RUN=false
-IMAGE_NAME="kapsis-sandbox:latest"
+# Use KAPSIS_IMAGE env var if set (for CI), otherwise default
+IMAGE_NAME="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 SANDBOX_MODE=""  # auto-detect, worktree, or overlay
 WORKTREE_PATH=""
 SANITIZED_GIT_PATH=""
