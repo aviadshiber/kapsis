@@ -8,7 +8,7 @@ name: Auto Release
 #   - Other types (docs, chore, refactor, etc.) → Patch bump
 #
 # Note: Since main is a protected branch, this workflow only creates tags.
-# The VERSION file is not updated (version is derived from git tags).
+# Git tags are the source of truth for versioning.
 
 on:
   # Triggered automatically when CI workflow completes on main
@@ -211,9 +211,7 @@ jobs:
           echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
           echo "Bumping $CURRENT -> $NEW_VERSION ($BUMP)"
 
-      # Note: VERSION and CHANGELOG updates are skipped because main is protected.
-      # The release tag is created from the current HEAD commit.
-      # Version tracking is done via git tags, not the VERSION file.
+      # Release tag is created from current HEAD. Git tags are the source of truth.
 
       - name: Create and push tag
         run: |

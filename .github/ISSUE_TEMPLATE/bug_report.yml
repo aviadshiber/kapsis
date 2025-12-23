@@ -74,7 +74,7 @@ body:
     id: kapsis-version
     attributes:
       label: Kapsis Version
-      description: Output of `cat VERSION` or git commit hash
+      description: Output of `git describe --tags` or commit hash
       placeholder: "1.0.0 or commit abc1234"
     validations:
       required: true

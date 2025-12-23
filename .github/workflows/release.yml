@@ -3,6 +3,9 @@ name: Release
 # Creates a GitHub release when a version tag is pushed
 # This workflow is typically triggered automatically by auto-release.yml after a merge to main
 # Can also be triggered manually via workflow_dispatch for pre-releases or hotfixes
+#
+# Note: Git tags are the source of truth for versioning. CHANGELOG entries
+# remain in [Unreleased] until manually moved by a maintainer.
 
 on:
   push:
@@ -44,17 +47,6 @@ jobs:
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Release version: $VERSION"
-
-      - name: Validate VERSION file
-        run: |
-          FILE_VERSION=$(cat VERSION | tr -d '[:space:]')
-          RELEASE_VERSION="${{ steps.version.outputs.version }}"
-
-          if [[ "$FILE_VERSION" != "$RELEASE_VERSION" ]]; then
-            echo "::error::VERSION file ($FILE_VERSION) doesn't match release version ($RELEASE_VERSION)"
-            exit 1
-          fi
-          echo "VERSION file matches release version"
 
       - name: Check CHANGELOG entry
         run: |
