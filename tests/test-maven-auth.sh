@@ -34,7 +34,7 @@ test_token_decoding() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo "USER=$KAPSIS_MAVEN_USERNAME PASS=$KAPSIS_MAVEN_PASSWORD"' 2>&1) || true
 
     cleanup_container_test
@@ -59,7 +59,7 @@ test_token_decoding_with_special_chars() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo "USER=$KAPSIS_MAVEN_USERNAME"' 2>&1) || true
 
     cleanup_container_test
@@ -83,7 +83,7 @@ test_token_not_decoded_if_credentials_set() {
         --userns=keep-id \
         -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token" \
         -e KAPSIS_MAVEN_USERNAME="$preset_username" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo "USER=$KAPSIS_MAVEN_USERNAME"' 2>&1) || true
 
     cleanup_container_test
@@ -104,7 +104,7 @@ test_invalid_token_handled_gracefully() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e DOCKER_ARTIFACTORY_TOKEN="not-valid-base64!!!" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo "USER=${KAPSIS_MAVEN_USERNAME:-unset} PASS=${KAPSIS_MAVEN_PASSWORD:-unset}"' 2>&1) || exit_code=$?
 
     cleanup_container_test
@@ -125,7 +125,7 @@ test_ge_extension_prepopulated() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -v "kapsis-test-m2:/home/developer/.m2/repository" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'ls -la ~/.m2/repository/com/gradle/gradle-enterprise-maven-extension/1.20/*.jar 2>/dev/null && echo "GE_FOUND=yes" || echo "GE_FOUND=no"' 2>&1) || true
 
     cleanup_container_test
@@ -144,7 +144,7 @@ test_ge_extension_entrypoint_log() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -v "kapsis-test-m2-log:/home/developer/.m2/repository" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo done' 2>&1) || true
 
     cleanup_container_test
@@ -166,7 +166,7 @@ test_maven_mirror_url_substitution() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e KAPSIS_MAVEN_MIRROR_URL="$test_mirror_url" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'mvn help:effective-settings 2>&1 | grep -A2 "<mirror>" | head -10' 2>&1) || true
 
     cleanup_container_test
@@ -185,7 +185,7 @@ test_maven_credentials_in_settings() {
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'cat /opt/kapsis/maven/settings.xml | grep -A3 "<server>"' 2>&1) || true
 
     cleanup_container_test
@@ -208,7 +208,7 @@ test_entrypoint_logs_token_decoding() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo done' 2>&1) || true
 
     cleanup_container_test
@@ -277,7 +277,7 @@ run_in_container_with_env() {
         --userns=keep-id \
         "${env_args[@]}" \
         -v "$TEST_PROJECT:/workspace:rw" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "$command" 2>&1
 }
 
@@ -294,8 +294,8 @@ main() {
         exit 0
     fi
 
-    if ! podman image exists kapsis-sandbox:latest 2>/dev/null; then
-        log_skip "kapsis-sandbox:latest image not found - run ./scripts/build-image.sh first"
+    if ! podman image exists $KAPSIS_TEST_IMAGE 2>/dev/null; then
+        log_skip "$KAPSIS_TEST_IMAGE image not found - run ./scripts/build-image.sh first"
         exit 0
     fi
 

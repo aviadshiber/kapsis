@@ -309,11 +309,11 @@ test_image_check_existing() {
 
     # Use an image we know exists from test prerequisites
     local result=0
-    if podman image exists kapsis-sandbox:latest 2>/dev/null; then
-        check_images "kapsis-sandbox:latest" || result=$?
+    if podman image exists $KAPSIS_TEST_IMAGE 2>/dev/null; then
+        check_images "$KAPSIS_TEST_IMAGE" || result=$?
         assert_equals 0 "$result" "Existing image should pass"
     else
-        skip_test "test_image_check_existing" "kapsis-sandbox:latest not built"
+        skip_test "test_image_check_existing" "$KAPSIS_TEST_IMAGE not built"
     fi
 }
 
@@ -351,8 +351,8 @@ test_preflight_full_pass() {
     fi
 
     # Skip if image not built
-    if ! podman image exists kapsis-sandbox:latest 2>/dev/null; then
-        skip_test "test_preflight_full_pass" "kapsis-sandbox:latest not built"
+    if ! podman image exists $KAPSIS_TEST_IMAGE 2>/dev/null; then
+        skip_test "test_preflight_full_pass" "$KAPSIS_TEST_IMAGE not built"
         return 0
     fi
 
@@ -368,7 +368,7 @@ test_preflight_full_pass() {
 
     local output
     local result=0
-    output=$(preflight_check "$test_repo" "feature/new-branch" "$spec_file" "kapsis-sandbox:latest" "1" 2>&1) || result=$?
+    output=$(preflight_check "$test_repo" "feature/new-branch" "$spec_file" "$KAPSIS_TEST_IMAGE" "1" 2>&1) || result=$?
 
     rm -rf "$test_repo"
     rm -f "$spec_file"
@@ -394,7 +394,7 @@ test_preflight_branch_conflict_fails() {
 
     local output
     local result=0
-    output=$(preflight_check "$test_repo" "feature/conflict-branch" "" "kapsis-sandbox:latest" "1" 2>&1) || result=$?
+    output=$(preflight_check "$test_repo" "feature/conflict-branch" "" "$KAPSIS_TEST_IMAGE" "1" 2>&1) || result=$?
 
     rm -rf "$test_repo"
 
@@ -413,7 +413,7 @@ test_preflight_error_messages_actionable() {
     source "$PREFLIGHT_SCRIPT"
 
     local output
-    output=$(preflight_check "$test_repo" "feature/my-branch" "" "kapsis-sandbox:latest" "1" 2>&1) || true
+    output=$(preflight_check "$test_repo" "feature/my-branch" "" "$KAPSIS_TEST_IMAGE" "1" 2>&1) || true
 
     rm -rf "$test_repo"
 

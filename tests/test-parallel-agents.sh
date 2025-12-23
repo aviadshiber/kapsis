@@ -55,7 +55,7 @@ test_two_agents_run_simultaneously() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         sleep 10 2>/dev/null || {
             cleanup_parallel_sandboxes 2
             return 0  # Skip if image missing
@@ -66,7 +66,7 @@ test_two_agents_run_simultaneously() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         sleep 10 2>/dev/null
 
     # Both should be running
@@ -97,7 +97,7 @@ test_agents_have_isolated_filesystems() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "echo 'agent1' > /workspace/agent1-file.txt" 2>/dev/null || {
             cleanup_parallel_sandboxes 2
             return 0
@@ -110,7 +110,7 @@ test_agents_have_isolated_filesystems() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "cat /workspace/agent1-file.txt 2>/dev/null || echo 'not found'" 2>&1)
 
     cleanup_parallel_sandboxes 2
@@ -129,7 +129,7 @@ test_agents_have_isolated_volumes() {
         --name "$name1" \
         --userns=keep-id \
         -v "${name1}-m2:/home/developer/.m2/repository" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "mkdir -p /home/developer/.m2/repository/test && echo 'agent1' > /home/developer/.m2/repository/test/marker.txt" 2>/dev/null || {
             podman volume rm "${name1}-m2" "${name2}-m2" 2>/dev/null || true
             return 0
@@ -141,7 +141,7 @@ test_agents_have_isolated_volumes() {
         --name "$name2" \
         --userns=keep-id \
         -v "${name2}-m2:/home/developer/.m2/repository" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "cat /home/developer/.m2/repository/test/marker.txt 2>/dev/null || echo 'not found'" 2>&1)
 
     podman volume rm "${name1}-m2" "${name2}-m2" 2>/dev/null || true
@@ -162,7 +162,7 @@ test_concurrent_file_operations() {
             --userns=keep-id \
             --security-opt label=disable \
             -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-            kapsis-sandbox:latest \
+            $KAPSIS_TEST_IMAGE \
             bash -c "echo 'agent$i' > /workspace/shared-name.txt && sleep 5" 2>/dev/null || true
     done
 
@@ -206,7 +206,7 @@ test_no_cross_contamination_on_git() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "
             cd /workspace
             git config user.email 'agent1@test.com'
@@ -226,7 +226,7 @@ test_no_cross_contamination_on_git() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "cd /workspace && git log --oneline -1" 2>&1)
 
     cleanup_parallel_sandboxes 2
@@ -251,7 +251,7 @@ test_resource_limits_per_agent() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         sleep 10 2>/dev/null || {
             cleanup_parallel_sandboxes 2
             return 0
@@ -264,7 +264,7 @@ test_resource_limits_per_agent() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         sleep 10 2>/dev/null
 
     # Both should be running with different limits

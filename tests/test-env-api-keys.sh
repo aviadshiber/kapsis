@@ -30,7 +30,7 @@ test_anthropic_key_passed() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e ANTHROPIC_API_KEY \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo $ANTHROPIC_API_KEY' 2>&1) || true
 
     cleanup_container_test
@@ -51,7 +51,7 @@ test_openai_key_passed() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e OPENAI_API_KEY \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo $OPENAI_API_KEY' 2>&1) || true
 
     cleanup_container_test
@@ -71,7 +71,7 @@ test_kapsis_env_vars_set() {
         --userns=keep-id \
         -e KAPSIS_AGENT_ID="test-agent" \
         -e KAPSIS_PROJECT="test-project" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo "AGENT_ID=$KAPSIS_AGENT_ID PROJECT=$KAPSIS_PROJECT"' 2>&1) || true
 
     cleanup_container_test
@@ -105,7 +105,7 @@ test_multiple_keys_passed() {
         --userns=keep-id \
         -e ANTHROPIC_API_KEY \
         -e OPENAI_API_KEY \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo "ANTHRO=$ANTHROPIC_API_KEY OPENAI=$OPENAI_API_KEY"' 2>&1) || true
 
     cleanup_container_test
@@ -125,7 +125,7 @@ test_empty_key_not_error() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e ANTHROPIC_API_KEY \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo "KEY_LENGTH=${#ANTHROPIC_API_KEY}"' 2>&1) || exit_code=$?
 
     cleanup_container_test
@@ -144,7 +144,7 @@ test_custom_env_vars() {
         --userns=keep-id \
         -e CUSTOM_VAR1="value1" \
         -e CUSTOM_VAR2="value2" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo "$CUSTOM_VAR1 $CUSTOM_VAR2"' 2>&1) || true
 
     cleanup_container_test
@@ -195,7 +195,7 @@ test_env_isolation_between_agents() {
         --name "env-agent1-$$" \
         --userns=keep-id \
         -e AGENT_SPECIFIC="agent1-data" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo $AGENT_SPECIFIC' 2>&1) || true
 
     # Agent 2 should not see Agent 1's env
@@ -203,7 +203,7 @@ test_env_isolation_between_agents() {
     output2=$(podman run --rm \
         --name "env-agent2-$$" \
         --userns=keep-id \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo "${AGENT_SPECIFIC:-not_set}"' 2>&1) || true
 
     # Use assert_contains since entrypoint outputs logging before the command
@@ -373,7 +373,7 @@ EOF
     local image_pos
     local spec_mount_pos
 
-    # Get position of image (kapsis-sandbox:latest)
+    # Get position of image ($KAPSIS_TEST_IMAGE)
     image_pos=$(echo "$cmd_line" | grep -bo "kapsis-sandbox:" | head -1 | cut -d: -f1)
 
     # Get position of task-spec.md mount
@@ -408,7 +408,7 @@ EOF
     rm -f "$test_config"
 
     # The agent command should appear after the image name
-    if echo "$output" | grep -q "kapsis-sandbox:latest.*bash -c.*my-custom-agent"; then
+    if echo "$output" | grep -q "$KAPSIS_TEST_IMAGE.*bash -c.*my-custom-agent"; then
         return 0
     else
         log_fail "Agent command not found in container command"
@@ -441,7 +441,7 @@ EOF
         return 1
     fi
 
-    if echo "$cmd_line" | grep -q "kapsis-sandbox:latest bash$"; then
+    if echo "$cmd_line" | grep -q "$KAPSIS_TEST_IMAGE bash$"; then
         return 0
     else
         log_fail "Interactive mode should use bash"
@@ -732,7 +732,7 @@ test_inject_credential_files_entrypoint() {
         --userns=keep-id \
         -e KAPSIS_CREDENTIAL_FILES="TEST_CRED|/tmp/test-cred.json|0600" \
         -e TEST_CRED="$test_secret" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c '
             # The entrypoint should have run inject_credential_files
             # Check if file was created
@@ -768,7 +768,7 @@ test_inject_credential_files_multiple() {
         -e KAPSIS_CREDENTIAL_FILES="CRED1|/tmp/cred1.txt|0600,CRED2|/tmp/cred2.txt|0640" \
         -e CRED1="secret1" \
         -e CRED2="secret2" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c '
             echo "CRED1_EXISTS=$(test -f /tmp/cred1.txt && echo YES || echo NO)"
             echo "CRED2_EXISTS=$(test -f /tmp/cred2.txt && echo YES || echo NO)"
@@ -795,7 +795,7 @@ test_inject_credential_files_home_expansion() {
         --userns=keep-id \
         -e KAPSIS_CREDENTIAL_FILES="HOME_CRED|~/.test-creds/secret.json|0600" \
         -e HOME_CRED="home-secret-value" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c '
             # Check if file was created in home directory
             if [[ -f ~/.test-creds/secret.json ]]; then
@@ -826,7 +826,7 @@ test_inject_credential_files_creates_parent_dirs() {
         --userns=keep-id \
         -e KAPSIS_CREDENTIAL_FILES="DEEP_CRED|/tmp/deep/nested/path/cred.json|0600" \
         -e DEEP_CRED="deep-secret" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c '
             if [[ -f /tmp/deep/nested/path/cred.json ]]; then
                 echo "NESTED_FILE_EXISTS=YES"
