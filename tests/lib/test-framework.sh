@@ -859,10 +859,12 @@ check_overlay_rw_support() {
     echo "test" > "$test_dir/lower/test.txt"
 
     # Try to write via overlay mount
+    # Override entrypoint to avoid its verbose output interfering with our test
     local result
     result=$(podman run --rm \
         --userns=keep-id \
         --security-opt label=disable \
+        --entrypoint="" \
         -v "$test_dir/lower:/workspace:O,upperdir=$test_dir/upper,workdir=$test_dir/work" \
         $KAPSIS_TEST_IMAGE \
         bash -c "echo 'write test' > /workspace/write-test.txt 2>&1 && echo SUCCESS || echo FAILED" 2>&1) || true
