@@ -574,13 +574,6 @@ setup_container_test() {
     mkdir -p "$CONTAINER_TEST_UPPER"
     mkdir -p "$CONTAINER_TEST_SANDBOX/work"
 
-    # For fuse-overlayfs mode, pre-create the data subdirectories that the entrypoint expects
-    # This ensures they exist with correct permissions before fuse-overlayfs tries to use them
-    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
-        mkdir -p "$CONTAINER_TEST_UPPER/data"
-        mkdir -p "$CONTAINER_TEST_SANDBOX/work/data"
-    fi
-
     log_info "Container test setup: $CONTAINER_TEST_ID"
 }
 
@@ -593,8 +586,7 @@ get_workspace_mount_args() {
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: true Copy-on-Write inside container
-        # Use HOST directories (not named volumes) to avoid cross-device link errors
-        echo "--device /dev/fuse --cap-add SYS_ADMIN -v '$TEST_PROJECT:/lower:ro' -v '$sandbox_path/upper:/upper' -v '$sandbox_path/work:/work' -e KAPSIS_USE_FUSE_OVERLAY=true"
+        echo "--device /dev/fuse --cap-add SYS_ADMIN -v '$TEST_PROJECT:/lower:ro' -v '${container_id}-upper:/upper' -v '${container_id}-work:/work' -e KAPSIS_USE_FUSE_OVERLAY=true"
     else
         # Native overlay (Linux)
         echo "-v '$TEST_PROJECT:/workspace:O,upperdir=$sandbox_path/upper,workdir=$sandbox_path/work'"
@@ -615,15 +607,17 @@ cleanup_container_test() {
         # Stop container if running
         podman rm -f "$CONTAINER_TEST_ID" 2>/dev/null || true
 
-        # Remove named volumes (m2 cache)
+        # Remove named volumes (m2 cache and fuse-overlayfs upper/work)
         # Redirect both stdout and stderr to suppress volume name output
         podman volume rm "${CONTAINER_TEST_ID}-m2" >/dev/null 2>&1 || true
+        podman volume rm "${CONTAINER_TEST_ID}-upper" >/dev/null 2>&1 || true
+        podman volume rm "${CONTAINER_TEST_ID}-work" >/dev/null 2>&1 || true
         podman volume rm "${CONTAINER_TEST_ID}-gradle" >/dev/null 2>&1 || true
         podman volume rm "${CONTAINER_TEST_ID}-ge" >/dev/null 2>&1 || true
         podman volume rm "${CONTAINER_TEST_ID}-workspace" >/dev/null 2>&1 || true
 
-        # Remove sandbox directory (contains upper/work for fuse-overlayfs)
-        # Fix work dir permissions first (fuse-overlayfs creates d--------- dirs)
+        # Remove sandbox directory (for native overlay mode)
+        # Fix work dir permissions first (overlay creates d--------- dirs)
         if [[ -n "$CONTAINER_TEST_SANDBOX" ]] && [[ -d "$CONTAINER_TEST_SANDBOX" ]]; then
             find "$CONTAINER_TEST_SANDBOX" -type d -perm 000 -exec chmod 755 {} \; 2>/dev/null || true
             rm -rf "$CONTAINER_TEST_SANDBOX" 2>/dev/null || true
@@ -635,15 +629,14 @@ cleanup_container_test() {
 
 # run_in_container <command>
 # Runs a command in a test container and captures output
-# Uses fuse-overlayfs for CoW (both Linux and macOS)
+# Uses fuse-overlayfs on macOS (native overlay is read-only with virtio-fs)
 run_in_container() {
     local command="$1"
     local timeout="${2:-30}"
 
-    # Check if we need to use fuse-overlayfs
+    # Check if we need to use fuse-overlayfs (macOS workaround for true CoW)
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: true Copy-on-Write inside container
-        # Use HOST directories (not named volumes) to avoid cross-device link errors
         podman run --rm \
             --name "$CONTAINER_TEST_ID" \
             --hostname "$CONTAINER_TEST_ID" \
@@ -654,8 +647,8 @@ run_in_container() {
             --cap-add SYS_ADMIN \
             --security-opt label=disable \
             -v "$TEST_PROJECT:/lower:ro" \
-            -v "$CONTAINER_TEST_UPPER:/upper" \
-            -v "$CONTAINER_TEST_SANDBOX/work:/work" \
+            -v "${CONTAINER_TEST_ID}-upper:/upper" \
+            -v "${CONTAINER_TEST_ID}-work:/work" \
             -v "${CONTAINER_TEST_ID}-m2:/home/developer/.m2/repository" \
             -e KAPSIS_AGENT_ID="$CONTAINER_TEST_ID" \
             -e KAPSIS_PROJECT="test" \
@@ -664,7 +657,7 @@ run_in_container() {
             $KAPSIS_TEST_IMAGE \
             bash -c "$command" 2>&1
     else
-        # Overlay-based isolation (native Podman overlay)
+        # Overlay-based isolation (native Linux)
         podman run --rm \
             --name "$CONTAINER_TEST_ID" \
             --hostname "$CONTAINER_TEST_ID" \
@@ -746,14 +739,18 @@ assert_file_in_upper() {
     local message="${2:-File should exist in upper directory}"
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
-        # fuse-overlayfs with host directories: check file in upper/data subdir on host
-        # The entrypoint's setup_fuse_overlay() puts files at /upper/data/
-        local full_path="$CONTAINER_TEST_UPPER/data/$relative_path"
+        # fuse-overlayfs: check file in upper volume (data subdir)
+        # Named volume must be checked from inside a container
+        local result
+        result=$(podman run --rm \
+            -v "${CONTAINER_TEST_ID}-upper:/upper:ro" \
+            $KAPSIS_TEST_IMAGE \
+            bash -c "test -f '/upper/data/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
 
-        if [[ -f "$full_path" ]]; then
+        if [[ "$result" == *"EXISTS"* ]]; then
             return 0
         else
-            _log_failure "$message" "Expected file in upper: $relative_path" "Full path: $full_path"
+            _log_failure "$message" "Expected file in upper: $relative_path"
             return 1
         fi
     else
@@ -776,10 +773,15 @@ assert_file_not_in_upper() {
     local message="${2:-File should not exist in upper directory}"
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
-        # fuse-overlayfs with host directories: check file NOT in upper/data subdir
-        local full_path="$CONTAINER_TEST_UPPER/data/$relative_path"
+        # fuse-overlayfs: check file NOT in upper volume
+        # Named volume must be checked from inside a container
+        local result
+        result=$(podman run --rm \
+            -v "${CONTAINER_TEST_ID}-upper:/upper:ro" \
+            $KAPSIS_TEST_IMAGE \
+            bash -c "test -f '/upper/data/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
 
-        if [[ ! -f "$full_path" ]]; then
+        if [[ "$result" == *"NOTFOUND"* ]]; then
             return 0
         else
             _log_failure "$message" "File should not exist in upper: $relative_path"
@@ -849,20 +851,8 @@ skip_if_no_container() {
 
 # check_overlay_rw_support
 # Checks if overlay mounts are read-write (they're read-only on macOS with virtio-fs)
-# Both Linux and macOS use fuse-overlayfs for consistent CoW behavior.
-# Native Podman overlay (:O) has permission issues on some Linux runners.
+# This test is platform-agnostic - it just checks if the overlay actually works.
 check_overlay_rw_support() {
-    # Always use fuse-overlayfs for container tests:
-    # - On Linux: Native overlay (:O) has permission issues on GitHub Actions
-    # - On macOS: virtio-fs makes native overlay read-only
-    # We use HOST directories (not named volumes) to avoid cross-device link errors
-    if [[ "$_TEST_OS" == "Linux" ]]; then
-        log_info "Linux detected - using fuse-overlayfs with host directories"
-        export KAPSIS_USE_FUSE_OVERLAY=true
-        return 0
-    fi
-
-    # On macOS, test if overlay is writable (virtio-fs makes it read-only)
     # Create test directories
     local test_dir="$HOME/.kapsis-overlay-test-$$"
     mkdir -p "$test_dir/lower" "$test_dir/upper" "$test_dir/work"
