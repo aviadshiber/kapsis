@@ -282,10 +282,16 @@ setup_fuse_overlay() {
     mkdir -p "$upper_dir" "$work_dir" /workspace 2>/dev/null || true
 
     # Mount fuse-overlayfs
-    # Note: noxattr is required on some systems (e.g., GitHub Actions) where copying
-    # extended attributes during copy-up fails with "Operation not permitted" (EPERM)
-    # when the container doesn't have capabilities to set certain xattrs
-    if fuse-overlayfs -o "lowerdir=/lower,upperdir=$upper_dir,workdir=$work_dir,noxattr" /workspace 2>/dev/null; then
+    # Options:
+    # - squash_to_uid/gid: Makes lower layer files appear owned by container user,
+    #   enabling copy-up operations that would otherwise fail with EPERM when the
+    #   lower layer has different ownership (common with host directory mounts)
+    # - noxattr: Disables extended attributes to avoid permission issues
+    # See: https://github.com/containers/fuse-overlayfs/issues/428
+    local mount_uid mount_gid
+    mount_uid=$(id -u)
+    mount_gid=$(id -g)
+    if fuse-overlayfs -o "lowerdir=/lower,upperdir=$upper_dir,workdir=$work_dir,squash_to_uid=$mount_uid,squash_to_gid=$mount_gid,noxattr" /workspace 2>/dev/null; then
         log_success "fuse-overlayfs mounted successfully"
         log_info "  Lower (read-only): /lower"
         log_info "  Upper (writes):    $upper_dir"
