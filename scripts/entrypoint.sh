@@ -282,7 +282,10 @@ setup_fuse_overlay() {
     mkdir -p "$upper_dir" "$work_dir" /workspace 2>/dev/null || true
 
     # Mount fuse-overlayfs
-    if fuse-overlayfs -o "lowerdir=/lower,upperdir=$upper_dir,workdir=$work_dir" /workspace 2>/dev/null; then
+    # Note: noxattr is required on some systems (e.g., GitHub Actions) where copying
+    # extended attributes during copy-up fails with "Operation not permitted" (EPERM)
+    # when the container doesn't have capabilities to set certain xattrs
+    if fuse-overlayfs -o "lowerdir=/lower,upperdir=$upper_dir,workdir=$work_dir,noxattr" /workspace 2>/dev/null; then
         log_success "fuse-overlayfs mounted successfully"
         log_info "  Lower (read-only): /lower"
         log_info "  Upper (writes):    $upper_dir"
