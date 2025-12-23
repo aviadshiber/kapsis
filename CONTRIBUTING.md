@@ -13,6 +13,13 @@ This guide covers the logging system and test framework for developers contribut
   - [Writing Tests](#writing-tests)
   - [Test Framework API](#test-framework-api)
   - [Test Categories](#test-categories)
+- [Code Style](#code-style)
+- [Submitting Changes](#submitting-changes)
+- [Release Process](#release-process)
+  - [Automatic Version Bumping](#automatic-version-bumping)
+  - [Commit Message Format](#commit-message-format)
+  - [Release Workflow](#release-workflow)
+  - [Manual Releases](#manual-releases)
 
 ---
 
@@ -312,3 +319,97 @@ Tests are categorized for selective execution:
 2. Make changes
 3. Run tests: `./tests/run-all-tests.sh -q`
 4. Submit PR with description of changes
+
+---
+
+## Release Process
+
+Kapsis uses automated releases triggered on every successful merge to `main`. The release system uses [Conventional Commits](https://www.conventionalcommits.org/) to automatically determine version bumps.
+
+### Automatic Version Bumping
+
+When a PR is merged to `main`, the auto-release workflow analyzes commit messages to determine the version bump:
+
+| Commit Type | Version Bump | Example |
+|-------------|--------------|---------|
+| `feat:` or `feat(scope):` | **Minor** (1.0.0 → 1.1.0) | `feat: add user authentication` |
+| `fix:` or `fix(scope):` | **Patch** (1.0.0 → 1.0.1) | `fix: resolve login timeout` |
+| `BREAKING CHANGE:` or `type!:` | **Major** (1.0.0 → 2.0.0) | `feat!: redesign API` |
+| Other (`docs:`, `chore:`, `refactor:`, etc.) | **Patch** | `docs: update README` |
+
+### Commit Message Format
+
+```
+<type>(<optional scope>): <description>
+
+[optional body]
+
+[optional footer with BREAKING CHANGE: description]
+```
+
+**Examples:**
+
+```bash
+# Patch release (bug fix)
+git commit -m "fix(agent): handle missing config gracefully"
+
+# Minor release (new feature)
+git commit -m "feat(status): add real-time monitoring dashboard"
+
+# Major release (breaking change)
+git commit -m "feat(api)!: change config format to YAML
+
+BREAKING CHANGE: Config files must now use YAML format instead of JSON."
+```
+
+### Common Commit Types
+
+| Type | Description |
+|------|-------------|
+| `feat` | New feature |
+| `fix` | Bug fix |
+| `docs` | Documentation only |
+| `style` | Code style (formatting, semicolons, etc.) |
+| `refactor` | Code refactoring (no feature/fix) |
+| `perf` | Performance improvements |
+| `test` | Adding/updating tests |
+| `chore` | Maintenance tasks, dependencies |
+| `ci` | CI/CD configuration |
+| `build` | Build system or dependencies |
+
+### Release Workflow
+
+1. **Merge PR to main** → CI runs tests
+2. **Auto-release workflow** → Analyzes commits, determines version bump
+3. **Updates VERSION** → Commits new version
+4. **Updates CHANGELOG** → Moves `[Unreleased]` to new version
+5. **Creates git tag** → Pushes `v{X.Y.Z}` tag
+6. **Release workflow triggers** → Builds container, creates GitHub Release
+
+### Manual Releases
+
+For special cases (hotfixes, pre-releases), you can trigger a release manually:
+
+```bash
+# Via GitHub UI:
+# Actions → Auto Release → Run workflow → Select bump type
+
+# Or via GitHub CLI:
+gh workflow run auto-release.yml -f bump_type=patch
+```
+
+### Updating the Changelog
+
+When adding changes to your PR, update the `[Unreleased]` section in `CHANGELOG.md`:
+
+```markdown
+## [Unreleased]
+
+### Added
+- Your new feature description
+
+### Fixed
+- Your bug fix description
+```
+
+The release workflow will automatically move these entries to the new version section when creating a release.
