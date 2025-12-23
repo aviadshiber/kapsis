@@ -42,7 +42,7 @@ get_tests_for_category() {
             echo "test-maven-snapshot-block.sh"
             ;;
         security)
-            echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh"
+            echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh"
             ;;
         git)
             echo "test-git-new-branch.sh test-git-auto-commit-push.sh"

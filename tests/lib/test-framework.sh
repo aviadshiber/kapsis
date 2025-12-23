@@ -34,6 +34,10 @@ KAPSIS_ROOT="$(dirname "$TESTS_DIR")"
 # Use $HOME path for reliable Podman VM filesystem sharing on macOS
 TEST_PROJECT="$HOME/.kapsis-test-project"
 
+# Container image name (configurable for CI environments)
+# CI sets KAPSIS_IMAGE="kapsis-test:ci", local dev uses kapsis-sandbox:latest
+KAPSIS_TEST_IMAGE="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
+
 #===============================================================================
 # OUTPUT FUNCTIONS
 #===============================================================================
@@ -423,7 +427,7 @@ check_prerequisites() {
     fi
 
     # Check Kapsis image (use KAPSIS_IMAGE env var if set)
-    local image_name="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
+    local image_name="${KAPSIS_IMAGE:-$KAPSIS_TEST_IMAGE}"
     if ! podman image exists "$image_name" 2>/dev/null; then
         missing+=("$image_name image (run ./scripts/build-image.sh)")
     fi
@@ -541,12 +545,13 @@ cleanup_container_test() {
         podman rm -f "$CONTAINER_TEST_ID" 2>/dev/null || true
 
         # Remove named volumes (including fuse-overlayfs volumes)
-        podman volume rm "${CONTAINER_TEST_ID}-m2" 2>/dev/null || true
-        podman volume rm "${CONTAINER_TEST_ID}-gradle" 2>/dev/null || true
-        podman volume rm "${CONTAINER_TEST_ID}-ge" 2>/dev/null || true
-        podman volume rm "${CONTAINER_TEST_ID}-workspace" 2>/dev/null || true
-        podman volume rm "${CONTAINER_TEST_ID}-upper" 2>/dev/null || true
-        podman volume rm "${CONTAINER_TEST_ID}-work" 2>/dev/null || true
+        # Redirect both stdout and stderr to suppress volume name output
+        podman volume rm "${CONTAINER_TEST_ID}-m2" >/dev/null 2>&1 || true
+        podman volume rm "${CONTAINER_TEST_ID}-gradle" >/dev/null 2>&1 || true
+        podman volume rm "${CONTAINER_TEST_ID}-ge" >/dev/null 2>&1 || true
+        podman volume rm "${CONTAINER_TEST_ID}-workspace" >/dev/null 2>&1 || true
+        podman volume rm "${CONTAINER_TEST_ID}-upper" >/dev/null 2>&1 || true
+        podman volume rm "${CONTAINER_TEST_ID}-work" >/dev/null 2>&1 || true
 
         # Remove sandbox directory (for native overlay mode)
         # Fix work dir permissions first (fuse-overlayfs creates d--------- dirs)
@@ -586,7 +591,7 @@ run_in_container() {
             -e KAPSIS_PROJECT="test" \
             -e KAPSIS_USE_FUSE_OVERLAY=true \
             --timeout "$timeout" \
-            kapsis-sandbox:latest \
+            $KAPSIS_TEST_IMAGE \
             bash -c "$command" 2>&1
     else
         # Overlay-based isolation (native Linux)
@@ -602,7 +607,7 @@ run_in_container() {
             -e KAPSIS_AGENT_ID="$CONTAINER_TEST_ID" \
             -e KAPSIS_PROJECT="test" \
             --timeout "$timeout" \
-            kapsis-sandbox:latest \
+            $KAPSIS_TEST_IMAGE \
             bash -c "$command" 2>&1
     fi
 }
@@ -624,7 +629,7 @@ run_in_container_detached() {
         -v "${container_name}-m2:/home/developer/.m2/repository" \
         -e KAPSIS_AGENT_ID="$container_name" \
         -e KAPSIS_PROJECT="test" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "$command" 2>&1
 }
 
@@ -675,7 +680,7 @@ assert_file_in_upper() {
         local result
         result=$(podman run --rm \
             -v "${CONTAINER_TEST_ID}-upper:/upper:ro" \
-            kapsis-sandbox:latest \
+            $KAPSIS_TEST_IMAGE \
             bash -c "test -f '/upper/data/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
 
         if [[ "$result" == *"EXISTS"* ]]; then
@@ -711,7 +716,7 @@ assert_file_not_in_upper() {
         local result
         result=$(podman run --rm \
             -v "${CONTAINER_TEST_ID}-upper:/upper:ro" \
-            kapsis-sandbox:latest \
+            $KAPSIS_TEST_IMAGE \
             bash -c "test -f '/upper/data/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
 
         if [[ "$result" == *"NOTFOUND"* ]]; then
@@ -768,13 +773,18 @@ skip_if_no_container() {
         return 1
     fi
 
-    if ! podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null | grep -q "running"; then
-        log_skip "Podman machine not running"
-        return 1
+    # Check Podman machine (macOS only - Linux runs Podman natively)
+    if [[ "$(uname)" == "Darwin" ]]; then
+        if ! podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null | grep -q "running"; then
+            log_skip "Podman machine not running"
+            return 1
+        fi
     fi
 
-    if ! podman image exists kapsis-sandbox:latest 2>/dev/null; then
-        log_skip "Kapsis image not built"
+    # Check Kapsis image (use KAPSIS_IMAGE env var if set, for CI compatibility)
+    local image_name="${KAPSIS_IMAGE:-$KAPSIS_TEST_IMAGE}"
+    if ! podman image exists "$image_name" 2>/dev/null; then
+        log_skip "Kapsis image not built ($image_name)"
         return 1
     fi
 
@@ -795,7 +805,7 @@ check_overlay_rw_support() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$test_dir/lower:/workspace:O,upperdir=$test_dir/upper,workdir=$test_dir/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "echo 'write test' > /workspace/write-test.txt 2>&1 && echo SUCCESS || echo FAILED" 2>&1) || true
 
     # Cleanup - fix work dir permissions first (overlay creates d--------- dirs)
@@ -851,7 +861,7 @@ run_podman_isolated() {
             -e KAPSIS_AGENT_ID="$container_id" \
             -e KAPSIS_USE_FUSE_OVERLAY=true \
             "$@" \
-            kapsis-sandbox:latest \
+            $KAPSIS_TEST_IMAGE \
             bash -c "$command" 2>&1
     else
         # Native overlay (Linux)
@@ -864,7 +874,7 @@ run_podman_isolated() {
             -v "${container_id}-m2:/home/developer/.m2/repository" \
             -e KAPSIS_AGENT_ID="$container_id" \
             "$@" \
-            kapsis-sandbox:latest \
+            $KAPSIS_TEST_IMAGE \
             bash -c "$command" 2>&1
     fi
 }
@@ -878,10 +888,10 @@ cleanup_isolated_container() {
     # Stop container if running
     podman rm -f "$container_id" 2>/dev/null || true
 
-    # Remove named volumes
-    podman volume rm "${container_id}-m2" 2>/dev/null || true
-    podman volume rm "${container_id}-upper" 2>/dev/null || true
-    podman volume rm "${container_id}-work" 2>/dev/null || true
+    # Remove named volumes (suppress stdout to avoid noise in quiet mode)
+    podman volume rm "${container_id}-m2" >/dev/null 2>&1 || true
+    podman volume rm "${container_id}-upper" >/dev/null 2>&1 || true
+    podman volume rm "${container_id}-work" >/dev/null 2>&1 || true
 
     # Remove sandbox directory (for native overlay mode)
     # Fix work dir permissions first (fuse-overlayfs creates d--------- dirs)
@@ -944,7 +954,7 @@ run_in_worktree_container() {
         -e KAPSIS_SANDBOX_MODE="worktree" \
         -e KAPSIS_WORKTREE_MODE="true" \
         "$@" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "$command" 2>&1
 }
 
@@ -963,8 +973,8 @@ cleanup_worktree_test() {
     # Cleanup worktree and sanitized git
     cleanup_worktree "$TEST_PROJECT" "$WORKTREE_TEST_ID" 2>/dev/null || true
 
-    # Remove any named volumes
-    podman volume rm "${WORKTREE_TEST_ID}-m2" 2>/dev/null || true
+    # Remove any named volumes (suppress stdout to avoid noise in quiet mode)
+    podman volume rm "${WORKTREE_TEST_ID}-m2" >/dev/null 2>&1 || true
 
     # Reset state
     WORKTREE_TEST_ID=""
