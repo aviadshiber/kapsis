@@ -92,15 +92,17 @@ test_project_config_found() {
 test_kapsis_dir_config() {
     log_test "Testing .kapsis/config.yaml resolution"
 
+    # Clean up any project-level config from previous test
+    rm -f "$TEST_PROJECT/agent-sandbox.yaml"
+
     create_kapsis_dir_config
 
     cd "$TEST_PROJECT"
     local output
     output=$("$LAUNCH_SCRIPT" 1 . --task "test" --dry-run 2>&1) || true
 
-    # Should find .kapsis/config.yaml
-    assert_contains "$output" ".kapsis/config.yaml" "Should find .kapsis config" || \
-    assert_contains "$output" "agent-sandbox" "Should find some config"
+    # Should find .kapsis/config.yaml (now that agent-sandbox.yaml is removed)
+    assert_contains "$output" ".kapsis/config.yaml" "Should find .kapsis config"
 }
 
 test_fallback_to_claude() {
