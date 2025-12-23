@@ -289,7 +289,6 @@ setup_fuse_overlay() {
                 export GIT_TEST_FSMONITOR=0
                 log_info "Git configured: GIT_DIR=/upper/data/.git GIT_WORK_TREE=/workspace"
 
-                # Configure git hooks (disable by default for container compatibility)
                 configure_git_hooks
             else
                 log_warn "Failed to copy .git directory"
@@ -301,7 +300,6 @@ setup_fuse_overlay() {
             export GIT_TEST_FSMONITOR=0
             log_info "Using existing .git in upper layer"
 
-            # Configure git hooks (disable by default for container compatibility)
             configure_git_hooks
         fi
     else
