@@ -563,14 +563,20 @@ EOF
 test_yq_v4_filesystem_parsing() {
     log_test "Testing yq v4 compatibility for filesystem.include parsing"
 
+    # Create test files that we know will exist (CI may not have ~/.gitconfig or ~/.ssh)
+    local test_file1="$HOME/.kapsis-test-file1"
+    local test_file2="$HOME/.kapsis-test-file2"
+    echo "test1" > "$test_file1"
+    echo "test2" > "$test_file2"
+
     local test_config="$TEST_PROJECT/.kapsis-yq-test.yaml"
-    cat > "$test_config" << 'EOF'
+    cat > "$test_config" << EOF
 agent:
   command: "echo test"
 filesystem:
   include:
-    - ~/.gitconfig
-    - ~/.ssh
+    - ~/.kapsis-test-file1
+    - ~/.kapsis-test-file2
 environment:
   passthrough:
     - HOME
@@ -580,12 +586,12 @@ EOF
     local output
     output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
-    rm -f "$test_config"
+    rm -f "$test_config" "$test_file1" "$test_file2"
 
     # Should parse multiple items without yq errors
     assert_contains "$output" "DRY RUN" "Should complete without yq parsing errors"
     # Check that both mounts appear
-    if echo "$output" | grep -q ".gitconfig" && echo "$output" | grep -q ".ssh"; then
+    if echo "$output" | grep -q "kapsis-test-file1" && echo "$output" | grep -q "kapsis-test-file2"; then
         return 0
     else
         log_fail "filesystem.include should parse multiple items correctly"
@@ -847,20 +853,26 @@ test_inject_credential_files_creates_parent_dirs() {
 test_staged_configs_env_var() {
     log_test "Testing KAPSIS_STAGED_CONFIGS is set for home directory mounts"
 
+    # Create test files that we know will exist (CI may not have ~/.gitconfig or ~/.ssh)
+    local test_file1="$HOME/.kapsis-staged-test1"
+    local test_file2="$HOME/.kapsis-staged-test2"
+    echo "test1" > "$test_file1"
+    echo "test2" > "$test_file2"
+
     local test_config="$TEST_PROJECT/.kapsis-staging-test.yaml"
-    cat > "$test_config" << 'EOF'
+    cat > "$test_config" << EOF
 agent:
   command: "echo test"
 filesystem:
   include:
-    - ~/.gitconfig
-    - ~/.ssh
+    - ~/.kapsis-staged-test1
+    - ~/.kapsis-staged-test2
 EOF
 
     local output
     output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
-    rm -f "$test_config"
+    rm -f "$test_config" "$test_file1" "$test_file2"
 
     # Should have KAPSIS_STAGED_CONFIGS with the relative paths
     assert_contains "$output" "KAPSIS_STAGED_CONFIGS=" "Should set KAPSIS_STAGED_CONFIGS env var"
@@ -869,19 +881,23 @@ EOF
 test_staging_mounts_to_kapsis_staging() {
     log_test "Testing home paths mount to /kapsis-staging/"
 
+    # Create test file that we know will exist (CI may not have ~/.gitconfig)
+    local test_file="$HOME/.kapsis-staging-mount-test"
+    echo "test" > "$test_file"
+
     local test_config="$TEST_PROJECT/.kapsis-staging-mount-test.yaml"
-    cat > "$test_config" << 'EOF'
+    cat > "$test_config" << EOF
 agent:
   command: "echo test"
 filesystem:
   include:
-    - ~/.gitconfig
+    - ~/.kapsis-staging-mount-test
 EOF
 
     local output
     output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
-    rm -f "$test_config"
+    rm -f "$test_config" "$test_file"
 
     # Should mount to /kapsis-staging/ not directly to home
     assert_contains "$output" "/kapsis-staging/" "Should mount to /kapsis-staging/ directory"
