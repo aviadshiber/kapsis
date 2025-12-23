@@ -111,8 +111,17 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-          # For workflow_run, checkout the commit that triggered CI
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          # Checkout main branch (not detached HEAD) so we can push commits
+          ref: main
+
+      - name: Verify we're on the right commit
+        run: |
+          EXPECTED_SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          CURRENT_SHA=$(git rev-parse HEAD)
+          if [[ "$EXPECTED_SHA" != "$CURRENT_SHA" ]]; then
+            echo "Warning: HEAD ($CURRENT_SHA) differs from expected ($EXPECTED_SHA)"
+            echo "This can happen if main moved since CI completed"
+          fi
 
       - name: Configure Git
         run: |
@@ -275,8 +284,8 @@ jobs:
         run: |
           NEW_VERSION="${{ steps.newversion.outputs.new_version }}"
 
-          # Push the version commit
-          git push origin HEAD
+          # Push the version commit to main
+          git push origin main
 
           # Create and push the tag
           git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
