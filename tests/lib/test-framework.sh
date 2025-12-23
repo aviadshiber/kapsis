@@ -867,13 +867,18 @@ check_overlay_rw_support() {
         $KAPSIS_TEST_IMAGE \
         bash -c "echo 'write test' > /workspace/write-test.txt 2>&1 && echo SUCCESS || echo FAILED" 2>&1) || true
 
+    # Debug: show what happened
+    log_info "Overlay write test result: $result"
+
     # Cleanup - fix work dir permissions first (overlay creates d--------- dirs)
     find "$test_dir" -type d -perm 000 -exec chmod 755 {} \; 2>/dev/null || true
     rm -rf "$test_dir"
 
     if [[ "$result" == *"SUCCESS"* ]]; then
+        log_info "Native overlay is writable - using native overlay mode"
         return 0
     else
+        log_info "Native overlay failed - will use fuse-overlayfs"
         return 1
     fi
 }
