@@ -857,12 +857,21 @@ skip_if_no_container() {
 # check_overlay_rw_support
 # Checks if native overlay mounts are read-write with --userns=keep-id (rootless security)
 # On macOS with virtio-fs, native overlay is read-only, so we fall back to fuse-overlayfs.
-# On Linux, native overlay may also have permission issues with rootless Podman.
+# On Linux CI, native overlay with host directories has permission issues when combined
+# with the entrypoint script - so we use fuse-overlayfs with named volumes instead.
 #
-# SECURITY: Always test with --userns=keep-id to ensure the solution maintains
+# SECURITY: Always use --userns=keep-id to ensure the solution maintains
 # the rootless, non-privileged container model that Kapsis requires for agent sandboxing.
 check_overlay_rw_support() {
-    # Create test directories
+    # On Linux (except macOS), use fuse-overlayfs for reliable operation
+    # Native overlay with --userns=keep-id has permission issues with host directories
+    # when running through the entrypoint (works without entrypoint but fails with it)
+    if [[ "$_TEST_OS" != "Darwin" ]]; then
+        log_info "Linux detected - using fuse-overlayfs for reliable rootless operation"
+        return 1
+    fi
+
+    # On macOS, test if native overlay works (typically read-only with virtio-fs)
     local test_dir="$HOME/.kapsis-overlay-test-$$"
     mkdir -p "$test_dir/lower" "$test_dir/upper" "$test_dir/work"
     chmod 777 "$test_dir/lower" "$test_dir/upper" "$test_dir/work"
