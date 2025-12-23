@@ -1,6 +1,6 @@
 name: Auto Release
 
-# Automatically creates a release on each successful merge to main
+# Automatically creates a release on each successful CI run on main
 # Uses Conventional Commits to determine version bump type:
 #   - feat: or feat(scope): → Minor version bump
 #   - fix: or fix(scope): → Patch version bump
@@ -8,8 +8,13 @@ name: Auto Release
 #   - Other types (docs, chore, refactor, etc.) → Patch bump
 
 on:
-  push:
+  # Triggered automatically when CI workflow completes on main
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
     branches: [main, master]
+
+  # Manual trigger for ad-hoc releases
   workflow_dispatch:
     inputs:
       bump_type:
@@ -41,6 +46,10 @@ jobs:
   check:
     name: Check Release Conditions
     runs-on: ubuntu-latest
+    # Only run if CI succeeded (for workflow_run) or manual trigger (workflow_dispatch)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
       last_tag: ${{ steps.check.outputs.last_tag }}
@@ -50,6 +59,8 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+          # For workflow_run, checkout the commit that triggered CI
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Check release conditions
         id: check
@@ -88,34 +99,11 @@ jobs:
             fi
           fi
 
-  # Wait for CI to complete successfully
-  wait-for-ci:
-    name: Wait for CI
-    runs-on: ubuntu-latest
-    needs: check
-    if: needs.check.outputs.should_release == 'true'
-    steps:
-      - name: Wait for CI workflow
-        uses: fountainhead/action-wait-for-check@v1.2.0
-        id: wait-for-ci
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          checkName: CI Success
-          ref: ${{ github.sha }}
-          timeoutSeconds: 600
-          intervalSeconds: 30
-
-      - name: Fail if CI failed
-        if: steps.wait-for-ci.outputs.conclusion != 'success'
-        run: |
-          echo "::error::CI workflow did not succeed (status: ${{ steps.wait-for-ci.outputs.conclusion }})"
-          exit 1
-
   # Determine version bump and create release
   release:
     name: Create Release
     runs-on: ubuntu-latest
-    needs: [check, wait-for-ci]
+    needs: [check]
     if: needs.check.outputs.should_release == 'true'
     steps:
       - name: Checkout code
@@ -123,6 +111,8 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
+          # For workflow_run, checkout the commit that triggered CI
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
       - name: Configure Git
         run: |
