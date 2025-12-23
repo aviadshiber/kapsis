@@ -157,15 +157,9 @@ test_timestamps_unchanged() {
 
     setup_container_test "host-time"
 
-    # Record modification time before
-    # Note: stat -f is "format" on macOS but "filesystem" on Linux
-    # Use OS detection for correct syntax
+    # Record modification time before (using cross-platform helper from test-framework.sh)
     local mtime_before
-    if [[ "$(uname)" == "Darwin" ]]; then
-        mtime_before=$(stat -f "%m" "$TEST_PROJECT/pom.xml")
-    else
-        mtime_before=$(stat -c "%Y" "$TEST_PROJECT/pom.xml")
-    fi
+    mtime_before=$(get_file_mtime "$TEST_PROJECT/pom.xml")
 
     # Modify file in container
     sleep 2  # Ensure time would change
@@ -173,11 +167,7 @@ test_timestamps_unchanged() {
 
     # Check modification time after
     local mtime_after
-    if [[ "$(uname)" == "Darwin" ]]; then
-        mtime_after=$(stat -f "%m" "$TEST_PROJECT/pom.xml")
-    else
-        mtime_after=$(stat -c "%Y" "$TEST_PROJECT/pom.xml")
-    fi
+    mtime_after=$(get_file_mtime "$TEST_PROJECT/pom.xml")
 
     cleanup_container_test
 

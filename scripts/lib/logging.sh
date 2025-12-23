@@ -36,6 +36,12 @@
 [[ -n "${_KAPSIS_LOGGING_LOADED:-}" ]] && return 0
 _KAPSIS_LOGGING_LOADED=1
 
+# Source cross-platform compatibility helpers
+_LOGGING_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$_LOGGING_LIB_DIR/compat.sh" ]]; then
+    source "$_LOGGING_LIB_DIR/compat.sh"
+fi
+
 # =============================================================================
 # Configuration Defaults
 # =============================================================================
@@ -131,8 +137,10 @@ _log_rotate() {
     local max_bytes=$((KAPSIS_LOG_MAX_SIZE_MB * 1024 * 1024))
     local current_size
 
-    # Get file size (compatible with macOS and Linux)
-    if [[ "$(uname)" == "Darwin" ]]; then
+    # Get file size using cross-platform helper (with fallback)
+    if type get_file_size &>/dev/null; then
+        current_size=$(get_file_size "$_KAPSIS_LOG_FILE_PATH")
+    elif [[ "$(uname)" == "Darwin" ]]; then
         current_size=$(stat -f%z "$_KAPSIS_LOG_FILE_PATH" 2>/dev/null || echo 0)
     else
         current_size=$(stat -c%s "$_KAPSIS_LOG_FILE_PATH" 2>/dev/null || echo 0)

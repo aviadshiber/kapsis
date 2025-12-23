@@ -427,6 +427,47 @@ After agent work completes, use the cleanup script to reclaim disk space:
 
 See [CLEANUP.md](CLEANUP.md) for full documentation on cleanup options, what gets cleaned, and handling permission issues.
 
+## Shared Libraries
+
+Kapsis scripts use shared libraries for common functionality:
+
+```
+scripts/lib/
+├── compat.sh      # Cross-platform compatibility helpers
+├── logging.sh     # File-based logging with rotation
+├── status.sh      # JSON status file management
+└── json-utils.sh  # JSON parsing utilities
+```
+
+### compat.sh - Cross-Platform Helpers
+
+Provides consistent behavior across macOS and Linux where command syntax differs:
+
+```bash
+source "$SCRIPT_DIR/lib/compat.sh"
+
+# Get file size (works on both macOS and Linux)
+size=$(get_file_size "/path/to/file")
+
+# Get file modification time as Unix epoch
+mtime=$(get_file_mtime "/path/to/file")
+
+# OS detection
+if is_macos; then
+    # macOS-specific code
+fi
+```
+
+**Why this exists:** The `stat` command has different syntax on macOS vs Linux:
+- macOS: `stat -f%z file` (format flag)
+- Linux: `stat -c%s file` (format flag)
+
+The fallback pattern `stat -f... || stat -c...` doesn't work because Linux's `stat -f` shows filesystem info and exits 0 (success).
+
+### logging.sh - Structured Logging
+
+See the header comments in `scripts/lib/logging.sh` for full documentation.
+
 ## Troubleshooting
 
 ### Common Issues
