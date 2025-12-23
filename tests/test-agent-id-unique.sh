@@ -32,7 +32,7 @@ test_same_id_blocked() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox_dir/upper,workdir=$sandbox_dir/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         sleep 30 2>/dev/null || {
             log_info "First container failed to start (may be image missing)"
             rm -rf "$sandbox_dir"
@@ -45,7 +45,7 @@ test_same_id_blocked() {
     output=$(podman run --rm \
         --name "$agent_id" \
         --hostname "$agent_id" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         echo "should not run" 2>&1) || exit_code=$?
 
     # Cleanup
@@ -80,7 +80,7 @@ test_different_ids_allowed() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         sleep 30 2>/dev/null || {
             rm -rf "$sandbox1" "$sandbox2"
             return 0  # Skip if image missing
@@ -93,7 +93,7 @@ test_different_ids_allowed() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         sleep 30 2>/dev/null || exit_code=$?
 
     # Check both are running
@@ -126,7 +126,7 @@ test_volumes_isolated() {
         --name "$agent_id1" \
         --userns=keep-id \
         -v "${agent_id1}-m2:/home/developer/.m2/repository" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "mkdir -p /home/developer/.m2/repository/test && echo 'agent1' > /home/developer/.m2/repository/test/marker.txt" 2>/dev/null || {
             return 0  # Skip if image missing
         }
@@ -137,7 +137,7 @@ test_volumes_isolated() {
         --name "$agent_id2" \
         --userns=keep-id \
         -v "${agent_id2}-m2:/home/developer/.m2/repository" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "cat /home/developer/.m2/repository/test/marker.txt 2>/dev/null || echo 'not found'" 2>&1)
 
     # Cleanup volumes
@@ -164,7 +164,7 @@ test_sandbox_dirs_isolated() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "echo 'from agent 1' > /workspace/agent1-file.txt" 2>/dev/null || {
             rm -rf "$sandbox1" "$sandbox2"
             return 0  # Skip if image missing
@@ -177,7 +177,7 @@ test_sandbox_dirs_isolated() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "cat /workspace/agent1-file.txt 2>/dev/null || echo 'not found'" 2>&1)
 
     # Cleanup
@@ -219,7 +219,7 @@ test_reuse_after_cleanup() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         echo "first run" 2>/dev/null || {
             rm -rf "$sandbox"
             return 0  # Skip if image missing
@@ -236,7 +236,7 @@ test_reuse_after_cleanup() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         echo "second run" 2>/dev/null || exit_code=$?
 
     rm -rf "$sandbox"

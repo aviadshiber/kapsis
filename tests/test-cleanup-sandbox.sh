@@ -56,7 +56,7 @@ test_named_volumes_removable() {
         --name "vol-test-$$" \
         --userns=keep-id \
         -v "${volume_name}:/data" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "echo 'data' > /data/test.txt" 2>/dev/null || {
             podman volume rm "$volume_name" 2>/dev/null || true
             return 0  # Skip if image missing
@@ -83,7 +83,7 @@ test_stopped_container_removable() {
     podman run \
         --name "$container_name" \
         --userns=keep-id \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         echo "done" 2>/dev/null || {
             return 0  # Skip if image missing
         }
@@ -113,7 +113,7 @@ test_force_remove_running() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         sleep 300 2>/dev/null || {
             rm -rf "$sandbox"
             return 0  # Skip if image missing

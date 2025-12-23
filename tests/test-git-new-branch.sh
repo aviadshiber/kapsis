@@ -41,7 +41,7 @@ test_branch_flag_creates_branch() {
         -e KAPSIS_PROJECT="test" \
         -e KAPSIS_USE_FUSE_OVERLAY=true \
         -e KAPSIS_BRANCH="$branch_name" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c "cd /workspace && git branch --show-current" 2>&1) || true
 
     cleanup_container_test
@@ -137,8 +137,8 @@ test_multiple_branches_different_agents() {
         # Check files in upper volumes
         local agent1_has_file
         local agent2_has_file
-        agent1_has_file=$(podman run --rm -v "${agent1}-upper:/upper:ro" kapsis-sandbox:latest bash -c "test -f /upper/data/agent1.txt && echo YES || echo NO" 2>&1)
-        agent2_has_file=$(podman run --rm -v "${agent2}-upper:/upper:ro" kapsis-sandbox:latest bash -c "test -f /upper/data/agent2.txt && echo YES || echo NO" 2>&1)
+        agent1_has_file=$(podman run --rm -v "${agent1}-upper:/upper:ro" $KAPSIS_TEST_IMAGE bash -c "test -f /upper/data/agent1.txt && echo YES || echo NO" 2>&1)
+        agent2_has_file=$(podman run --rm -v "${agent2}-upper:/upper:ro" $KAPSIS_TEST_IMAGE bash -c "test -f /upper/data/agent2.txt && echo YES || echo NO" 2>&1)
 
         cleanup_isolated_container "$agent1"
         cleanup_isolated_container "$agent2"
@@ -180,7 +180,7 @@ test_branch_env_var_passed() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e KAPSIS_BRANCH="$branch_name" \
-        kapsis-sandbox:latest \
+        $KAPSIS_TEST_IMAGE \
         bash -c 'echo $KAPSIS_BRANCH' 2>&1) || true
 
     cleanup_container_test
