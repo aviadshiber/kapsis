@@ -39,6 +39,37 @@ TEST_PROJECT="$HOME/.kapsis-test-project"
 KAPSIS_TEST_IMAGE="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 
 #===============================================================================
+# CROSS-PLATFORM HELPERS
+#===============================================================================
+# macOS and Linux have different stat command syntax
+
+_TEST_OS="$(uname)"
+
+# Get file modification time as Unix epoch
+get_file_mtime() {
+    local file="$1"
+    if [[ "$_TEST_OS" == "Darwin" ]]; then
+        stat -f "%m" "$file" 2>/dev/null
+    else
+        stat -c "%Y" "$file" 2>/dev/null
+    fi
+}
+
+# Get file size in bytes
+get_file_size() {
+    local file="$1"
+    if [[ ! -f "$file" ]]; then
+        echo 0
+        return
+    fi
+    if [[ "$_TEST_OS" == "Darwin" ]]; then
+        stat -f%z "$file" 2>/dev/null || echo 0
+    else
+        stat -c%s "$file" 2>/dev/null || echo 0
+    fi
+}
+
+#===============================================================================
 # OUTPUT FUNCTIONS
 #===============================================================================
 # In quiet mode, only PASS/FAIL are shown; other output is suppressed

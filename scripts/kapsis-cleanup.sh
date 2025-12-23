@@ -26,6 +26,11 @@ else
     log_debug() { [[ "${KAPSIS_DEBUG:-}" == "1" ]] && echo "[DEBUG] $*" >&2 || true; }
 fi
 
+# Source cross-platform compatibility helpers
+if [[ -f "$SCRIPT_DIR/lib/compat.sh" ]]; then
+    source "$SCRIPT_DIR/lib/compat.sh"
+fi
+
 # Directories
 KAPSIS_DIR="${KAPSIS_DIR:-$HOME/.kapsis}"
 WORKTREE_DIR="${KAPSIS_WORKTREE_DIR:-$KAPSIS_DIR/worktrees}"
@@ -342,7 +347,7 @@ clean_status() {
         fi
 
         local size
-        size=$(stat -f%z "$status_file" 2>/dev/null || stat -c%s "$status_file" 2>/dev/null || echo 0)
+        size=$(get_file_size "$status_file")
         local size_human
         size_human=$(format_size "$size")
 
@@ -535,7 +540,7 @@ clean_logs() {
         local name
         name=$(basename "$log_file")
         local size
-        size=$(stat -f%z "$log_file" 2>/dev/null || stat -c%s "$log_file" 2>/dev/null || echo 0)
+        size=$(get_file_size "$log_file")
         local size_human
         size_human=$(format_size "$size")
 

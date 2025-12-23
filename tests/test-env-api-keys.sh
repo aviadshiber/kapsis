@@ -373,8 +373,8 @@ EOF
     local image_pos
     local spec_mount_pos
 
-    # Get position of image ($KAPSIS_TEST_IMAGE)
-    image_pos=$(echo "$cmd_line" | grep -bo "kapsis-sandbox:" | head -1 | cut -d: -f1)
+    # Get position of image (use KAPSIS_TEST_IMAGE which respects KAPSIS_IMAGE env var)
+    image_pos=$(echo "$cmd_line" | grep -bo "$KAPSIS_TEST_IMAGE" | head -1 | cut -d: -f1)
 
     # Get position of task-spec.md mount
     spec_mount_pos=$(echo "$cmd_line" | grep -bo "/task-spec.md:ro" | head -1 | cut -d: -f1)

@@ -53,7 +53,9 @@ test_dry_run_shows_image() {
     output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "Image:" "Should show Image line"
-    assert_contains "$output" "kapsis-sandbox" "Should show image name"
+    # Check for the actual image name (respects KAPSIS_IMAGE env var)
+    local expected_image="${KAPSIS_TEST_IMAGE%%:*}"  # Extract base name without tag
+    assert_contains "$output" "$expected_image" "Should show image name"
 }
 
 test_dry_run_shows_resources() {
