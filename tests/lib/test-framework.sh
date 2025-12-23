@@ -590,7 +590,7 @@ get_workspace_mount_args() {
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: true Copy-on-Write inside container
-        echo "--device /dev/fuse --cap-add SYS_ADMIN -v '$TEST_PROJECT:/lower:ro' -v '${container_id}-upper:/upper' -v '${container_id}-work:/work' -e KAPSIS_USE_FUSE_OVERLAY=true"
+        echo "--device /dev/fuse --cap-add SYS_ADMIN -v '$TEST_PROJECT:/lower:ro' -v '${container_id}-overlay:/overlay' -e KAPSIS_USE_FUSE_OVERLAY=true"
     else
         # Native overlay (Linux)
         echo "-v '$TEST_PROJECT:/workspace:O,upperdir=$sandbox_path/upper,workdir=$sandbox_path/work'"
@@ -611,9 +611,11 @@ cleanup_container_test() {
         # Stop container if running
         podman rm -f "$CONTAINER_TEST_ID" 2>/dev/null || true
 
-        # Remove named volumes (m2 cache and fuse-overlayfs upper/work)
+        # Remove named volumes (m2 cache, fuse-overlayfs overlay volume, and legacy upper/work)
         # Redirect both stdout and stderr to suppress volume name output
         podman volume rm "${CONTAINER_TEST_ID}-m2" >/dev/null 2>&1 || true
+        podman volume rm "${CONTAINER_TEST_ID}-overlay" >/dev/null 2>&1 || true
+        # Legacy volume names (for backward compatibility during transition)
         podman volume rm "${CONTAINER_TEST_ID}-upper" >/dev/null 2>&1 || true
         podman volume rm "${CONTAINER_TEST_ID}-work" >/dev/null 2>&1 || true
         podman volume rm "${CONTAINER_TEST_ID}-gradle" >/dev/null 2>&1 || true
@@ -641,6 +643,9 @@ run_in_container() {
     # Check if we need to use fuse-overlayfs (macOS workaround for true CoW)
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: true Copy-on-Write inside container
+        # IMPORTANT: Use single volume for both upper and work directories
+        # upperdir and workdir MUST be on the same filesystem to avoid EXDEV errors
+        # (see: https://docs.kernel.org/filesystems/overlayfs.html)
         podman run --rm \
             --name "$CONTAINER_TEST_ID" \
             --hostname "$CONTAINER_TEST_ID" \
@@ -651,8 +656,7 @@ run_in_container() {
             --cap-add SYS_ADMIN \
             --security-opt label=disable \
             -v "$TEST_PROJECT:/lower:ro" \
-            -v "${CONTAINER_TEST_ID}-upper:/upper" \
-            -v "${CONTAINER_TEST_ID}-work:/work" \
+            -v "${CONTAINER_TEST_ID}-overlay:/overlay" \
             -v "${CONTAINER_TEST_ID}-m2:/home/developer/.m2/repository" \
             -e KAPSIS_AGENT_ID="$CONTAINER_TEST_ID" \
             -e KAPSIS_PROJECT="test" \
@@ -744,13 +748,13 @@ assert_file_in_upper() {
     local message="${2:-File should exist in upper directory}"
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
-        # fuse-overlayfs: check file in upper volume (data subdir)
+        # fuse-overlayfs: check file in overlay volume (upper subdir)
         # Named volume must be checked from inside a container
         local result
         result=$(podman run --rm \
-            -v "${CONTAINER_TEST_ID}-upper:/upper:ro" \
+            -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro" \
             $KAPSIS_TEST_IMAGE \
-            bash -c "test -f '/upper/data/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
+            bash -c "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
 
         if [[ "$result" == *"EXISTS"* ]]; then
             return 0
@@ -778,13 +782,13 @@ assert_file_not_in_upper() {
     local message="${2:-File should not exist in upper directory}"
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
-        # fuse-overlayfs: check file NOT in upper volume
+        # fuse-overlayfs: check file NOT in overlay volume (upper subdir)
         # Named volume must be checked from inside a container
         local result
         result=$(podman run --rm \
-            -v "${CONTAINER_TEST_ID}-upper:/upper:ro" \
+            -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro" \
             $KAPSIS_TEST_IMAGE \
-            bash -c "test -f '/upper/data/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
+            bash -c "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
 
         if [[ "$result" == *"NOTFOUND"* ]]; then
             return 0
@@ -934,6 +938,8 @@ run_podman_isolated() {
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: true Copy-on-Write inside container
+        # IMPORTANT: Use single volume for both upper and work directories
+        # upperdir and workdir MUST be on the same filesystem to avoid EXDEV errors
         podman run --rm \
             --name "$container_id" \
             --hostname "$container_id" \
@@ -942,8 +948,7 @@ run_podman_isolated() {
             --cap-add SYS_ADMIN \
             --security-opt label=disable \
             -v "$TEST_PROJECT:/lower:ro" \
-            -v "${container_id}-upper:/upper" \
-            -v "${container_id}-work:/work" \
+            -v "${container_id}-overlay:/overlay" \
             -v "${container_id}-m2:/home/developer/.m2/repository" \
             -e KAPSIS_AGENT_ID="$container_id" \
             -e KAPSIS_USE_FUSE_OVERLAY=true \
@@ -978,6 +983,8 @@ cleanup_isolated_container() {
 
     # Remove named volumes (suppress stdout to avoid noise in quiet mode)
     podman volume rm "${container_id}-m2" >/dev/null 2>&1 || true
+    podman volume rm "${container_id}-overlay" >/dev/null 2>&1 || true
+    # Legacy volume names (for backward compatibility)
     podman volume rm "${container_id}-upper" >/dev/null 2>&1 || true
     podman volume rm "${container_id}-work" >/dev/null 2>&1 || true
 

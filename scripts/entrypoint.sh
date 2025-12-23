@@ -263,39 +263,55 @@ setup_fuse_overlay() {
         return
     fi
 
+    # Determine overlay directory layout
+    # New layout: single /overlay volume with upper/ and work/ subdirectories
+    # This ensures upperdir and workdir are on the same filesystem (required by overlayfs)
+    # Legacy layout: separate /upper and /work volumes (deprecated due to EXDEV errors)
+    local upper_dir work_dir
+    if [[ -d "/overlay" ]]; then
+        # New layout: single volume
+        upper_dir="/overlay/upper"
+        work_dir="/overlay/work"
+    else
+        # Legacy layout: separate volumes (may cause EXDEV errors on mkdir)
+        upper_dir="/upper/data"
+        work_dir="/work/data"
+    fi
+
     # Create overlay directories
-    mkdir -p /upper/data /work/data /workspace 2>/dev/null || true
+    mkdir -p "$upper_dir" "$work_dir" /workspace 2>/dev/null || true
 
     # Mount fuse-overlayfs
-    if fuse-overlayfs -o lowerdir=/lower,upperdir=/upper/data,workdir=/work/data /workspace 2>/dev/null; then
+    if fuse-overlayfs -o "lowerdir=/lower,upperdir=$upper_dir,workdir=$work_dir" /workspace 2>/dev/null; then
         log_success "fuse-overlayfs mounted successfully"
         log_info "  Lower (read-only): /lower"
-        log_info "  Upper (writes):    /upper/data"
+        log_info "  Upper (writes):    $upper_dir"
         log_info "  Merged view:       /workspace"
 
         # Git workaround: Copy .git directory to upper layer to avoid cross-device link issues
         # Git creates lock files that require same-filesystem linking
-        if [[ -d /lower/.git ]] && [[ ! -d /upper/data/.git ]]; then
+        local git_upper="$upper_dir/.git"
+        if [[ -d /lower/.git ]] && [[ ! -d "$git_upper" ]]; then
             log_info "Copying .git directory to upper layer for git compatibility..."
             # Use rsync-like copy that handles missing files gracefully
-            cp -a /lower/.git /upper/data/.git 2>&1 | grep -v "No such file" || true
+            cp -a /lower/.git "$git_upper" 2>&1 | grep -v "No such file" || true
             # Verify the copy worked
-            if [[ -d /upper/data/.git/objects ]]; then
+            if [[ -d "$git_upper/objects" ]]; then
                 log_success ".git directory copied successfully"
 
                 # Set GIT_DIR to point to the upper layer copy to avoid cross-device link issues
-                export GIT_DIR=/upper/data/.git
+                export GIT_DIR="$git_upper"
                 export GIT_WORK_TREE=/workspace
                 export GIT_TEST_FSMONITOR=0
-                log_info "Git configured: GIT_DIR=/upper/data/.git GIT_WORK_TREE=/workspace"
+                log_info "Git configured: GIT_DIR=$git_upper GIT_WORK_TREE=/workspace"
 
                 configure_git_hooks
             else
                 log_warn "Failed to copy .git directory"
             fi
-        elif [[ -d /upper/data/.git ]]; then
+        elif [[ -d "$git_upper" ]]; then
             # .git already exists in upper (from previous run)
-            export GIT_DIR=/upper/data/.git
+            export GIT_DIR="$git_upper"
             export GIT_WORK_TREE=/workspace
             export GIT_TEST_FSMONITOR=0
             log_info "Using existing .git in upper layer"
