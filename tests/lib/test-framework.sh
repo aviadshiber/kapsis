@@ -662,15 +662,18 @@ run_in_container() {
             bash -c "$command" 2>&1
     else
         # Overlay-based isolation (native Linux)
-        # On Linux, don't use --userns=keep-id with overlay mounts to avoid permission issues
-        local userns_opt=""
+        # On Linux, run as root (--user=0) to avoid permission issues with overlay
+        # macOS uses --userns=keep-id for proper UID mapping with Podman machine
+        local user_opt=""
         if [[ "$_TEST_OS" == "Darwin" ]]; then
-            userns_opt="--userns=keep-id"
+            user_opt="--userns=keep-id"
+        else
+            user_opt="--user=0"
         fi
         podman run --rm \
             --name "$CONTAINER_TEST_ID" \
             --hostname "$CONTAINER_TEST_ID" \
-            $userns_opt \
+            $user_opt \
             --memory=2g \
             --cpus=2 \
             --security-opt label=disable \
@@ -870,15 +873,18 @@ check_overlay_rw_support() {
 
     # Try to write via overlay mount
     # Override entrypoint to avoid its verbose output interfering with our test
-    # On Linux, don't use --userns=keep-id which can cause permission issues with overlay
-    local userns_opt=""
+    # On Linux, run as root (--user=0) to avoid permission issues with overlay
+    # macOS uses --userns=keep-id for proper UID mapping with Podman machine
+    local user_opt=""
     if [[ "$_TEST_OS" == "Darwin" ]]; then
-        userns_opt="--userns=keep-id"
+        user_opt="--userns=keep-id"
+    else
+        user_opt="--user=0"
     fi
 
     local result
     result=$(podman run --rm \
-        $userns_opt \
+        $user_opt \
         --security-opt label=disable \
         --entrypoint="" \
         -v "$test_dir/lower:/workspace:O,upperdir=$test_dir/upper,workdir=$test_dir/work" \
@@ -949,15 +955,18 @@ run_podman_isolated() {
             bash -c "$command" 2>&1
     else
         # Native overlay (Linux)
-        # On Linux, don't use --userns=keep-id with overlay mounts to avoid permission issues
-        local userns_opt=""
+        # On Linux, run as root (--user=0) to avoid permission issues with overlay
+        # macOS uses --userns=keep-id for proper UID mapping with Podman machine
+        local user_opt=""
         if [[ "$_TEST_OS" == "Darwin" ]]; then
-            userns_opt="--userns=keep-id"
+            user_opt="--userns=keep-id"
+        else
+            user_opt="--user=0"
         fi
         podman run --rm \
             --name "$container_id" \
             --hostname "$container_id" \
-            $userns_opt \
+            $user_opt \
             --security-opt label=disable \
             -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
             -v "${container_id}-m2:/home/developer/.m2/repository" \
