@@ -574,6 +574,13 @@ setup_container_test() {
     mkdir -p "$CONTAINER_TEST_UPPER"
     mkdir -p "$CONTAINER_TEST_SANDBOX/work"
 
+    # For fuse-overlayfs mode, pre-create the data subdirectories that the entrypoint expects
+    # This ensures they exist with correct permissions before fuse-overlayfs tries to use them
+    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
+        mkdir -p "$CONTAINER_TEST_UPPER/data"
+        mkdir -p "$CONTAINER_TEST_SANDBOX/work/data"
+    fi
+
     log_info "Container test setup: $CONTAINER_TEST_ID"
 }
 
