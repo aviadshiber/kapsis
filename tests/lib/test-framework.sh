@@ -586,7 +586,8 @@ get_workspace_mount_args() {
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: true Copy-on-Write inside container
-        echo "--device /dev/fuse --cap-add SYS_ADMIN -v '$TEST_PROJECT:/lower:ro' -v '${container_id}-upper:/upper' -v '${container_id}-work:/work' -e KAPSIS_USE_FUSE_OVERLAY=true"
+        # Use HOST directories (not named volumes) to avoid cross-device link errors
+        echo "--device /dev/fuse --cap-add SYS_ADMIN -v '$TEST_PROJECT:/lower:ro' -v '$sandbox_path/upper:/upper' -v '$sandbox_path/work:/work' -e KAPSIS_USE_FUSE_OVERLAY=true"
     else
         # Native overlay (Linux)
         echo "-v '$TEST_PROJECT:/workspace:O,upperdir=$sandbox_path/upper,workdir=$sandbox_path/work'"
@@ -607,16 +608,14 @@ cleanup_container_test() {
         # Stop container if running
         podman rm -f "$CONTAINER_TEST_ID" 2>/dev/null || true
 
-        # Remove named volumes (including fuse-overlayfs volumes)
+        # Remove named volumes (m2 cache)
         # Redirect both stdout and stderr to suppress volume name output
         podman volume rm "${CONTAINER_TEST_ID}-m2" >/dev/null 2>&1 || true
         podman volume rm "${CONTAINER_TEST_ID}-gradle" >/dev/null 2>&1 || true
         podman volume rm "${CONTAINER_TEST_ID}-ge" >/dev/null 2>&1 || true
         podman volume rm "${CONTAINER_TEST_ID}-workspace" >/dev/null 2>&1 || true
-        podman volume rm "${CONTAINER_TEST_ID}-upper" >/dev/null 2>&1 || true
-        podman volume rm "${CONTAINER_TEST_ID}-work" >/dev/null 2>&1 || true
 
-        # Remove sandbox directory (for native overlay mode)
+        # Remove sandbox directory (contains upper/work for fuse-overlayfs)
         # Fix work dir permissions first (fuse-overlayfs creates d--------- dirs)
         if [[ -n "$CONTAINER_TEST_SANDBOX" ]] && [[ -d "$CONTAINER_TEST_SANDBOX" ]]; then
             find "$CONTAINER_TEST_SANDBOX" -type d -perm 000 -exec chmod 755 {} \; 2>/dev/null || true
@@ -629,14 +628,15 @@ cleanup_container_test() {
 
 # run_in_container <command>
 # Runs a command in a test container and captures output
-# Uses fuse-overlayfs on macOS (native overlay is read-only with virtio-fs)
+# Uses fuse-overlayfs for CoW (both Linux and macOS)
 run_in_container() {
     local command="$1"
     local timeout="${2:-30}"
 
-    # Check if we need to use fuse-overlayfs (macOS workaround for true CoW)
+    # Check if we need to use fuse-overlayfs
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: true Copy-on-Write inside container
+        # Use HOST directories (not named volumes) to avoid cross-device link errors
         podman run --rm \
             --name "$CONTAINER_TEST_ID" \
             --hostname "$CONTAINER_TEST_ID" \
@@ -647,8 +647,8 @@ run_in_container() {
             --cap-add SYS_ADMIN \
             --security-opt label=disable \
             -v "$TEST_PROJECT:/lower:ro" \
-            -v "${CONTAINER_TEST_ID}-upper:/upper" \
-            -v "${CONTAINER_TEST_ID}-work:/work" \
+            -v "$CONTAINER_TEST_UPPER:/upper" \
+            -v "$CONTAINER_TEST_SANDBOX/work:/work" \
             -v "${CONTAINER_TEST_ID}-m2:/home/developer/.m2/repository" \
             -e KAPSIS_AGENT_ID="$CONTAINER_TEST_ID" \
             -e KAPSIS_PROJECT="test" \
@@ -657,7 +657,7 @@ run_in_container() {
             $KAPSIS_TEST_IMAGE \
             bash -c "$command" 2>&1
     else
-        # Overlay-based isolation (native Linux)
+        # Overlay-based isolation (native Podman overlay)
         podman run --rm \
             --name "$CONTAINER_TEST_ID" \
             --hostname "$CONTAINER_TEST_ID" \
@@ -849,14 +849,16 @@ skip_if_no_container() {
 
 # check_overlay_rw_support
 # Checks if overlay mounts are read-write (they're read-only on macOS with virtio-fs)
-# On Linux: Native Podman overlay works correctly, use it directly
-# On macOS: virtio-fs makes overlay read-only, need fuse-overlayfs fallback
+# Both Linux and macOS use fuse-overlayfs for consistent CoW behavior.
+# Native Podman overlay (:O) has permission issues on some Linux runners.
 check_overlay_rw_support() {
-    # On Linux, native overlay should always work
-    # Only macOS needs the fallback to fuse-overlayfs
-    # fuse-overlayfs with named Podman volumes on Linux causes "Invalid cross-device link" errors
+    # Always use fuse-overlayfs for container tests:
+    # - On Linux: Native overlay (:O) has permission issues on GitHub Actions
+    # - On macOS: virtio-fs makes native overlay read-only
+    # We use HOST directories (not named volumes) to avoid cross-device link errors
     if [[ "$_TEST_OS" == "Linux" ]]; then
-        log_info "Linux detected - using native overlay (recommended)"
+        log_info "Linux detected - using fuse-overlayfs with host directories"
+        export KAPSIS_USE_FUSE_OVERLAY=true
         return 0
     fi
 
