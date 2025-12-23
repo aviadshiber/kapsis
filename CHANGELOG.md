@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- CLAUDE.md guidelines for AI assistant onboarding
 - GitHub Actions CI/CD pipeline with ShellCheck and tests
 - Branch protection setup script for enforcing PR-only merges
 - Security policy (SECURITY.md)
