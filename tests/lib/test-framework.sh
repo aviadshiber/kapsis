@@ -574,6 +574,10 @@ setup_container_test() {
     mkdir -p "$CONTAINER_TEST_UPPER"
     mkdir -p "$CONTAINER_TEST_SANDBOX/work"
 
+    # Make upper and work directories world-writable for rootless Podman
+    # Without --userns=keep-id, the container user may have different UID
+    chmod 777 "$CONTAINER_TEST_UPPER" "$CONTAINER_TEST_SANDBOX/work"
+
     log_info "Container test setup: $CONTAINER_TEST_ID"
 }
 
@@ -922,6 +926,8 @@ run_podman_isolated() {
 
     local sandbox="$HOME/.ai-sandboxes/$container_id"
     mkdir -p "$sandbox/upper" "$sandbox/work"
+    # Make directories world-writable for rootless Podman without --userns=keep-id
+    chmod 777 "$sandbox/upper" "$sandbox/work"
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: true Copy-on-Write inside container
