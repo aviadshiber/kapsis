@@ -452,17 +452,20 @@ size=$(get_file_size "/path/to/file")
 # Get file modification time as Unix epoch
 mtime=$(get_file_mtime "/path/to/file")
 
+# Get MD5 hash of file
+hash=$(get_file_md5 "/path/to/file")
+
 # OS detection
 if is_macos; then
     # macOS-specific code
 fi
 ```
 
-**Why this exists:** The `stat` command has different syntax on macOS vs Linux:
-- macOS: `stat -f%z file` (format flag)
-- Linux: `stat -c%s file` (format flag)
+**Why this exists:** Common commands differ between macOS and Linux:
+- `stat`: macOS uses `-f%z`, Linux uses `-c%s`
+- `md5`: macOS has `md5`, Linux has `md5sum`
 
-The fallback pattern `stat -f... || stat -c...` doesn't work because Linux's `stat -f` shows filesystem info and exits 0 (success).
+The fallback pattern `cmd1 || cmd2` doesn't work reliably because some commands exit 0 with wrong output.
 
 ### logging.sh - Structured Logging
 
