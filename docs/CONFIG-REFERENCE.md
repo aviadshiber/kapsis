@@ -195,6 +195,19 @@ sandbox:
   interactive_merge: true
 
 #===============================================================================
+# GIT HOOKS
+#===============================================================================
+# In a rootless isolated container, git hooks aren't a security concern -
+# they can only affect the sandboxed environment. Hooks run normally by
+# default; if they fail (e.g., referencing tools not in the container),
+# it's graceful degradation.
+#
+# To explicitly disable hooks, set KAPSIS_DISABLE_HOOKS=true
+#
+# git_hooks:
+#   disable: false  # Set via KAPSIS_DISABLE_HOOKS env var
+
+#===============================================================================
 # GIT WORKFLOW
 #===============================================================================
 git:

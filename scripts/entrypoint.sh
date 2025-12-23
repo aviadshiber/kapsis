@@ -218,33 +218,20 @@ setup_worktree_git() {
 #===============================================================================
 # GIT HOOKS CONFIGURATION
 #
-# Git hooks may reference interpreters/tools not available in the container,
-# causing "cannot run X: No such file or directory" errors. By default, we
-# disable hooks to prevent these errors. Users can enable hooks if their
-# container image has the required tooling.
+# In a rootless isolated container, git hooks aren't a security concern - they
+# can only affect the sandboxed environment. We allow hooks to run naturally;
+# if they fail (e.g., referencing tools not in container), it's graceful degradation.
 #===============================================================================
 configure_git_hooks() {
-    local git_dir="${GIT_DIR:-/upper/data/.git}"
-
-    if [[ "${KAPSIS_ENABLE_HOOKS:-false}" == "true" ]]; then
-        # User explicitly wants hooks enabled - assume they've configured
-        # the container with necessary tools
-        log_info "Git hooks enabled (KAPSIS_ENABLE_HOOKS=true)"
+    if [[ "${KAPSIS_DISABLE_HOOKS:-false}" == "true" ]]; then
+        # User explicitly wants hooks disabled
+        log_info "Git hooks disabled (KAPSIS_DISABLE_HOOKS=true)"
+        git config --global core.hooksPath /dev/null 2>/dev/null || true
         return 0
     fi
 
-    # Disable hooks by redirecting to empty directory
-    # This prevents "cannot run" errors while preserving original hooks
-    local empty_hooks_dir="$git_dir/hooks-disabled"
-    mkdir -p "$empty_hooks_dir" 2>/dev/null || true
-
-    # Use git config to redirect hooks path (safer than deleting hooks)
-    if [[ -d "$git_dir" ]]; then
-        git config --file "$git_dir/config" core.hooksPath "$empty_hooks_dir" 2>/dev/null || true
-        log_warn "Git hooks disabled in sandbox (hooks may reference unavailable tools)"
-        log_info "  To enable hooks: set KAPSIS_ENABLE_HOOKS=true"
-        log_info "  Original hooks preserved in: $git_dir/hooks/"
-    fi
+    # Hooks run normally - sandbox isolation provides security
+    log_info "Git hooks: using project hooks (sandbox isolated)"
 }
 
 #===============================================================================
@@ -553,7 +540,7 @@ print_welcome() {
     [[ -f "/task-spec.md" ]] && echo "Spec File:   /task-spec.md"
     echo ""
     echo "Maven settings: $KAPSIS_HOME/maven/settings.xml (isolation enabled)"
-    [[ "${KAPSIS_WORKTREE_MODE:-}" == "true" ]] && echo "Git:         using sanitized .git-safe (hooks disabled)"
+    [[ "${KAPSIS_WORKTREE_MODE:-}" == "true" ]] && echo "Git:         using sanitized .git-safe (hooks sandbox isolated)"
     echo ""
 }
 
