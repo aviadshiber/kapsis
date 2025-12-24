@@ -178,18 +178,18 @@ setup_staged_config_overlays() {
 #
 # In worktree mode, the host has already created:
 # - /workspace (mounted worktree directory)
-# - $CONTAINER_GIT_PATH (sanitized git directory, mounted over the worktree's .git file)
+# - $CONTAINER_GIT_PATH (sanitized git at .git-safe, can't mount over .git file)
 # - $CONTAINER_OBJECTS_PATH (shared objects, read-only)
 #
-# The sanitized git directory contains an 'objects' symlink pointing to
-# $CONTAINER_OBJECTS_PATH, so git "just works" without needing GIT_DIR.
+# Since worktrees have a .git FILE (not directory), we mount sanitized git at
+# .git-safe and set GIT_DIR to make git commands work.
 #===============================================================================
 setup_worktree_git() {
     log_debug "setup_worktree_git: Checking for worktree mode..."
 
     # Check if we're in worktree mode by looking for the kapsis-meta file
-    # This file is created by prepare_sanitized_git and indicates the .git
-    # directory is a mounted sanitized git (not the original worktree .git file)
+    # This file is created by prepare_sanitized_git and indicates we have
+    # a mounted sanitized git directory
     if [[ ! -f "${CONTAINER_GIT_PATH}/kapsis-meta" ]]; then
         log_debug "setup_worktree_git: ${CONTAINER_GIT_PATH}/kapsis-meta not found, not in worktree mode"
         return 1
@@ -197,16 +197,20 @@ setup_worktree_git() {
 
     log_info "Worktree mode: using sanitized .git (hooks isolated)"
 
+    # Set GIT_DIR to the sanitized git location
+    # This is required because worktrees have a .git FILE containing a host path,
+    # which doesn't exist in the container. We mount sanitized git at .git-safe.
+    export GIT_DIR="${CONTAINER_GIT_PATH}"
+    log_debug "setup_worktree_git: GIT_DIR=${GIT_DIR}"
+
     # Disable fsmonitor for container compatibility
     export GIT_TEST_FSMONITOR=0
 
     # Read metadata if available
-    if [[ -f "${CONTAINER_GIT_PATH}/kapsis-meta" ]]; then
-        local branch
-        branch=$(grep "^BRANCH=" "${CONTAINER_GIT_PATH}/kapsis-meta" 2>/dev/null | cut -d= -f2)
-        if [[ -n "$branch" ]]; then
-            log_info "  Branch: $branch"
-        fi
+    local branch
+    branch=$(grep "^BRANCH=" "${CONTAINER_GIT_PATH}/kapsis-meta" 2>/dev/null | cut -d= -f2)
+    if [[ -n "$branch" ]]; then
+        log_info "  Branch: $branch"
     fi
 
     return 0

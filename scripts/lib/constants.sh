@@ -24,9 +24,11 @@ readonly _KAPSIS_CONSTANTS_LOADED=1
 #===============================================================================
 
 # Git directory mount point inside container
-# In worktree mode, the sanitized .git directory is mounted here,
-# replacing the worktree's .git file with a proper .git directory
-readonly CONTAINER_GIT_PATH="/workspace/.git"
+# In worktree mode, the sanitized .git directory is mounted here.
+# We use .git-safe (not .git) because worktrees have a .git FILE that
+# can't be mounted over with a directory in crun OCI runtime.
+# Scripts must set GIT_DIR=$CONTAINER_GIT_PATH for git to work.
+readonly CONTAINER_GIT_PATH="/workspace/.git-safe"
 
 # Git objects mount point inside container (read-only)
 readonly CONTAINER_OBJECTS_PATH="/workspace/.git-objects"

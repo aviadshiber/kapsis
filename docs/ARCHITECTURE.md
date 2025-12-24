@@ -151,21 +151,23 @@ HOST (Trusted)                          CONTAINER (Untrusted)
 git worktree add
     ↓
 ~/.kapsis/worktrees/project-agent-1/    /workspace (bind mount)
-├── .git (file) ─── REPLACED BY ──────→ ├── .git/ (sanitized dir, ro mount)
-├── src/                                │   ├── config (minimal)
-├── pom.xml                             │   ├── objects → .git-objects
-└── ...                                 │   └── hooks/ (sandbox isolated)
+├── .git (file, ignored) ─────────────→ ├── .git (file, host path - ignored)
+├── src/                                ├── .git-safe/ (sanitized, ro mount)
+├── pom.xml                             │   ├── config (minimal)
+└── ...                                 │   ├── objects → .git-objects
+                                        │   └── hooks/ (empty)
                                         ├── .git-objects/ (shared objects, ro)
                                         ├── src/
                                         └── pom.xml
     ↓                                       ↓
 Post-container: git commit/push         Agent makes changes
-(on HOST with full git access)          (git works without GIT_DIR)
+(on HOST with full git access)          (GIT_DIR=.git-safe for git ops)
 ```
 
-**Key insight:** The worktree's `.git` file (which contains a host path) is **replaced** by
-mounting the sanitized `.git` directory over it. This makes git work seamlessly in the
-container without needing environment variables like `GIT_DIR`.
+**Key insight:** The worktree's `.git` file contains a host path that doesn't exist in the
+container. We mount the sanitized git at `.git-safe` and set `GIT_DIR=/workspace/.git-safe`
+so git commands work. We can't mount over the `.git` file because OCI runtimes (crun) don't
+allow mounting a directory over a file.
 
 **Auto-selected when:** `--branch` flag provided AND project is a git repository
 

@@ -192,10 +192,10 @@ test_git_operations_work_in_container() {
 
     setup_worktree_test "wt-git-ops"
 
-    # Run git status in container - should work without needing GIT_DIR
-    # because sanitized .git is mounted directly at /workspace/.git
+    # Run git status in container with GIT_DIR set to .git-safe
+    # (required because worktree's .git file contains host path)
     local output
-    output=$(run_in_worktree_container "cd /workspace && git status")
+    output=$(run_in_worktree_container "cd /workspace && GIT_DIR=${CONTAINER_GIT_PATH} git status")
 
     cleanup_worktree_test
 
