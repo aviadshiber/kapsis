@@ -151,16 +151,21 @@ HOST (Trusted)                          CONTAINER (Untrusted)
 git worktree add
     ↓
 ~/.kapsis/worktrees/project-agent-1/    /workspace (bind mount)
-├── .git (file) ──────────────────────→ ├── .git-safe/ (sanitized, ro)
+├── .git (file) ─── REPLACED BY ──────→ ├── .git/ (sanitized dir, ro mount)
 ├── src/                                │   ├── config (minimal)
-├── pom.xml                             │   ├── objects → (ro link)
+├── pom.xml                             │   ├── objects → .git-objects
 └── ...                                 │   └── hooks/ (sandbox isolated)
+                                        ├── .git-objects/ (shared objects, ro)
                                         ├── src/
                                         └── pom.xml
     ↓                                       ↓
 Post-container: git commit/push         Agent makes changes
-(on HOST with full git access)          (restricted git env)
+(on HOST with full git access)          (git works without GIT_DIR)
 ```
+
+**Key insight:** The worktree's `.git` file (which contains a host path) is **replaced** by
+mounting the sanitized `.git` directory over it. This makes git work seamlessly in the
+container without needing environment variables like `GIT_DIR`.
 
 **Auto-selected when:** `--branch` flag provided AND project is a git repository
 

@@ -64,6 +64,9 @@ SANDBOX_MODE=""  # auto-detect, worktree, or overlay
 WORKTREE_PATH=""
 SANITIZED_GIT_PATH=""
 
+# Source shared constants
+source "$SCRIPT_DIR/lib/constants.sh"
+
 #===============================================================================
 # COLORS AND OUTPUT (colors used for banner only)
 #===============================================================================
@@ -561,11 +564,12 @@ generate_volume_mounts_worktree() {
     mkdir -p "$status_dir" 2>/dev/null || true
     VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
 
-    # Mount sanitized git as read-only
-    VOLUME_MOUNTS+=("-v" "${SANITIZED_GIT_PATH}:/workspace/.git-safe:ro")
+    # Mount sanitized git at $CONTAINER_GIT_PATH, replacing the worktree's .git file
+    # This makes git work without needing GIT_DIR environment variable
+    VOLUME_MOUNTS+=("-v" "${SANITIZED_GIT_PATH}:${CONTAINER_GIT_PATH}:ro")
 
     # Mount objects directory read-only
-    VOLUME_MOUNTS+=("-v" "${OBJECTS_PATH}:/workspace/.git-objects:ro")
+    VOLUME_MOUNTS+=("-v" "${OBJECTS_PATH}:${CONTAINER_OBJECTS_PATH}:ro")
 
     # Maven repository (isolated per agent)
     VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")

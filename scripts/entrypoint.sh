@@ -49,6 +49,13 @@ elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/status.sh" ]]; then
     source "$(dirname "${BASH_SOURCE[0]}")/lib/status.sh"
 fi
 
+# Source shared constants (provides CONTAINER_GIT_PATH, CONTAINER_OBJECTS_PATH, etc.)
+if [[ -f "$KAPSIS_HOME/lib/constants.sh" ]]; then
+    source "$KAPSIS_HOME/lib/constants.sh"
+elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/constants.sh" ]]; then
+    source "$(dirname "${BASH_SOURCE[0]}")/lib/constants.sh"
+fi
+
 #===============================================================================
 # CREDENTIAL FILE INJECTION (Agent-Agnostic)
 #
@@ -171,45 +178,35 @@ setup_staged_config_overlays() {
 #
 # In worktree mode, the host has already created:
 # - /workspace (mounted worktree directory)
-# - /workspace/.git-safe (sanitized git directory, read-only)
-# - /workspace/.git-objects (shared objects, read-only)
+# - $CONTAINER_GIT_PATH (sanitized git directory, mounted over the worktree's .git file)
+# - $CONTAINER_OBJECTS_PATH (shared objects, read-only)
 #
-# We set up git to use the sanitized environment.
+# The sanitized git directory contains an 'objects' symlink pointing to
+# $CONTAINER_OBJECTS_PATH, so git "just works" without needing GIT_DIR.
 #===============================================================================
 setup_worktree_git() {
     log_debug "setup_worktree_git: Checking for worktree mode..."
 
-    # Check if we're in worktree mode
-    if [[ ! -d "/workspace/.git-safe" ]]; then
-        log_debug "setup_worktree_git: /workspace/.git-safe not found, not in worktree mode"
+    # Check if we're in worktree mode by looking for the kapsis-meta file
+    # This file is created by prepare_sanitized_git and indicates the .git
+    # directory is a mounted sanitized git (not the original worktree .git file)
+    if [[ ! -f "${CONTAINER_GIT_PATH}/kapsis-meta" ]]; then
+        log_debug "setup_worktree_git: ${CONTAINER_GIT_PATH}/kapsis-meta not found, not in worktree mode"
         return 1
     fi
 
-    log_info "Worktree mode: Setting up sanitized git environment"
-    log_debug "Found .git-safe directory"
+    log_info "Worktree mode: using sanitized .git (hooks isolated)"
 
-    # Point git to sanitized directory
-    export GIT_DIR=/workspace/.git-safe
-    export GIT_WORK_TREE=/workspace
+    # Disable fsmonitor for container compatibility
     export GIT_TEST_FSMONITOR=0
-    log_debug "Set GIT_DIR=$GIT_DIR, GIT_WORK_TREE=$GIT_WORK_TREE"
-
-    # Link objects if mount exists
-    if [[ -d "/workspace/.git-objects" ]]; then
-        # Create symlink from sanitized git to mounted objects
-        ln -sf /workspace/.git-objects "$GIT_DIR/objects" 2>/dev/null || true
-        log_info "  Objects: linked to /workspace/.git-objects"
-    fi
-
-    # Configure git hooks (disable by default for container compatibility)
-    configure_git_hooks
-
-    log_info "  GIT_DIR: $GIT_DIR"
-    log_info "  GIT_WORK_TREE: $GIT_WORK_TREE"
 
     # Read metadata if available
-    if [[ -f "$GIT_DIR/kapsis-meta" ]]; then
-        log_info "  Worktree metadata found"
+    if [[ -f "${CONTAINER_GIT_PATH}/kapsis-meta" ]]; then
+        local branch
+        branch=$(grep "^BRANCH=" "${CONTAINER_GIT_PATH}/kapsis-meta" 2>/dev/null | cut -d= -f2)
+        if [[ -n "$branch" ]]; then
+            log_info "  Branch: $branch"
+        fi
     fi
 
     return 0

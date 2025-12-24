@@ -31,6 +31,9 @@ fi
 KAPSIS_WORKTREE_BASE="${KAPSIS_WORKTREE_BASE:-$HOME/.kapsis/worktrees}"
 KAPSIS_SANITIZED_GIT_BASE="${KAPSIS_SANITIZED_GIT_BASE:-$HOME/.kapsis/sanitized-git}"
 
+# Source shared constants (provides CONTAINER_GIT_PATH, CONTAINER_OBJECTS_PATH, etc.)
+source "$WORKTREE_SCRIPT_DIR/lib/constants.sh"
+
 # Note: logging functions are provided by lib/logging.sh
 
 #===============================================================================
@@ -272,11 +275,11 @@ prepare_sanitized_git() {
     create_safe_git_config "$sanitized_dir/config" "$worktree_path" "$agent_id"
 
     # Create objects symlink pointing to container mount path
-    # The sanitized git will be mounted at /workspace/.git-safe
-    # and objects will be mounted at /workspace/.git-objects
+    # The sanitized git will be mounted at $CONTAINER_GIT_PATH
+    # and objects will be mounted at $CONTAINER_OBJECTS_PATH
     # This symlink allows git to find objects when running inside the container
-    ln -sf /workspace/.git-objects "$sanitized_dir/objects"
-    log_debug "Created objects symlink -> /workspace/.git-objects"
+    ln -sf "$CONTAINER_OBJECTS_PATH" "$sanitized_dir/objects"
+    log_debug "Created objects symlink -> $CONTAINER_OBJECTS_PATH"
 
     # Create a marker file with paths for container setup
     cat > "$sanitized_dir/kapsis-meta" << EOF
