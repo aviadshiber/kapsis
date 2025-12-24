@@ -102,6 +102,9 @@ Container tests that require read-write overlay mounts will fail on macOS due to
 
 For full test coverage, run container tests on Linux or in a Linux VM.
 
+### CI Limitation
+The worktree isolation tests (`test-worktree-isolation.sh`) are skipped in CI due to UID mapping issues with rootless Podman. The worktree sandbox mode requires specific user/group permissions that don't map correctly in the GitHub Actions runner environment. These tests can be run locally on Linux.
+
 ## Running Container Tests
 
 ```bash
