@@ -33,6 +33,9 @@ This directory contains tests to validate the isolation guarantees and functiona
 | | test-input-validation.sh | 11 | PASS |
 | | test-path-spaces.sh | 5 | PASS |
 | | test-dry-run-completeness.sh | 12 | PASS |
+| | test-preflight-check.sh | 17 | PASS |
+| **Status Reporting** | | | |
+| | test-status-reporting.sh | 19 | PASS |
 
 ### Container Tests (Require Podman)
 
@@ -52,6 +55,7 @@ This directory contains tests to validate the isolation guarantees and functiona
 | **Git Workflow** | | | |
 | | test-git-new-branch.sh | 7 | Ready |
 | | test-git-auto-commit-push.sh | 9 | Ready |
+| | test-worktree-isolation.sh | 11 | Ready |
 | **Cleanup** | | | |
 | | test-cleanup-sandbox.sh | 9 | Ready |
 | **Integration** | | | |
@@ -63,10 +67,10 @@ This directory contains tests to validate the isolation guarantees and functiona
 | Priority | Tests | Status |
 |----------|-------|--------|
 | P0 (Critical) | 40 | Ready |
-| P1 (Important) | 60 | Ready |
-| P2 (Robustness) | 37 | Ready |
+| P1 (Important) | 87 | Ready |
+| P2 (Robustness) | 54 | Ready |
 | P3 (Integration) | 16 | Ready |
-| **Total** | **153** | **Ready** |
+| **Total** | **197** | **Ready** |
 
 ## Prerequisites
 
@@ -90,13 +94,16 @@ Container tests that require read-write overlay mounts will fail on macOS due to
 - test-full-workflow.sh
 
 **Tests that work on macOS**:
-- All quick tests (7 scripts, 50 tests)
+- All quick tests (9 scripts, 86 tests)
 - test-security-no-root.sh
 - test-env-api-keys.sh
 - test-cleanup-sandbox.sh
 - test-parallel-agents.sh
 
 For full test coverage, run container tests on Linux or in a Linux VM.
+
+### CI Limitation
+The worktree isolation tests (`test-worktree-isolation.sh`) are skipped in CI due to UID mapping issues with rootless Podman. The worktree sandbox mode requires specific user/group permissions that don't map correctly in the GitHub Actions runner environment. These tests can be run locally on Linux.
 
 ## Running Container Tests
 
@@ -193,16 +200,33 @@ main "$@"
 
 ### P1 - Important (Core Features)
 - [x] Git branch workflow
+- [x] Git worktree isolation
 - [x] Auto-commit on exit
 - [x] Security (non-root execution)
 - [x] Environment variable passthrough
+- [x] Status reporting lifecycle
+- [x] Maven authentication
 
 ### P2 - Robustness
 - [x] Input validation
 - [x] Path handling (spaces, special chars)
 - [x] Dry-run completeness
 - [x] Cleanup operations
+- [x] Pre-flight checks
 
 ### P3 - Integration
 - [x] Parallel agent execution
 - [x] Full end-to-end workflow
+
+## CI Phases
+
+Tests run at different phases in the CI pipeline:
+
+| Phase | Tests Run | Blocking |
+|-------|-----------|----------|
+| **PR - Quick Tests** | 9 scripts (no container) | Yes |
+| **PR - Container Tests** | 14 scripts (with container) | Yes |
+| **Main - All Tests** | All 23 scripts | Yes |
+| **Release - Validation** | Quick tests + ShellCheck | Yes |
+
+All tests are blocking - PRs cannot be merged if any tests fail.

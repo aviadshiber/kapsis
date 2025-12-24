@@ -98,8 +98,7 @@ jobs:
     name: Container Tests
     runs-on: ubuntu-latest
     needs: quick-tests
-    # Only run on merge to main (not on PRs)
-    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    # Run on main and PRs, but PRs are non-blocking (see ci-success job)
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -168,9 +167,11 @@ jobs:
             echo "Quick tests job failed"
             exit 1
           fi
-          # Container tests only run on main, allow skipped on PRs
-          if [[ "${{ needs.container-tests.result }}" != "success" && "${{ needs.container-tests.result }}" != "skipped" ]]; then
+
+          # Container tests are required on all branches
+          if [[ "${{ needs.container-tests.result }}" != "success" ]]; then
             echo "Container tests job failed"
             exit 1
           fi
+
           echo "All required CI checks passed!"
