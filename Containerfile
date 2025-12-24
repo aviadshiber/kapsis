@@ -169,6 +169,7 @@ COPY maven/isolated-settings.xml /opt/kapsis/maven/settings.xml
 
 # Create lib directory and copy libraries
 RUN mkdir -p /opt/kapsis/lib
+COPY scripts/lib/constants.sh /opt/kapsis/lib/constants.sh
 COPY scripts/lib/logging.sh /opt/kapsis/lib/logging.sh
 COPY scripts/lib/status.sh /opt/kapsis/lib/status.sh
 

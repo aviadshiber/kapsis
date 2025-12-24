@@ -39,6 +39,9 @@ KAPSIS_ROOT="$(dirname "$TESTS_DIR")"
 # Use $HOME path for reliable Podman VM filesystem sharing on macOS
 TEST_PROJECT="$HOME/.kapsis-test-project"
 
+# Source shared constants (provides CONTAINER_GIT_PATH, CONTAINER_OBJECTS_PATH, etc.)
+source "$KAPSIS_ROOT/scripts/lib/constants.sh"
+
 # Container image name (configurable for CI environments)
 # CI sets KAPSIS_IMAGE="kapsis-test:ci", local dev uses kapsis-sandbox:latest
 KAPSIS_TEST_IMAGE="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
@@ -1050,8 +1053,8 @@ run_in_worktree_container() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$WORKTREE_TEST_PATH:/workspace" \
-        -v "$WORKTREE_SANITIZED_GIT:/workspace/.git-safe:ro" \
-        -v "$objects_path:/workspace/.git-objects:ro" \
+        -v "$WORKTREE_SANITIZED_GIT:${CONTAINER_GIT_PATH}:ro" \
+        -v "$objects_path:${CONTAINER_OBJECTS_PATH}:ro" \
         -v "${WORKTREE_TEST_ID}-m2:/home/developer/.m2/repository" \
         -e KAPSIS_AGENT_ID="$WORKTREE_TEST_ID" \
         -e KAPSIS_SANDBOX_MODE="worktree" \

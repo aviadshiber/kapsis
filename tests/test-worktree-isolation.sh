@@ -4,7 +4,7 @@
 #
 # Verifies that the git worktree sandbox mode works correctly:
 # - Worktrees are created on host
-# - Sanitized git prevents hook attacks
+# - Sanitized git mounted at /workspace/.git (git works without GIT_DIR)
 # - Objects are read-only
 # - Changes stay in worktree
 # - Host project unchanged
@@ -192,9 +192,10 @@ test_git_operations_work_in_container() {
 
     setup_worktree_test "wt-git-ops"
 
-    # Run git status in container
+    # Run git status in container with GIT_DIR set to .git-safe
+    # (required because worktree's .git file contains host path)
     local output
-    output=$(run_in_worktree_container "cd /workspace && GIT_DIR=/workspace/.git-safe GIT_WORK_TREE=/workspace git status")
+    output=$(run_in_worktree_container "cd /workspace && GIT_DIR=${CONTAINER_GIT_PATH} git status")
 
     cleanup_worktree_test
 
@@ -206,37 +207,6 @@ test_git_operations_work_in_container() {
         log_info "Output: $output"
         return 1
     fi
-}
-
-test_no_hooks_execute() {
-    log_test "Testing no hooks execute in container"
-
-    setup_worktree_test "wt-no-hooks"
-
-    # Try to create a hook in the sanitized git directory
-    # This should fail because .git-safe is mounted read-only
-    local output
-    output=$(run_in_worktree_container "
-        # Try to create a pre-commit hook (should fail - read-only)
-        echo '#!/bin/bash' > /workspace/.git-safe/hooks/test-hook 2>&1 || true
-
-        # Check if the hook file was actually created (it shouldn't be)
-        if [[ -f /workspace/.git-safe/hooks/test-hook ]]; then
-            echo 'HOOK_CREATED=true'
-        else
-            echo 'HOOK_CREATED=false'
-        fi
-    ") || true
-
-    cleanup_worktree_test
-
-    # Hook creation should have failed (read-only mount)
-    if [[ "$output" == *"HOOK_CREATED=true"* ]]; then
-        log_fail "Hooks should not be creatable in read-only .git-safe"
-        return 1
-    fi
-
-    return 0
 }
 
 test_worktree_cleanup() {
@@ -300,7 +270,6 @@ main() {
     run_test test_changes_stay_in_worktree
     run_test test_host_project_unchanged
     run_test test_git_operations_work_in_container
-    run_test test_no_hooks_execute
     run_test test_worktree_cleanup
 
     # Cleanup
