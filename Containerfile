@@ -60,27 +60,20 @@ RUN wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/d
 ENV SDKMAN_DIR=/opt/sdkman
 RUN curl -s "https://get.sdkman.io?rcupdate=false" | bash
 
-# Install Java 17 (default) and Java 8
-# Note: Use current SDKMAN versions - check with 'sdk list java' if build fails
+# Install Java 17 (default), Java 8, and Maven via SDKMAN
+# Using SDKMAN for Maven provides reliable downloads (archive.apache.org is often slow/unreliable)
+# Note: Use current SDKMAN versions - check with 'sdk list java' or 'sdk list maven' if build fails
+ARG MAVEN_VERSION=3.9.9
 RUN bash -c "source $SDKMAN_DIR/bin/sdkman-init.sh && \
     sdk install java 17.0.17-tem && \
     sdk install java 8.0.472-tem && \
-    sdk default java 17.0.17-tem"
+    sdk default java 17.0.17-tem && \
+    sdk install maven ${MAVEN_VERSION}"
 
-# Set Java environment
+# Set Java and Maven environment
 ENV JAVA_HOME=/opt/sdkman/candidates/java/current
-ENV PATH=$JAVA_HOME/bin:$PATH
-
-#===============================================================================
-# MAVEN INSTALLATION
-#===============================================================================
-ARG MAVEN_VERSION=3.9.11
-ENV MAVEN_HOME=/opt/maven
-ENV PATH=$MAVEN_HOME/bin:$PATH
-
-RUN mkdir -p ${MAVEN_HOME} && \
-    curl -fsSL https://archive.apache.org/dist/maven/maven-3/${MAVEN_VERSION}/binaries/apache-maven-${MAVEN_VERSION}-bin.tar.gz \
-    | tar xzf - -C ${MAVEN_HOME} --strip-components=1
+ENV MAVEN_HOME=/opt/sdkman/candidates/maven/current
+ENV PATH=$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH
 
 #===============================================================================
 # NODE.JS INSTALLATION (for Claude Code and frontend builds)

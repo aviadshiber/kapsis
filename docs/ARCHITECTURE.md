@@ -379,11 +379,10 @@ rm -rf ~/.ai-sandboxes/project-1/
 ```dockerfile
 ubuntu:24.04
 └── Base dependencies (curl, git, ripgrep, etc.)
-    └── SDKMAN + Java 8/17
-        └── Maven 3.9.11
-            └── NVM + Node.js 18.18.0
-                └── Kapsis scripts + Maven settings
-                    └── Runtime configuration
+    └── SDKMAN + Java 8/17 + Maven 3.9.9
+        └── NVM + Node.js 18.18.0
+            └── Kapsis scripts + Maven settings
+                └── Runtime configuration
 ```
 
 ## Performance Considerations
