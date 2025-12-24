@@ -1028,6 +1028,9 @@ setup_worktree_test() {
     # Create worktree
     WORKTREE_TEST_PATH=$(create_worktree "$TEST_PROJECT" "$WORKTREE_TEST_ID" "$branch")
 
+    # Ensure worktree is writable (fixes UID mapping issues in rootless podman CI)
+    chmod -R a+rwX "$WORKTREE_TEST_PATH" 2>/dev/null || true
+
     # Create sanitized git
     WORKTREE_SANITIZED_GIT=$(prepare_sanitized_git "$WORKTREE_TEST_PATH" "$WORKTREE_TEST_ID" "$TEST_PROJECT")
 

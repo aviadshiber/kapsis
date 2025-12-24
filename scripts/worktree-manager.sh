@@ -176,6 +176,11 @@ create_worktree() {
         return 1
     fi
 
+    # Ensure worktree is writable by container user (fixes UID mapping in rootless podman)
+    # This is necessary because git worktree creates files with the host user's umask,
+    # which may not be writable when mounted into a container with different UID mapping
+    chmod -R a+rwX "$worktree_path" 2>/dev/null || true
+
     log_success "Worktree ready: $worktree_path"
     echo "$worktree_path"
 }
@@ -265,6 +270,13 @@ prepare_sanitized_git() {
 
     # Create minimal safe config
     create_safe_git_config "$sanitized_dir/config" "$worktree_path" "$agent_id"
+
+    # Create objects symlink pointing to container mount path
+    # The sanitized git will be mounted at /workspace/.git-safe
+    # and objects will be mounted at /workspace/.git-objects
+    # This symlink allows git to find objects when running inside the container
+    ln -sf /workspace/.git-objects "$sanitized_dir/objects"
+    log_debug "Created objects symlink -> /workspace/.git-objects"
 
     # Create a marker file with paths for container setup
     cat > "$sanitized_dir/kapsis-meta" << EOF

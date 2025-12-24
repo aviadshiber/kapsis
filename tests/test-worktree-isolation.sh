@@ -213,23 +213,26 @@ test_no_hooks_execute() {
 
     setup_worktree_test "wt-no-hooks"
 
-    # Create a hook that would create a marker file if executed
-    # This should NOT work since hooks dir is read-only
+    # Try to create a hook in the sanitized git directory
+    # This should fail because .git-safe is mounted read-only
     local output
     output=$(run_in_worktree_container "
         # Try to create a pre-commit hook (should fail - read-only)
-        echo '#!/bin/bash' > /workspace/.git-safe/hooks/pre-commit 2>&1 || true
-        echo 'touch /tmp/hook-executed' >> /workspace/.git-safe/hooks/pre-commit 2>&1 || true
+        echo '#!/bin/bash' > /workspace/.git-safe/hooks/test-hook 2>&1 || true
 
-        # Even if it somehow got created, it shouldn't be there
-        ls -la /workspace/.git-safe/hooks/ 2>&1
+        # Check if the hook file was actually created (it shouldn't be)
+        if [[ -f /workspace/.git-safe/hooks/test-hook ]]; then
+            echo 'HOOK_CREATED=true'
+        else
+            echo 'HOOK_CREATED=false'
+        fi
     ") || true
 
     cleanup_worktree_test
 
-    # Hooks should still be empty (read-only mount prevents creation)
-    if [[ "$output" == *"pre-commit"* ]]; then
-        log_fail "Hooks should not be creatable"
+    # Hook creation should have failed (read-only mount)
+    if [[ "$output" == *"HOOK_CREATED=true"* ]]; then
+        log_fail "Hooks should not be creatable in read-only .git-safe"
         return 1
     fi
 
@@ -275,13 +278,6 @@ main() {
     # See tests/README.md for platform notes
     if [[ "$(uname -s)" == "Darwin" ]]; then
         log_skip "Worktree tests require Linux (macOS has known sanitized git issues)"
-        exit 0
-    fi
-
-    # Skip in CI - worktree mode has permission issues with rootless podman UID mapping
-    # The overlay mode tests cover the primary use case; worktree mode can be tested locally
-    if [[ -n "${CI:-}" ]] || [[ -n "${GITHUB_ACTIONS:-}" ]]; then
-        log_skip "Worktree tests skipped in CI (UID mapping issues with rootless podman)"
         exit 0
     fi
 
