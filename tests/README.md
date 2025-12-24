@@ -222,8 +222,8 @@ Tests run at different phases in the CI pipeline:
 | Phase | Tests Run | Blocking |
 |-------|-----------|----------|
 | **PR - Quick Tests** | 9 scripts (no container) | Yes |
-| **PR - Container Tests** | 14 scripts (with container) | No (warning only) |
+| **PR - Container Tests** | 14 scripts (with container) | Yes |
 | **Main - All Tests** | All 23 scripts | Yes |
 | **Release - Validation** | Quick tests + ShellCheck | Yes |
 
-Container tests run on PRs to catch regressions early, but failures are warnings only to avoid blocking PRs due to CI environment issues. On main branch, all tests must pass.
+All tests are blocking - PRs cannot be merged if any tests fail.

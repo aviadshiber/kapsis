@@ -168,23 +168,10 @@ jobs:
             exit 1
           fi
 
-          # Container tests are required on main, informational on PRs
-          CONTAINER_RESULT="${{ needs.container-tests.result }}"
-          IS_MAIN="${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}"
-
-          if [[ "$IS_MAIN" == "true" ]]; then
-            # On main: container tests must pass
-            if [[ "$CONTAINER_RESULT" != "success" ]]; then
-              echo "Container tests job failed on main branch"
-              exit 1
-            fi
-          else
-            # On PRs: report but don't block
-            if [[ "$CONTAINER_RESULT" == "failure" ]]; then
-              echo "::warning::Container tests failed - review before merging"
-            elif [[ "$CONTAINER_RESULT" == "success" ]]; then
-              echo "Container tests passed"
-            fi
+          # Container tests are required on all branches
+          if [[ "${{ needs.container-tests.result }}" != "success" ]]; then
+            echo "Container tests job failed"
+            exit 1
           fi
 
           echo "All required CI checks passed!"
