@@ -9,6 +9,9 @@ name: Auto Release
 #
 # Note: Since main is a protected branch, this workflow only creates tags.
 # Git tags are the source of truth for versioning.
+#
+# IMPORTANT: Uses RELEASE_TOKEN (PAT) to push tags so that the Release
+# workflow is triggered. GITHUB_TOKEN doesn't trigger other workflows.
 
 on:
   # Triggered automatically when CI workflow completes on main
@@ -113,8 +116,9 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
-          # Checkout main branch (not detached HEAD) so we can push commits
+          # Use PAT to push tags - this triggers the Release workflow
+          # GITHUB_TOKEN pushes don't trigger other workflows (prevents loops)
+          token: ${{ secrets.RELEASE_TOKEN }}
           ref: main
 
       - name: Verify we're on the right commit
