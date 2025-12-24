@@ -4,8 +4,14 @@ name: Release
 # This workflow is typically triggered automatically by auto-release.yml after a merge to main
 # Can also be triggered manually via workflow_dispatch for pre-releases or hotfixes
 #
-# Note: Git tags are the source of truth for versioning. CHANGELOG entries
-# remain in [Unreleased] until manually moved by a maintainer.
+# Release notes are auto-generated from conventional commits between tags:
+# - feat: → Features section
+# - fix: → Bug Fixes section
+# - docs: → Documentation section
+# - other types → Other Changes section
+# - type!: or BREAKING CHANGE → Breaking Changes section
+#
+# Note: Git tags are the source of truth for versioning.
 
 on:
   push:
@@ -129,24 +135,96 @@ jobs:
           sha256sum kapsis-$VERSION.tar.gz > checksums.sha256
           cat checksums.sha256
 
-      - name: Extract changelog for version
+      - name: Generate changelog from commits
         id: changelog
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          # Extract changelog section for this version
-          awk -v ver="[$VERSION]" '
-            $0 ~ ver {found=1; next}
-            found && /^## \[/ {exit}
-            found {print}
-          ' CHANGELOG.md > release_notes.md
 
-          # If no specific notes found, use a default message
-          if [[ ! -s release_notes.md ]]; then
-            echo "Release $VERSION" > release_notes.md
-            echo "" >> release_notes.md
-            echo "See [CHANGELOG.md](CHANGELOG.md) for details." >> release_notes.md
+          # Find the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null || echo "")
+
+          echo "Generating changelog for v${VERSION}"
+          echo "Previous tag: ${PREV_TAG:-none}"
+
+          # Get commits between tags (or all commits for first release)
+          if [[ -n "$PREV_TAG" ]]; then
+            COMMITS=$(git log "${PREV_TAG}..v${VERSION}" --pretty=format:"%s" --no-merges)
+          else
+            COMMITS=$(git log "v${VERSION}" --pretty=format:"%s" --no-merges -50)
           fi
 
+          # Initialize category files
+          > /tmp/breaking.txt
+          > /tmp/features.txt
+          > /tmp/fixes.txt
+          > /tmp/docs.txt
+          > /tmp/others.txt
+
+          # Parse and categorize commits
+          while IFS= read -r msg; do
+            [[ -z "$msg" ]] && continue
+
+            # Check for breaking changes (type!: or BREAKING CHANGE)
+            if [[ "$msg" =~ ^[a-z]+(\(.+\))?!: ]] || [[ "$msg" =~ BREAKING[\ -]CHANGE ]]; then
+              echo "- $msg" >> /tmp/breaking.txt
+            fi
+
+            # Categorize by conventional commit prefix
+            if [[ "$msg" =~ ^feat(\(.+\))?: ]]; then
+              echo "- $msg" >> /tmp/features.txt
+            elif [[ "$msg" =~ ^fix(\(.+\))?: ]]; then
+              echo "- $msg" >> /tmp/fixes.txt
+            elif [[ "$msg" =~ ^docs(\(.+\))?: ]]; then
+              echo "- $msg" >> /tmp/docs.txt
+            else
+              echo "- $msg" >> /tmp/others.txt
+            fi
+          done <<< "$COMMITS"
+
+          # Generate markdown release notes
+          {
+            echo "## What's Changed"
+            echo ""
+
+            if [[ -s /tmp/breaking.txt ]]; then
+              echo "### ⚠️ Breaking Changes"
+              cat /tmp/breaking.txt
+              echo ""
+            fi
+
+            if [[ -s /tmp/features.txt ]]; then
+              echo "### 🚀 Features"
+              cat /tmp/features.txt
+              echo ""
+            fi
+
+            if [[ -s /tmp/fixes.txt ]]; then
+              echo "### 🐛 Bug Fixes"
+              cat /tmp/fixes.txt
+              echo ""
+            fi
+
+            if [[ -s /tmp/docs.txt ]]; then
+              echo "### 📝 Documentation"
+              cat /tmp/docs.txt
+              echo ""
+            fi
+
+            if [[ -s /tmp/others.txt ]]; then
+              echo "### 🔧 Other Changes"
+              cat /tmp/others.txt
+              echo ""
+            fi
+
+            # Add compare link
+            if [[ -n "$PREV_TAG" ]]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...v${VERSION}"
+            else
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/commits/v${VERSION}"
+            fi
+          } > release_notes.md
+
+          echo "Generated release notes:"
           cat release_notes.md
 
       - name: Create Release
