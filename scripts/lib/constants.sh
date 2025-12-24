@@ -6,6 +6,9 @@
 # Source this file from any script that needs these values.
 #===============================================================================
 
+# shellcheck disable=SC2034
+# SC2034: Variables defined here are used by scripts that source this file
+
 # Guard against multiple sourcing
 if [[ -n "${_KAPSIS_CONSTANTS_LOADED:-}" ]]; then
     return 0
