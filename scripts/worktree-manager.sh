@@ -243,6 +243,9 @@ prepare_sanitized_git() {
     local current_branch
     current_branch=$(cd "$worktree_path" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
 
+    # Create parent directory for branch ref (needed for branches like feature/foo)
+    mkdir -p "$sanitized_dir/refs/heads/$(dirname "$current_branch")" 2>/dev/null || true
+
     if [[ -f "$worktree_gitdir/refs/heads/$current_branch" ]]; then
         cp "$worktree_gitdir/refs/heads/$current_branch" "$sanitized_dir/refs/heads/$current_branch"
     elif [[ -f "$parent_git/refs/heads/$current_branch" ]]; then
