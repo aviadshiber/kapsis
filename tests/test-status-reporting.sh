@@ -530,6 +530,164 @@ test_status_utility_functions() {
 }
 
 #===============================================================================
+# TEST CASES: Push Verification (Issue #40)
+#===============================================================================
+
+test_status_set_push_info() {
+    log_test "status_set_push_info sets push verification fields"
+
+    setup_status_test
+
+    status_init "test-project" "1" "" "worktree" ""
+
+    # Set push info
+    status_set_push_info "success" "abc123def456" "abc123def456"
+
+    # Write status to capture push info
+    status_phase "complete" 100 "Done"
+
+    local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+    local content
+    content=$(cat "$status_file")
+
+    assert_contains "$content" '"push_status": "success"' "Should contain push_status"
+    assert_contains "$content" '"local_commit": "abc123def456"' "Should contain local_commit"
+    assert_contains "$content" '"remote_commit": "abc123def456"' "Should contain remote_commit"
+
+    cleanup_status_test
+}
+
+test_status_set_push_info_failed() {
+    log_test "status_set_push_info records failed push"
+
+    setup_status_test
+
+    status_init "test-project" "1" "" "worktree" ""
+
+    # Set push info with mismatched commits (failure case)
+    status_set_push_info "failed" "abc123" "def456"
+
+    status_phase "complete" 100 "Done"
+
+    local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+    local content
+    content=$(cat "$status_file")
+
+    assert_contains "$content" '"push_status": "failed"' "Should show failed status"
+    assert_contains "$content" '"local_commit": "abc123"' "Should contain local commit"
+    assert_contains "$content" '"remote_commit": "def456"' "Should contain remote commit"
+
+    cleanup_status_test
+}
+
+test_status_push_skipped() {
+    log_test "status_push_skipped records skipped push"
+
+    setup_status_test
+
+    status_init "test-project" "1" "" "worktree" ""
+
+    # Mark push as skipped (--no-push scenario)
+    status_push_skipped "abc123def456"
+
+    status_phase "complete" 100 "Done"
+
+    local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+    local content
+    content=$(cat "$status_file")
+
+    assert_contains "$content" '"push_status": "skipped"' "Should show skipped status"
+    assert_contains "$content" '"local_commit": "abc123def456"' "Should contain local commit"
+    assert_contains "$content" '"remote_commit": null' "Remote commit should be null for skipped"
+
+    cleanup_status_test
+}
+
+test_status_push_unverified() {
+    log_test "status_set_push_info records unverified push"
+
+    setup_status_test
+
+    status_init "test-project" "1" "" "worktree" ""
+
+    # Set push info as unverified (fetch failed but push might have worked)
+    status_set_push_info "unverified" "abc123" ""
+
+    status_phase "complete" 100 "Done"
+
+    local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+    local content
+    content=$(cat "$status_file")
+
+    assert_contains "$content" '"push_status": "unverified"' "Should show unverified status"
+    assert_contains "$content" '"local_commit": "abc123"' "Should contain local commit"
+
+    cleanup_status_test
+}
+
+test_status_push_fields_null_by_default() {
+    log_test "Push fields are null by default"
+
+    setup_status_test
+
+    status_init "test-project" "1" "" "worktree" ""
+    # Don't call any push functions
+
+    local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+    local content
+    content=$(cat "$status_file")
+
+    assert_contains "$content" '"push_status": null' "push_status should be null by default"
+    assert_contains "$content" '"local_commit": null' "local_commit should be null by default"
+    assert_contains "$content" '"remote_commit": null' "remote_commit should be null by default"
+
+    cleanup_status_test
+}
+
+test_status_json_valid_with_push_fields() {
+    log_test "JSON is valid with all push verification fields"
+
+    setup_status_test
+
+    status_init "test-project" "1" "feature/test" "worktree" "/tmp/wt"
+    status_set_push_info "success" "a1b2c3d4e5f6" "a1b2c3d4e5f6"
+    status_phase "complete" 100 "All done"
+
+    local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+
+    # Verify JSON is valid
+    if python3 -c "import json; json.load(open('$status_file'))" 2>/dev/null; then
+        log_info "  JSON is valid with push fields"
+    else
+        log_fail "Status file contains invalid JSON with push fields"
+        cleanup_status_test
+        return 1
+    fi
+
+    # Verify push fields are present and properly formatted
+    local content
+    content=$(cat "$status_file")
+
+    if python3 -c "
+import json
+data = json.load(open('$status_file'))
+assert 'push_status' in data, 'Missing push_status'
+assert 'local_commit' in data, 'Missing local_commit'
+assert 'remote_commit' in data, 'Missing remote_commit'
+assert data['push_status'] == 'success', 'Wrong push_status'
+print('All push fields validated')
+" 2>/dev/null; then
+        log_info "  All push fields validated"
+    else
+        log_fail "Push fields validation failed"
+        cleanup_status_test
+        return 1
+    fi
+
+    cleanup_status_test
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -561,6 +719,14 @@ main() {
     # Integration tests
     run_test test_reinit_from_env
     run_test test_status_utility_functions
+
+    # Push verification tests (Issue #40)
+    run_test test_status_set_push_info
+    run_test test_status_set_push_info_failed
+    run_test test_status_push_skipped
+    run_test test_status_push_unverified
+    run_test test_status_push_fields_null_by_default
+    run_test test_status_json_valid_with_push_fields
 
     # Summary
     print_summary
