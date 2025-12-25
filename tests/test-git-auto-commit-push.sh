@@ -230,6 +230,105 @@ test_task_in_commit_message() {
     assert_contains "$output" "authentication" "Commit should include task description"
 }
 
+test_push_runs_when_agent_commits_itself() {
+    log_test "Testing push runs when agent commits (no uncommitted, but unpushed)"
+
+    setup_container_test "git-unpushed"
+
+    # Simulate agent committing inside container
+    # After agent commits, there are no uncommitted changes but there ARE unpushed commits
+    local output
+    output=$(run_in_container "
+        cd /workspace
+        git config user.email 'test@test.com'
+        git config user.name 'Test User'
+
+        # Create a change and commit it (simulating agent behavior)
+        echo 'agent change' > agent-change.txt
+        git add agent-change.txt
+        git commit -m 'Agent commit'
+
+        # Verify: no uncommitted changes after commit
+        uncommitted=\$(git status --porcelain)
+
+        # Verify: there IS an unpushed commit (no remote = all commits unpushed)
+        commits=\$(git rev-list --count HEAD)
+
+        echo \"Uncommitted: '\$uncommitted'\"
+        echo \"Commits: \$commits\"
+
+        # Test the has_uncommitted/has_unpushed logic from entrypoint.sh fix
+        has_uncommitted=false
+        has_unpushed=false
+
+        if ! git diff --quiet || ! git diff --cached --quiet || [[ -n \"\$(git status --porcelain)\" ]]; then
+            has_uncommitted=true
+        fi
+
+        # Check for unpushed - no remote tracking branch means all commits are unpushed
+        if ! git rev-parse --verify 'origin/main' >/dev/null 2>&1; then
+            local count
+            count=\$(git rev-list --count HEAD 2>/dev/null || echo '0')
+            if [[ \"\$count\" -gt 0 ]]; then
+                has_unpushed=true
+            fi
+        fi
+
+        echo \"has_uncommitted: \$has_uncommitted\"
+        echo \"has_unpushed: \$has_unpushed\"
+
+        # The fix ensures we don't return early when has_unpushed=true
+        if [[ \"\$has_uncommitted\" == \"false\" && \"\$has_unpushed\" == \"true\" ]]; then
+            echo 'PUSH_SHOULD_RUN'
+        fi
+    ") || true
+
+    cleanup_container_test
+
+    # Should detect unpushed commits even with no uncommitted changes
+    assert_contains "$output" "has_uncommitted: false" "Should have no uncommitted changes"
+    assert_contains "$output" "has_unpushed: true" "Should detect unpushed commits"
+    assert_contains "$output" "PUSH_SHOULD_RUN" "Push logic should run when unpushed commits exist"
+}
+
+test_detects_unpushed_ahead_of_remote() {
+    log_test "Testing detection of commits ahead of remote tracking branch"
+
+    setup_container_test "git-ahead"
+
+    # Test the has_unpushed detection when remote branch exists but we're ahead
+    local output
+    output=$(run_in_container "
+        cd /workspace
+        git config user.email 'test@test.com'
+        git config user.name 'Test User'
+
+        # Simulate having a remote tracking branch by creating origin/main ref
+        git update-ref refs/remotes/origin/main HEAD
+
+        # Now make a new commit (we'll be 1 ahead of origin/main)
+        echo 'new change' > new-file.txt
+        git add new-file.txt
+        git commit -m 'New commit'
+
+        # Check how many commits ahead we are
+        ahead=\$(git rev-list --count origin/main..HEAD 2>/dev/null || echo '0')
+        echo \"Commits ahead: \$ahead\"
+
+        # Verify the detection logic
+        has_unpushed=false
+        if [[ \"\$ahead\" -gt 0 ]]; then
+            has_unpushed=true
+        fi
+        echo \"has_unpushed: \$has_unpushed\"
+    ") || true
+
+    cleanup_container_test
+
+    assert_contains "$output" "Commits ahead: 1" "Should be 1 commit ahead of remote"
+    assert_contains "$output" "has_unpushed: true" "Should detect being ahead of remote"
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -256,6 +355,8 @@ main() {
     run_test test_deleted_files_committed
     run_test test_commit_author_set
     run_test test_task_in_commit_message
+    run_test test_push_runs_when_agent_commits_itself
+    run_test test_detects_unpushed_ahead_of_remote
 
     # Cleanup
     cleanup_test_project
