@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kapsis | Isolated AI Agent Sandbox</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        kapsis: {
+                            dark: '#0f172a',
+                            card: '#1e293b',
+                            neon: '#10b981', // Emerald 500
+                            danger: '#ef4444', // Red 500
+                            beta: '#f59e0b',   // Amber 500
+                            accent: '#6366f1' // Indigo 500
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', "Liberation Mono", "Courier New", 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .glow-text {
+            text-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+        }
+        .code-block {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+    </style>
+</head>
+<body class="bg-kapsis-dark text-slate-300 font-sans antialiased selection:bg-kapsis-neon selection:text-white">
+
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 bg-kapsis-dark/90 backdrop-blur-md border-b border-slate-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-box-open text-kapsis-neon text-2xl"></i>
+                    <span class="text-white text-xl font-bold tracking-wider">KAPSIS <span class="text-xs text-kapsis-beta ml-1 border border-kapsis-beta px-1 rounded uppercase">Beta</span></span>
+                </div>
+                <div class="hidden md:block">
+                    <div class="ml-10 flex items-baseline space-x-6">
+                        <a href="#install" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Install</a>
+                        <a href="#yolo" class="text-kapsis-danger hover:text-red-400 transition-colors px-3 py-2 rounded-md text-sm font-bold"><i class="fa-solid fa-biohazard mr-1"></i> YOLO Mode</a>
+                        <a href="#docs" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Docs & Profiles</a>
+                        <a href="#quickstart" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Quick Start</a>
+                    </div>
+                </div>
+                <div>
+                    <a href="https://github.com/aviadshiber/kapsis" target="_blank" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all border border-slate-700">
+                        <i class="fa-brands fa-github mr-2"></i> GitHub
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="pt-32 pb-20 relative overflow-hidden">
+        <!-- Background Grid Effect -->
+        <div class="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
+
+            <div class="inline-flex items-center px-4 py-1 rounded-full border border-kapsis-beta/30 bg-kapsis-beta/10 text-kapsis-beta text-sm mb-8">
+                <span class="animate-pulse mr-2">●</span> Public Beta Release
+            </div>
+
+            <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 leading-tight">
+                Hermetically Isolated <br>
+                <span class="text-transparent bg-clip-text bg-gradient-to-r from-kapsis-neon to-emerald-600 glow-text">AI Agent Sandbox</span>
+            </h1>
+
+            <p class="mt-4 max-w-2xl mx-auto text-xl text-slate-400">
+                Run multiple AI coding agents in parallel. Total isolation. Zero conflicts.
+                <br>The safest way to let LLMs edit your code.
+            </p>
+
+            <div class="mt-10 flex justify-center gap-4">
+                <a href="#install" class="px-8 py-3 rounded-lg bg-kapsis-neon hover:bg-emerald-400 text-slate-900 font-bold text-lg transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+                    Install Now
+                </a>
+                <a href="#docs" class="px-8 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-medium text-lg border border-slate-700 transition-all">
+                    Read Docs
+                </a>
+            </div>
+
+            <!-- Terminal Visual -->
+            <div class="mt-16 mx-auto max-w-4xl bg-[#0d1117] rounded-xl border border-slate-700 shadow-2xl overflow-hidden text-left">
+                <div class="flex items-center px-4 py-2 bg-slate-800 border-b border-slate-700">
+                    <div class="flex gap-2">
+                        <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    </div>
+                    <div class="mx-auto text-xs text-slate-400 font-mono">kapsis-manager — zsh</div>
+                </div>
+                <div class="p-6 font-mono text-sm overflow-x-auto">
+                    <div class="flex mb-2">
+                        <span class="text-emerald-400 mr-2">➜</span>
+                        <span class="text-white">./scripts/launch-agent.sh 1 ~/project --config claude.yaml &</span>
+                    </div>
+                    <div class="text-slate-500 mb-2">[1] 45121 launched: Claude Code (Container ID: 8f9a2b)</div>
+                    <div class="flex mb-2">
+                        <span class="text-emerald-400 mr-2">➜</span>
+                        <span class="text-white">./scripts/launch-agent.sh 2 ~/project --config aider.yaml &</span>
+                    </div>
+                    <div class="text-slate-500 mb-2">[2] 45122 launched: Aider (Container ID: 3c2d1e)</div>
+                    <div class="flex mb-2">
+                        <span class="text-emerald-400 mr-2">➜</span>
+                        <span class="text-white">./scripts/kapsis-status.sh</span>
+                    </div>
+                    <div class="text-blue-400">AGENT 1 (Claude): <span class="text-green-400">RUNNING</span> | ISO: Active | FS: CoW Layer</div>
+                    <div class="text-blue-400">AGENT 2 (Aider): &nbsp;<span class="text-green-400">RUNNING</span> | ISO: Active | FS: CoW Layer</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation Section -->
+    <section id="install" class="py-20 bg-slate-800/50">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-8 flex items-center">
+                <i class="fa-solid fa-download text-kapsis-neon mr-3"></i> Installation
+            </h2>
+
+            <div class="grid md:grid-cols-2 gap-8">
+                <!-- Requirements -->
+                <div class="space-y-6">
+                    <div>
+                        <h3 class="text-lg font-semibold text-white mb-2">System Requirements</h3>
+                        <ul class="space-y-2 text-slate-400">
+                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>macOS</strong> (Apple Silicon) or <strong>Linux</strong></span></li>
+                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>Git</strong> installed</span></li>
+                            <li class="flex items-center"><i class="fa-solid fa-info-circle text-blue-400 w-6"></i> <span>Podman is installed automatically by the setup script.</span></li>
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Setup Steps -->
+                <div>
+                    <h3 class="text-lg font-semibold text-white mb-4">Setup Steps</h3>
+                    <div class="relative pl-8 border-l border-slate-700 space-y-8">
+
+                        <!-- Step 1 -->
+                        <div class="relative">
+                            <span class="absolute -left-[41px] bg-slate-800 border border-slate-600 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white">1</span>
+                            <p class="text-slate-300 mb-2">Clone the repository</p>
+                            <div class="code-block p-3 rounded text-sm font-mono text-blue-300">git clone https://github.com/aviadshiber/kapsis.git</div>
+                        </div>
+
+                        <!-- Step 2 -->
+                        <div class="relative">
+                            <span class="absolute -left-[41px] bg-slate-800 border border-slate-600 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white">2</span>
+                            <p class="text-slate-300 mb-2">Run the setup script</p>
+                            <div class="code-block p-3 rounded text-sm font-mono text-blue-300">
+                                cd kapsis <br>
+                                ./setup.sh
+                            </div>
+                            <p class="text-xs text-slate-500 mt-2">This script installs Podman (if missing), initializes the machine, and verifies dependencies.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- YOLO Mode Spotlight -->
+    <section id="yolo" class="py-20 relative">
+        <div class="absolute inset-0 bg-gradient-to-b from-kapsis-dark via-red-900/10 to-kapsis-dark pointer-events-none"></div>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="bg-gradient-to-r from-slate-900 to-slate-800 rounded-2xl border border-red-500/30 p-8 md:p-12 shadow-[0_0_50px_rgba(239,68,68,0.1)]">
+                <div class="md:flex items-center gap-12">
+                    <div class="md:w-1/2">
+                        <div class="inline-flex items-center px-3 py-1 rounded text-xs font-bold bg-red-500/20 text-red-400 mb-4 border border-red-500/30">
+                            <i class="fa-solid fa-triangle-exclamation mr-2"></i> GAME CHANGER
+                        </div>
+                        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+                            Work in <span class="text-red-500 italic">YOLO Mode</span> safely.
+                        </h2>
+                        <p class="text-slate-300 text-lg mb-6">
+                            Normally, flags like <code class="bg-red-900/30 text-red-400 px-1 py-0.5 rounded text-sm">--dangerously-skip-permissions</code> or <code class="bg-red-900/30 text-red-400 px-1 py-0.5 rounded text-sm">--yes-always</code> are terrifying. They risk your OS and your files.
+                        </p>
+                        <p class="text-slate-300 text-lg mb-6">
+                            With <strong>Kapsis</strong>, they are safe. Every destructive command is trapped inside a disposable container.
+                        </p>
+                        <ul class="space-y-3 mb-8">
+                            <li class="flex items-center text-slate-400">
+                                <i class="fa-solid fa-check text-green-500 mr-3"></i> Agent deletes root? Container dies, Host lives.
+                            </li>
+                            <li class="flex items-center text-slate-400">
+                                <i class="fa-solid fa-check text-green-500 mr-3"></i> Agent installs malware? It's isolated.
+                            </li>
+                            <li class="flex items-center text-slate-400">
+                                <i class="fa-solid fa-check text-green-500 mr-3"></i> Full autonomy without the anxiety.
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="md:w-1/2 mt-8 md:mt-0">
+                        <!-- Visual representation of containment -->
+                        <div class="bg-black rounded-lg border border-red-500/30 p-4 font-mono text-xs relative overflow-hidden">
+                            <div class="absolute top-0 right-0 bg-red-600 text-white text-[10px] px-2 py-1 font-bold rounded-bl">CONTAINER ISOLATION</div>
+                            <div class="text-red-400 mb-2">$ claude --dangerously-skip-permissions</div>
+                            <div class="text-slate-500 italic mb-2">> Agent attempting to delete database config...</div>
+                            <div class="text-slate-500 italic mb-2">> Agent installing unknown npm packages...</div>
+                            <div class="text-slate-500 italic mb-2">> Agent modifying system PATH...</div>
+                            <div class="mt-4 pt-4 border-t border-dashed border-slate-700 text-green-400 font-bold">
+                                [KAPSIS MONITOR]: Host System Integrity: 100% (Safe)
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Documentation: Config & Profiles -->
+    <section id="docs" class="py-20 bg-slate-900/50">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-8 text-center">Docs & Agent Profiles</h2>
+            <p class="text-center text-slate-400 mb-12 max-w-2xl mx-auto">
+                Kapsis separates the <strong>Container Environment</strong> (resources, mounts) from the <strong>Agent Logic</strong> (commands, flags).
+            </p>
+
+            <div class="grid lg:grid-cols-2 gap-12">
+
+                <!-- Section 1: Agent Profiles -->
+                <div>
+                    <h3 class="text-xl font-bold text-white mb-4 flex items-center">
+                        <span class="bg-indigo-500/20 text-indigo-400 w-8 h-8 rounded flex items-center justify-center mr-3 text-sm">1</span>
+                        Agent Profiles
+                    </h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        Profiles define <em>what</em> runs inside the container. You can create custom YAML files for any CLI tool.
+                    </p>
+
+                    <!-- Interactive Profile Viewer -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                        <div class="flex border-b border-slate-700">
+                            <button onclick="switchDocTab('claude')" id="doc-tab-claude" class="flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white border-r border-slate-700">configs/claude.yaml</button>
+                            <button onclick="switchDocTab('aider')" id="doc-tab-aider" class="flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500">configs/aider.yaml</button>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] overflow-x-auto h-64">
+                            <!-- Claude Code -->
+                            <pre id="doc-content-claude" class="text-xs font-mono text-green-400">
+agent:
+  # The actual command to run inside the container
+  command: "claude --dangerously-skip-permissions -p \"$(cat /task-spec.md)\""
+
+  # Working directory inside the container
+  workdir: /workspace
+
+# Required environment variables (auto-injected from host keychain)
+environment:
+  keychain:
+    ANTHROPIC_API_KEY:
+      service: "Claude Code-credentials"</pre>
+
+                            <!-- Aider Code -->
+                            <pre id="doc-content-aider" class="text-xs font-mono text-blue-400 hidden">
+agent:
+  command: "aider --yes-always --message-file /task-spec.md"
+
+# Git behaviors specifically for this agent
+git:
+  auto_push:
+    enabled: true
+    remote: origin
+
+# Additional files to mount from host
+filesystem:
+  include:
+    - ~/.gitconfig
+    - ~/.ssh</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: Global Configuration -->
+                <div>
+                    <h3 class="text-xl font-bold text-white mb-4 flex items-center">
+                        <span class="bg-orange-500/20 text-orange-400 w-8 h-8 rounded flex items-center justify-center mr-3 text-sm">2</span>
+                        Sandbox Resources
+                    </h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        The `agent-sandbox.yaml` (or CLI overrides) controls the container's physical limits and isolation rules.
+                    </p>
+
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl p-4">
+                        <ul class="space-y-4">
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">resources:</div>
+                                <div class="text-slate-500 text-xs">Controls <code>memory</code> (e.g., 8g) and <code>cpus</code> (e.g., 4). Crucial for heavy compile tasks.</div>
+                            </li>
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">maven:</div>
+                                <div class="text-slate-500 text-xs">
+                                    <code>block_remote_snapshots: true</code> prevents the agent from fetching unstable dependencies.
+                                </div>
+                            </li>
+                            <li>
+                                <div class="text-white font-mono text-sm mb-1">filesystem:</div>
+                                <div class="text-slate-500 text-xs">
+                                    Defines overlay mounts. By default, the project is mounted Read-Only + Copy-On-Write layer.
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick Start -->
+    <section id="quickstart" class="py-20">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-8 text-center">Launch Your First Agent</h2>
+
+            <div class="space-y-8">
+                <!-- Launch Command -->
+                <div>
+                    <p class="text-slate-400 mb-4 text-center">Once installed, launch an agent by specifying an ID, the project path, and the config profile.</p>
+                    <div class="code-block rounded-lg p-6 font-mono text-sm text-slate-300 overflow-x-auto relative group shadow-lg border-l-4 border-kapsis-neon">
+                        <button onclick="copyToClipboard('launch-code')" class="absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                            <i class="fa-regular fa-copy"></i>
+                        </button>
+                        <div class="text-slate-500 mb-2"># Syntax: ./scripts/launch-agent.sh [ID] [PROJECT_PATH] [FLAGS]</div>
+                        <pre id="launch-code">./scripts/launch-agent.sh 1 ~/my-project \
+    --config configs/claude.yaml \
+    --branch feature/new-api</pre>
+                    </div>
+                </div>
+
+                <!-- Monitor -->
+                <div class="text-center">
+                    <p class="text-slate-400 mb-2">Watch the agents work in real-time:</p>
+                    <code class="bg-slate-800 px-3 py-1 rounded text-kapsis-neon font-mono">./scripts/kapsis-status.sh --watch</code>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Troubleshooting -->
+    <section class="py-20 border-t border-slate-800 bg-slate-900">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-2xl font-bold text-white mb-6">Troubleshooting & Ops</h2>
+            <div class="grid md:grid-cols-2 gap-6">
+                <div class="bg-slate-800 p-6 rounded-lg border border-slate-700">
+                    <h4 class="text-white font-bold mb-2"><i class="fa-solid fa-magnifying-glass text-indigo-400 mr-2"></i> Debug Logs</h4>
+                    <p class="text-sm text-slate-400 mb-2">View the launch sequence and container output.</p>
+                    <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-indigo-300">tail -f ~/.kapsis/logs/kapsis-launch-agent.log</code>
+                </div>
+                <div class="bg-slate-800 p-6 rounded-lg border border-slate-700">
+                    <h4 class="text-white font-bold mb-2"><i class="fa-solid fa-broom text-red-400 mr-2"></i> Cleanup</h4>
+                    <p class="text-sm text-slate-400 mb-2">Reclaim disk space and kill hanging containers.</p>
+                    <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-red-300">./scripts/kapsis-cleanup.sh --all</code>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="bg-kapsis-dark border-t border-slate-800 py-12">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="md:flex justify-between items-center">
+                <div class="mb-6 md:mb-0">
+                    <div class="flex items-center gap-2 mb-2">
+                        <i class="fa-solid fa-box-open text-slate-600"></i>
+                        <span class="text-slate-300 font-bold">KAPSIS</span>
+                        <span class="text-xs text-kapsis-beta border border-kapsis-beta px-1 rounded uppercase">Beta</span>
+                    </div>
+                    <p class="text-slate-500 text-sm">The Secure Lab for AI Agents.</p>
+                </div>
+                <div class="flex space-x-6">
+                    <a href="https://github.com/aviadshiber/kapsis" class="text-slate-400 hover:text-white transition-colors">GitHub</a>
+                    <a href="https://github.com/aviadshiber/kapsis/issues" class="text-slate-400 hover:text-white transition-colors">Issues</a>
+                    <a href="#" class="text-slate-400 hover:text-white transition-colors">License</a>
+                </div>
+            </div>
+            <div class="border-t border-slate-800 mt-8 pt-8 text-center text-slate-600 text-sm">
+                <p>&copy; 2025 Kapsis Project. All rights reserved.</p>
+                <p class="mt-2">
+                    Website built by <a href="https://github.com/aviadshiber" target="_blank" class="text-kapsis-neon hover:underline">Aviad Shiber</a>
+                </p>
+                <p class="text-xs mt-1 opacity-50">Powered by Nano Banana Infographics</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script>
+        function switchDocTab(tabName) {
+            // Hide all contents
+            document.getElementById('doc-content-claude').classList.add('hidden');
+            document.getElementById('doc-content-aider').classList.add('hidden');
+
+            // Reset buttons
+            document.getElementById('doc-tab-claude').className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 border-r border-slate-700 transition-colors";
+            document.getElementById('doc-tab-aider').className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 transition-colors";
+
+            // Activate
+            document.getElementById('doc-content-' + tabName).classList.remove('hidden');
+            const activeBtn = document.getElementById('doc-tab-' + tabName);
+            activeBtn.className = "flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white " + (tabName === 'claude' ? "border-r border-slate-700" : "");
+        }
+
+        function copyToClipboard(elementId) {
+            const text = document.getElementById(elementId).innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                alert('Copied to clipboard!');
+            });
+        }
+    </script>
+</body>
+</html>

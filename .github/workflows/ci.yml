@@ -12,9 +12,31 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Check which files changed to determine if tests should run
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      scripts: ${{ steps.filter.outputs.scripts }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            scripts:
+              - 'scripts/**'
+              - 'tests/**'
+              - 'configs/**'
+              - 'Containerfile'
+              - 'setup.sh'
+              - '.github/workflows/ci.yml'
+
   lint:
     name: ShellCheck Lint
     runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -59,7 +81,8 @@ jobs:
   quick-tests:
     name: Quick Tests
     runs-on: ubuntu-latest
-    needs: lint
+    needs: [changes, lint]
+    if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -97,8 +120,8 @@ jobs:
   container-tests:
     name: Container Tests
     runs-on: ubuntu-latest
-    needs: quick-tests
-    # Run on main and PRs, but PRs are non-blocking (see ci-success job)
+    needs: [changes, quick-tests]
+    if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -154,11 +177,19 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, quick-tests, container-tests]
+    needs: [changes, lint, quick-tests, container-tests]
     if: always()
     steps:
       - name: Check all jobs passed
         run: |
+          # If no script changes, all tests are skipped - that's OK
+          if [[ "${{ needs.changes.outputs.scripts }}" != "true" ]]; then
+            echo "No script changes detected - CI tests skipped"
+            echo "Files changed: docs, assets, or other non-code files"
+            exit 0
+          fi
+
+          # Script changes detected - all tests must pass
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
             echo "Lint job failed"
             exit 1
@@ -167,8 +198,6 @@ jobs:
             echo "Quick tests job failed"
             exit 1
           fi
-
-          # Container tests are required on all branches
           if [[ "${{ needs.container-tests.result }}" != "success" ]]; then
             echo "Container tests job failed"
             exit 1
