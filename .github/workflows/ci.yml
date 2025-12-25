@@ -12,12 +12,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Check which files changed to determine if tests should run
+  # Check which files changed to determine which tests to run
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
       scripts: ${{ steps.filter.outputs.scripts }}
+      container: ${{ steps.filter.outputs.container }}
     steps:
       - uses: actions/checkout@v6
       - uses: dorny/paths-filter@v3
@@ -31,7 +32,14 @@ jobs:
               - 'Containerfile'
               - 'setup.sh'
               - '.github/workflows/ci.yml'
+            container:
+              - 'Containerfile'
+              - 'scripts/entrypoint.sh'
+              - 'scripts/build-image.sh'
+              - 'scripts/lib/**'
+              - '.github/workflows/ci.yml'
 
+  # All test jobs run in parallel after change detection
   lint:
     name: ShellCheck Lint
     runs-on: ubuntu-latest
@@ -81,7 +89,7 @@ jobs:
   quick-tests:
     name: Quick Tests
     runs-on: ubuntu-latest
-    needs: [changes, lint]
+    needs: changes
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
@@ -120,8 +128,9 @@ jobs:
   container-tests:
     name: Container Tests
     runs-on: ubuntu-latest
-    needs: [changes, quick-tests]
-    if: needs.changes.outputs.scripts == 'true'
+    needs: changes
+    # Only run if container-related files changed (Containerfile, entrypoint, build scripts, libs)
+    if: needs.changes.outputs.container == 'true'
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -152,11 +161,44 @@ jobs:
           podman --version
           podman info --debug 2>&1 | head -20 || true
 
-      - name: Build Kapsis container image
+      - name: Generate cache key
+        id: cache-key
+        run: |
+          # Cache key based on Containerfile and base image references
+          echo "key=kapsis-image-${{ hashFiles('Containerfile', 'scripts/build-image.sh') }}" >> $GITHUB_OUTPUT
+
+      - name: Restore cached container image
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: /tmp/kapsis-image.tar
+          key: ${{ steps.cache-key.outputs.key }}
+
+      - name: Load cached image or build new
         run: |
           chmod +x ./scripts/build-image.sh
-          ./scripts/build-image.sh --name kapsis-test --tag ci
+          if [[ -f /tmp/kapsis-image.tar ]]; then
+            echo "Loading cached container image..."
+            podman load -i /tmp/kapsis-image.tar
+            echo "Cached image loaded successfully"
+          else
+            echo "No cache found, building fresh image..."
+            ./scripts/build-image.sh --name kapsis-test --tag ci
+          fi
         timeout-minutes: 30
+
+      - name: Save image to cache
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        run: |
+          echo "Saving image to cache..."
+          podman save kapsis-test:ci -o /tmp/kapsis-image.tar
+
+      - name: Upload image cache
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: /tmp/kapsis-image.tar
+          key: ${{ steps.cache-key.outputs.key }}
 
       - name: Run container tests
         run: |
@@ -189,7 +231,7 @@ jobs:
             exit 0
           fi
 
-          # Script changes detected - all tests must pass
+          # Script changes detected - lint and quick-tests must pass
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
             echo "Lint job failed"
             exit 1
@@ -198,9 +240,14 @@ jobs:
             echo "Quick tests job failed"
             exit 1
           fi
-          if [[ "${{ needs.container-tests.result }}" != "success" ]]; then
-            echo "Container tests job failed"
-            exit 1
-          fi
 
-          echo "All required CI checks passed!"
+          # Container tests only required if container-related files changed
+          if [[ "${{ needs.changes.outputs.container }}" == "true" ]]; then
+            if [[ "${{ needs.container-tests.result }}" != "success" ]]; then
+              echo "Container tests job failed"
+              exit 1
+            fi
+            echo "All CI checks passed (including container tests)!"
+          else
+            echo "All CI checks passed (container tests skipped - no container changes)!"
+          fi
