@@ -517,10 +517,53 @@ Branch: ${KAPSIS_BRANCH}"
         echo "└────────────────────────────────────────────────────────────────┘"
 
         local remote="${KAPSIS_GIT_REMOTE:-origin}"
+
+        # Capture local commit before push for verification
+        local local_commit
+        local_commit=$(git rev-parse HEAD 2>/dev/null || echo "")
+
         git push --set-upstream "$remote" "$KAPSIS_BRANCH" || {
             log_warn "Push failed. Changes are committed locally."
+            if type status_set_push_info &>/dev/null; then
+                status_set_push_info "failed" "$local_commit" ""
+            fi
             return
         }
+
+        # Verify push succeeded by comparing local and remote HEAD
+        echo ""
+        log_info "Verifying push to ${remote}/${KAPSIS_BRANCH}..."
+
+        # Fetch latest from remote to ensure we have current state
+        git fetch "$remote" "$KAPSIS_BRANCH" --quiet 2>/dev/null || true
+
+        # Get remote HEAD commit after fetch
+        local remote_commit
+        remote_commit=$(git rev-parse "${remote}/${KAPSIS_BRANCH}" 2>/dev/null || echo "")
+
+        # Compare commits
+        if [[ "$local_commit" == "$remote_commit" ]]; then
+            log_success "Push verified: local and remote HEAD match"
+            log_info "  Commit: ${local_commit:0:12}"
+            if type status_set_push_info &>/dev/null; then
+                status_set_push_info "success" "$local_commit" "$remote_commit"
+            fi
+        elif [[ -z "$remote_commit" ]]; then
+            log_warn "Could not verify push - fetch may have failed"
+            log_info "  Local commit: ${local_commit:0:12}"
+            if type status_set_push_info &>/dev/null; then
+                status_set_push_info "unverified" "$local_commit" ""
+            fi
+        else
+            log_error "Push verification FAILED: commits do not match!"
+            log_error "  Local:  $local_commit"
+            log_error "  Remote: $remote_commit"
+            if type status_set_push_info &>/dev/null; then
+                status_set_push_info "failed" "$local_commit" "$remote_commit"
+            fi
+            log_error "Commits may not have been pushed to remote."
+            return
+        fi
 
         # Generate PR URL
         local remote_url
@@ -542,7 +585,7 @@ Branch: ${KAPSIS_BRANCH}"
         fi
 
         echo ""
-        log_success "Changes pushed successfully"
+        log_success "Changes pushed and verified successfully"
         echo ""
         echo "To continue after PR review, re-run with same branch:"
         echo "  ./launch-agent.sh <id> <project> --branch ${KAPSIS_BRANCH} --spec ./updated-spec.md"
@@ -550,6 +593,12 @@ Branch: ${KAPSIS_BRANCH}"
         echo ""
         log_success "Changes committed locally (--no-push)"
         echo "To push later: git push ${KAPSIS_GIT_REMOTE:-origin} ${KAPSIS_BRANCH}"
+        # Record that push was skipped with the local commit
+        local local_commit
+        local_commit=$(git rev-parse HEAD 2>/dev/null || echo "")
+        if type status_push_skipped &>/dev/null; then
+            status_push_skipped "$local_commit"
+        fi
     fi
 }
 

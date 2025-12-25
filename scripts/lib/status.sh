@@ -54,6 +54,11 @@ _KAPSIS_STATUS_FILE=""
 _KAPSIS_STATUS_STARTED=""
 _KAPSIS_STATUS_INITIALIZED=false
 
+# Push verification state
+_KAPSIS_PUSH_STATUS=""      # "success", "failed", "skipped", "unverified"
+_KAPSIS_LOCAL_COMMIT=""     # Local HEAD commit SHA
+_KAPSIS_REMOTE_COMMIT=""    # Remote HEAD commit SHA after push
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -183,6 +188,70 @@ status_complete() {
 }
 
 # =============================================================================
+# Push Verification
+# =============================================================================
+
+# Set push verification information
+# Arguments:
+#   $1 - Push status: "success", "failed", "skipped", "unverified"
+#   $2 - Local commit SHA
+#   $3 - Remote commit SHA (optional)
+status_set_push_info() {
+    _KAPSIS_PUSH_STATUS="${1:-unverified}"
+    _KAPSIS_LOCAL_COMMIT="${2:-}"
+    _KAPSIS_REMOTE_COMMIT="${3:-}"
+}
+
+# Verify push succeeded by comparing local and remote HEAD
+# Arguments:
+#   $1 - Worktree/repo path
+#   $2 - Remote name (default: origin)
+#   $3 - Branch name
+# Returns: 0 if push verified, 1 if verification failed
+status_verify_push() {
+    local repo_path="${1:-.}"
+    local remote="${2:-origin}"
+    local branch="${3:-}"
+
+    cd "$repo_path" || return 1
+
+    # Get current branch if not specified
+    if [[ -z "$branch" ]]; then
+        branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+    fi
+
+    # Get local HEAD commit
+    local local_commit
+    local_commit=$(git rev-parse HEAD 2>/dev/null)
+    if [[ -z "$local_commit" ]]; then
+        status_set_push_info "failed" "" ""
+        return 1
+    fi
+
+    # Fetch latest from remote to ensure we have current state
+    git fetch "$remote" "$branch" --quiet 2>/dev/null || true
+
+    # Get remote HEAD commit
+    local remote_commit
+    remote_commit=$(git rev-parse "${remote}/${branch}" 2>/dev/null)
+
+    # Compare commits
+    if [[ "$local_commit" == "$remote_commit" ]]; then
+        status_set_push_info "success" "$local_commit" "$remote_commit"
+        return 0
+    else
+        status_set_push_info "failed" "$local_commit" "${remote_commit:-unknown}"
+        return 1
+    fi
+}
+
+# Mark push as skipped (for --no-push scenarios)
+status_push_skipped() {
+    local local_commit="${1:-}"
+    status_set_push_info "skipped" "$local_commit" ""
+}
+
+# =============================================================================
 # Internal Write Function
 # =============================================================================
 
@@ -231,6 +300,16 @@ _status_write() {
     local worktree_json="null"
     [[ -n "$_KAPSIS_STATUS_WORKTREE_PATH" ]] && worktree_json="\"$escaped_worktree\""
 
+    # Push verification fields
+    local push_status_json="null"
+    [[ -n "$_KAPSIS_PUSH_STATUS" ]] && push_status_json="\"$_KAPSIS_PUSH_STATUS\""
+
+    local local_commit_json="null"
+    [[ -n "$_KAPSIS_LOCAL_COMMIT" ]] && local_commit_json="\"$_KAPSIS_LOCAL_COMMIT\""
+
+    local remote_commit_json="null"
+    [[ -n "$_KAPSIS_REMOTE_COMMIT" ]] && remote_commit_json="\"$_KAPSIS_REMOTE_COMMIT\""
+
     # Build JSON (using heredoc for readability)
     local json
     json=$(cat << EOF
@@ -248,7 +327,10 @@ _status_write() {
   "exit_code": ${exit_code_json},
   "error": ${error_json},
   "worktree_path": ${worktree_json},
-  "pr_url": ${pr_url_json}
+  "pr_url": ${pr_url_json},
+  "push_status": ${push_status_json},
+  "local_commit": ${local_commit_json},
+  "remote_commit": ${remote_commit_json}
 }
 EOF
 )
