@@ -98,9 +98,70 @@ EOF
 }
 
 #===============================================================================
+# VERIFY PUSH
+#
+# Verifies that the push actually succeeded by comparing local and remote HEAD.
+# This addresses the issue where push may report success but commits aren't
+# actually on the remote (network issues, partial failures, etc.).
+#
+# Returns: 0 if verified, 1 if verification failed
+#===============================================================================
+verify_push() {
+    local worktree_path="$1"
+    local remote="${2:-origin}"
+    local branch="${3:-}"
+
+    cd "$worktree_path"
+
+    # Get current branch if not specified
+    if [[ -z "$branch" ]]; then
+        branch=$(git rev-parse --abbrev-ref HEAD)
+    fi
+
+    log_info "Verifying push to ${remote}/${branch}..."
+
+    # Get local HEAD commit
+    local local_commit
+    local_commit=$(git rev-parse HEAD 2>/dev/null)
+    if [[ -z "$local_commit" ]]; then
+        log_error "Could not determine local HEAD commit"
+        status_set_push_info "failed" "" ""
+        return 1
+    fi
+    log_debug "Local commit: $local_commit"
+
+    # Fetch latest from remote to ensure we have current state
+    if ! git fetch "$remote" "$branch" --quiet 2>/dev/null; then
+        log_warn "Could not fetch from remote for verification"
+        # Don't fail - the push might have worked even if fetch fails
+        status_set_push_info "unverified" "$local_commit" ""
+        return 0
+    fi
+
+    # Get remote HEAD commit after fetch
+    local remote_commit
+    remote_commit=$(git rev-parse "${remote}/${branch}" 2>/dev/null)
+    log_debug "Remote commit: ${remote_commit:-unknown}"
+
+    # Compare commits
+    if [[ "$local_commit" == "$remote_commit" ]]; then
+        log_success "Push verified: local and remote HEAD match"
+        log_info "  Commit: ${local_commit:0:12}"
+        status_set_push_info "success" "$local_commit" "$remote_commit"
+        return 0
+    else
+        log_error "Push verification FAILED: commits do not match!"
+        log_error "  Local:  $local_commit"
+        log_error "  Remote: ${remote_commit:-not found}"
+        status_set_push_info "failed" "$local_commit" "${remote_commit:-unknown}"
+        return 1
+    fi
+}
+
+#===============================================================================
 # PUSH CHANGES
 #
-# Pushes the current branch to remote.
+# Pushes the current branch to remote and verifies the push succeeded.
 #===============================================================================
 push_changes() {
     local worktree_path="$1"
@@ -119,15 +180,27 @@ push_changes() {
     echo "  Branch: $branch"
     echo ""
 
+    # Capture local commit before push for verification
+    local local_commit
+    local_commit=$(git rev-parse HEAD 2>/dev/null)
+
     if git push --set-upstream "$remote" "$branch"; then
-        log_success "Push successful"
+        log_success "Push command completed"
 
-        # Generate PR URL
-        generate_pr_url "$worktree_path" "$branch"
-
-        return 0
+        # Verify the push actually succeeded
+        echo ""
+        if verify_push "$worktree_path" "$remote" "$branch"; then
+            # Generate PR URL only after verified push
+            generate_pr_url "$worktree_path" "$branch"
+            return 0
+        else
+            log_error "Push reported success but verification failed!"
+            log_error "Commits may not have been pushed to remote."
+            return 2  # Distinct exit code for verification failure
+        fi
     else
         log_error "Push failed"
+        status_set_push_info "failed" "$local_commit" ""
         return 1
     fi
 }
@@ -289,15 +362,29 @@ post_container_git() {
         status_phase "pushing" 97 "Pushing to remote"
 
         log_debug "Pushing changes to remote..."
-        if ! push_changes "$worktree_path" "$remote"; then
+        local push_result
+        push_changes "$worktree_path" "$remote"
+        push_result=$?
+
+        if [[ $push_result -eq 0 ]]; then
+            log_debug "Push successful and verified"
+        elif [[ $push_result -eq 2 ]]; then
+            # Push command succeeded but verification failed
+            log_error "Push verification failed! Commits may not be on remote."
+            log_info "To check: cd $worktree_path && git fetch && git log --oneline HEAD ^origin/$branch"
+            return 2
+        else
             log_warn "Push failed. Changes are committed locally."
             log_info "To push manually: cd $worktree_path && git push -u $remote $branch"
             return 1
         fi
-        log_debug "Push successful"
     else
         log_info "Skipping push (--no-push specified)"
         log_info "To push: cd $worktree_path && git push -u $remote $branch"
+        # Record that push was skipped with the local commit
+        local local_commit
+        local_commit=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "")
+        status_push_skipped "$local_commit"
     fi
 
     echo ""
