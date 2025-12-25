@@ -271,30 +271,79 @@ preflight_check() {
 # STANDALONE EXECUTION
 #===============================================================================
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    # Called directly - run checks with provided args
-    PROJECT_PATH="${1:-.}"
-    TARGET_BRANCH="${2:-}"
-    SPEC_FILE="${3:-}"
-    IMAGE_NAME="${4:-kapsis-sandbox:latest}"
-    AGENT_ID="${5:-1}"
+    # Parse arguments - support both --config and legacy positional args
+    PROJECT_PATH=""
+    TARGET_BRANCH=""
+    SPEC_FILE=""
+    IMAGE_NAME=""
+    AGENT_ID="1"
+    CONFIG_FILE=""
 
-    if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
-        echo "Usage: $0 <project_path> [target_branch] [spec_file] [image_name] [agent_id]"
+    show_help() {
+        echo "Usage: $0 [--config <file>] <project_path> [target_branch] [spec_file]"
         echo ""
         echo "Validates prerequisites before launching a Kapsis agent."
         echo ""
-        echo "Arguments:"
+        echo "Options:"
+        echo "  --config <file>  Read image from config file (same as launch-agent.sh)"
+        echo "  -h, --help       Show this help message"
+        echo ""
+        echo "Positional arguments:"
         echo "  project_path   Path to the project directory (default: .)"
         echo "  target_branch  Git branch for worktree (optional)"
         echo "  spec_file      Task specification file (optional)"
-        echo "  image_name     Container image (default: kapsis-sandbox:latest)"
+        echo "  image_name     Container image (default: from config or kapsis-sandbox:latest)"
         echo "  agent_id       Agent identifier (default: 1)"
+        echo ""
+        echo "Examples:"
+        echo "  # Recommended: use --config to match launch-agent.sh behavior"
+        echo "  $0 --config ~/git/kapsis/configs/aviad-claude.yaml ~/git/products feature/DEV-123 ./spec.md"
+        echo ""
+        echo "  # Legacy: explicit image name"
+        echo "  $0 ~/git/products feature/DEV-123 ./spec.md kapsis-claude-cli:latest"
         echo ""
         echo "Exit codes:"
         echo "  0 - All checks pass"
         echo "  1 - Critical failure"
         exit 0
+    }
+
+    # Parse --config option first
+    POSITIONAL_ARGS=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_help
+                ;;
+            --config)
+                CONFIG_FILE="$2"
+                shift 2
+                ;;
+            *)
+                POSITIONAL_ARGS+=("$1")
+                shift
+                ;;
+        esac
+    done
+    set -- "${POSITIONAL_ARGS[@]}"
+
+    # Parse positional arguments
+    PROJECT_PATH="${1:-.}"
+    TARGET_BRANCH="${2:-}"
+    SPEC_FILE="${3:-}"
+    IMAGE_NAME="${4:-}"
+    AGENT_ID="${5:-1}"
+
+    # Extract image from config file (same logic as launch-agent.sh lines 418-419)
+    if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
+        if command -v yq &>/dev/null; then
+            CONFIG_IMAGE=$(yq -r '.image.name // "kapsis-sandbox"' "$CONFIG_FILE"):$(yq -r '.image.tag // "latest"' "$CONFIG_FILE")
+            IMAGE_NAME="${CONFIG_IMAGE}"
+        fi
     fi
+
+    # Default if still not set
+    [[ -z "$IMAGE_NAME" ]] && IMAGE_NAME="kapsis-sandbox:latest"
 
     preflight_check "$PROJECT_PATH" "$TARGET_BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"
     exit $?
