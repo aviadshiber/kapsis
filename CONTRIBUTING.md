@@ -91,8 +91,8 @@ Kapsis includes a comprehensive test suite in `tests/`. All tests use the shared
 # Container tests only (requires Podman)
 ./tests/run-all-tests.sh --container
 
-# Run specific test categories (comma-separated)
-./tests/run-all-tests.sh --category agent,config,dry-run
+# Run specific test category
+./tests/run-all-tests.sh --category security
 ```
 
 #### Individual Tests
@@ -261,14 +261,16 @@ Tests are categorized for selective execution:
 | Category | Description | Container Required |
 |----------|-------------|-------------------|
 | `agent` | Agent selection/configuration | No |
-| `config` | Configuration resolution | No |
-| `input` | Input validation | No |
-| `dry-run` | Dry-run output verification | No |
-| `path` | Path handling (spaces, special chars) | No |
-| `cow` | Copy-on-Write filesystem isolation | Yes |
-| `security` | Security constraints (rootless, etc.) | Yes |
-| `workflow` | Full workflow integration | Yes |
-| `git` | Git operations | Yes |
+| `validation` | Input validation, path handling, preflight checks | No |
+| `status` | Status reporting system | No |
+| `filesystem` | Copy-on-Write isolation, host unchanged | Yes |
+| `maven` | Maven SNAPSHOT blocking, authentication | Yes |
+| `security` | SSH keychain, API key handling, rootless mode | Partial* |
+| `git` | Branch creation, commit/push, worktree isolation | Yes |
+| `cleanup` | Sandbox cleanup operations | Yes |
+| `integration` | Full workflow, parallel agents | Yes |
+
+*Security tests include both quick tests (SSH keychain) and container tests (rootless mode).
 
 #### Quick vs Container Tests
 

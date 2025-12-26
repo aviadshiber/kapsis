@@ -248,6 +248,23 @@ git:
     include_timestamp: true
 
 #===============================================================================
+# SSH HOST KEY VERIFICATION
+#===============================================================================
+# Kapsis verifies SSH host keys before git push to prevent MITM attacks.
+# Verified keys are mounted at /etc/ssh/ssh_known_hosts inside the container.
+ssh:
+  # Hosts to verify SSH keys for
+  # Public providers (github.com, gitlab.com, bitbucket.org) are verified
+  # automatically against their official APIs.
+  # Enterprise hosts require one-time setup:
+  #   ./scripts/lib/ssh-keychain.sh add-host git.company.com
+  verify_hosts:
+    - github.com
+    - gitlab.com
+    - bitbucket.org
+    # - git.company.com  # Enterprise host (run add-host first!)
+
+#===============================================================================
 # CONTAINER IMAGE
 #===============================================================================
 image:
@@ -499,6 +516,83 @@ secret-tool lookup service "my-service-name" account "$USER"
 - Secrets are **never written to disk** during the launch process
 - Dry-run mode masks all sensitive environment variables (`***MASKED***`)
 - Container processes cannot access the host keychain
+
+## SSH Host Key Verification
+
+Kapsis verifies SSH host keys before git push operations to prevent MITM attacks. Verified keys are mounted into containers at `/etc/ssh/ssh_known_hosts`.
+
+### How It Works
+
+1. At launch, Kapsis reads the `ssh.verify_hosts` list from your config
+2. For each host, it fetches and verifies the SSH host key
+3. Public providers (GitHub, GitLab, Bitbucket) are verified against their official APIs
+4. Enterprise hosts use fingerprints cached during one-time setup
+5. Verified keys are written to a temp file and mounted read-only into the container
+
+### Public Git Providers (Automatic)
+
+These providers work automatically - no setup required:
+
+| Provider | Verification Source |
+|----------|---------------------|
+| `github.com` | GitHub Meta API |
+| `gitlab.com` | GitLab static fingerprints |
+| `bitbucket.org` | Bitbucket static fingerprints |
+
+### Enterprise Git Servers (One-Time Setup)
+
+For self-hosted or enterprise git servers, you must add the host first:
+
+```bash
+# Interactive verification (recommended)
+./scripts/lib/ssh-keychain.sh add-host git.company.com
+
+# The script will:
+# 1. Scan the server's SSH host key
+# 2. Display the fingerprint for verification
+# 3. Ask you to confirm (verify with IT admin if unsure)
+# 4. Store the fingerprint securely in system keychain
+```
+
+### Configuration Example
+
+```yaml
+ssh:
+  verify_hosts:
+    - github.com                    # Public (automatic)
+    - gitlab.com                    # Public (automatic)
+    - git.company.com               # Enterprise (requires add-host first)
+    - git.taboolasyndication.com    # Taboola Bitbucket (requires add-host)
+```
+
+### Managing Custom Hosts
+
+```bash
+# List configured custom hosts
+./scripts/lib/ssh-keychain.sh list-hosts
+
+# Verify a host (check if key matches stored fingerprint)
+./scripts/lib/ssh-keychain.sh verify git.company.com
+
+# Remove a custom host
+./scripts/lib/ssh-keychain.sh remove-host git.company.com
+```
+
+### Fingerprint Storage
+
+| Platform | Storage Location |
+|----------|------------------|
+| macOS | Keychain (service: `kapsis-ssh-hosts`) |
+| Linux | GNOME Keyring / KDE Wallet |
+| Fallback | `~/.kapsis/ssh-cache/` (600 permissions) |
+
+### Security Guarantees
+
+- Keys are verified against official APIs or user-confirmed fingerprints
+- No Trust On First Use (TOFU) by default - you must explicitly trust enterprise hosts
+- Fingerprints are cached securely in system keychain (not plain files)
+- Container cannot modify known_hosts (mounted read-only)
+- If verification fails, git push will fail (fail-secure)
 
 ## Environment Variable Substitution
 
