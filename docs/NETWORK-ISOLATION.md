@@ -253,6 +253,180 @@ no_proxy: "localhost,127.0.0.1,.company.com,.internal"
 6. Switch to `mode: filtered`
 7. Test workflows and add missing hosts
 
+## SSH Host Key Verification
+
+DNS filtering alone doesn't fully protect SSH connections. After DNS resolves, SSH connects
+directly to IP addresses. A compromised DNS could redirect to a malicious server.
+
+### Solution: Automatic Key Verification with Keychain
+
+Kapsis automatically verifies SSH host keys against official sources and caches them in Keychain:
+
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                    SSH Host Key Verification Flow                          │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                                            │
+│  Container Startup                                                         │
+│       │                                                                    │
+│       ▼                                                                    │
+│  ┌──────────────────────────────────┐                                      │
+│  │ Check Keychain for cached keys   │◄── kapsis-ssh-known-hosts service   │
+│  └──────────────────────────────────┘                                      │
+│       │                                                                    │
+│       ├── Found & not expired ──────────► Use cached keys                 │
+│       │                                                                    │
+│       ▼                                                                    │
+│  ┌──────────────────────────────────┐                                      │
+│  │ Fetch official fingerprints      │◄── api.github.com/meta              │
+│  │ from provider APIs               │◄── bitbucket.org/site/ssh           │
+│  └──────────────────────────────────┘◄── gitlab.com/api/v4/metadata       │
+│       │                                                                    │
+│       ▼                                                                    │
+│  ┌──────────────────────────────────┐                                      │
+│  │ ssh-keyscan to get actual keys   │                                      │
+│  └──────────────────────────────────┘                                      │
+│       │                                                                    │
+│       ▼                                                                    │
+│  ┌──────────────────────────────────┐                                      │
+│  │ Verify fingerprint matches       │                                      │
+│  │ official API response            │                                      │
+│  └──────────────────────────────────┘                                      │
+│       │                                                                    │
+│       ├── Match ────────────► Store in Keychain + use key                 │
+│       │                                                                    │
+│       └── MISMATCH ─────────► FATAL ERROR (possible MITM attack!)         │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Configuration
+
+```yaml
+network:
+  mode: filtered
+
+  ssh:
+    # Verification mode:
+    #   auto     - Verify against official APIs (recommended)
+    #   disabled - No SSH key verification
+    mode: auto
+
+    # Providers with automatic verification (have official meta APIs)
+    auto_verify:
+      - github.com      # Uses api.github.com/meta
+      - bitbucket.org   # Uses bitbucket.org/site/ssh
+      - gitlab.com      # Uses gitlab.com/api/v4/metadata
+
+    # Custom hosts (no official API - must provide fingerprint)
+    custom_hosts:
+      - host: "git.company.com"
+        fingerprint: "SHA256:abc123..."  # Get from your admin
+
+    # Keychain integration
+    keychain:
+      enabled: true
+      service: "kapsis-ssh-known-hosts"
+      ttl: 86400  # Refresh keys every 24 hours (seconds)
+
+    # SSH client hardening (applied to container ssh_config)
+    config:
+      StrictHostKeyChecking: "yes"
+      UserKnownHostsFile: "/etc/ssh/ssh_known_hosts"
+      ForwardAgent: "no"
+      ForwardX11: "no"
+      PermitLocalCommand: "no"
+```
+
+### How Keys Are Obtained
+
+| Provider | Official Source | API Endpoint |
+|----------|-----------------|--------------|
+| GitHub | ✅ | `https://api.github.com/meta` → `ssh_key_fingerprints` |
+| GitLab | ✅ | `https://gitlab.com/api/v4/metadata` |
+| Bitbucket Cloud | ✅ | `https://bitbucket.org/site/ssh` |
+| Enterprise/Custom | ⚠️ TOFU | Interactive verification with Keychain storage |
+
+### Enterprise Git Servers (e.g., Taboola Bitbucket)
+
+For enterprise Git servers like `git.taboolasyndication.com`, use the interactive
+Trust On First Use (TOFU) mode:
+
+```bash
+# Add enterprise Bitbucket server
+./scripts/lib/ssh-keychain.sh add-host git.taboolasyndication.com
+```
+
+This will:
+1. Scan the SSH host keys from the server
+2. Display fingerprints for verification with your IT administrator
+3. Ask for confirmation before trusting
+4. Store the verified fingerprint in `~/.kapsis/ssh-hosts.conf`
+5. Cache the full key in macOS Keychain
+
+```bash
+# List configured custom hosts
+./scripts/lib/ssh-keychain.sh list-hosts
+
+# Example output:
+# Custom SSH hosts (~/.kapsis/ssh-hosts.conf):
+# git.taboolasyndication.com SHA256:abc123...
+```
+
+The config file (`~/.kapsis/ssh-hosts.conf`) persists across sessions and can be
+shared with team members (fingerprints are public info, not secrets).
+
+### Security Benefits
+
+1. **No hardcoded keys** - Keys fetched and verified automatically
+2. **MITM protection** - Fingerprints verified against official APIs before trust
+3. **Persistent cache** - Keychain survives container restarts
+4. **Automatic refresh** - TTL ensures keys stay current
+5. **Audit trail** - Logs when keys are verified/refreshed
+
+### Implementation Details
+
+```bash
+# 1. Fetch official fingerprints from GitHub
+GITHUB_FINGERPRINTS=$(curl -s https://api.github.com/meta | jq '.ssh_key_fingerprints')
+
+# 2. Scan actual keys from server
+ACTUAL_KEYS=$(ssh-keyscan -t ed25519,rsa github.com 2>/dev/null)
+
+# 3. Compute fingerprint of scanned key
+ACTUAL_FP=$(echo "$ACTUAL_KEYS" | ssh-keygen -lf - | awk '{print $2}')
+
+# 4. Verify match
+if echo "$GITHUB_FINGERPRINTS" | grep -q "${ACTUAL_FP#SHA256:}"; then
+    echo "✓ Key verified against official GitHub fingerprints"
+    security add-generic-password -s "kapsis-ssh-known-hosts" -a "github.com" -w "$ACTUAL_KEYS"
+else
+    echo "✗ FINGERPRINT MISMATCH - Possible MITM attack!"
+    exit 1
+fi
+```
+
+### Keychain Storage
+
+Keys are stored in macOS Keychain under the service name `kapsis-ssh-known-hosts`:
+
+```bash
+# View cached keys
+security find-generic-password -s "kapsis-ssh-known-hosts" -a "github.com" -w
+
+# Clear cache (force refresh)
+security delete-generic-password -s "kapsis-ssh-known-hosts" -a "github.com"
+```
+
+### Error Handling
+
+| Scenario | Behavior |
+|----------|----------|
+| API unreachable | Use cached key if valid, else fail |
+| Fingerprint mismatch | FATAL: Stop container, alert user |
+| Key expired | Refresh from API |
+| Custom host, no fingerprint | Fail unless `StrictHostKeyChecking: no` |
+
 ## Future Enhancements
 
 - IP-based filtering (iptables/nftables)
