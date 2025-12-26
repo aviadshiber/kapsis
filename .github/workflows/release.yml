@@ -107,7 +107,8 @@ jobs:
       - name: Export image
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          podman save kapsis:$VERSION | gzip > kapsis-$VERSION.tar.gz
+          # Security: Quote variables to prevent word splitting and injection
+          podman save "kapsis:${VERSION}" | gzip > "kapsis-${VERSION}.tar.gz"
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v6

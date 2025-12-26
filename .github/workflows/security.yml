@@ -64,7 +64,8 @@ jobs:
           podman save kapsis:scan -o kapsis-image.tar
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        # Security: Pin to specific commit SHA to prevent supply chain attacks
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9a63cf  # v0.24.0
         with:
           input: 'kapsis-image.tar'
           format: 'sarif'
@@ -80,7 +81,8 @@ jobs:
           category: 'container-scanning'
 
       - name: Run Trivy (table output for logs)
-        uses: aquasecurity/trivy-action@master
+        # Security: Pin to specific commit SHA to prevent supply chain attacks
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9a63cf  # v0.24.0
         with:
           input: 'kapsis-image.tar'
           format: 'table'
@@ -97,7 +99,8 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@main
+        # Security: Pin to specific commit SHA to prevent supply chain attacks
+        uses: trufflesecurity/trufflehog@8a8ef8526831638cfa6efc0b523f496c6c8e40c7  # v3.82.13
         with:
           extra_args: --only-verified
 

@@ -703,8 +703,15 @@ generate_env_vars() {
             [[ -z "$var_name" || -z "$service" ]] && continue
 
             # Expand variables in account (e.g., ${USER})
+            # Security: Use parameter expansion instead of eval to prevent injection
             if [[ -n "$account" ]]; then
-                account=$(eval echo "$account" 2>/dev/null || echo "$account")
+                # Safe variable substitution without eval
+                account="${account//\$\{USER\}/${USER}}"
+                account="${account//\$USER/${USER}}"
+                account="${account//\$\{HOME\}/${HOME}}"
+                account="${account//\$HOME/${HOME}}"
+                account="${account//\$\{LOGNAME\}/${LOGNAME:-$USER}}"
+                account="${account//\$LOGNAME/${LOGNAME:-$USER}}"
             fi
 
             # Skip if already set via passthrough
