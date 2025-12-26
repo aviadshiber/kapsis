@@ -146,7 +146,7 @@ EOF
 # Load custom fingerprints from config file
 # Config format: hostname SHA256:fingerprint
 ssh_load_custom_config() {
-    local config_file="${1:-$SSH_CUSTOM_CONFIG}"
+    local config_file="$SSH_CUSTOM_CONFIG"
 
     [[ ! -f "$config_file" ]] && return 0
 
