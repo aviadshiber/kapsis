@@ -65,6 +65,7 @@
                     <div class="ml-10 flex items-baseline space-x-6">
                         <a href="#install" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Install</a>
                         <a href="#yolo" class="text-kapsis-danger hover:text-red-400 transition-colors px-3 py-2 rounded-md text-sm font-bold"><i class="fa-solid fa-biohazard mr-1"></i> YOLO Mode</a>
+                        <a href="#security" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium"><i class="fa-solid fa-shield-halved mr-1"></i> Security</a>
                         <a href="#docs" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Docs & Profiles</a>
                         <a href="#quickstart" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Quick Start</a>
                     </div>
@@ -236,8 +237,100 @@
         </div>
     </section>
 
+    <!-- Security Features Section -->
+    <section id="security" class="py-20 bg-slate-900/50">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-4 text-center">
+                <i class="fa-solid fa-shield-halved text-kapsis-neon mr-3"></i> Defense in Depth
+            </h2>
+            <p class="text-center text-slate-400 mb-12 max-w-2xl mx-auto">
+                Multiple layers of isolation protect your host system from rogue AI agents.
+            </p>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                <!-- Network Isolation -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-network-wired text-blue-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-white font-bold text-lg mb-2">Network Filtering</h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        DNS-based allowlist blocks unknown hosts. Agents can only reach approved destinations (GitHub, npm, PyPI).
+                    </p>
+                    <div class="code-block p-3 rounded text-xs font-mono">
+                        <span class="text-slate-500"># agent-sandbox.yaml</span><br>
+                        <span class="text-purple-400">network:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;mode:</span> <span class="text-green-400">filtered</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;allowlist:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">github.com</span>
+                    </div>
+                </div>
+
+                <!-- SSH Key Verification -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="w-12 h-12 bg-emerald-500/20 rounded-lg flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-key text-emerald-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-white font-bold text-lg mb-2">SSH Key Verification</h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        Host keys are verified against official provider APIs (GitHub, GitLab, Bitbucket) to prevent MITM attacks.
+                    </p>
+                    <div class="code-block p-3 rounded text-xs font-mono">
+                        <span class="text-slate-500"># Verified via API</span><br>
+                        <span class="text-purple-400">ssh:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;verify_hosts:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">github.com</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">gitlab.com</span>
+                    </div>
+                </div>
+
+                <!-- Container Isolation -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="w-12 h-12 bg-red-500/20 rounded-lg flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-box text-red-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-white font-bold text-lg mb-2">Rootless Containers</h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        Podman runs without root privileges. Even container escape leaves attacker as unprivileged user.
+                    </p>
+                    <div class="code-block p-3 rounded text-xs font-mono">
+                        <span class="text-slate-500"># Copy-on-Write filesystem</span><br>
+                        <span class="text-purple-400">filesystem:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;mode:</span> <span class="text-green-400">overlay</span><br>
+                        <span class="text-slate-500"># Host files unchanged</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Security Guarantees -->
+            <div class="mt-12 bg-gradient-to-r from-slate-800 to-slate-900 rounded-xl border border-slate-700 p-6">
+                <h4 class="text-white font-bold mb-4 flex items-center">
+                    <i class="fa-solid fa-check-double text-kapsis-neon mr-2"></i> Security Guarantees
+                </h4>
+                <div class="grid md:grid-cols-2 gap-4 text-sm">
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Data exfiltration blocked</strong> — Unknown hosts return NXDOMAIN</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>MITM prevention</strong> — SSH keys verified against official APIs</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Host filesystem safe</strong> — Changes trapped in overlay layer</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Credential isolation</strong> — API keys injected at runtime from keychain</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
     <!-- Documentation: Config & Profiles -->
-    <section id="docs" class="py-20 bg-slate-900/50">
+    <section id="docs" class="py-20">
         <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
             <h2 class="text-3xl font-bold text-white mb-8 text-center">Docs & Agent Profiles</h2>
             <p class="text-center text-slate-400 mb-12 max-w-2xl mx-auto">
@@ -266,17 +359,20 @@
                             <!-- Claude Code -->
                             <pre id="doc-content-claude" class="text-xs font-mono text-green-400">
 agent:
-  # The actual command to run inside the container
   command: "claude --dangerously-skip-permissions -p \"$(cat /task-spec.md)\""
-
-  # Working directory inside the container
   workdir: /workspace
 
-# Required environment variables (auto-injected from host keychain)
+# API keys injected from host keychain
 environment:
   keychain:
     ANTHROPIC_API_KEY:
-      service: "Claude Code-credentials"</pre>
+      service: "Claude Code-credentials"
+
+# SSH hosts verified against official APIs
+ssh:
+  verify_hosts:
+    - github.com
+    - gitlab.com</pre>
 
                             <!-- Aider Code -->
                             <pre id="doc-content-aider" class="text-xs font-mono text-blue-400 hidden">
@@ -313,6 +409,18 @@ filesystem:
                             <li class="border-b border-slate-700 pb-3">
                                 <div class="text-white font-mono text-sm mb-1">resources:</div>
                                 <div class="text-slate-500 text-xs">Controls <code>memory</code> (e.g., 8g) and <code>cpus</code> (e.g., 4). Crucial for heavy compile tasks.</div>
+                            </li>
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">network:</div>
+                                <div class="text-slate-500 text-xs">
+                                    <code>mode: filtered</code> enables DNS allowlist. <code>mode: none</code> for air-gapped operation.
+                                </div>
+                            </li>
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">ssh:</div>
+                                <div class="text-slate-500 text-xs">
+                                    <code>verify_hosts: [github.com]</code> enables MITM-protected SSH via official API verification.
+                                </div>
                             </li>
                             <li class="border-b border-slate-700 pb-3">
                                 <div class="text-white font-mono text-sm mb-1">maven:</div>
