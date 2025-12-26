@@ -582,9 +582,10 @@ setup_container_test() {
     mkdir -p "$CONTAINER_TEST_UPPER"
     mkdir -p "$CONTAINER_TEST_SANDBOX/work"
 
-    # Make upper and work directories world-writable for rootless Podman
-    # Even with --userns=keep-id, overlay mount internals may need broader permissions
-    chmod 777 "$CONTAINER_TEST_UPPER" "$CONTAINER_TEST_SANDBOX/work"
+    # Make upper and work directories accessible for rootless Podman
+    # Security: Use 755 instead of 777 to prevent world-writable directories
+    # With --userns=keep-id, owner permissions are sufficient
+    chmod 755 "$CONTAINER_TEST_UPPER" "$CONTAINER_TEST_SANDBOX/work"
 
     log_info "Container test setup: $CONTAINER_TEST_ID"
 }
@@ -886,7 +887,8 @@ check_overlay_rw_support() {
     # On macOS, test if native overlay works (typically read-only with virtio-fs)
     local test_dir="$HOME/.kapsis-overlay-test-$$"
     mkdir -p "$test_dir/lower" "$test_dir/upper" "$test_dir/work"
-    chmod 777 "$test_dir/lower" "$test_dir/upper" "$test_dir/work"
+    # Security: Use 755 instead of 777 to prevent world-writable test directories
+    chmod 755 "$test_dir/lower" "$test_dir/upper" "$test_dir/work"
     echo "test" > "$test_dir/lower/test.txt"
 
     # Try to write via native overlay mount with --userns=keep-id (rootless security model)
@@ -941,8 +943,8 @@ run_podman_isolated() {
 
     local sandbox="$HOME/.ai-sandboxes/$container_id"
     mkdir -p "$sandbox/upper" "$sandbox/work"
-    # Make directories world-writable for rootless Podman without --userns=keep-id
-    chmod 777 "$sandbox/upper" "$sandbox/work"
+    # Security: Use 755 instead of 777 - with --userns=keep-id, owner permissions suffice
+    chmod 755 "$sandbox/upper" "$sandbox/work"
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: true Copy-on-Write inside container

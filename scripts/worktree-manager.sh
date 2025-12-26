@@ -182,7 +182,9 @@ create_worktree() {
     # Ensure worktree is writable by container user (fixes UID mapping in rootless podman)
     # This is necessary because git worktree creates files with the host user's umask,
     # which may not be writable when mounted into a container with different UID mapping
-    chmod -R a+rwX "$worktree_path" 2>/dev/null || true
+    # Security: Use u+rwX,g+rX instead of a+rwX to avoid world-writable files
+    # With --userns=keep-id, the container user maps to the host user
+    chmod -R u+rwX,g+rX "$worktree_path" 2>/dev/null || true
 
     log_success "Worktree ready: $worktree_path"
     echo "$worktree_path"
