@@ -406,16 +406,27 @@ else
 fi
 ```
 
-### Keychain Storage
+### Secret Storage (Platform-compatible)
 
-Keys are stored in macOS Keychain under the service name `kapsis-ssh-known-hosts`:
+Keys are securely stored using the native secret service:
+
+| Platform | Backend | Tool |
+|----------|---------|------|
+| macOS | Keychain | `security` |
+| Linux (desktop) | GNOME Keyring / KDE Wallet | `secret-tool` |
+| Linux (headless) | File-based (700/600 perms) | Fallback |
 
 ```bash
-# View cached keys
+# macOS: View/clear cached keys
 security find-generic-password -s "kapsis-ssh-known-hosts" -a "github.com" -w
-
-# Clear cache (force refresh)
 security delete-generic-password -s "kapsis-ssh-known-hosts" -a "github.com"
+
+# Linux (with secret-tool): View/clear cached keys
+secret-tool lookup service "kapsis-ssh-known-hosts" host "github.com"
+secret-tool clear service "kapsis-ssh-known-hosts" host "github.com"
+
+# Linux (fallback): Keys stored in ~/.kapsis/ssh-cache/
+ls -la ~/.kapsis/ssh-cache/
 ```
 
 ### Error Handling

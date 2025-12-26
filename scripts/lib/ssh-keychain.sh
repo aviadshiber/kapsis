@@ -19,12 +19,6 @@ SSH_KEYCHAIN_SERVICE="${SSH_KEYCHAIN_SERVICE:-kapsis-ssh-known-hosts}"
 # Default TTL: 24 hours in seconds
 SSH_KEY_TTL="${SSH_KEY_TTL:-86400}"
 
-# Custom fingerprints can be loaded from config
-# Note: Bash 4+ required for associative arrays
-if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
-    declare -A SSH_CUSTOM_FINGERPRINTS
-fi
-
 # Configuration file for custom hosts (optional)
 # Format: host:fingerprint per line
 SSH_CUSTOM_CONFIG="${SSH_CUSTOM_CONFIG:-${HOME}/.kapsis/ssh-hosts.conf}"
@@ -34,36 +28,55 @@ SSH_CUSTOM_CONFIG="${SSH_CUSTOM_CONFIG:-${HOME}/.kapsis/ssh-hosts.conf}"
 SSH_TOFU_ENABLED="${SSH_TOFU_ENABLED:-false}"
 
 # ==============================================================================
-# Keychain Operations (macOS)
+# Secret Storage (Platform-compatible: macOS Keychain / Linux Secret Service)
 # ==============================================================================
+
+# Cache directory for Linux (file-based fallback storage)
+SSH_CACHE_DIR="${SSH_CACHE_DIR:-${HOME}/.kapsis/ssh-cache}"
 
 # Check if running on macOS with Keychain support
 ssh_has_keychain() {
     [[ "$(uname -s)" == "Darwin" ]] && command -v security &>/dev/null
 }
 
-# Get cached SSH key from Keychain
+# Check if Linux Secret Service (secret-tool) is available
+# Part of libsecret, uses GNOME Keyring or KDE Wallet
+ssh_has_secret_service() {
+    [[ "$(uname -s)" == "Linux" ]] && command -v secret-tool &>/dev/null
+}
+
+# Get cached SSH key
 # Args: $1 = hostname
 # Returns: key data or empty string
 ssh_keychain_get() {
     local host="$1"
     local key_data timestamp current_time
 
-    if ! ssh_has_keychain; then
-        return 1
+    if ssh_has_keychain; then
+        # macOS: Use Keychain
+        key_data=$(security find-generic-password \
+            -s "$SSH_KEYCHAIN_SERVICE" \
+            -a "$host" \
+            -w 2>/dev/null) || return 1
+
+        timestamp=$(security find-generic-password \
+            -s "${SSH_KEYCHAIN_SERVICE}-timestamp" \
+            -a "$host" \
+            -w 2>/dev/null) || timestamp=0
+    elif ssh_has_secret_service; then
+        # Linux: Use Secret Service (GNOME Keyring/KDE Wallet)
+        key_data=$(secret-tool lookup service "$SSH_KEYCHAIN_SERVICE" host "$host" 2>/dev/null) || return 1
+        timestamp=$(secret-tool lookup service "${SSH_KEYCHAIN_SERVICE}-timestamp" host "$host" 2>/dev/null) || timestamp=0
+    else
+        # Linux fallback: Use file-based cache with secure permissions
+        local cache_file="${SSH_CACHE_DIR}/${host}.key"
+        local ts_file="${SSH_CACHE_DIR}/${host}.ts"
+
+        [[ ! -f "$cache_file" ]] && return 1
+
+        key_data=$(cat "$cache_file" 2>/dev/null) || return 1
+        timestamp=$(cat "$ts_file" 2>/dev/null) || timestamp=0
     fi
-
-    # Try to get the key
-    key_data=$(security find-generic-password \
-        -s "$SSH_KEYCHAIN_SERVICE" \
-        -a "$host" \
-        -w 2>/dev/null) || return 1
-
-    # Check timestamp (stored as separate entry)
-    timestamp=$(security find-generic-password \
-        -s "${SSH_KEYCHAIN_SERVICE}-timestamp" \
-        -a "$host" \
-        -w 2>/dev/null) || timestamp=0
 
     current_time=$(date +%s)
     if (( current_time - timestamp > SSH_KEY_TTL )); then
@@ -74,36 +87,55 @@ ssh_keychain_get() {
     echo "$key_data"
 }
 
-# Store SSH key in Keychain
+# Store SSH key in cache
 # Args: $1 = hostname, $2 = key data
 ssh_keychain_set() {
     local host="$1"
     local key_data="$2"
     local timestamp
 
-    if ! ssh_has_keychain; then
-        return 1
-    fi
-
     timestamp=$(date +%s)
 
-    # Delete existing entries (ignore errors)
-    security delete-generic-password -s "$SSH_KEYCHAIN_SERVICE" -a "$host" 2>/dev/null || true
-    security delete-generic-password -s "${SSH_KEYCHAIN_SERVICE}-timestamp" -a "$host" 2>/dev/null || true
+    if ssh_has_keychain; then
+        # macOS: Use Keychain
+        security delete-generic-password -s "$SSH_KEYCHAIN_SERVICE" -a "$host" 2>/dev/null || true
+        security delete-generic-password -s "${SSH_KEYCHAIN_SERVICE}-timestamp" -a "$host" 2>/dev/null || true
 
-    # Store key
-    security add-generic-password \
-        -s "$SSH_KEYCHAIN_SERVICE" \
-        -a "$host" \
-        -w "$key_data" \
-        -U 2>/dev/null || return 1
+        security add-generic-password \
+            -s "$SSH_KEYCHAIN_SERVICE" \
+            -a "$host" \
+            -w "$key_data" \
+            -U 2>/dev/null || return 1
 
-    # Store timestamp
-    security add-generic-password \
-        -s "${SSH_KEYCHAIN_SERVICE}-timestamp" \
-        -a "$host" \
-        -w "$timestamp" \
-        -U 2>/dev/null || return 1
+        security add-generic-password \
+            -s "${SSH_KEYCHAIN_SERVICE}-timestamp" \
+            -a "$host" \
+            -w "$timestamp" \
+            -U 2>/dev/null || return 1
+    elif ssh_has_secret_service; then
+        # Linux: Use Secret Service (GNOME Keyring/KDE Wallet)
+        # Delete existing entries first
+        secret-tool clear service "$SSH_KEYCHAIN_SERVICE" host "$host" 2>/dev/null || true
+        secret-tool clear service "${SSH_KEYCHAIN_SERVICE}-timestamp" host "$host" 2>/dev/null || true
+
+        # Store key using secret-tool (reads from stdin)
+        echo -n "$key_data" | secret-tool store --label="Kapsis SSH: $host" \
+            service "$SSH_KEYCHAIN_SERVICE" host "$host" 2>/dev/null || return 1
+
+        echo -n "$timestamp" | secret-tool store --label="Kapsis SSH timestamp: $host" \
+            service "${SSH_KEYCHAIN_SERVICE}-timestamp" host "$host" 2>/dev/null || return 1
+    else
+        # Linux fallback: Use file-based cache with secure permissions
+        mkdir -p "$SSH_CACHE_DIR"
+        chmod 700 "$SSH_CACHE_DIR"
+
+        local cache_file="${SSH_CACHE_DIR}/${host}.key"
+        local ts_file="${SSH_CACHE_DIR}/${host}.ts"
+
+        # Write with secure permissions (umask)
+        (umask 077; echo "$key_data" > "$cache_file")
+        (umask 077; echo "$timestamp" > "$ts_file")
+    fi
 
     return 0
 }
@@ -145,17 +177,30 @@ EOF
 
 # Load custom fingerprints from config file
 # Config format: hostname SHA256:fingerprint
+# Works with Bash 3.2+ (no associative arrays needed)
 ssh_load_custom_config() {
-    local config_file="$SSH_CUSTOM_CONFIG"
+    : # Config is read directly in ssh_get_custom_fingerprint
+}
 
-    [[ ! -f "$config_file" ]] && return 0
+# Get custom fingerprint for a host from config file
+# Args: $1 = hostname
+# Returns: fingerprint or empty
+ssh_get_custom_fingerprint() {
+    local target_host="$1"
+    local config_file="$SSH_CUSTOM_CONFIG"
+    local host fingerprint
+
+    [[ ! -f "$config_file" ]] && return 1
 
     while IFS=' ' read -r host fingerprint; do
         [[ -z "$host" || "$host" =~ ^# ]] && continue
-        if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
-            SSH_CUSTOM_FINGERPRINTS["$host"]="$fingerprint"
+        if [[ "$host" == "$target_host" ]]; then
+            echo "$fingerprint"
+            return 0
         fi
     done < "$config_file"
+
+    return 1
 }
 
 # Add a custom host fingerprint (persists to config file)
@@ -179,22 +224,17 @@ ssh_add_custom_host() {
     chmod 600 "$SSH_CUSTOM_CONFIG"
 
     echo "Added custom host: $host -> $fingerprint" >&2
-
-    # Update in-memory if bash 4+
-    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
-        SSH_CUSTOM_FINGERPRINTS["$host"]="$fingerprint"
-    fi
 }
 
 # Get fingerprints for a host (official or custom)
 # Args: $1 = hostname
 ssh_get_official_fingerprints() {
     local host="$1"
+    local custom_fp
 
-    # Check custom config first
-    ssh_load_custom_config
-    if [[ "${BASH_VERSINFO[0]}" -ge 4 ]] && [[ -n "${SSH_CUSTOM_FINGERPRINTS[$host]:-}" ]]; then
-        echo "${SSH_CUSTOM_FINGERPRINTS[$host]}"
+    # Check custom config first (works with Bash 3.2+)
+    if custom_fp=$(ssh_get_custom_fingerprint "$host"); then
+        echo "$custom_fp"
         return 0
     fi
 
@@ -380,8 +420,10 @@ ssh_verify_and_cache_keys() {
         fi
     done
 
-    # Output all verified keys
-    printf '%s\n' "${verified_keys[@]}"
+    # Output all verified keys (handle empty array)
+    if [[ ${#verified_keys[@]} -gt 0 ]]; then
+        printf '%s\n' "${verified_keys[@]}"
+    fi
 }
 
 # Generate known_hosts file from verified keys
@@ -408,19 +450,24 @@ ssh_generate_known_hosts() {
     fi
 }
 
-# Clear all cached SSH keys from Keychain
+# Clear all cached SSH keys from Keychain/cache
 ssh_clear_cache() {
     local hosts=("${@:-github.com gitlab.com bitbucket.org}")
     local host
 
-    if ! ssh_has_keychain; then
-        echo "Keychain not available on this platform" >&2
-        return 1
-    fi
-
     for host in "${hosts[@]}"; do
-        security delete-generic-password -s "$SSH_KEYCHAIN_SERVICE" -a "$host" 2>/dev/null || true
-        security delete-generic-password -s "${SSH_KEYCHAIN_SERVICE}-timestamp" -a "$host" 2>/dev/null || true
+        if ssh_has_keychain; then
+            # macOS: Use Keychain
+            security delete-generic-password -s "$SSH_KEYCHAIN_SERVICE" -a "$host" 2>/dev/null || true
+            security delete-generic-password -s "${SSH_KEYCHAIN_SERVICE}-timestamp" -a "$host" 2>/dev/null || true
+        elif ssh_has_secret_service; then
+            # Linux: Use Secret Service
+            secret-tool clear service "$SSH_KEYCHAIN_SERVICE" host "$host" 2>/dev/null || true
+            secret-tool clear service "${SSH_KEYCHAIN_SERVICE}-timestamp" host "$host" 2>/dev/null || true
+        else
+            # Linux fallback: Use file-based cache
+            rm -f "${SSH_CACHE_DIR}/${host}.key" "${SSH_CACHE_DIR}/${host}.ts" 2>/dev/null || true
+        fi
         echo "Cleared cache for $host" >&2
     done
 }
