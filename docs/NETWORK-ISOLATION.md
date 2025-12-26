@@ -347,14 +347,14 @@ network:
 | Bitbucket Cloud | ✅ | `https://bitbucket.org/site/ssh` |
 | Enterprise/Custom | ⚠️ TOFU | Interactive verification with Keychain storage |
 
-### Enterprise Git Servers (e.g., Taboola Bitbucket)
+### Enterprise Git Servers
 
-For enterprise Git servers like `git.taboolasyndication.com`, use the interactive
+For enterprise or self-hosted Git servers, use the interactive
 Trust On First Use (TOFU) mode:
 
 ```bash
-# Add enterprise Bitbucket server
-./scripts/lib/ssh-keychain.sh add-host git.taboolasyndication.com
+# Add enterprise Git server
+./scripts/lib/ssh-keychain.sh add-host git.company.com
 ```
 
 This will:
@@ -370,7 +370,7 @@ This will:
 
 # Example output:
 # Custom SSH hosts (~/.kapsis/ssh-hosts.conf):
-# git.taboolasyndication.com SHA256:abc123...
+# git.company.com SHA256:abc123...
 ```
 
 The config file (`~/.kapsis/ssh-hosts.conf`) persists across sessions and can be

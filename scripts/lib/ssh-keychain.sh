@@ -526,7 +526,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             echo "Known providers (automatic verification):"
             echo "  github.com, gitlab.com, bitbucket.org"
             echo ""
-            echo "Enterprise hosts (e.g., git.taboolasyndication.com):"
+            echo "Enterprise hosts (e.g., git.company.com):"
             echo "  Use 'add-host' to interactively verify and trust"
             echo ""
             echo "Environment variables:"

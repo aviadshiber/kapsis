@@ -562,7 +562,6 @@ ssh:
     - github.com                    # Public (automatic)
     - gitlab.com                    # Public (automatic)
     - git.company.com               # Enterprise (requires add-host first)
-    - git.taboolasyndication.com    # Taboola Bitbucket (requires add-host)
 ```
 
 ### Managing Custom Hosts
