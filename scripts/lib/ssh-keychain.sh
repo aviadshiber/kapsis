@@ -19,13 +19,9 @@ SSH_KEYCHAIN_SERVICE="${SSH_KEYCHAIN_SERVICE:-kapsis-ssh-known-hosts}"
 # Default TTL: 24 hours in seconds
 SSH_KEY_TTL="${SSH_KEY_TTL:-86400}"
 
-# Provider API endpoints for fingerprint verification
+# Custom fingerprints can be loaded from config
 # Note: Bash 4+ required for associative arrays
 if [[ "${BASH_VERSINFO[0]}" -ge 4 ]]; then
-    declare -A SSH_PROVIDER_APIS
-    SSH_PROVIDER_APIS["github.com"]="https://api.github.com/meta"
-    SSH_PROVIDER_APIS["gitlab.com"]="https://gitlab.com/api/v4/metadata"
-    # Custom fingerprints can be loaded from config
     declare -A SSH_CUSTOM_FINGERPRINTS
 fi
 
@@ -256,8 +252,10 @@ ssh_tofu_verify() {
         read -r response
 
         if [[ "$response" == "yes" ]]; then
-            # Store the primary fingerprint (ed25519 preferred)
-            fingerprint=$(echo "$key_data" | grep -E "(ed25519|rsa)" | head -1 | xargs -I{} sh -c 'echo "{}" | ssh-keygen -lf - 2>/dev/null | awk "{print \$2}"')
+            # Store the primary fingerprint (ed25519 preferred, then rsa)
+            local primary_key
+            primary_key=$(echo "$key_data" | grep -E "ed25519|rsa" | head -1)
+            fingerprint=$(ssh_compute_fingerprint "$primary_key")
             ssh_add_custom_host "$host" "$fingerprint"
             echo "$key_data"
             return 0
@@ -268,7 +266,9 @@ ssh_tofu_verify() {
     else
         # Non-interactive mode - provide instructions
         echo "To trust this host, add it to your config:" >&2
-        fingerprint=$(echo "$key_data" | grep -E "(ed25519|rsa)" | head -1 | xargs -I{} sh -c 'echo "{}" | ssh-keygen -lf - 2>/dev/null | awk "{print \$2}"')
+        local primary_key
+        primary_key=$(echo "$key_data" | grep -E "ed25519|rsa" | head -1)
+        fingerprint=$(ssh_compute_fingerprint "$primary_key")
         echo "" >&2
         echo "  echo '$host $fingerprint' >> ~/.kapsis/ssh-hosts.conf" >&2
         echo "" >&2
