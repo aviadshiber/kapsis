@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, master]
 
+# Security: Explicitly define minimal permissions
+permissions:
+  contents: read
+
 # Cancel in-progress runs for the same branch
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}

@@ -336,8 +336,10 @@ EOF
 )
 
     # Atomic write: temp file + mv
+    # Security: Restrict status file permissions (contains project/agent metadata)
     local temp_file="${_KAPSIS_STATUS_FILE}.tmp.$$"
     if echo "$json" > "$temp_file" 2>/dev/null; then
+        chmod 600 "$temp_file" 2>/dev/null || true
         mv "$temp_file" "$_KAPSIS_STATUS_FILE" 2>/dev/null || {
             rm -f "$temp_file" 2>/dev/null
             return 1

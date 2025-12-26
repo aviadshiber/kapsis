@@ -170,8 +170,10 @@ _do_rotation() {
     # Rotate current log
     [[ -f "$base_path" ]] && mv "$base_path" "${base_path}.1"
 
-    # Create new empty log file
+    # Create new empty log file with secure permissions
+    # Security: Logs may contain sensitive paths/info - restrict to owner only
     touch "$base_path"
+    chmod 600 "$base_path"
 
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] [INFO] [logging] Log rotated (previous file: ${base_path}.1)" >> "$base_path"
 }
@@ -349,10 +351,10 @@ log_success() {
 # =============================================================================
 
 # Log a command before executing it (useful for debugging)
+# Security: Use "$@" instead of eval to prevent command injection
 log_cmd() {
-    local cmd="$*"
-    log_debug "Executing: $cmd"
-    eval "$cmd"
+    log_debug "Executing: $*"
+    "$@"
     local rc=$?
     if [[ $rc -ne 0 ]]; then
         log_debug "Command exited with code: $rc"

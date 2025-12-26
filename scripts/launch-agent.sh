@@ -877,9 +877,10 @@ generate_env_vars() {
             while IFS= read -r line; do
                 [[ -z "$line" ]] && continue
                 # Parse "KEY = value" format
+                # Security: Use sed for whitespace trimming instead of xargs (safer with special chars)
                 local key value
-                key=$(echo "$line" | cut -d'=' -f1 | xargs)
-                value=$(echo "$line" | cut -d'=' -f2- | xargs)
+                key=$(echo "$line" | cut -d'=' -f1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
+                value=$(echo "$line" | cut -d'=' -f2- | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
                 if [[ -n "$key" ]]; then
                     ENV_VARS+=("-e" "${key}=${value}")
                 fi
@@ -1147,8 +1148,10 @@ post_container_overlay() {
             log_success "Agent made $changes_count file change(s)"
             echo ""
             echo "Changed files:"
-            # Cross-platform: -printf is GNU-specific, use sed to strip prefix
-            find "$UPPER_DIR" -type f 2>/dev/null | sed "s|^${UPPER_DIR}/|  |" | head -20
+            # Cross-platform: use parameter expansion to strip prefix (safer than sed with special chars)
+            find "$UPPER_DIR" -type f 2>/dev/null | while IFS= read -r file; do
+                echo "  ${file#${UPPER_DIR}/}"
+            done | head -20
             echo ""
             echo "Upper directory: $UPPER_DIR"
             echo ""
