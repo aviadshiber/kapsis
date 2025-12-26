@@ -25,6 +25,7 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 - **Maven Isolation** - Per-agent `.m2/repository`, blocked remote SNAPSHOTs, blocked deploy
 - **Build Cache Isolation** - Gradle Enterprise remote cache disabled, per-agent local cache
 - **Git Workflow** - Optional branch-based workflow with PR review feedback loop
+- **SSH Security** - Automatic SSH host key verification for GitHub/GitLab/Bitbucket (enterprise servers supported)
 - **Keychain Integration** - Automatic secret retrieval from macOS Keychain / Linux secret-tool
 - **Status Reporting** - JSON-based progress tracking for external monitoring
 - **Rootless Containers** - Security-hardened Podman rootless mode

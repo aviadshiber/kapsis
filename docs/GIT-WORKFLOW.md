@@ -84,6 +84,61 @@ The git workflow enables AI agents to push changes to branches for PR-based revi
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+## SSH Host Key Setup
+
+Kapsis automatically verifies SSH host keys to protect against MITM attacks when pushing to Git remotes.
+
+### Public Git Providers (Automatic)
+
+For these providers, SSH host keys are verified automatically against official APIs:
+- **GitHub** (`github.com`)
+- **GitLab** (`gitlab.com`)
+- **Bitbucket Cloud** (`bitbucket.org`)
+
+No setup required.
+
+### Enterprise Git Servers (One-Time Setup)
+
+For self-hosted or enterprise Git servers (e.g., GitHub Enterprise, GitLab self-hosted, Bitbucket Server), you need to add the host once:
+
+```bash
+# Add your enterprise Git server (interactive verification)
+./scripts/lib/ssh-keychain.sh add-host git.company.com
+
+# The script will:
+# 1. Scan the server's SSH host key
+# 2. Display the fingerprint for verification
+# 3. Ask you to confirm (verify with your IT admin if unsure)
+# 4. Store the fingerprint securely
+```
+
+**Example:**
+```bash
+$ ./scripts/lib/ssh-keychain.sh add-host git.company.com
+Enterprise host detected: git.company.com
+No official fingerprint source available.
+
+SSH Host Key Fingerprints for git.company.com:
+============================================
+  ssh-rsa: SHA256:abc123...
+============================================
+
+IMPORTANT: Verify these fingerprints with your IT administrator!
+Do you trust this host? (yes/no): yes
+Added custom host: git.company.com -> SHA256:abc123...
+```
+
+**List configured hosts:**
+```bash
+./scripts/lib/ssh-keychain.sh list-hosts
+```
+
+Keys are cached securely in:
+- **macOS**: Keychain
+- **Linux**: GNOME Keyring / KDE Wallet (or `~/.kapsis/ssh-cache/` as fallback)
+
+See [docs/NETWORK-ISOLATION.md](NETWORK-ISOLATION.md#ssh-host-key-verification) for technical details.
+
 ## Basic Usage
 
 ### New Feature Branch
