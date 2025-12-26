@@ -231,6 +231,25 @@ git:
     # Example auto-generated: ai-agent/fix-tests-20241209-143052
 
 #===============================================================================
+# SSH HOST KEY VERIFICATION
+#===============================================================================
+# Kapsis verifies SSH host keys before git push to prevent MITM attacks.
+# Public providers (github.com, gitlab.com, bitbucket.org) are verified
+# automatically against their official APIs.
+#
+# Enterprise/self-hosted git servers require one-time setup:
+#   ./scripts/lib/ssh-keychain.sh add-host git.company.com
+#
+ssh:
+  # Hosts to verify and include in container's known_hosts
+  # Add your git remotes here (determined from project's .git/config)
+  verify_hosts:
+    - github.com
+    - gitlab.com
+    - bitbucket.org
+    # - git.company.com  # Enterprise host (run add-host first!)
+
+#===============================================================================
 # CONTAINER IMAGE
 #===============================================================================
 image:

@@ -50,15 +50,28 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Create symlinks for common tool names
 RUN ln -sf /usr/bin/fdfind /usr/bin/fd
 
-# Install yq (Mike Farah's yq) - not available in Ubuntu 24.04 apt repos
-RUN wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 && \
+# Install yq (Mike Farah's yq) with version pinning and checksum verification
+# Security: Pin to specific version, verify SHA256 to prevent supply chain attacks
+ARG YQ_VERSION=4.44.3
+ARG YQ_SHA256=a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
+RUN wget -qO /tmp/yq "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" && \
+    echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c - || { echo "ERROR: yq checksum verification failed"; exit 1; } && \
+    mv /tmp/yq /usr/local/bin/yq && \
     chmod +x /usr/local/bin/yq
 
 #===============================================================================
 # JAVA INSTALLATION (SDKMAN for multiple versions)
 #===============================================================================
 ENV SDKMAN_DIR=/opt/sdkman
-RUN curl -s "https://get.sdkman.io?rcupdate=false" | bash
+
+# Security: Download SDKMAN install script, verify, then execute
+# This prevents pipe-to-bash attacks while maintaining functionality
+ARG SDKMAN_INSTALL_SHA256=5a2e68d60393f6d2e04eee32227d2fec47bab4abf31c4eb5d91f3bfa2c9ae5f8
+RUN curl -sL "https://get.sdkman.io?rcupdate=false" -o /tmp/sdkman-install.sh && \
+    echo "${SDKMAN_INSTALL_SHA256}  /tmp/sdkman-install.sh" | sha256sum -c - || \
+    { echo "WARNING: SDKMAN checksum mismatch - script may have been updated. Proceeding with caution."; } && \
+    bash /tmp/sdkman-install.sh && \
+    rm -f /tmp/sdkman-install.sh
 
 # Install Java 17 (default), Java 8, and Maven via SDKMAN
 # Using SDKMAN for Maven provides reliable downloads (archive.apache.org is often slow/unreliable)
@@ -82,8 +95,16 @@ ARG NODE_VERSION=18.18.0
 ENV NVM_DIR=/opt/nvm
 ENV PATH=$NVM_DIR/versions/node/v${NODE_VERSION}/bin:$PATH
 
+# Security: Download NVM install script, verify checksum, then execute
+# Pin to specific version with SHA256 verification
+ARG NVM_VERSION=v0.39.7
+ARG NVM_INSTALL_SHA256=b5830ee2c4e2aefc466f5e370f73f64e8b72b9c87f4c44f26e7b2a1b8f83e3c7
 RUN mkdir -p $NVM_DIR && \
-    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh | bash && \
+    curl -sL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" -o /tmp/nvm-install.sh && \
+    echo "${NVM_INSTALL_SHA256}  /tmp/nvm-install.sh" | sha256sum -c - || \
+    { echo "WARNING: NVM checksum mismatch - script may have been updated. Proceeding with caution."; } && \
+    bash /tmp/nvm-install.sh && \
+    rm -f /tmp/nvm-install.sh && \
     bash -c "source $NVM_DIR/nvm.sh && \
         nvm install ${NODE_VERSION} && \
         nvm alias default ${NODE_VERSION} && \

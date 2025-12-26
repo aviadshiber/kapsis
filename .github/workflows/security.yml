@@ -64,7 +64,8 @@ jobs:
           podman save kapsis:scan -o kapsis-image.tar
 
       - name: Run Trivy vulnerability scanner
-        uses: aquasecurity/trivy-action@master
+        # Security: Pin to specific commit SHA to prevent supply chain attacks
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9a63cf  # v0.24.0
         with:
           input: 'kapsis-image.tar'
           format: 'sarif'
@@ -80,26 +81,21 @@ jobs:
           category: 'container-scanning'
 
       - name: Run Trivy (table output for logs)
-        uses: aquasecurity/trivy-action@master
+        # Security: Pin to specific commit SHA to prevent supply chain attacks
+        uses: aquasecurity/trivy-action@6e7b7d1fd3e4fef0c5fa8cce1229c54b2c9a63cf  # v0.24.0
         with:
           input: 'kapsis-image.tar'
           format: 'table'
           severity: 'CRITICAL,HIGH,MEDIUM'
           vuln-type: 'os,library'
 
-  secrets-scan:
-    name: Secret Detection
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@main
-        with:
-          extra_args: --only-verified
+  # NOTE: Secret Detection is handled by GitHub's built-in Secret Scanning
+  # Enable it in: Settings > Code security and analysis > Secret scanning
+  # This provides:
+  # - Push protection (blocks commits containing secrets)
+  # - Alert notifications for exposed secrets
+  # - No external dependencies (eliminates AGPL-3.0 license concern from TruffleHog)
+  # See: https://docs.github.com/en/code-security/secret-scanning
 
   dependency-review:
     name: Dependency Review

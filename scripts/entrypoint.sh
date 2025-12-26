@@ -91,13 +91,28 @@ inject_credential_files() {
         # Expand ~ in file path
         file_path="${file_path/#\~/$HOME}"
 
-        # Create parent directory
+        # Create parent directory with secure permissions
         mkdir -p "$(dirname "$file_path")" 2>/dev/null || true
 
-        # Write the credential to file
-        echo "$value" > "$file_path"
-        chmod "${file_mode:-0600}" "$file_path"
-        log_debug "Injected $var_name to $file_path"
+        # Security: Set restrictive umask before file creation to prevent race condition
+        # This ensures the file is never world-readable, even momentarily
+        local old_umask
+        old_umask=$(umask)
+        umask 0077
+
+        # Write the credential to file (protected by umask)
+        if ! echo "$value" > "$file_path" 2>/dev/null; then
+            umask "$old_umask"
+            log_error "Failed to write credential to $file_path"
+            continue
+        fi
+
+        # Restore original umask
+        umask "$old_umask"
+
+        # Explicitly set final permissions for clarity
+        chmod "${file_mode:-0600}" "$file_path" 2>/dev/null || true
+        log_debug "Injected $var_name to $file_path (mode: ${file_mode:-0600})"
 
         # Unset the env var so it's not visible to child processes
         unset "$var_name"

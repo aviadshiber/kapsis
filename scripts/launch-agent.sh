@@ -435,6 +435,9 @@ parse_config() {
         # inject_to_file: optional file path to write the secret to (agent-agnostic)
         # mode: optional file permissions (default 0600)
         ENV_KEYCHAIN=$(yq '.environment.keychain // {} | to_entries | .[] | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600")' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+        # Parse SSH host verification list
+        SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
     else
         log_warn "yq not found. Using default config values."
         AGENT_COMMAND="bash"
@@ -448,6 +451,7 @@ parse_config() {
         ENV_PASSTHROUGH="ANTHROPIC_API_KEY"
         ENV_SET="{}"
         ENV_KEYCHAIN=""
+        SSH_VERIFY_HOSTS=""
     fi
 
     # Expand ~ in paths
@@ -588,6 +592,12 @@ generate_volume_mounts_worktree() {
 
     # Filesystem whitelist from config
     generate_filesystem_includes
+
+    # SSH known_hosts for verified git remotes
+    generate_ssh_known_hosts
+    if [[ -n "$SSH_KNOWN_HOSTS_FILE" ]]; then
+        VOLUME_MOUNTS+=("-v" "${SSH_KNOWN_HOSTS_FILE}:/etc/ssh/ssh_known_hosts:ro")
+    fi
 }
 
 #===============================================================================
@@ -621,6 +631,12 @@ generate_volume_mounts_overlay() {
 
     # Filesystem whitelist from config
     generate_filesystem_includes
+
+    # SSH known_hosts for verified git remotes
+    generate_ssh_known_hosts
+    if [[ -n "$SSH_KNOWN_HOSTS_FILE" ]]; then
+        VOLUME_MOUNTS+=("-v" "${SSH_KNOWN_HOSTS_FILE}:/etc/ssh/ssh_known_hosts:ro")
+    fi
 }
 
 #===============================================================================
@@ -678,6 +694,68 @@ generate_filesystem_includes() {
 }
 
 #===============================================================================
+# SSH KNOWN_HOSTS GENERATION
+# Generates verified known_hosts for container SSH operations (git push, etc.)
+#===============================================================================
+SSH_KNOWN_HOSTS_FILE=""  # Path to generated known_hosts file
+
+generate_ssh_known_hosts() {
+    SSH_KNOWN_HOSTS_FILE=""
+
+    # Skip if no hosts to verify
+    if [[ -z "$SSH_VERIFY_HOSTS" ]]; then
+        log_debug "No SSH hosts to verify (ssh.verify_hosts not configured)"
+        return 0
+    fi
+
+    local ssh_keychain_script="$SCRIPT_DIR/lib/ssh-keychain.sh"
+    if [[ ! -x "$ssh_keychain_script" ]]; then
+        log_warn "SSH keychain script not found: $ssh_keychain_script"
+        log_warn "SSH host verification skipped - container will use host's known_hosts"
+        return 0
+    fi
+
+    # Create temp file for known_hosts
+    local known_hosts_file
+    known_hosts_file=$(mktemp -t kapsis-known-hosts.XXXXXX)
+
+    log_info "Generating verified SSH known_hosts..."
+
+    # Process each host
+    local failed_hosts=()
+    while IFS= read -r host; do
+        [[ -z "$host" ]] && continue
+
+        log_debug "Verifying SSH host key: $host"
+        if "$ssh_keychain_script" generate "$known_hosts_file" "$host" 2>/dev/null; then
+            log_debug "  ✓ $host verified"
+        else
+            log_warn "  ✗ $host verification failed (run: ssh-keychain.sh add-host $host)"
+            failed_hosts+=("$host")
+        fi
+    done <<< "$SSH_VERIFY_HOSTS"
+
+    # Check if any hosts were verified
+    if [[ -s "$known_hosts_file" ]]; then
+        SSH_KNOWN_HOSTS_FILE="$known_hosts_file"
+        local host_count
+        host_count=$(wc -l < "$known_hosts_file" | tr -d ' ')
+        log_success "SSH known_hosts ready ($host_count keys verified)"
+    else
+        rm -f "$known_hosts_file"
+        log_warn "No SSH hosts could be verified"
+    fi
+
+    # Report failed hosts
+    if [[ ${#failed_hosts[@]} -gt 0 ]]; then
+        log_warn "Failed hosts (git push may fail):"
+        for host in "${failed_hosts[@]}"; do
+            log_warn "  - $host (run: ./scripts/lib/ssh-keychain.sh add-host $host)"
+        done
+    fi
+}
+
+#===============================================================================
 # ENVIRONMENT VARIABLES GENERATION
 #===============================================================================
 generate_env_vars() {
@@ -703,8 +781,15 @@ generate_env_vars() {
             [[ -z "$var_name" || -z "$service" ]] && continue
 
             # Expand variables in account (e.g., ${USER})
+            # Security: Use parameter expansion instead of eval to prevent injection
             if [[ -n "$account" ]]; then
-                account=$(eval echo "$account" 2>/dev/null || echo "$account")
+                # Safe variable substitution without eval
+                account="${account//\$\{USER\}/${USER}}"
+                account="${account//\$USER/${USER}}"
+                account="${account//\$\{HOME\}/${HOME}}"
+                account="${account//\$HOME/${HOME}}"
+                account="${account//\$\{LOGNAME\}/${LOGNAME:-$USER}}"
+                account="${account//\$LOGNAME/${LOGNAME:-$USER}}"
             fi
 
             # Skip if already set via passthrough
