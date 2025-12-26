@@ -45,7 +45,7 @@ get_tests_for_category() {
             echo "test-maven-snapshot-block.sh test-maven-auth.sh"
             ;;
         security)
-            echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh"
+            echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh test-ssh-keychain.sh"
             ;;
         git)
             echo "test-git-new-branch.sh test-git-auto-commit-push.sh test-worktree-isolation.sh test-push-verification.sh"
@@ -66,7 +66,7 @@ ALL_CATEGORIES="agent validation status filesystem maven security git cleanup in
 
 # Quick tests (no container required)
 # These tests either don't need a container or gracefully skip container-dependent tests
-QUICK_TESTS="test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-status-reporting.sh test-preflight-check.sh test-push-verification.sh"
+QUICK_TESTS="test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-status-reporting.sh test-preflight-check.sh test-push-verification.sh test-ssh-keychain.sh"
 
 #===============================================================================
 # ARGUMENT PARSING
