@@ -73,6 +73,7 @@ OPTIONS:
     --volumes           Also clean build cache volumes (Maven, Gradle)
     --containers        Clean stopped Kapsis containers
     --logs              Clean log files older than 7 days
+    --ssh-cache         Clear cached SSH host keys from keychain
     --force, -f         Skip confirmation prompts
     --help, -h          Show this help message
 
@@ -84,6 +85,7 @@ WHAT GETS CLEANED:
     Containers      Stopped kapsis-* containers (with --containers)
     Volumes         Build cache volumes (with --volumes)
     Logs            Old log files (with --logs)
+    SSH cache       Cached SSH host keys (with --ssh-cache)
 
 EXAMPLES:
     # See what would be cleaned
@@ -97,6 +99,9 @@ EXAMPLES:
 
     # Clean specific agent
     $(basename "$0") --agent products 1
+
+    # Clear SSH host key cache (after key rotation)
+    $(basename "$0") --ssh-cache
 EOF
 }
 
@@ -564,6 +569,74 @@ clean_logs() {
     fi
 }
 
+# Clean SSH cache
+clean_ssh_cache() {
+    section "SSH Host Key Cache"
+
+    local count=0
+    local ssh_cache_dir="$KAPSIS_DIR/ssh-cache"
+
+    # macOS: Clear keychain entries
+    if [[ "$(uname)" == "Darwin" ]]; then
+        # Get all kapsis SSH entries from keychain
+        local entries
+        entries=$(security dump-keychain 2>/dev/null | grep -B5 '"kapsis-ssh-known-hosts"' | grep '"acct"' | sed 's/.*="//;s/".*//' || true)
+
+        if [[ -n "$entries" ]]; then
+            while IFS= read -r host; do
+                [[ -z "$host" ]] && continue
+
+                if [[ "$DRY_RUN" == "true" ]]; then
+                    print_item "keychain" "kapsis-ssh-known-hosts/$host" "N/A"
+                else
+                    if security delete-generic-password -s "kapsis-ssh-known-hosts" -a "$host" &>/dev/null; then
+                        print_item "keychain" "kapsis-ssh-known-hosts/$host" "N/A"
+                    fi
+                fi
+                ((count++))
+            done <<< "$entries"
+        fi
+    fi
+
+    # Linux: Clear file-based cache
+    if [[ -d "$ssh_cache_dir" ]]; then
+        local cache_size
+        cache_size=$(get_dir_size "$ssh_cache_dir")
+        local size_human
+        size_human=$(format_size "$cache_size")
+
+        for cache_file in "$ssh_cache_dir"/*; do
+            [[ -f "$cache_file" ]] || continue
+            local name
+            name=$(basename "$cache_file")
+
+            if [[ "$DRY_RUN" == "true" ]]; then
+                print_item "ssh-cache" "$name" "N/A"
+            else
+                rm -f "$cache_file"
+                print_item "ssh-cache" "$name" "N/A"
+            fi
+            ((count++))
+        done
+
+        if [[ "$DRY_RUN" != "true" ]] && [[ -d "$ssh_cache_dir" ]]; then
+            rmdir "$ssh_cache_dir" 2>/dev/null || true
+        fi
+    fi
+
+    if (( count == 0 )); then
+        echo "  No SSH cache entries to clean"
+    else
+        echo -e "  ${BOLD}Total: $count SSH cache entries${NC}"
+        ((ITEMS_CLEANED += count))
+    fi
+
+    # Note about persistent config
+    if [[ -f "$KAPSIS_DIR/ssh-hosts.conf" ]]; then
+        echo -e "  ${CYAN}Note: ~/.kapsis/ssh-hosts.conf (fingerprints) preserved${NC}"
+    fi
+}
+
 # Print summary
 print_summary() {
     echo -e "\n${BOLD}${GREEN}=== Summary ===${NC}"
@@ -581,6 +654,7 @@ print_summary() {
 main() {
     local clean_containers_flag=false
     local clean_logs_flag=false
+    local clean_ssh_cache_flag=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -607,6 +681,10 @@ main() {
                 ;;
             --logs)
                 clean_logs_flag=true
+                shift
+                ;;
+            --ssh-cache)
+                clean_ssh_cache_flag=true
                 shift
                 ;;
             --project)
@@ -666,6 +744,10 @@ main() {
 
     if [[ "$clean_logs_flag" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
         clean_logs
+    fi
+
+    if [[ "$clean_ssh_cache_flag" == "true" ]]; then
+        clean_ssh_cache
     fi
 
     # Summary
