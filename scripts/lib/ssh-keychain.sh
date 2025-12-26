@@ -53,11 +53,11 @@ ssh_keychain_get() {
     local key_data timestamp current_time
 
     if ssh_has_keychain; then
-        # macOS: Use Keychain
+        # macOS: Use Keychain (stores as hex, decode on retrieval)
         key_data=$(security find-generic-password \
             -s "$SSH_KEYCHAIN_SERVICE" \
             -a "$host" \
-            -w 2>/dev/null) || return 1
+            -w 2>/dev/null | xxd -r -p) || return 1
 
         timestamp=$(security find-generic-password \
             -s "${SSH_KEYCHAIN_SERVICE}-timestamp" \
