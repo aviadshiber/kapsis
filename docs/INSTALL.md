@@ -24,14 +24,21 @@ brew upgrade kapsis
 Download the `.deb` package from the [releases page](https://github.com/aviadshiber/kapsis/releases):
 
 ```bash
-# Download (replace VERSION with actual version)
-curl -LO https://github.com/aviadshiber/kapsis/releases/download/vVERSION/kapsis_VERSION-1_all.deb
+# Set version (check releases page for latest)
+VERSION="1.0.0"
 
-# Install
-sudo dpkg -i kapsis_VERSION-1_all.deb
+# Download package and checksums
+curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/kapsis_${VERSION}-1_all.deb"
+curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/checksums.sha256"
 
-# Install any missing dependencies
-sudo apt-get install -f
+# Verify checksum (IMPORTANT: always verify before installing)
+# Linux:
+grep "kapsis_${VERSION}-1_all.deb" checksums.sha256 | sha256sum -c -
+# macOS:
+# grep "kapsis_${VERSION}-1_all.deb" checksums.sha256 | shasum -a 256 -c -
+
+# Install (apt handles dependencies automatically)
+sudo apt install "./kapsis_${VERSION}-1_all.deb"
 ```
 
 #### Using APT Repository (Future)
@@ -51,14 +58,21 @@ sudo apt install kapsis
 Download the `.rpm` package from the [releases page](https://github.com/aviadshiber/kapsis/releases):
 
 ```bash
-# Download (replace VERSION with actual version)
-curl -LO https://github.com/aviadshiber/kapsis/releases/download/vVERSION/kapsis-VERSION-1.noarch.rpm
+# Set version (check releases page for latest)
+VERSION="1.0.0"
 
-# Install with dnf (Fedora)
-sudo dnf install kapsis-VERSION-1.noarch.rpm
+# Download package and checksums
+curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/kapsis-${VERSION}-1.noarch.rpm"
+curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/checksums.sha256"
+
+# Verify checksum (IMPORTANT: always verify before installing)
+grep "kapsis-${VERSION}-1.noarch.rpm" checksums.sha256 | sha256sum -c -
+
+# Install with dnf (Fedora) - handles dependencies automatically
+sudo dnf install "./kapsis-${VERSION}-1.noarch.rpm"
 
 # Or install with yum (RHEL/CentOS)
-sudo yum install kapsis-VERSION-1.noarch.rpm
+sudo yum install "./kapsis-${VERSION}-1.noarch.rpm"
 ```
 
 #### Using DNF Repository (Future)
@@ -67,6 +81,26 @@ sudo yum install kapsis-VERSION-1.noarch.rpm
 # Add repository (coming soon)
 sudo dnf config-manager --add-repo https://rpm.kapsis.dev/kapsis.repo
 sudo dnf install kapsis
+```
+
+## Security Best Practices
+
+When installing packages manually:
+
+1. **Always verify checksums** - Each release includes a `checksums.sha256` file
+2. **Filter checksums explicitly** - Use `grep "filename" checksums.sha256 | sha256sum -c -` to verify specific files (never use `--ignore-missing`)
+3. **Use explicit paths** - Use `./package.deb` not wildcards like `*.deb`
+4. **Pin versions** - Specify exact version numbers, not wildcards
+5. **Download from official sources** - Only use GitHub releases or official package repos
+
+### Cross-Platform Checksum Verification
+
+```bash
+# Linux (sha256sum)
+grep "filename" checksums.sha256 | sha256sum -c -
+
+# macOS (shasum)
+grep "filename" checksums.sha256 | shasum -a 256 -c -
 ```
 
 ## Universal Install Script

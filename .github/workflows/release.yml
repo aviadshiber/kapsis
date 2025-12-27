@@ -108,13 +108,14 @@ jobs:
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
           # Security: Quote variables to prevent word splitting and injection
-          podman save "kapsis:${VERSION}" | gzip > "kapsis-${VERSION}.tar.gz"
+          # Use -image suffix to distinguish from source tarball
+          podman save "kapsis:${VERSION}" | gzip > "kapsis-image-${VERSION}.tar.gz"
 
       - name: Upload image artifact
         uses: actions/upload-artifact@v6
         with:
           name: container-image
-          path: kapsis-*.tar.gz
+          path: kapsis-image-*.tar.gz
           retention-days: 7
 
   release:
@@ -130,10 +131,25 @@ jobs:
         with:
           name: container-image
 
+      - name: Create source tarball
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+
+          # Create a clean source tarball for the install script
+          mkdir -p "kapsis-${VERSION}"
+          cp -r scripts configs maven *.sh *.md *.yaml.template Containerfile LICENSE "kapsis-${VERSION}/"
+          tar czf "kapsis-${VERSION}.tar.gz" "kapsis-${VERSION}"
+          rm -rf "kapsis-${VERSION}"
+
       - name: Generate checksums
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
-          sha256sum kapsis-$VERSION.tar.gz > checksums.sha256
+
+          # Generate checksums for all release assets
+          sha256sum "kapsis-${VERSION}.tar.gz" > checksums.sha256
+          sha256sum "kapsis-image-${VERSION}.tar.gz" >> checksums.sha256
+
+          echo "Generated checksums:"
           cat checksums.sha256
 
       - name: Generate changelog from commits
@@ -237,7 +253,8 @@ jobs:
           draft: false
           prerelease: ${{ inputs.prerelease || false }}
           files: |
-            kapsis-*.tar.gz
+            kapsis-${{ needs.validate.outputs.version }}.tar.gz
+            kapsis-image-${{ needs.validate.outputs.version }}.tar.gz
             checksums.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
