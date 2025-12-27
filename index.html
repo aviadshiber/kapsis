@@ -82,6 +82,14 @@
         .code-scroll-container.has-overflow::after {
             opacity: 1;
         }
+        /* Ensure copy button is above scroll indicator */
+        .copy-btn {
+            z-index: 10;
+        }
+        /* Body scroll lock when mobile menu is open */
+        body.mobile-menu-open {
+            overflow: hidden;
+        }
         /* Toast notification */
         .toast {
             transform: translateY(100px);
@@ -255,7 +263,7 @@
                             <span class="text-xs text-slate-500">macOS & Linux</span>
                         </div>
                         <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
-                            <button onclick="copyCode('cmd-homebrew')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy Homebrew install command">
+                            <button onclick="copyCode(event, 'cmd-homebrew')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy Homebrew install command">
                                 <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
                             <pre id="cmd-homebrew" class="text-blue-300 whitespace-pre overflow-x-auto">brew tap aviadshiber/kapsis && brew install kapsis</pre>
@@ -269,7 +277,7 @@
                             <span class="text-xs text-slate-500">Debian, Ubuntu, Mint</span>
                         </div>
                         <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
-                            <button onclick="copyCode('cmd-apt')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy APT install command">
+                            <button onclick="copyCode(event, 'cmd-apt')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy APT install command">
                                 <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
                             <pre id="cmd-apt" class="text-blue-300 whitespace-pre overflow-x-auto">sudo dpkg -i kapsis_*.deb && sudo apt-get install -f</pre>
@@ -283,7 +291,7 @@
                             <span class="text-xs text-slate-500">Fedora, RHEL, CentOS</span>
                         </div>
                         <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
-                            <button onclick="copyCode('cmd-dnf')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy DNF install command">
+                            <button onclick="copyCode(event, 'cmd-dnf')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy DNF install command">
                                 <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
                             <pre id="cmd-dnf" class="text-blue-300 whitespace-pre overflow-x-auto">sudo dnf install kapsis-*.rpm</pre>
@@ -297,7 +305,7 @@
                             <span class="text-xs text-slate-500">Installs to ~/.local</span>
                         </div>
                         <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
-                            <button onclick="copyCode('cmd-script')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy install script command">
+                            <button onclick="copyCode(event, 'cmd-script')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy install script command">
                                 <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
                             <pre id="cmd-script" class="text-kapsis-neon whitespace-pre overflow-x-auto">curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash</pre>
@@ -311,7 +319,7 @@
                             <span class="text-xs text-slate-500">Auto-installs dependencies</span>
                         </div>
                         <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
-                            <button onclick="copyCode('cmd-manual')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy git clone command">
+                            <button onclick="copyCode(event, 'cmd-manual')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy git clone command">
                                 <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
                             <pre id="cmd-manual" class="text-blue-300 whitespace-pre overflow-x-auto">git clone https://github.com/aviadshiber/kapsis.git && cd kapsis && ./setup.sh --all</pre>
@@ -598,7 +606,7 @@ filesystem:
                 <div>
                     <p class="text-slate-400 mb-4 text-center">Once installed, launch an agent by specifying an ID, the project path, and the config profile.</p>
                     <div class="code-block code-scroll-container rounded-lg p-6 font-mono text-sm text-slate-300 overflow-x-auto relative group shadow-lg border-l-4 border-kapsis-neon">
-                        <button onclick="copyCode('launch-code')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy launch command">
+                        <button onclick="copyCode(event, 'launch-code')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy launch command">
                             <i class="fa-regular fa-copy" aria-hidden="true"></i>
                         </button>
                         <div class="text-slate-500 mb-2"># Syntax: ./scripts/launch-agent.sh [ID] [PROJECT_PATH] [FLAGS]</div>
@@ -682,12 +690,14 @@ filesystem:
                 button.setAttribute('aria-expanded', 'false');
                 menu.setAttribute('aria-hidden', 'true');
                 icon.className = 'fa-solid fa-bars text-xl';
+                document.body.classList.remove('mobile-menu-open');
             } else {
                 menu.classList.add('open');
                 backdrop.classList.remove('hidden');
                 button.setAttribute('aria-expanded', 'true');
                 menu.setAttribute('aria-hidden', 'false');
                 icon.className = 'fa-solid fa-xmark text-xl';
+                document.body.classList.add('mobile-menu-open');
             }
         }
 
@@ -709,7 +719,10 @@ filesystem:
         }
 
         // Unified copy function with toast and icon feedback
-        function copyCode(elementId) {
+        function copyCode(e, elementId) {
+            e.preventDefault();
+            e.stopPropagation();
+
             const element = document.getElementById(elementId);
             if (!element) return;
 
@@ -719,10 +732,11 @@ filesystem:
                 showToast();
 
                 // Also update button icon
-                const btn = event.target.closest('button');
+                const btn = e.target.closest('button');
                 if (btn) {
                     const icon = btn.querySelector('i');
                     if (icon) {
+                        const originalClass = icon.className;
                         icon.className = 'fa-solid fa-check';
                         setTimeout(() => { icon.className = 'fa-regular fa-copy'; }, 1500);
                     }
@@ -746,6 +760,9 @@ filesystem:
             const activeTab = document.getElementById('install-tab-' + tabName);
             activeTab.className = 'install-tab px-4 py-2 rounded-lg text-sm font-medium bg-kapsis-neon text-slate-900 transition-all';
             activeTab.setAttribute('aria-selected', 'true');
+
+            // Recheck scroll overflow for newly visible content
+            setTimeout(checkScrollOverflow, 50);
         }
 
         // Doc tab switching
@@ -765,13 +782,33 @@ filesystem:
         function checkScrollOverflow() {
             document.querySelectorAll('.code-scroll-container').forEach(container => {
                 const pre = container.querySelector('pre');
-                if (pre && pre.scrollWidth > container.clientWidth) {
-                    container.classList.add('has-overflow');
-                } else {
-                    container.classList.remove('has-overflow');
+                if (pre) {
+                    // Use requestAnimationFrame to ensure layout is complete
+                    requestAnimationFrame(() => {
+                        if (pre.scrollWidth > container.clientWidth) {
+                            container.classList.add('has-overflow');
+                        } else {
+                            container.classList.remove('has-overflow');
+                        }
+                    });
                 }
             });
         }
+
+        // Hide scroll indicator when user has scrolled to the end
+        document.querySelectorAll('.code-scroll-container').forEach(container => {
+            container.addEventListener('scroll', function() {
+                const pre = this.querySelector('pre');
+                if (pre) {
+                    const atEnd = this.scrollLeft + this.clientWidth >= pre.scrollWidth - 5;
+                    if (atEnd) {
+                        this.classList.remove('has-overflow');
+                    } else if (pre.scrollWidth > this.clientWidth) {
+                        this.classList.add('has-overflow');
+                    }
+                }
+            });
+        });
 
         // Keyboard navigation for install tabs
         document.addEventListener('keydown', function(e) {
