@@ -70,14 +70,18 @@ See [docs/INSTALL.md](docs/INSTALL.md) for detailed installation instructions.
 # 1. Install Kapsis (using any method above, or clone directly)
 git clone https://github.com/aviadshiber/kapsis.git && cd kapsis
 
-# 2. Build the container image
+# 2. Run setup (checks dependencies, optionally installs Podman)
+./setup.sh              # Check dependencies only
+./setup.sh --install    # Auto-install missing dependencies (Podman, etc.)
+
+# 3. Build the container image
 kapsis-build  # or ./scripts/build-image.sh
 
-# 3. Copy and customize config
+# 4. Copy and customize config
 cp agent-sandbox.yaml.template agent-sandbox.yaml
 # Edit agent-sandbox.yaml with your settings
 
-# 4. Run an agent
+# 5. Run an agent
 kapsis 1 ~/project --task "fix failing tests"
 # or: ./scripts/launch-agent.sh 1 ~/project --task "fix failing tests"
 ```
@@ -344,8 +348,9 @@ kapsis/
 
 ## Requirements
 
-- **Podman** 4.0+ (5.0+ recommended)
+- **Podman** 4.0+ (5.0+ recommended) — automatically installed by `./setup.sh --install`
 - **macOS** with Apple Silicon (tested) or Linux
+- **Git** 2.0+
 - **yq** (optional, for config parsing)
 
 ## License

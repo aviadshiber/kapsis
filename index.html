@@ -220,8 +220,8 @@
                         <h3 class="text-lg font-semibold text-white mb-2">System Requirements</h3>
                         <ul class="space-y-2 text-slate-400">
                             <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>macOS</strong> (Apple Silicon) or <strong>Linux</strong></span></li>
-                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>Git</strong> 2.0+ installed</span></li>
-                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>Podman</strong> 4.0+ (or installed by setup)</span></li>
+                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>Git</strong> 2.0+</span></li>
+                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>Podman</strong> 4.0+ — auto-installed by <code class="bg-slate-700 px-1 rounded text-xs">./setup.sh --install</code></span></li>
                         </ul>
                     </div>
                     <div>
@@ -252,7 +252,7 @@
                             <div class="code-block p-3 rounded text-sm font-mono text-blue-300">
                                 cd kapsis && ./setup.sh --all
                             </div>
-                            <p class="text-xs text-slate-500 mt-2">Installs Podman, builds image, verifies dependencies.</p>
+                            <p class="text-xs text-slate-500 mt-2">Auto-installs Podman & dependencies, builds container image, validates setup.</p>
                         </div>
                     </div>
                 </div>
