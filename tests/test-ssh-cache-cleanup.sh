@@ -12,7 +12,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/test-framework.sh"
 
 CLEANUP_SCRIPT="$KAPSIS_ROOT/scripts/kapsis-cleanup.sh"
-SSH_KEYCHAIN_SCRIPT="$KAPSIS_ROOT/scripts/lib/ssh-keychain.sh"
 
 # Test-specific directories
 TEST_SSH_CACHE_DIR=""
@@ -92,8 +91,7 @@ test_ssh_cache_actual_cleanup() {
 
     # Run cleanup with ssh-cache flag and verify it completes
     local output
-    local exit_code=0
-    output=$("$CLEANUP_SCRIPT" --ssh-cache --force --dry-run 2>&1) || exit_code=$?
+    output=$("$CLEANUP_SCRIPT" --ssh-cache --force --dry-run 2>&1) || true
 
     # Cleanup should run (exit code may be non-zero due to nothing to clean)
     assert_contains "$output" "Cleanup" "Should show cleanup output"

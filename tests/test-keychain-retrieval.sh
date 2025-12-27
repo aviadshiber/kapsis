@@ -174,7 +174,9 @@ EOF
 
     rm -f "$test_config"
 
-    assert_equals "~/.config/agent/credentials.json" "$inject_path" "inject_to_file path should be parsed"
+    # Note: The config file contains literal "~/" which is preserved in YAML
+    # shellcheck disable=SC2088
+    assert_equals '~/.config/agent/credentials.json' "$inject_path" "inject_to_file path should be parsed"
     assert_equals "0600" "$mode" "mode should be parsed"
 }
 
