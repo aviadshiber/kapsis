@@ -24,18 +24,15 @@ brew upgrade kapsis
 Download the `.deb` package from the [releases page](https://github.com/aviadshiber/kapsis/releases):
 
 ```bash
-# Set version (check releases page for latest)
-VERSION="1.0.0"
+# Get latest version automatically (requires jq)
+VERSION=$(curl -s https://api.github.com/repos/aviadshiber/kapsis/releases/latest | jq -r '.tag_name | ltrimstr("v")')
 
 # Download package and checksums
 curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/kapsis_${VERSION}-1_all.deb"
 curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/checksums.sha256"
 
 # Verify checksum (IMPORTANT: always verify before installing)
-# Linux:
 grep "kapsis_${VERSION}-1_all.deb" checksums.sha256 | sha256sum -c -
-# macOS:
-# grep "kapsis_${VERSION}-1_all.deb" checksums.sha256 | shasum -a 256 -c -
 
 # Install (apt handles dependencies automatically)
 sudo apt install "./kapsis_${VERSION}-1_all.deb"
@@ -58,8 +55,8 @@ sudo apt install kapsis
 Download the `.rpm` package from the [releases page](https://github.com/aviadshiber/kapsis/releases):
 
 ```bash
-# Set version (check releases page for latest)
-VERSION="1.0.0"
+# Get latest version automatically (requires jq)
+VERSION=$(curl -s https://api.github.com/repos/aviadshiber/kapsis/releases/latest | jq -r '.tag_name | ltrimstr("v")')
 
 # Download package and checksums
 curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/kapsis-${VERSION}-1.noarch.rpm"
@@ -316,5 +313,6 @@ KAPSIS_DEBUG=1 kapsis-build
 - **Podman:** 4.0 or later
 - **Git:** 2.0 or later
 - **Bash:** 3.2 or later
+- **jq:** For manual package installation (to fetch latest version)
 - **Disk:** 5GB for container images
 - **Memory:** 4GB RAM minimum, 8GB recommended

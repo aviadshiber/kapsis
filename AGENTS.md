@@ -41,6 +41,23 @@
 - Create a feature branch, run `./tests/run-all-tests.sh -q`, and submit a PR with a clear description.
 - Update `CHANGELOG.md` under `[Unreleased]` when adding user-facing changes.
 
+## Version Documentation Updates
+When completing a PR that will trigger a release, update version references in documentation:
+
+1. **Determine the new version** based on conventional commit type:
+   - `feat:` → minor bump (0.7.5 → 0.8.0)
+   - `fix:` → patch bump (0.7.5 → 0.7.6)
+   - `feat!:` or `BREAKING CHANGE:` → major bump (0.7.5 → 1.0.0)
+
+2. **Check current version**: `git tag --sort=-v:refname | head -1`
+
+3. **Update hardcoded versions** in these files if they exist:
+   - `docs/INSTALL.md` - example version in install commands
+   - `packaging/homebrew/kapsis.rb` - formula version
+   - Any other docs with explicit version numbers
+
+4. **Prefer dynamic fetching** where possible - the landing page and install docs already fetch versions dynamically from GitHub API.
+
 ## Security & Configuration Tips
 - Copy `agent-sandbox.yaml.template` to `agent-sandbox.yaml` and keep secrets in keychain-backed fields.
 - Avoid committing API keys or local paths; prefer `environment.passthrough` for non-secret values.
