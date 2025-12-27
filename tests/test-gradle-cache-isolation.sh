@@ -153,7 +153,7 @@ test_gradle_home_in_container() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e GRADLE_USER_HOME="/home/developer/.gradle" \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         bash -c 'echo "GRADLE_HOME=$GRADLE_USER_HOME"' 2>&1) || true
 
     cleanup_container_test
@@ -184,14 +184,14 @@ test_agents_use_isolated_gradle_volumes() {
     podman run --rm \
         --userns=keep-id \
         -v "$agent1_vol:/home/developer/.gradle" \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         bash -c 'echo "agent1" > /home/developer/.gradle/marker.txt' 2>/dev/null || true
 
     # Agent 2 writes a different marker file
     podman run --rm \
         --userns=keep-id \
         -v "$agent2_vol:/home/developer/.gradle" \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         bash -c 'echo "agent2" > /home/developer/.gradle/marker.txt' 2>/dev/null || true
 
     # Check Agent 1's marker
@@ -199,7 +199,7 @@ test_agents_use_isolated_gradle_volumes() {
     agent1_marker=$(podman run --rm \
         --userns=keep-id \
         -v "$agent1_vol:/home/developer/.gradle" \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         bash -c 'cat /home/developer/.gradle/marker.txt 2>/dev/null || echo ""' 2>/dev/null) || true
 
     # Check Agent 2's marker
@@ -207,7 +207,7 @@ test_agents_use_isolated_gradle_volumes() {
     agent2_marker=$(podman run --rm \
         --userns=keep-id \
         -v "$agent2_vol:/home/developer/.gradle" \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         bash -c 'cat /home/developer/.gradle/marker.txt 2>/dev/null || echo ""' 2>/dev/null) || true
 
     # Cleanup
@@ -236,7 +236,7 @@ test_gradle_cache_persistence() {
     podman run --rm \
         --userns=keep-id \
         -v "$vol_name:/home/developer/.gradle" \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         bash -c 'mkdir -p /home/developer/.gradle/caches && echo "cached" > /home/developer/.gradle/caches/test.txt' 2>/dev/null || true
 
     # Second run: read data
@@ -244,7 +244,7 @@ test_gradle_cache_persistence() {
     cached_content=$(podman run --rm \
         --userns=keep-id \
         -v "$vol_name:/home/developer/.gradle" \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         bash -c 'cat /home/developer/.gradle/caches/test.txt 2>/dev/null || echo "missing"' 2>/dev/null) || true
 
     # Cleanup

@@ -59,7 +59,7 @@ test_keychain_lookup_function_exists() {
     else
         # Functions may have different names - check for any keychain-related function
         local funcs
-        funcs=$(declare -F | grep -i "ssh_" | wc -l)
+        funcs=$(declare -F | grep -ci "ssh_" || true)
         assert_true "[[ $funcs -gt 0 ]]" "Should have SSH keychain functions defined"
     fi
 }
@@ -174,9 +174,10 @@ EOF
 
     rm -f "$test_config"
 
-    # Note: The config file contains literal "~/" which is preserved in YAML
-    # shellcheck disable=SC2088
-    assert_equals '~/.config/agent/credentials.json' "$inject_path" "inject_to_file path should be parsed"
+    # The config file contains literal "~/" which yq preserves as a string
+    # Verify the path starts with ~/ and contains the expected components
+    assert_contains "$inject_path" ".config/agent/credentials.json" "inject_to_file should contain path"
+    assert_true "[[ \${inject_path:0:2} == '~/' ]]" "inject_to_file path should start with ~/"
     assert_equals "0600" "$mode" "mode should be parsed"
 }
 

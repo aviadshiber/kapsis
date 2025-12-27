@@ -107,7 +107,7 @@ test_image_has_bash() {
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         which bash 2>&1) || exit_code=$?
 
     cleanup_container_test
@@ -130,7 +130,7 @@ test_image_has_git() {
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         git --version 2>&1) || exit_code=$?
 
     cleanup_container_test
@@ -153,7 +153,7 @@ test_image_has_curl() {
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         curl --version 2>&1) || exit_code=$?
 
     cleanup_container_test
@@ -175,7 +175,7 @@ test_image_has_jq() {
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         jq --version 2>&1) || exit_code=$?
 
     cleanup_container_test
@@ -196,7 +196,7 @@ test_image_developer_user() {
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         id 2>&1) || true
 
     cleanup_container_test
@@ -223,7 +223,7 @@ test_image_home_directory() {
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         bash -c 'echo $HOME' 2>&1) || true
 
     cleanup_container_test

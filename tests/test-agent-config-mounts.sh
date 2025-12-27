@@ -137,7 +137,7 @@ test_config_mount_accessible_in_container() {
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -v "$test_file:/kapsis-staging/.kapsis-container-test-config:ro" \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         bash -c 'cat /kapsis-staging/.kapsis-container-test-config' 2>&1) || true
 
     cleanup_container_test
