@@ -54,8 +54,25 @@ check_dependencies() {
         fi
     done
 
+    # Check for sha256sum or shasum (macOS)
+    if ! command -v sha256sum &>/dev/null && ! command -v shasum &>/dev/null; then
+        missing+=("sha256sum or shasum")
+    fi
+
     if [[ ${#missing[@]} -gt 0 ]]; then
         die "Missing required commands: ${missing[*]}"
+    fi
+}
+
+# Compute SHA256 hash (cross-platform: Linux and macOS)
+compute_sha256() {
+    local file="$1"
+    if command -v sha256sum &>/dev/null; then
+        sha256sum "$file" | awk '{print $1}'
+    elif command -v shasum &>/dev/null; then
+        shasum -a 256 "$file" | awk '{print $1}'
+    else
+        die "No SHA256 tool available"
     fi
 }
 
@@ -79,25 +96,26 @@ download_release() {
 
     info "Downloading Kapsis v${version}..."
 
-    local tarball_url="https://github.com/$GITHUB_REPO/archive/refs/tags/v${version}.tar.gz"
+    local tarball_url="https://github.com/$GITHUB_REPO/releases/download/v${version}/kapsis-${version}.tar.gz"
     local checksum_url="https://github.com/$GITHUB_REPO/releases/download/v${version}/checksums.sha256"
+    local tarball_name="kapsis-${version}.tar.gz"
 
-    # Download tarball
+    # Download release asset (must be uploaded as part of release process)
     if ! curl -fsSL "$tarball_url" -o "$tmpdir/kapsis.tar.gz"; then
         rm -rf "$tmpdir"
-        die "Failed to download release"
+        die "Failed to download release asset. Ensure v${version} has kapsis-${version}.tar.gz uploaded."
     fi
 
     # Verify checksum (required for security)
     if curl -fsSL "$checksum_url" -o "$tmpdir/checksums.sha256" 2>/dev/null; then
         info "Verifying checksum..."
         local expected_checksum
-        # Extract checksum for the source tarball (format: "hash  filename")
-        expected_checksum=$(grep -E "v${version}\.tar\.gz|kapsis-${version}\.tar\.gz" "$tmpdir/checksums.sha256" 2>/dev/null | awk '{print $1}' | head -1)
+        # Use fixed-string grep to avoid regex injection from version string
+        expected_checksum=$(grep -F "$tarball_name" "$tmpdir/checksums.sha256" 2>/dev/null | awk '{print $1}' | head -1)
 
         if [[ -n "$expected_checksum" ]]; then
             local actual_checksum
-            actual_checksum=$(sha256sum "$tmpdir/kapsis.tar.gz" | awk '{print $1}')
+            actual_checksum=$(compute_sha256 "$tmpdir/kapsis.tar.gz")
 
             if [[ "$expected_checksum" != "$actual_checksum" ]]; then
                 rm -rf "$tmpdir"
@@ -106,7 +124,7 @@ download_release() {
             success "Checksum verified"
         else
             rm -rf "$tmpdir"
-            die "No matching checksum found in checksums.sha256 for v${version}"
+            die "No matching checksum found in checksums.sha256 for '$tarball_name'"
         fi
     else
         rm -rf "$tmpdir"

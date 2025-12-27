@@ -32,7 +32,10 @@ curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/ka
 curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/checksums.sha256"
 
 # Verify checksum (IMPORTANT: always verify before installing)
-sha256sum -c checksums.sha256 --ignore-missing
+# Linux:
+grep "kapsis_${VERSION}-1_all.deb" checksums.sha256 | sha256sum -c -
+# macOS:
+# grep "kapsis_${VERSION}-1_all.deb" checksums.sha256 | shasum -a 256 -c -
 
 # Install (apt handles dependencies automatically)
 sudo apt install "./kapsis_${VERSION}-1_all.deb"
@@ -63,7 +66,7 @@ curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/ka
 curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/checksums.sha256"
 
 # Verify checksum (IMPORTANT: always verify before installing)
-sha256sum -c checksums.sha256 --ignore-missing
+grep "kapsis-${VERSION}-1.noarch.rpm" checksums.sha256 | sha256sum -c -
 
 # Install with dnf (Fedora) - handles dependencies automatically
 sudo dnf install "./kapsis-${VERSION}-1.noarch.rpm"
@@ -85,9 +88,20 @@ sudo dnf install kapsis
 When installing packages manually:
 
 1. **Always verify checksums** - Each release includes a `checksums.sha256` file
-2. **Use explicit paths** - Use `./package.deb` not wildcards like `*.deb`
-3. **Pin versions** - Specify exact version numbers, not wildcards
-4. **Download from official sources** - Only use GitHub releases or official package repos
+2. **Filter checksums explicitly** - Use `grep "filename" checksums.sha256 | sha256sum -c -` to verify specific files (never use `--ignore-missing`)
+3. **Use explicit paths** - Use `./package.deb` not wildcards like `*.deb`
+4. **Pin versions** - Specify exact version numbers, not wildcards
+5. **Download from official sources** - Only use GitHub releases or official package repos
+
+### Cross-Platform Checksum Verification
+
+```bash
+# Linux (sha256sum)
+grep "filename" checksums.sha256 | sha256sum -c -
+
+# macOS (shasum)
+grep "filename" checksums.sha256 | shasum -a 256 -c -
+```
 
 ## Universal Install Script
 
