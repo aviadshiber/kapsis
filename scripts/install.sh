@@ -71,7 +71,7 @@ get_latest_version() {
     echo "$version"
 }
 
-# Download and extract release
+# Download and extract release with checksum verification
 download_release() {
     local version="$1"
     local tmpdir
@@ -79,11 +79,38 @@ download_release() {
 
     info "Downloading Kapsis v${version}..."
 
-    local url="https://github.com/$GITHUB_REPO/archive/refs/tags/v${version}.tar.gz"
+    local tarball_url="https://github.com/$GITHUB_REPO/archive/refs/tags/v${version}.tar.gz"
+    local checksum_url="https://github.com/$GITHUB_REPO/releases/download/v${version}/checksums.sha256"
 
-    if ! curl -fsSL "$url" -o "$tmpdir/kapsis.tar.gz"; then
+    # Download tarball
+    if ! curl -fsSL "$tarball_url" -o "$tmpdir/kapsis.tar.gz"; then
         rm -rf "$tmpdir"
         die "Failed to download release"
+    fi
+
+    # Verify checksum (required for security)
+    if curl -fsSL "$checksum_url" -o "$tmpdir/checksums.sha256" 2>/dev/null; then
+        info "Verifying checksum..."
+        local expected_checksum
+        # Extract checksum for the source tarball (format: "hash  filename")
+        expected_checksum=$(grep -E "v${version}\.tar\.gz|kapsis-${version}\.tar\.gz" "$tmpdir/checksums.sha256" 2>/dev/null | awk '{print $1}' | head -1)
+
+        if [[ -n "$expected_checksum" ]]; then
+            local actual_checksum
+            actual_checksum=$(sha256sum "$tmpdir/kapsis.tar.gz" | awk '{print $1}')
+
+            if [[ "$expected_checksum" != "$actual_checksum" ]]; then
+                rm -rf "$tmpdir"
+                die "Checksum verification failed! Expected: $expected_checksum, Got: $actual_checksum"
+            fi
+            success "Checksum verified"
+        else
+            rm -rf "$tmpdir"
+            die "No matching checksum found in checksums.sha256 for v${version}"
+        fi
+    else
+        rm -rf "$tmpdir"
+        die "Checksum file not available for v${version}. Cannot verify download integrity."
     fi
 
     tar -xzf "$tmpdir/kapsis.tar.gz" -C "$tmpdir"
