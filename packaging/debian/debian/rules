@@ -1,0 +1,81 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_install:
+	# Create directories
+	install -d $(CURDIR)/debian/kapsis/usr/bin
+	install -d $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts
+	install -d $(CURDIR)/debian/kapsis/usr/lib/kapsis/lib
+	install -d $(CURDIR)/debian/kapsis/usr/share/kapsis/configs/agents
+	install -d $(CURDIR)/debian/kapsis/usr/share/kapsis/maven
+	install -d $(CURDIR)/debian/kapsis/usr/share/doc/kapsis
+
+	# Install main executable scripts
+	install -m 755 scripts/launch-agent.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/build-image.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/build-agent-image.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/kapsis-cleanup.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/kapsis-status.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/entrypoint.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/worktree-manager.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/post-container-git.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/post-exit-git.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/preflight-check.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/init-git-branch.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/merge-changes.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/switch-java.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 setup.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 quick-start.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+
+	# Install library files
+	install -m 644 scripts/lib/*.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/lib/
+
+	# Install configuration files
+	install -m 644 agent-sandbox.yaml.template $(CURDIR)/debian/kapsis/usr/share/kapsis/
+	install -m 644 Containerfile $(CURDIR)/debian/kapsis/usr/share/kapsis/
+	install -m 644 configs/*.yaml $(CURDIR)/debian/kapsis/usr/share/kapsis/configs/ || true
+	install -m 644 configs/agents/*.yaml $(CURDIR)/debian/kapsis/usr/share/kapsis/configs/agents/
+	install -m 644 maven/isolated-settings.xml $(CURDIR)/debian/kapsis/usr/share/kapsis/maven/
+
+	# Install documentation
+	install -m 644 README.md $(CURDIR)/debian/kapsis/usr/share/doc/kapsis/
+	install -m 644 CHANGELOG.md $(CURDIR)/debian/kapsis/usr/share/doc/kapsis/
+
+	# Create wrapper scripts in /usr/bin
+	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis
+	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis
+	echo 'export KAPSIS_LIB="/usr/lib/kapsis/lib"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis
+	echo 'export KAPSIS_SCRIPTS="/usr/lib/kapsis/scripts"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis
+	echo 'exec /usr/lib/kapsis/scripts/launch-agent.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis
+	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis
+
+	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-build
+	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-build
+	echo 'exec /usr/lib/kapsis/scripts/build-image.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-build
+	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-build
+
+	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-cleanup
+	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-cleanup
+	echo 'exec /usr/lib/kapsis/scripts/kapsis-cleanup.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-cleanup
+	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-cleanup
+
+	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
+	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
+	echo 'exec /usr/lib/kapsis/scripts/kapsis-status.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
+	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
+
+	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-setup
+	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-setup
+	echo 'exec /usr/lib/kapsis/scripts/setup.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-setup
+	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-setup
+
+	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-quick
+	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-quick
+	echo 'exec /usr/lib/kapsis/scripts/quick-start.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-quick
+	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-quick
+
+override_dh_auto_test:
+	# Skip tests during package build
+	@true

@@ -147,6 +147,72 @@
                 <i class="fa-solid fa-download text-kapsis-neon mr-3"></i> Installation
             </h2>
 
+            <!-- Quick Install -->
+            <div class="mb-12">
+                <h3 class="text-xl font-semibold text-white mb-4 flex items-center">
+                    <i class="fa-solid fa-bolt text-yellow-400 mr-2"></i> Quick Install (Recommended)
+                </h3>
+                <div class="code-block p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                    <button onclick="copyToClipboard('quick-install-code')" class="absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
+                        <i class="fa-regular fa-copy"></i>
+                    </button>
+                    <pre id="quick-install-code" class="text-kapsis-neon">curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash</pre>
+                </div>
+                <p class="text-xs text-slate-500 mt-2">Installs to ~/.local and adds kapsis to your PATH automatically.</p>
+            </div>
+
+            <!-- Package Managers -->
+            <div class="mb-12">
+                <h3 class="text-xl font-semibold text-white mb-6 flex items-center">
+                    <i class="fa-solid fa-box text-kapsis-neon mr-2"></i> Package Managers
+                </h3>
+                <div class="grid md:grid-cols-3 gap-6">
+                    <!-- Homebrew -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
+                        <div class="flex items-center mb-3">
+                            <i class="fa-brands fa-apple text-slate-400 text-xl mr-2"></i>
+                            <i class="fa-brands fa-linux text-slate-400 text-xl mr-3"></i>
+                            <span class="text-white font-bold">Homebrew</span>
+                        </div>
+                        <div class="code-block p-3 rounded text-xs font-mono space-y-1">
+                            <div class="text-slate-500"># Add tap & install</div>
+                            <div class="text-blue-300">brew tap aviadshiber/kapsis</div>
+                            <div class="text-blue-300">brew install kapsis</div>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-3">macOS and Linux</p>
+                    </div>
+
+                    <!-- Debian/Ubuntu -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
+                        <div class="flex items-center mb-3">
+                            <i class="fa-brands fa-ubuntu text-orange-500 text-xl mr-2"></i>
+                            <i class="fa-brands fa-debian text-red-500 text-xl mr-3"></i>
+                            <span class="text-white font-bold">APT</span>
+                        </div>
+                        <div class="code-block p-3 rounded text-xs font-mono space-y-1">
+                            <div class="text-slate-500"># Download from releases</div>
+                            <div class="text-blue-300">sudo dpkg -i kapsis_*.deb</div>
+                            <div class="text-blue-300">sudo apt-get install -f</div>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-3">Debian, Ubuntu, Mint</p>
+                    </div>
+
+                    <!-- Fedora/RHEL -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
+                        <div class="flex items-center mb-3">
+                            <i class="fa-brands fa-fedora text-blue-400 text-xl mr-2"></i>
+                            <i class="fa-brands fa-redhat text-red-600 text-xl mr-3"></i>
+                            <span class="text-white font-bold">DNF / YUM</span>
+                        </div>
+                        <div class="code-block p-3 rounded text-xs font-mono space-y-1">
+                            <div class="text-slate-500"># Download from releases</div>
+                            <div class="text-blue-300">sudo dnf install kapsis-*.rpm</div>
+                        </div>
+                        <p class="text-xs text-slate-500 mt-3">Fedora, RHEL, CentOS</p>
+                    </div>
+                </div>
+            </div>
+
             <div class="grid md:grid-cols-2 gap-8">
                 <!-- Requirements -->
                 <div class="space-y-6">
@@ -154,15 +220,22 @@
                         <h3 class="text-lg font-semibold text-white mb-2">System Requirements</h3>
                         <ul class="space-y-2 text-slate-400">
                             <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>macOS</strong> (Apple Silicon) or <strong>Linux</strong></span></li>
-                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>Git</strong> installed</span></li>
-                            <li class="flex items-center"><i class="fa-solid fa-info-circle text-blue-400 w-6"></i> <span>Podman is installed automatically by the setup script.</span></li>
+                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>Git</strong> 2.0+ installed</span></li>
+                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>Podman</strong> 4.0+ (or installed by setup)</span></li>
                         </ul>
+                    </div>
+                    <div>
+                        <h3 class="text-lg font-semibold text-white mb-2">Post-Install</h3>
+                        <div class="code-block p-3 rounded text-sm font-mono text-blue-300">
+                            kapsis-setup --build
+                        </div>
+                        <p class="text-xs text-slate-500 mt-2">Builds the container image (required once after install).</p>
                     </div>
                 </div>
 
-                <!-- Setup Steps -->
+                <!-- Manual Setup Steps -->
                 <div>
-                    <h3 class="text-lg font-semibold text-white mb-4">Setup Steps</h3>
+                    <h3 class="text-lg font-semibold text-white mb-4">Manual Install (Alternative)</h3>
                     <div class="relative pl-8 border-l border-slate-700 space-y-8">
 
                         <!-- Step 1 -->
@@ -177,10 +250,9 @@
                             <span class="absolute -left-[41px] bg-slate-800 border border-slate-600 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white">2</span>
                             <p class="text-slate-300 mb-2">Run the setup script</p>
                             <div class="code-block p-3 rounded text-sm font-mono text-blue-300">
-                                cd kapsis <br>
-                                ./setup.sh
+                                cd kapsis && ./setup.sh --all
                             </div>
-                            <p class="text-xs text-slate-500 mt-2">This script installs Podman (if missing), initializes the machine, and verifies dependencies.</p>
+                            <p class="text-xs text-slate-500 mt-2">Installs Podman, builds image, verifies dependencies.</p>
                         </div>
                     </div>
                 </div>

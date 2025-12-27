@@ -30,22 +30,53 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 - **Status Reporting** - JSON-based progress tracking for external monitoring
 - **Rootless Containers** - Security-hardened Podman rootless mode
 
+## Installation
+
+### Quick Install (Recommended)
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
+```
+
+### Package Managers
+
+**Homebrew (macOS/Linux):**
+```bash
+brew tap aviadshiber/kapsis
+brew install kapsis
+```
+
+**Debian/Ubuntu:**
+```bash
+# Download from releases page
+sudo dpkg -i kapsis_VERSION-1_all.deb
+sudo apt-get install -f
+```
+
+**Fedora/RHEL:**
+```bash
+# Download from releases page
+sudo dnf install kapsis-VERSION-1.noarch.rpm
+```
+
+See [docs/INSTALL.md](docs/INSTALL.md) for detailed installation instructions.
+
 ## Quick Start
 
 ```bash
-# 1. Clone Kapsis
-git clone https://github.com/aviadshiber/kapsis.git
-cd kapsis
+# 1. Install Kapsis (using any method above, or clone directly)
+git clone https://github.com/aviadshiber/kapsis.git && cd kapsis
 
 # 2. Build the container image
-./scripts/build-image.sh
+kapsis-build  # or ./scripts/build-image.sh
 
 # 3. Copy and customize config
 cp agent-sandbox.yaml.template agent-sandbox.yaml
 # Edit agent-sandbox.yaml with your settings
 
 # 4. Run an agent
-./scripts/launch-agent.sh 1 ~/project --task "fix failing tests"
+kapsis 1 ~/project --task "fix failing tests"
+# or: ./scripts/launch-agent.sh 1 ~/project --task "fix failing tests"
 ```
 
 ## Agent Profiles
