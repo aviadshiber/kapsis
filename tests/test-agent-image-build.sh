@@ -266,10 +266,10 @@ test_profiles_define_agent_commands() {
         name=$(basename "$profile")
 
         local command
-        command=$(yq '.agent.command // ""' "$profile")
+        command=$(yq '.command // ""' "$profile")
 
         if [[ -z "$command" || "$command" == "null" ]]; then
-            log_info "Profile $name missing agent.command"
+            log_info "Profile $name missing command"
             ((missing++))
         fi
     done

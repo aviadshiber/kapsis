@@ -104,16 +104,16 @@ test_profile_has_required_fields() {
         local name
         name=$(basename "$profile")
 
-        # Check for agent.command field
+        # Check for command field
         local command
-        command=$(yq '.agent.command // ""' "$profile")
+        command=$(yq '.command // ""' "$profile")
         if [[ -z "$command" || "$command" == "null" ]]; then
-            log_fail "Profile $name missing agent.command"
+            log_fail "Profile $name missing command"
             ((missing_fields++))
         fi
     done
 
-    assert_equals 0 "$missing_fields" "All profiles should have agent.command"
+    assert_equals 0 "$missing_fields" "All profiles should have command"
 }
 
 test_profile_shortcut_works() {
