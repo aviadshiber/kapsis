@@ -30,7 +30,7 @@ get_tests_for_category() {
     local category="$1"
     case "$category" in
         agent)
-            echo "test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh"
+            echo "test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-agent-config-mounts.sh test-agent-image-build.sh"
             ;;
         validation)
             echo "test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-preflight-check.sh"
@@ -42,10 +42,10 @@ get_tests_for_category() {
             echo "test-cow-isolation.sh test-host-unchanged.sh"
             ;;
         maven)
-            echo "test-maven-snapshot-block.sh test-maven-auth.sh"
+            echo "test-maven-snapshot-block.sh test-maven-auth.sh test-gradle-cache-isolation.sh"
             ;;
         security)
-            echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh test-ssh-keychain.sh"
+            echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh test-ssh-keychain.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh"
             ;;
         git)
             echo "test-git-new-branch.sh test-git-auto-commit-push.sh test-worktree-isolation.sh test-push-verification.sh"
@@ -66,7 +66,7 @@ ALL_CATEGORIES="agent validation status filesystem maven security git cleanup in
 
 # Quick tests (no container required)
 # These tests either don't need a container or gracefully skip container-dependent tests
-QUICK_TESTS="test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-status-reporting.sh test-preflight-check.sh test-push-verification.sh test-ssh-keychain.sh"
+QUICK_TESTS="test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-status-reporting.sh test-preflight-check.sh test-push-verification.sh test-ssh-keychain.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-agent-config-mounts.sh test-gradle-cache-isolation.sh test-agent-image-build.sh"
 
 #===============================================================================
 # ARGUMENT PARSING

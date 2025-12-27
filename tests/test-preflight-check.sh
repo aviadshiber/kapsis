@@ -309,7 +309,7 @@ test_image_check_existing() {
 
     # Use an image we know exists from test prerequisites
     local result=0
-    if podman image exists $KAPSIS_TEST_IMAGE 2>/dev/null; then
+    if podman image exists "$KAPSIS_TEST_IMAGE" 2>/dev/null; then
         check_images "$KAPSIS_TEST_IMAGE" || result=$?
         assert_equals 0 "$result" "Existing image should pass"
     else
@@ -351,7 +351,7 @@ test_preflight_full_pass() {
     fi
 
     # Skip if image not built
-    if ! podman image exists $KAPSIS_TEST_IMAGE 2>/dev/null; then
+    if ! podman image exists "$KAPSIS_TEST_IMAGE" 2>/dev/null; then
         skip_test "test_preflight_full_pass" "$KAPSIS_TEST_IMAGE not built"
         return 0
     fi

@@ -350,6 +350,20 @@ test_key_ttl_expiration() {
 test_fingerprint_computation() {
     log_test "SSH fingerprint computation"
 
+    # Skip if ssh-keygen is not available
+    if ! command -v ssh-keygen &>/dev/null; then
+        log_skip "ssh-keygen not available"
+        return 0
+    fi
+
+    # Test if ssh-keygen can read from stdin (not all versions support -f -)
+    local test_result
+    test_result=$(echo "test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" | ssh-keygen -lf - 2>/dev/null) || true
+    if [[ -z "$test_result" ]]; then
+        log_skip "ssh-keygen does not support reading from stdin"
+        return 0
+    fi
+
     source "$SSH_KEYCHAIN_SCRIPT"
 
     # Test with a known SSH key (ed25519 test key)
@@ -364,6 +378,20 @@ test_fingerprint_computation() {
 
 test_verify_key_mismatch_detection() {
     log_test "Key verification detects fingerprint mismatch"
+
+    # Skip if ssh-keygen cannot compute fingerprints
+    if ! command -v ssh-keygen &>/dev/null; then
+        log_skip "ssh-keygen not available"
+        return 0
+    fi
+
+    # Test if ssh-keygen can read from stdin
+    local test_fp
+    test_fp=$(echo "test ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl" | ssh-keygen -lf - 2>/dev/null | awk '{print $2}') || true
+    if [[ -z "$test_fp" ]]; then
+        log_skip "ssh-keygen cannot compute fingerprints from stdin"
+        return 0
+    fi
 
     setup_test_environment
 

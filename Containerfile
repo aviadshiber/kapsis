@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     zip \
     ca-certificates \
     gnupg \
+    openssh-client \
     # Development tools
     build-essential \
     # Search tools

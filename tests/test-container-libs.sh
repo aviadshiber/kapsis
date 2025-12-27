@@ -182,7 +182,7 @@ test_entrypoint_with_status_env() {
         -e KAPSIS_SANDBOX_MODE="worktree" \
         -e KAPSIS_STATUS_DIR="/tmp/status" \
         -e KAPSIS_STATUS_ENABLED="true" \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         bash -c "mkdir -p /tmp/status && echo 'Entrypoint completed successfully'" 2>&1) || exit_code=$?
 
     cleanup_container_test
@@ -214,7 +214,7 @@ test_entrypoint_status_file_created() {
         -e KAPSIS_SANDBOX_MODE="worktree" \
         -e KAPSIS_STATUS_DIR="/kapsis-status" \
         -e KAPSIS_STATUS_ENABLED="true" \
-        $KAPSIS_TEST_IMAGE \
+        "$KAPSIS_TEST_IMAGE" \
         bash -c "cat /kapsis-status/kapsis-filetest-7.json 2>/dev/null || echo 'NO_FILE'" 2>&1) || true
 
     # Cleanup volume

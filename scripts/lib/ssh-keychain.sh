@@ -344,6 +344,12 @@ ssh_verify_key() {
 
         actual_fp=$(ssh_compute_fingerprint "$key_line")
 
+        # Skip if fingerprint computation failed (empty result)
+        if [[ -z "$actual_fp" ]]; then
+            echo "WARNING: Could not compute fingerprint for key" >&2
+            continue
+        fi
+
         # Check if fingerprint matches any official one
         if echo "$official_fps" | grep -qF "${actual_fp#SHA256:}"; then
             return 0  # Match found
