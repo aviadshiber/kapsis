@@ -147,115 +147,97 @@
                 <i class="fa-solid fa-download text-kapsis-neon mr-3"></i> Installation
             </h2>
 
-            <!-- Quick Install -->
-            <div class="mb-12">
-                <h3 class="text-xl font-semibold text-white mb-4 flex items-center">
-                    <i class="fa-solid fa-bolt text-yellow-400 mr-2"></i> Quick Install (Recommended)
-                </h3>
-                <div class="code-block p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
-                    <button onclick="copyToClipboard('quick-install-code')" class="absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                        <i class="fa-regular fa-copy"></i>
+            <!-- Tabbed Installation -->
+            <div class="mb-10">
+                <!-- Tab Buttons -->
+                <div class="flex flex-wrap gap-2 mb-6">
+                    <button onclick="switchInstallTab('homebrew')" id="install-tab-homebrew" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-kapsis-neon text-slate-900 transition-all">
+                        <i class="fa-brands fa-apple mr-1"></i><i class="fa-brands fa-linux mr-2"></i>Homebrew
                     </button>
-                    <pre id="quick-install-code" class="text-kapsis-neon">curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash</pre>
+                    <button onclick="switchInstallTab('apt')" id="install-tab-apt" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-brands fa-ubuntu mr-1"></i><i class="fa-brands fa-debian mr-2"></i>APT
+                    </button>
+                    <button onclick="switchInstallTab('dnf')" id="install-tab-dnf" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-brands fa-fedora mr-1"></i><i class="fa-brands fa-redhat mr-2"></i>DNF
+                    </button>
+                    <button onclick="switchInstallTab('script')" id="install-tab-script" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-solid fa-terminal mr-2"></i>Script
+                    </button>
+                    <button onclick="switchInstallTab('manual')" id="install-tab-manual" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-solid fa-code-branch mr-2"></i>Git Clone
+                    </button>
                 </div>
-                <p class="text-xs text-slate-500 mt-2">Installs to ~/.local and adds kapsis to your PATH automatically.</p>
-            </div>
 
-            <!-- Package Managers -->
-            <div class="mb-12">
-                <h3 class="text-xl font-semibold text-white mb-6 flex items-center">
-                    <i class="fa-solid fa-box text-kapsis-neon mr-2"></i> Package Managers
-                </h3>
-                <div class="grid md:grid-cols-3 gap-6">
+                <!-- Tab Contents -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
                     <!-- Homebrew -->
-                    <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
-                        <div class="flex items-center mb-3">
-                            <i class="fa-brands fa-apple text-slate-400 text-xl mr-2"></i>
-                            <i class="fa-brands fa-linux text-slate-400 text-xl mr-3"></i>
-                            <span class="text-white font-bold">Homebrew</span>
+                    <div id="install-content-homebrew" class="install-content">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-kapsis-neon border border-kapsis-neon px-2 py-0.5 rounded">RECOMMENDED</span>
+                            <span class="text-xs text-slate-500">macOS & Linux</span>
                         </div>
-                        <div class="code-block p-3 rounded text-xs font-mono space-y-1">
-                            <div class="text-slate-500"># Add tap & install</div>
-                            <div class="text-blue-300">brew tap aviadshiber/kapsis</div>
-                            <div class="text-blue-300">brew install kapsis</div>
+                        <div class="code-block p-4 rounded-lg font-mono text-sm">
+                            <pre class="text-blue-300">brew tap aviadshiber/kapsis && brew install kapsis</pre>
                         </div>
-                        <p class="text-xs text-slate-500 mt-3">macOS and Linux</p>
                     </div>
 
-                    <!-- Debian/Ubuntu -->
-                    <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
-                        <div class="flex items-center mb-3">
-                            <i class="fa-brands fa-ubuntu text-orange-500 text-xl mr-2"></i>
-                            <i class="fa-brands fa-debian text-red-500 text-xl mr-3"></i>
-                            <span class="text-white font-bold">APT</span>
+                    <!-- APT -->
+                    <div id="install-content-apt" class="install-content hidden">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">Download from <a href="https://github.com/aviadshiber/kapsis/releases" class="text-kapsis-neon hover:underline">releases</a></span>
+                            <span class="text-xs text-slate-500">Debian, Ubuntu, Mint</span>
                         </div>
-                        <div class="code-block p-3 rounded text-xs font-mono space-y-1">
-                            <div class="text-slate-500"># Download from releases</div>
-                            <div class="text-blue-300">sudo dpkg -i kapsis_*.deb</div>
-                            <div class="text-blue-300">sudo apt-get install -f</div>
+                        <div class="code-block p-4 rounded-lg font-mono text-sm">
+                            <pre class="text-blue-300">sudo dpkg -i kapsis_*.deb && sudo apt-get install -f</pre>
                         </div>
-                        <p class="text-xs text-slate-500 mt-3">Debian, Ubuntu, Mint</p>
                     </div>
 
-                    <!-- Fedora/RHEL -->
-                    <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
-                        <div class="flex items-center mb-3">
-                            <i class="fa-brands fa-fedora text-blue-400 text-xl mr-2"></i>
-                            <i class="fa-brands fa-redhat text-red-600 text-xl mr-3"></i>
-                            <span class="text-white font-bold">DNF / YUM</span>
+                    <!-- DNF -->
+                    <div id="install-content-dnf" class="install-content hidden">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">Download from <a href="https://github.com/aviadshiber/kapsis/releases" class="text-kapsis-neon hover:underline">releases</a></span>
+                            <span class="text-xs text-slate-500">Fedora, RHEL, CentOS</span>
                         </div>
-                        <div class="code-block p-3 rounded text-xs font-mono space-y-1">
-                            <div class="text-slate-500"># Download from releases</div>
-                            <div class="text-blue-300">sudo dnf install kapsis-*.rpm</div>
+                        <div class="code-block p-4 rounded-lg font-mono text-sm">
+                            <pre class="text-blue-300">sudo dnf install kapsis-*.rpm</pre>
                         </div>
-                        <p class="text-xs text-slate-500 mt-3">Fedora, RHEL, CentOS</p>
+                    </div>
+
+                    <!-- Script -->
+                    <div id="install-content-script" class="install-content hidden">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">For systems without a package manager</span>
+                            <span class="text-xs text-slate-500">Installs to ~/.local</span>
+                        </div>
+                        <div class="code-block p-4 rounded-lg font-mono text-sm">
+                            <pre class="text-kapsis-neon">curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash</pre>
+                        </div>
+                    </div>
+
+                    <!-- Manual -->
+                    <div id="install-content-manual" class="install-content hidden">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">Clone and run setup</span>
+                            <span class="text-xs text-slate-500">Auto-installs dependencies</span>
+                        </div>
+                        <div class="code-block p-4 rounded-lg font-mono text-sm space-y-2">
+                            <pre class="text-blue-300">git clone https://github.com/aviadshiber/kapsis.git</pre>
+                            <pre class="text-blue-300">cd kapsis && ./setup.sh --all</pre>
+                        </div>
+                    </div>
+
+                    <!-- Post-install note -->
+                    <div class="mt-4 pt-4 border-t border-slate-700 text-xs text-slate-500">
+                        <strong class="text-slate-400">Post-install:</strong> Run <code class="bg-slate-700 px-1 rounded">kapsis-setup --build</code> to build the container image.
                     </div>
                 </div>
             </div>
 
-            <div class="grid md:grid-cols-2 gap-8">
-                <!-- Requirements -->
-                <div class="space-y-6">
-                    <div>
-                        <h3 class="text-lg font-semibold text-white mb-2">System Requirements</h3>
-                        <ul class="space-y-2 text-slate-400">
-                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>macOS</strong> (Apple Silicon) or <strong>Linux</strong></span></li>
-                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>Git</strong> 2.0+ installed</span></li>
-                            <li class="flex items-center"><i class="fa-solid fa-check text-kapsis-neon w-6"></i> <span><strong>Podman</strong> 4.0+ (or installed by setup)</span></li>
-                        </ul>
-                    </div>
-                    <div>
-                        <h3 class="text-lg font-semibold text-white mb-2">Post-Install</h3>
-                        <div class="code-block p-3 rounded text-sm font-mono text-blue-300">
-                            kapsis-setup --build
-                        </div>
-                        <p class="text-xs text-slate-500 mt-2">Builds the container image (required once after install).</p>
-                    </div>
-                </div>
-
-                <!-- Manual Setup Steps -->
-                <div>
-                    <h3 class="text-lg font-semibold text-white mb-4">Manual Install (Alternative)</h3>
-                    <div class="relative pl-8 border-l border-slate-700 space-y-8">
-
-                        <!-- Step 1 -->
-                        <div class="relative">
-                            <span class="absolute -left-[41px] bg-slate-800 border border-slate-600 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white">1</span>
-                            <p class="text-slate-300 mb-2">Clone the repository</p>
-                            <div class="code-block p-3 rounded text-sm font-mono text-blue-300">git clone https://github.com/aviadshiber/kapsis.git</div>
-                        </div>
-
-                        <!-- Step 2 -->
-                        <div class="relative">
-                            <span class="absolute -left-[41px] bg-slate-800 border border-slate-600 w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold text-white">2</span>
-                            <p class="text-slate-300 mb-2">Run the setup script</p>
-                            <div class="code-block p-3 rounded text-sm font-mono text-blue-300">
-                                cd kapsis && ./setup.sh --all
-                            </div>
-                            <p class="text-xs text-slate-500 mt-2">Installs Podman, builds image, verifies dependencies.</p>
-                        </div>
-                    </div>
-                </div>
+            <!-- Requirements (compact) -->
+            <div class="flex flex-wrap gap-6 text-sm text-slate-400">
+                <span><i class="fa-solid fa-check text-kapsis-neon mr-2"></i><strong>macOS</strong> (Apple Silicon) or <strong>Linux</strong></span>
+                <span><i class="fa-solid fa-check text-kapsis-neon mr-2"></i><strong>Git</strong> 2.0+</span>
+                <span><i class="fa-solid fa-check text-kapsis-neon mr-2"></i><strong>Podman</strong> 4.0+ <span class="text-slate-500">(auto-installed by setup)</span></span>
             </div>
         </div>
     </section>
@@ -592,6 +574,18 @@ filesystem:
 
     <!-- Scripts -->
     <script>
+        function switchInstallTab(tabName) {
+            // Hide all contents
+            document.querySelectorAll('.install-content').forEach(el => el.classList.add('hidden'));
+            // Reset all tabs
+            document.querySelectorAll('.install-tab').forEach(el => {
+                el.className = 'install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all';
+            });
+            // Show selected content and highlight tab
+            document.getElementById('install-content-' + tabName).classList.remove('hidden');
+            document.getElementById('install-tab-' + tabName).className = 'install-tab px-4 py-2 rounded-lg text-sm font-medium bg-kapsis-neon text-slate-900 transition-all';
+        }
+
         function switchDocTab(tabName) {
             // Hide all contents
             document.getElementById('doc-content-claude').classList.add('hidden');
