@@ -225,10 +225,12 @@ check_podman() {
     fi
 }
 
-# Cleanup
+# Cleanup - removes the temp directory containing extracted source
 cleanup() {
-    local tmpdir="$1"
-    if [[ -d "$tmpdir" ]]; then
+    local src_dir="$1"
+    local tmpdir
+    tmpdir=$(dirname "$src_dir")
+    if [[ -d "$tmpdir" && "$tmpdir" == /tmp/* ]]; then
         rm -rf "$tmpdir"
     fi
 }
@@ -262,6 +264,7 @@ main() {
     # Download
     local src_dir
     src_dir=$(download_release "$version")
+    # shellcheck disable=SC2064  # Intentional: expand src_dir now to capture value
     trap "cleanup '$src_dir'" EXIT
 
     # Install
