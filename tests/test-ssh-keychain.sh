@@ -350,6 +350,12 @@ test_key_ttl_expiration() {
 test_fingerprint_computation() {
     log_test "SSH fingerprint computation"
 
+    # Skip if ssh-keygen is not available
+    if ! command -v ssh-keygen &>/dev/null; then
+        log_skip "ssh-keygen not available"
+        return 0
+    fi
+
     source "$SSH_KEYCHAIN_SCRIPT"
 
     # Test with a known SSH key (ed25519 test key)
