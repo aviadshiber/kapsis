@@ -192,11 +192,25 @@ jobs:
         with:
           path: packages
 
-      - name: Generate checksums
+      - name: Download existing checksums and append package checksums
         run: |
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          TAG="${{ needs.determine-version.outputs.tag }}"
+
+          # Download existing checksums.sha256 from the release
+          curl -fsSL "https://github.com/${{ github.repository }}/releases/download/${TAG}/checksums.sha256" -o checksums.sha256 || echo "# Checksums for Kapsis ${TAG}" > checksums.sha256
+
+          # Append package checksums
           cd packages
-          find . -type f \( -name "*.deb" -o -name "*.rpm" \) -exec sha256sum {} \; > package-checksums.sha256
-          cat package-checksums.sha256
+          find . -type f \( -name "*.deb" -o -name "*.rpm" \) | while read -r file; do
+            # Get just the filename without path prefix
+            filename=$(basename "$file")
+            sha256sum "$file" | sed "s|.*/||" >> ../checksums.sha256
+          done
+          cd ..
+
+          echo "Updated checksums.sha256:"
+          cat checksums.sha256
 
       - name: Upload to release
         uses: softprops/action-gh-release@v2
@@ -206,7 +220,7 @@ jobs:
             packages/deb-package/*.deb
             packages/rpm-package/*.rpm
             packages/homebrew-formula/kapsis.rb
-            packages/package-checksums.sha256
+            checksums.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
