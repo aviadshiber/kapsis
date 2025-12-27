@@ -48,18 +48,19 @@ brew install kapsis
 
 **Debian/Ubuntu:**
 ```bash
-# Download from releases page
-sudo dpkg -i kapsis_VERSION-1_all.deb
-sudo apt-get install -f
+# Download from https://github.com/aviadshiber/kapsis/releases
+sudo apt install ./kapsis_VERSION-1_all.deb
 ```
 
 **Fedora/RHEL:**
 ```bash
-# Download from releases page
-sudo dnf install kapsis-VERSION-1.noarch.rpm
+# Download from https://github.com/aviadshiber/kapsis/releases
+sudo dnf install ./kapsis-VERSION-1.noarch.rpm
 ```
 
-See [docs/INSTALL.md](docs/INSTALL.md) for detailed installation instructions.
+> **Security:** Verify downloads using the `checksums.sha256` file included with each release.
+
+See [docs/INSTALL.md](docs/INSTALL.md) for detailed installation instructions including checksum verification.
 
 ## Quick Start
 

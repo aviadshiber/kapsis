@@ -190,9 +190,8 @@
                             <span class="text-white font-bold">APT</span>
                         </div>
                         <div class="code-block p-3 rounded text-xs font-mono space-y-1">
-                            <div class="text-slate-500"># Download from releases</div>
-                            <div class="text-blue-300">sudo dpkg -i kapsis_*.deb</div>
-                            <div class="text-blue-300">sudo apt-get install -f</div>
+                            <div class="text-slate-500"># Download from <a href="https://github.com/aviadshiber/kapsis/releases" class="text-kapsis-neon hover:underline">releases</a></div>
+                            <div class="text-blue-300">sudo apt install ./kapsis_1.0.0-1_all.deb</div>
                         </div>
                         <p class="text-xs text-slate-500 mt-3">Debian, Ubuntu, Mint</p>
                     </div>
@@ -205,10 +204,20 @@
                             <span class="text-white font-bold">DNF / YUM</span>
                         </div>
                         <div class="code-block p-3 rounded text-xs font-mono space-y-1">
-                            <div class="text-slate-500"># Download from releases</div>
-                            <div class="text-blue-300">sudo dnf install kapsis-*.rpm</div>
+                            <div class="text-slate-500"># Download from <a href="https://github.com/aviadshiber/kapsis/releases" class="text-kapsis-neon hover:underline">releases</a></div>
+                            <div class="text-blue-300">sudo dnf install ./kapsis-1.0.0-1.noarch.rpm</div>
                         </div>
                         <p class="text-xs text-slate-500 mt-3">Fedora, RHEL, CentOS</p>
+                    </div>
+                </div>
+
+                <!-- Security Note -->
+                <div class="mt-6 bg-slate-900/50 border border-slate-700 rounded-lg p-4 flex items-start">
+                    <i class="fa-solid fa-shield-halved text-kapsis-neon mt-1 mr-3"></i>
+                    <div class="text-sm">
+                        <span class="text-white font-semibold">Verify downloads:</span>
+                        <span class="text-slate-400"> Each release includes <code class="bg-slate-800 px-1 rounded">checksums.sha256</code> for integrity verification.</span>
+                        <a href="https://github.com/aviadshiber/kapsis/releases" class="text-kapsis-neon hover:underline ml-1">View releases →</a>
                     </div>
                 </div>
             </div>
