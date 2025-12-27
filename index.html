@@ -49,37 +49,115 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #475569;
         }
+        /* Mobile menu */
+        .mobile-menu {
+            transform: translateX(100%);
+            transition: transform 0.3s ease-in-out;
+        }
+        .mobile-menu.open {
+            transform: translateX(0);
+        }
+        /* Copy button visibility on touch devices */
+        @media (hover: none) and (pointer: coarse) {
+            .copy-btn {
+                opacity: 1 !important;
+            }
+        }
+        /* Scroll indicator for overflowing code blocks */
+        .code-scroll-container {
+            position: relative;
+        }
+        .code-scroll-container::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 30px;
+            background: linear-gradient(to right, transparent, #0d1117);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .code-scroll-container.has-overflow::after {
+            opacity: 1;
+        }
+        /* Toast notification */
+        .toast {
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease-in-out;
+        }
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
     </style>
 </head>
 <body class="bg-kapsis-dark text-slate-300 font-sans antialiased selection:bg-kapsis-neon selection:text-white">
 
+    <!-- Skip to main content (accessibility) -->
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100] focus:bg-kapsis-neon focus:text-slate-900 focus:px-4 focus:py-2 focus:rounded-lg focus:font-medium">
+        Skip to main content
+    </a>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-kapsis-neon text-slate-900 px-4 py-2 rounded-lg font-medium shadow-lg flex items-center gap-2">
+        <i class="fa-solid fa-check"></i>
+        <span id="toast-message">Copied to clipboard!</span>
+    </div>
+
     <!-- Navigation -->
-    <nav class="fixed w-full z-50 bg-kapsis-dark/90 backdrop-blur-md border-b border-slate-800">
+    <nav class="fixed w-full z-50 bg-kapsis-dark/90 backdrop-blur-md border-b border-slate-800" role="navigation" aria-label="Main navigation">
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
             <div class="flex items-center justify-between h-16">
                 <div class="flex items-center gap-3">
-                    <i class="fa-solid fa-box-open text-kapsis-neon text-2xl"></i>
+                    <i class="fa-solid fa-box-open text-kapsis-neon text-2xl" aria-hidden="true"></i>
                     <span class="text-white text-xl font-bold tracking-wider">KAPSIS <span class="text-xs text-kapsis-beta ml-1 border border-kapsis-beta px-1 rounded uppercase">Beta</span></span>
                 </div>
                 <div class="hidden md:block">
-                    <div class="ml-10 flex items-baseline space-x-6">
-                        <a href="#install" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Install</a>
-                        <a href="#yolo" class="text-kapsis-danger hover:text-red-400 transition-colors px-3 py-2 rounded-md text-sm font-bold"><i class="fa-solid fa-biohazard mr-1"></i> YOLO Mode</a>
-                        <a href="#security" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium"><i class="fa-solid fa-shield-halved mr-1"></i> Security</a>
-                        <a href="#docs" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Docs & Profiles</a>
-                        <a href="#quickstart" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Quick Start</a>
+                    <div class="ml-10 flex items-baseline space-x-6" role="menubar">
+                        <a href="#install" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Install</a>
+                        <a href="#yolo" role="menuitem" class="text-kapsis-danger hover:text-red-400 transition-colors px-3 py-2 rounded-md text-sm font-bold"><i class="fa-solid fa-biohazard mr-1" aria-hidden="true"></i> YOLO Mode</a>
+                        <a href="#security" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium"><i class="fa-solid fa-shield-halved mr-1" aria-hidden="true"></i> Security</a>
+                        <a href="#docs" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Docs & Profiles</a>
+                        <a href="#quickstart" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Quick Start</a>
                     </div>
                 </div>
-                <div>
+                <div class="flex items-center gap-3">
                     <a href="https://github.com/aviadshiber/kapsis" target="_blank" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all border border-slate-700">
-                        <i class="fa-brands fa-github mr-2"></i> GitHub
+                        <i class="fa-brands fa-github mr-2" aria-hidden="true"></i><span class="hidden sm:inline">GitHub</span>
                     </a>
+                    <!-- Mobile menu button -->
+                    <button onclick="toggleMobileMenu()" class="md:hidden p-2 text-slate-400 hover:text-white transition-colors" aria-label="Toggle mobile menu" aria-expanded="false" aria-controls="mobile-menu">
+                        <i class="fa-solid fa-bars text-xl" id="mobile-menu-icon"></i>
+                    </button>
                 </div>
             </div>
         </div>
     </nav>
 
+    <!-- Mobile menu overlay -->
+    <div id="mobile-menu" class="mobile-menu fixed inset-y-0 right-0 z-[60] w-64 bg-kapsis-dark border-l border-slate-800 md:hidden" aria-hidden="true">
+        <div class="p-6">
+            <button onclick="toggleMobileMenu()" class="absolute top-4 right-4 p-2 text-slate-400 hover:text-white" aria-label="Close menu">
+                <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+            <nav class="mt-8 flex flex-col space-y-4" role="menu">
+                <a href="#install" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Install</a>
+                <a href="#yolo" onclick="toggleMobileMenu()" role="menuitem" class="text-kapsis-danger hover:text-red-400 transition-colors py-2 text-lg font-bold"><i class="fa-solid fa-biohazard mr-2" aria-hidden="true"></i>YOLO Mode</a>
+                <a href="#security" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium"><i class="fa-solid fa-shield-halved mr-2" aria-hidden="true"></i>Security</a>
+                <a href="#docs" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Docs & Profiles</a>
+                <a href="#quickstart" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Quick Start</a>
+                <hr class="border-slate-700 my-2">
+                <a href="https://github.com/aviadshiber/kapsis" target="_blank" class="text-slate-300 hover:text-white transition-colors py-2 text-lg font-medium"><i class="fa-brands fa-github mr-2" aria-hidden="true"></i>GitHub</a>
+            </nav>
+        </div>
+    </div>
+    <div id="mobile-menu-backdrop" onclick="toggleMobileMenu()" class="fixed inset-0 bg-black/50 z-[55] hidden md:hidden"></div>
+
     <!-- Hero Section -->
+    <main id="main-content">
     <section class="pt-32 pb-20 relative overflow-hidden">
         <!-- Background Grid Effect -->
         <div class="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
@@ -150,91 +228,91 @@
             <!-- Tabbed Installation -->
             <div class="mb-10">
                 <!-- Tab Buttons -->
-                <div class="flex flex-wrap gap-2 mb-6">
-                    <button onclick="switchInstallTab('homebrew')" id="install-tab-homebrew" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-kapsis-neon text-slate-900 transition-all">
-                        <i class="fa-brands fa-apple mr-1"></i><i class="fa-brands fa-linux mr-2"></i>Homebrew
+                <div class="flex flex-wrap gap-2 mb-6" role="tablist" aria-label="Installation methods">
+                    <button onclick="switchInstallTab('homebrew')" id="install-tab-homebrew" role="tab" aria-selected="true" aria-controls="install-content-homebrew" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-kapsis-neon text-slate-900 transition-all">
+                        <i class="fa-brands fa-apple mr-1" aria-hidden="true"></i><i class="fa-brands fa-linux mr-2" aria-hidden="true"></i>Homebrew
                     </button>
-                    <button onclick="switchInstallTab('apt')" id="install-tab-apt" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
-                        <i class="fa-brands fa-ubuntu mr-1"></i><i class="fa-brands fa-debian mr-2"></i>APT
+                    <button onclick="switchInstallTab('apt')" id="install-tab-apt" role="tab" aria-selected="false" aria-controls="install-content-apt" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-brands fa-ubuntu mr-1" aria-hidden="true"></i><i class="fa-brands fa-debian mr-2" aria-hidden="true"></i>APT
                     </button>
-                    <button onclick="switchInstallTab('dnf')" id="install-tab-dnf" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
-                        <i class="fa-brands fa-fedora mr-1"></i><i class="fa-brands fa-redhat mr-2"></i>DNF
+                    <button onclick="switchInstallTab('dnf')" id="install-tab-dnf" role="tab" aria-selected="false" aria-controls="install-content-dnf" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-brands fa-fedora mr-1" aria-hidden="true"></i><i class="fa-brands fa-redhat mr-2" aria-hidden="true"></i>DNF
                     </button>
-                    <button onclick="switchInstallTab('script')" id="install-tab-script" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
-                        <i class="fa-solid fa-terminal mr-2"></i>Script
+                    <button onclick="switchInstallTab('script')" id="install-tab-script" role="tab" aria-selected="false" aria-controls="install-content-script" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-solid fa-terminal mr-2" aria-hidden="true"></i>Script
                     </button>
-                    <button onclick="switchInstallTab('manual')" id="install-tab-manual" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
-                        <i class="fa-solid fa-code-branch mr-2"></i>Git Clone
+                    <button onclick="switchInstallTab('manual')" id="install-tab-manual" role="tab" aria-selected="false" aria-controls="install-content-manual" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-solid fa-code-branch mr-2" aria-hidden="true"></i>Git Clone
                     </button>
                 </div>
 
                 <!-- Tab Contents -->
                 <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
                     <!-- Homebrew -->
-                    <div id="install-content-homebrew" class="install-content">
+                    <div id="install-content-homebrew" class="install-content" role="tabpanel" aria-labelledby="install-tab-homebrew">
                         <div class="flex items-center justify-between mb-4">
                             <span class="text-xs text-kapsis-neon border border-kapsis-neon px-2 py-0.5 rounded">RECOMMENDED</span>
                             <span class="text-xs text-slate-500">macOS & Linux</span>
                         </div>
-                        <div class="code-block p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
-                            <button onclick="copyInstallCmd('homebrew')" class="absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                                <i class="fa-regular fa-copy"></i>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                            <button onclick="copyCode('cmd-homebrew')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy Homebrew install command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
                             <pre id="cmd-homebrew" class="text-blue-300 whitespace-pre overflow-x-auto">brew tap aviadshiber/kapsis && brew install kapsis</pre>
                         </div>
                     </div>
 
                     <!-- APT -->
-                    <div id="install-content-apt" class="install-content hidden">
+                    <div id="install-content-apt" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-apt">
                         <div class="flex items-center justify-between mb-4">
                             <span class="text-xs text-slate-400">Download from <a href="https://github.com/aviadshiber/kapsis/releases" class="text-kapsis-neon hover:underline">releases</a></span>
                             <span class="text-xs text-slate-500">Debian, Ubuntu, Mint</span>
                         </div>
-                        <div class="code-block p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
-                            <button onclick="copyInstallCmd('apt')" class="absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                                <i class="fa-regular fa-copy"></i>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                            <button onclick="copyCode('cmd-apt')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy APT install command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
                             <pre id="cmd-apt" class="text-blue-300 whitespace-pre overflow-x-auto">sudo dpkg -i kapsis_*.deb && sudo apt-get install -f</pre>
                         </div>
                     </div>
 
                     <!-- DNF -->
-                    <div id="install-content-dnf" class="install-content hidden">
+                    <div id="install-content-dnf" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-dnf">
                         <div class="flex items-center justify-between mb-4">
                             <span class="text-xs text-slate-400">Download from <a href="https://github.com/aviadshiber/kapsis/releases" class="text-kapsis-neon hover:underline">releases</a></span>
                             <span class="text-xs text-slate-500">Fedora, RHEL, CentOS</span>
                         </div>
-                        <div class="code-block p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
-                            <button onclick="copyInstallCmd('dnf')" class="absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                                <i class="fa-regular fa-copy"></i>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                            <button onclick="copyCode('cmd-dnf')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy DNF install command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
                             <pre id="cmd-dnf" class="text-blue-300 whitespace-pre overflow-x-auto">sudo dnf install kapsis-*.rpm</pre>
                         </div>
                     </div>
 
                     <!-- Script -->
-                    <div id="install-content-script" class="install-content hidden">
+                    <div id="install-content-script" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-script">
                         <div class="flex items-center justify-between mb-4">
                             <span class="text-xs text-slate-400">For systems without a package manager</span>
                             <span class="text-xs text-slate-500">Installs to ~/.local</span>
                         </div>
-                        <div class="code-block p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
-                            <button onclick="copyInstallCmd('script')" class="absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                                <i class="fa-regular fa-copy"></i>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                            <button onclick="copyCode('cmd-script')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy install script command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
                             <pre id="cmd-script" class="text-kapsis-neon whitespace-pre overflow-x-auto">curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash</pre>
                         </div>
                     </div>
 
                     <!-- Manual -->
-                    <div id="install-content-manual" class="install-content hidden">
+                    <div id="install-content-manual" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-manual">
                         <div class="flex items-center justify-between mb-4">
                             <span class="text-xs text-slate-400">Clone and run setup</span>
                             <span class="text-xs text-slate-500">Auto-installs dependencies</span>
                         </div>
-                        <div class="code-block p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
-                            <button onclick="copyInstallCmd('manual')" class="absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                                <i class="fa-regular fa-copy"></i>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                            <button onclick="copyCode('cmd-manual')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy git clone command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
                             <pre id="cmd-manual" class="text-blue-300 whitespace-pre overflow-x-auto">git clone https://github.com/aviadshiber/kapsis.git && cd kapsis && ./setup.sh --all</pre>
                         </div>
@@ -519,9 +597,9 @@ filesystem:
                 <!-- Launch Command -->
                 <div>
                     <p class="text-slate-400 mb-4 text-center">Once installed, launch an agent by specifying an ID, the project path, and the config profile.</p>
-                    <div class="code-block rounded-lg p-6 font-mono text-sm text-slate-300 overflow-x-auto relative group shadow-lg border-l-4 border-kapsis-neon">
-                        <button onclick="copyToClipboard('launch-code')" class="absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity">
-                            <i class="fa-regular fa-copy"></i>
+                    <div class="code-block code-scroll-container rounded-lg p-6 font-mono text-sm text-slate-300 overflow-x-auto relative group shadow-lg border-l-4 border-kapsis-neon">
+                        <button onclick="copyCode('launch-code')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy launch command">
+                            <i class="fa-regular fa-copy" aria-hidden="true"></i>
                         </button>
                         <div class="text-slate-500 mb-2"># Syntax: ./scripts/launch-agent.sh [ID] [PROJECT_PATH] [FLAGS]</div>
                         <pre id="launch-code">./scripts/launch-agent.sh 1 ~/my-project \
@@ -557,6 +635,7 @@ filesystem:
             </div>
         </div>
     </section>
+    </main>
 
     <!-- Footer -->
     <footer class="bg-kapsis-dark border-t border-slate-800 py-12">
@@ -588,50 +667,145 @@ filesystem:
 
     <!-- Scripts -->
     <script>
-        function switchInstallTab(tabName) {
-            // Hide all contents
-            document.querySelectorAll('.install-content').forEach(el => el.classList.add('hidden'));
-            // Reset all tabs
-            document.querySelectorAll('.install-tab').forEach(el => {
-                el.className = 'install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all';
-            });
-            // Show selected content and highlight tab
-            document.getElementById('install-content-' + tabName).classList.remove('hidden');
-            document.getElementById('install-tab-' + tabName).className = 'install-tab px-4 py-2 rounded-lg text-sm font-medium bg-kapsis-neon text-slate-900 transition-all';
+        // Mobile menu toggle
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobile-menu');
+            const backdrop = document.getElementById('mobile-menu-backdrop');
+            const button = document.querySelector('[aria-controls="mobile-menu"]');
+            const icon = document.getElementById('mobile-menu-icon');
+
+            const isOpen = menu.classList.contains('open');
+
+            if (isOpen) {
+                menu.classList.remove('open');
+                backdrop.classList.add('hidden');
+                button.setAttribute('aria-expanded', 'false');
+                menu.setAttribute('aria-hidden', 'true');
+                icon.className = 'fa-solid fa-bars text-xl';
+            } else {
+                menu.classList.add('open');
+                backdrop.classList.remove('hidden');
+                button.setAttribute('aria-expanded', 'true');
+                menu.setAttribute('aria-hidden', 'false');
+                icon.className = 'fa-solid fa-xmark text-xl';
+            }
         }
 
+        // Toast notification
+        let toastTimeout;
+        function showToast(message = 'Copied to clipboard!') {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toast-message');
+
+            // Clear any existing timeout
+            if (toastTimeout) clearTimeout(toastTimeout);
+
+            toastMessage.textContent = message;
+            toast.classList.add('show');
+
+            toastTimeout = setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2000);
+        }
+
+        // Unified copy function with toast and icon feedback
+        function copyCode(elementId) {
+            const element = document.getElementById(elementId);
+            if (!element) return;
+
+            const text = element.innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                // Show toast
+                showToast();
+
+                // Also update button icon
+                const btn = event.target.closest('button');
+                if (btn) {
+                    const icon = btn.querySelector('i');
+                    if (icon) {
+                        icon.className = 'fa-solid fa-check';
+                        setTimeout(() => { icon.className = 'fa-regular fa-copy'; }, 1500);
+                    }
+                }
+            }).catch(err => {
+                showToast('Failed to copy');
+            });
+        }
+
+        // Install tab switching with accessibility
+        function switchInstallTab(tabName) {
+            // Hide all contents and update aria-selected
+            document.querySelectorAll('.install-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.install-tab').forEach(el => {
+                el.className = 'install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all';
+                el.setAttribute('aria-selected', 'false');
+            });
+
+            // Show selected content and highlight tab
+            document.getElementById('install-content-' + tabName).classList.remove('hidden');
+            const activeTab = document.getElementById('install-tab-' + tabName);
+            activeTab.className = 'install-tab px-4 py-2 rounded-lg text-sm font-medium bg-kapsis-neon text-slate-900 transition-all';
+            activeTab.setAttribute('aria-selected', 'true');
+        }
+
+        // Doc tab switching
         function switchDocTab(tabName) {
-            // Hide all contents
             document.getElementById('doc-content-claude').classList.add('hidden');
             document.getElementById('doc-content-aider').classList.add('hidden');
 
-            // Reset buttons
             document.getElementById('doc-tab-claude').className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 border-r border-slate-700 transition-colors";
             document.getElementById('doc-tab-aider').className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 transition-colors";
 
-            // Activate
             document.getElementById('doc-content-' + tabName).classList.remove('hidden');
             const activeBtn = document.getElementById('doc-tab-' + tabName);
             activeBtn.className = "flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white " + (tabName === 'claude' ? "border-r border-slate-700" : "");
         }
 
-        function copyToClipboard(elementId) {
-            const text = document.getElementById(elementId).innerText;
-            navigator.clipboard.writeText(text).then(() => {
-                alert('Copied to clipboard!');
+        // Check for horizontal scroll overflow and add indicator
+        function checkScrollOverflow() {
+            document.querySelectorAll('.code-scroll-container').forEach(container => {
+                const pre = container.querySelector('pre');
+                if (pre && pre.scrollWidth > container.clientWidth) {
+                    container.classList.add('has-overflow');
+                } else {
+                    container.classList.remove('has-overflow');
+                }
             });
         }
 
-        function copyInstallCmd(tabName) {
-            const text = document.getElementById('cmd-' + tabName).innerText;
-            navigator.clipboard.writeText(text).then(() => {
-                // Show brief feedback
-                const btn = event.target.closest('button');
-                const icon = btn.querySelector('i');
-                icon.className = 'fa-solid fa-check';
-                setTimeout(() => { icon.className = 'fa-regular fa-copy'; }, 1500);
-            });
-        }
+        // Keyboard navigation for install tabs
+        document.addEventListener('keydown', function(e) {
+            if (e.target.classList.contains('install-tab')) {
+                const tabs = Array.from(document.querySelectorAll('.install-tab'));
+                const currentIndex = tabs.indexOf(e.target);
+
+                if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    const nextIndex = (currentIndex + 1) % tabs.length;
+                    tabs[nextIndex].focus();
+                    tabs[nextIndex].click();
+                } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+                    tabs[prevIndex].focus();
+                    tabs[prevIndex].click();
+                }
+            }
+        });
+
+        // Close mobile menu on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const menu = document.getElementById('mobile-menu');
+                if (menu.classList.contains('open')) {
+                    toggleMobileMenu();
+                }
+            }
+        });
+
+        // Initialize on load
+        window.addEventListener('load', checkScrollOverflow);
+        window.addEventListener('resize', checkScrollOverflow);
     </script>
 </body>
 </html>
