@@ -2,30 +2,9 @@
 
 This guide covers all available methods to install Kapsis on your system.
 
-## Quick Install (Recommended)
+## Package Managers (Recommended)
 
-The fastest way to install Kapsis is using the install script:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
-```
-
-This will install Kapsis to `~/.local` and add it to your PATH.
-
-### Install Script Options
-
-```bash
-# Install specific version
-KAPSIS_VERSION=1.0.0 curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
-
-# Install to custom location
-KAPSIS_PREFIX=/opt/kapsis curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
-
-# Skip PATH modification
-KAPSIS_NO_MODIFY_PATH=1 curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
-```
-
-## Package Managers
+Using a package manager is the recommended way to install Kapsis. Package managers provide automatic updates, dependency management, and clean uninstallation.
 
 ### Homebrew (macOS and Linux)
 
@@ -88,6 +67,29 @@ sudo yum install kapsis-VERSION-1.noarch.rpm
 # Add repository (coming soon)
 sudo dnf config-manager --add-repo https://rpm.kapsis.dev/kapsis.repo
 sudo dnf install kapsis
+```
+
+## Universal Install Script
+
+For systems without a supported package manager, you can use the install script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
+```
+
+This will install Kapsis to `~/.local` and add it to your PATH.
+
+### Install Script Options
+
+```bash
+# Install specific version
+KAPSIS_VERSION=1.0.0 curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
+
+# Install to custom location
+KAPSIS_PREFIX=/opt/kapsis curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
+
+# Skip PATH modification
+KAPSIS_NO_MODIFY_PATH=1 curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
 ```
 
 ## Manual Installation
@@ -182,7 +184,7 @@ sudo apt upgrade kapsis
 sudo dnf upgrade kapsis
 ```
 
-### Install Script
+### Universal Install Script
 Re-run the install script to upgrade:
 ```bash
 curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
@@ -206,7 +208,7 @@ sudo apt remove kapsis
 sudo dnf remove kapsis
 ```
 
-### Install Script / Manual
+### Universal Install Script / Manual
 ```bash
 # Remove installed files
 rm -rf ~/.local/lib/kapsis
