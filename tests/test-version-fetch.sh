@@ -96,7 +96,8 @@ test_jq_parse_missing_tag_name() {
     local json_response='{"name": "Some Release", "draft": false}'
 
     local version
-    version=$(echo "$json_response" | jq -r '.tag_name | ltrimstr("v")')
+    # Handle null case before calling ltrimstr (which requires string input)
+    version=$(echo "$json_response" | jq -r '.tag_name | if . == null then "null" else ltrimstr("v") end')
 
     assert_equals "null" "$version" "Should return null when tag_name is missing"
 }

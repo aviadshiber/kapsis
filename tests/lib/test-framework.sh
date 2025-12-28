@@ -258,6 +258,19 @@ assert_dir_exists() {
     fi
 }
 
+# assert_dir_not_exists <path> <message>
+assert_dir_not_exists() {
+    local path="$1"
+    local message="${2:-Directory should not exist}"
+
+    if [[ ! -d "$path" ]]; then
+        return 0
+    else
+        _log_failure "$message" "Directory exists but shouldn't: $path"
+        return 1
+    fi
+}
+
 # assert_exit_code <expected> <actual> <message>
 assert_exit_code() {
     local expected="$1"
