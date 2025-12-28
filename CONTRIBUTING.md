@@ -399,10 +399,10 @@ BREAKING CHANGE: Config files must now use YAML format instead of JSON."
 | Git tag creation | ✅ Automated | Auto-release workflow |
 | GitHub Release | ✅ Automated | With auto-generated release notes |
 | Container image | ✅ Automated | Built and attached to release |
+| CHANGELOG.md | ✅ Automated | Moves `[Unreleased]` to version section |
 | Homebrew formula | ✅ Automated | Version + SHA256 updated |
 | RPM spec | ✅ Automated | Version updated |
 | Debian changelog | ✅ Automated | New entry prepended |
-| **CHANGELOG.md** | ⚠️ **Manual** | Move entries from `[Unreleased]` to version section |
 | **docs/INSTALL.md** | ⚠️ **Manual** | Update version examples if needed |
 | **README badges** | ⚠️ **Manual** | Update if version badges are used |
 
@@ -410,15 +410,11 @@ BREAKING CHANGE: Config files must now use YAML format instead of JSON."
 
 After a release is created, maintainers should:
 
-1. **Update CHANGELOG.md** (if not done in the PR):
-   - Move entries from `[Unreleased]` to the new version section
-   - Update the comparison links at the bottom
-
-2. **Review documentation** for version-specific content:
-   - `docs/INSTALL.md` - version examples
+1. **Review documentation** for version-specific content:
+   - `docs/INSTALL.md` - version examples (if hardcoded)
    - `README.md` - any hardcoded versions
 
-3. **Announce the release** (if significant):
+2. **Announce the release** (if significant):
    - Update project documentation
    - Notify users of breaking changes
 
@@ -448,4 +444,4 @@ When adding changes to your PR, update the `[Unreleased]` section in `CHANGELOG.
 - Your bug fix description
 ```
 
-> **Note:** Since `main` is protected, changelog entries remain in `[Unreleased]` until manually moved. Periodically, a maintainer should update the changelog to move entries to released version sections based on git tags.
+> **Note:** The release workflow automatically moves `[Unreleased]` content to the new version section. Just add your changes to `[Unreleased]` and the automation handles the rest.

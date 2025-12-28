@@ -295,6 +295,90 @@ jobs:
 
           echo "✓ Inputs validated: version=$VERSION, repo=$REPO"
 
+      - name: Update CHANGELOG.md
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate.outputs.version }}"
+          REPO="${{ github.repository }}"
+          CHANGELOG_FILE="CHANGELOG.md"
+          DATE=$(date -u +%Y-%m-%d)
+
+          # Check if this version already exists (idempotency)
+          if grep -q "^## \[${VERSION}\]" "$CHANGELOG_FILE"; then
+            echo "Version ${VERSION} already in CHANGELOG, skipping"
+            exit 0
+          fi
+
+          echo "Updating CHANGELOG.md for v${VERSION} (${DATE})"
+
+          # Create a temporary file for the new changelog
+          {
+            # Keep header lines (title and format description)
+            head -7 "$CHANGELOG_FILE"
+            echo ""
+
+            # Add new version section
+            echo "## [${VERSION}] - ${DATE}"
+            echo ""
+
+            # Extract content from [Unreleased] section (between ## [Unreleased] and next ## [...])
+            # Skip empty unreleased section
+            UNRELEASED_CONTENT=$(sed -n '/^## \[Unreleased\]/,/^## \[/{ /^## \[/d; p; }' "$CHANGELOG_FILE" | sed '/^$/d')
+
+            if [[ -n "$UNRELEASED_CONTENT" ]]; then
+              echo "$UNRELEASED_CONTENT"
+              echo ""
+            else
+              echo "### Changed"
+              echo "- Release v${VERSION}"
+              echo ""
+            fi
+
+            # Add empty [Unreleased] section and rest of changelog (skip old unreleased content)
+            echo "## [Unreleased]"
+            echo ""
+
+            # Get everything after [Unreleased] section's content (starting from next version)
+            sed -n '/^## \[Unreleased\]/,/^## \[/{ /^## \[Unreleased\]/d; /^## \[/p; }' "$CHANGELOG_FILE"
+            sed -n '/^## \[Unreleased\]/,/^## \[/{d}; /^## \[/,$p' "$CHANGELOG_FILE" | tail -n +2
+
+          } > "${CHANGELOG_FILE}.new"
+
+          # Update comparison links at the bottom
+          # Add new version link and update Unreleased link
+          if grep -q "^\[Unreleased\]:" "${CHANGELOG_FILE}.new"; then
+            # Update existing Unreleased link to point to new version
+            sed -i.bak "s|\[Unreleased\]: https://github.com/${REPO}/compare/v[^.]*\.[^.]*\.[^.]*\.\.\.HEAD|\[Unreleased\]: https://github.com/${REPO}/compare/v${VERSION}...HEAD|" "${CHANGELOG_FILE}.new"
+          fi
+
+          # Check if version link already exists, if not add it
+          if ! grep -q "^\[${VERSION}\]:" "${CHANGELOG_FILE}.new"; then
+            # Find the previous version from the changelog
+            PREV_VERSION=$(grep -o '^\[[0-9]*\.[0-9]*\.[0-9]*\]:' "${CHANGELOG_FILE}.new" | head -1 | tr -d '[]:'  || echo "")
+
+            if [[ -n "$PREV_VERSION" ]]; then
+              # Insert new version link before the first version link
+              sed -i.bak "/^\[${PREV_VERSION}\]:/i\\
+[${VERSION}]: https://github.com/${REPO}/releases/tag/v${VERSION}
+" "${CHANGELOG_FILE}.new"
+            else
+              # Append at end if no version links exist
+              echo "[${VERSION}]: https://github.com/${REPO}/releases/tag/v${VERSION}" >> "${CHANGELOG_FILE}.new"
+            fi
+          fi
+
+          rm -f "${CHANGELOG_FILE}.new.bak"
+          mv "${CHANGELOG_FILE}.new" "$CHANGELOG_FILE"
+
+          # Validate update succeeded
+          if ! grep -q "^## \[${VERSION}\] - ${DATE}" "$CHANGELOG_FILE"; then
+            echo "::error::Failed to update CHANGELOG.md"
+            exit 1
+          fi
+
+          echo "✓ Updated CHANGELOG.md to v${VERSION}"
+
       - name: Update Homebrew formula
         run: |
           set -euo pipefail
@@ -422,7 +506,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          git add packaging/
+          git add packaging/ CHANGELOG.md
 
           # Only commit if there are changes
           if git diff --staged --quiet; then
@@ -430,7 +514,7 @@ jobs:
             exit 0
           fi
 
-          git commit -m "chore(packaging): update all packages to v${VERSION}"
+          git commit -m "chore(release): update CHANGELOG and packages to v${VERSION}"
 
           # Push with retry logic for concurrent updates
           MAX_RETRIES=3
@@ -471,6 +555,7 @@ jobs:
           echo "- ✅ Checksums generated" >> $GITHUB_STEP_SUMMARY
 
           if [[ "$PACKAGES_STATUS" == "success" ]]; then
+            echo "- ✅ CHANGELOG.md updated" >> $GITHUB_STEP_SUMMARY
             echo "- ✅ All package definitions updated (Homebrew, RPM, Debian)" >> $GITHUB_STEP_SUMMARY
           else
             echo "- ⚠️ Package updates: $PACKAGES_STATUS" >> $GITHUB_STEP_SUMMARY
