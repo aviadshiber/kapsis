@@ -295,13 +295,20 @@ jobs:
     needs: [validate, release]
     if: needs.release.result == 'success'
     steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
       - name: Checkout code
         uses: actions/checkout@v6
         with:
           ref: main
-          # Use RELEASE_TOKEN (PAT) to bypass branch protection when pushing
-          # GITHUB_TOKEN cannot push to protected branches
-          token: ${{ secrets.RELEASE_TOKEN }}
+          # Use GitHub App token to bypass branch protection when pushing
+          # The app is configured as a bypass actor in the repository ruleset
+          token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
 
       - name: Validate inputs
