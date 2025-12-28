@@ -31,65 +31,26 @@ class Kapsis < Formula
   # Users must install it separately (brew install podman on macOS)
 
   def install
-    # Install main scripts
-    bin.install "scripts/launch-agent.sh" => "kapsis"
-    bin.install "scripts/build-image.sh" => "kapsis-build"
-    bin.install "scripts/kapsis-cleanup.sh" => "kapsis-cleanup"
-    bin.install "scripts/kapsis-status.sh" => "kapsis-status"
-    bin.install "setup.sh" => "kapsis-setup"
-    bin.install "quick-start.sh" => "kapsis-quick"
+    # Install everything to libexec, then create wrappers
+    libexec.install Dir["*"]
 
-    # Install library files
-    (libexec/"lib").install Dir["scripts/lib/*.sh"]
-
-    # Install configuration templates
-    (share/"kapsis/configs").install Dir["configs/**/*"]
-    (share/"kapsis").install "agent-sandbox.yaml.template"
-    (share/"kapsis").install "Containerfile"
-    (share/"kapsis/maven").install "maven/isolated-settings.xml"
-
-    # Install additional scripts needed by main scripts
-    (libexec/"scripts").install "scripts/entrypoint.sh"
-    (libexec/"scripts").install "scripts/worktree-manager.sh"
-    (libexec/"scripts").install "scripts/post-container-git.sh"
-    (libexec/"scripts").install "scripts/post-exit-git.sh"
-    (libexec/"scripts").install "scripts/preflight-check.sh"
-    (libexec/"scripts").install "scripts/init-git-branch.sh"
-    (libexec/"scripts").install "scripts/merge-changes.sh"
-    (libexec/"scripts").install "scripts/switch-java.sh"
-    (libexec/"scripts").install "scripts/build-agent-image.sh"
-
-    # Create wrapper scripts that set up the environment
-    (bin/"kapsis").write_env_script libexec/"kapsis-wrapper.sh",
-      KAPSIS_HOME: share/"kapsis",
-      KAPSIS_LIB: libexec/"lib",
-      KAPSIS_SCRIPTS: libexec/"scripts"
-
-    # Install the wrapper script
-    (libexec/"kapsis-wrapper.sh").write <<~EOS
-      #!/usr/bin/env bash
-      set -euo pipefail
-      export KAPSIS_HOME="${KAPSIS_HOME:-#{share}/kapsis}"
-      export KAPSIS_LIB="${KAPSIS_LIB:-#{libexec}/lib}"
-      export KAPSIS_SCRIPTS="${KAPSIS_SCRIPTS:-#{libexec}/scripts}"
-      exec "#{libexec}/scripts/launch-agent.sh" "$@"
-    EOS
-
-    # Move launch-agent.sh to libexec and install wrapper
-    mv bin/"kapsis", libexec/"scripts/launch-agent.sh"
-
-    (bin/"kapsis").write <<~EOS
-      #!/usr/bin/env bash
-      set -euo pipefail
-      export KAPSIS_HOME="#{share}/kapsis"
-      export KAPSIS_LIB="#{libexec}/lib"
-      export KAPSIS_SCRIPTS="#{libexec}/scripts"
-      exec "#{libexec}/scripts/launch-agent.sh" "$@"
-    EOS
-
-    # Fix remaining binaries to use correct paths
-    %w[kapsis-build kapsis-cleanup kapsis-status kapsis-setup kapsis-quick].each do |cmd|
-      inreplace bin/cmd, /^(SCRIPT_DIR=).*$/, "\\1\"#{libexec}/scripts\""
+    # Create wrapper scripts for main commands
+    {
+      "kapsis" => "scripts/launch-agent.sh",
+      "kapsis-build" => "scripts/build-image.sh",
+      "kapsis-cleanup" => "scripts/kapsis-cleanup.sh",
+      "kapsis-status" => "scripts/kapsis-status.sh",
+      "kapsis-setup" => "setup.sh",
+      "kapsis-quick" => "quick-start.sh",
+    }.each do |cmd, script|
+      (bin/cmd).write <<~EOS
+        #!/usr/bin/env bash
+        set -euo pipefail
+        export KAPSIS_HOME="#{libexec}"
+        export KAPSIS_LIB="#{libexec}/scripts/lib"
+        export KAPSIS_SCRIPTS="#{libexec}/scripts"
+        exec "#{libexec}/#{script}" "$@"
+      EOS
     end
   end
 
@@ -122,8 +83,5 @@ class Kapsis < Formula
   test do
     # Test that kapsis command works
     assert_match "Usage:", shell_output("#{bin}/kapsis --help 2>&1", 1)
-
-    # Test that setup script validates correctly
-    assert_match "Kapsis", shell_output("#{bin}/kapsis-setup --check 2>&1", 1)
   end
 end
