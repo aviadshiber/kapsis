@@ -1,0 +1,78 @@
+name: Sync Homebrew Tap
+
+# Syncs the Homebrew formula to the homebrew-kapsis tap repository
+# after each release, so users get the latest version via brew upgrade
+
+on:
+  # Trigger after release workflow updates the formula
+  push:
+    branches: [main]
+    paths:
+      - 'packaging/homebrew/kapsis.rb'
+  # Manual trigger
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  sync-tap:
+    name: Sync Formula to Tap
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kapsis
+        uses: actions/checkout@v4
+
+      - name: Sync formula to tap repository
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+
+          # Skip if no deploy key configured
+          if [[ -z "${TAP_DEPLOY_KEY:-}" ]]; then
+            echo "::warning::TAP_DEPLOY_KEY not configured. Skipping tap sync."
+            echo "To enable automatic tap updates, add a deploy key secret."
+            exit 0
+          fi
+
+          # Setup SSH for tap repo access
+          mkdir -p ~/.ssh
+          echo "$TAP_DEPLOY_KEY" > ~/.ssh/tap_deploy_key
+          chmod 600 ~/.ssh/tap_deploy_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+          # Clone tap repo
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_deploy_key" \
+            git clone git@github.com:aviadshiber/homebrew-kapsis.git /tmp/tap
+
+          # Copy formula
+          cp packaging/homebrew/kapsis.rb /tmp/tap/Formula/kapsis.rb
+
+          cd /tmp/tap
+
+          # Check for changes
+          if git diff --quiet; then
+            echo "No changes to formula"
+            exit 0
+          fi
+
+          # Get version from formula
+          VERSION=$(grep -oP 'version "\K[^"]+' Formula/kapsis.rb | head -1)
+
+          # Commit and push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/kapsis.rb
+          git commit -m "Update kapsis to v${VERSION}"
+
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_deploy_key" git push origin main
+
+          echo "✓ Synced formula v${VERSION} to tap"
+
+      - name: Summary
+        run: |
+          VERSION=$(grep -oP 'version "\K[^"]+' packaging/homebrew/kapsis.rb | head -1)
+          echo "## Homebrew Tap Sync" >> $GITHUB_STEP_SUMMARY
+          echo "- Formula version: v${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- Tap: [aviadshiber/homebrew-kapsis](https://github.com/aviadshiber/homebrew-kapsis)" >> $GITHUB_STEP_SUMMARY
