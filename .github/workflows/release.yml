@@ -295,14 +295,30 @@ jobs:
     needs: [validate, release]
     if: needs.release.result == 'success'
     steps:
+      - name: Check if GitHub App is configured
+        id: check-app
+        env:
+          APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$APP_ID" || -z "$APP_KEY" ]]; then
+            echo "::warning::GitHub App not configured. Skipping package updates."
+            echo "::warning::Run ./scripts/setup-release-app.sh to enable automatic package updates."
+            echo "configured=false" >> $GITHUB_OUTPUT
+          else
+            echo "configured=true" >> $GITHUB_OUTPUT
+          fi
+
       - name: Generate GitHub App token
         id: app-token
+        if: steps.check-app.outputs.configured == 'true'
         uses: actions/create-github-app-token@v1
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - name: Checkout code
+        if: steps.check-app.outputs.configured == 'true'
         uses: actions/checkout@v6
         with:
           ref: main
@@ -312,6 +328,7 @@ jobs:
           fetch-depth: 0
 
       - name: Validate inputs
+        if: steps.check-app.outputs.configured == 'true'
         run: |
           set -euo pipefail
 
@@ -333,6 +350,7 @@ jobs:
           echo "✓ Inputs validated: version=$VERSION, repo=$REPO"
 
       - name: Update CHANGELOG.md
+        if: steps.check-app.outputs.configured == 'true'
         run: |
           set -euo pipefail
 
@@ -419,6 +437,7 @@ jobs:
           echo "✓ Updated CHANGELOG.md to v${VERSION}"
 
       - name: Update Homebrew formula
+        if: steps.check-app.outputs.configured == 'true'
         run: |
           set -euo pipefail
 
@@ -480,6 +499,7 @@ jobs:
           echo "✓ Updated Homebrew formula to v${VERSION}"
 
       - name: Update RPM spec
+        if: steps.check-app.outputs.configured == 'true'
         run: |
           set -euo pipefail
 
@@ -502,6 +522,7 @@ jobs:
           echo "✓ Updated RPM spec to v${VERSION}"
 
       - name: Update Debian changelog
+        if: steps.check-app.outputs.configured == 'true'
         run: |
           set -euo pipefail
 
@@ -537,6 +558,7 @@ jobs:
           echo "✓ Updated Debian changelog to v${VERSION}"
 
       - name: Commit and push package updates
+        if: steps.check-app.outputs.configured == 'true'
         run: |
           set -euo pipefail
 
