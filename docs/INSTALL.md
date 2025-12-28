@@ -9,8 +9,9 @@ Using a package manager is the recommended way to install Kapsis. Package manage
 ### Homebrew (macOS and Linux)
 
 ```bash
-# Install Kapsis
-brew install aviadshiber/kapsis/kapsis
+# Add the tap and install
+brew tap aviadshiber/kapsis
+brew install kapsis
 
 # Upgrade to latest version
 brew upgrade kapsis

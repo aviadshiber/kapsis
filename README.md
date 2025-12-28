@@ -34,7 +34,7 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 
 | Method | Command |
 |--------|---------|
-| **Homebrew** (recommended) | `brew install aviadshiber/kapsis/kapsis` |
+| **Homebrew** (recommended) | `brew tap aviadshiber/kapsis && brew install kapsis` |
 | **Debian/Ubuntu** | `sudo dpkg -i kapsis_*.deb && sudo apt-get install -f` |
 | **Fedora/RHEL** | `sudo dnf install kapsis-*.rpm` |
 | **Universal script** | `curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh \| bash` |
