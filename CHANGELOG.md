@@ -5,99 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-
-## [0.8.23] - 2025-12-28
-
-### Changed
-- Release v0.8.23
-
 ## [Unreleased]
 
-## [0.7.8] - 2025-12-28
-
-### Changed
-- Release v0.8.22
-
-
-### Changed
-- Release v0.8.21
-
-
-### Changed
-- Release v0.8.20
-
-
-### Changed
-- Release v0.8.19
-
-
-### Changed
-- Release v0.8.18
-
-
-### Changed
-- Release v0.8.17
-
-
-### Changed
-- Release v0.8.16
-
-
-### Changed
-- Release v0.8.15
-
-
-### Changed
-- Release v0.8.14
-
-
-### Changed
-- Release v0.8.13
-
-
-### Changed
-- Release v0.8.12
-
-
-### Changed
-- Release v0.8.11
-
-
-### Changed
-- Release v0.8.10
-
-
-### Changed
-- Release v0.8.9
-
-
-### Changed
-- Release v0.8.8
-
-
-### Changed
-- Release v0.8.7
-
-
-### Changed
-- Release v0.8.6
-
-
-### Changed
-- Release v0.8.5
-
-
-### Changed
-- Release v0.8.4
-
-
-### Changed
-- Release v0.8.3
-
-
-### Changed
-- Release v0.8.2
-
+## [0.8.3] - 2025-12-28
 
 ### Added
 - CLAUDE.md guidelines for AI assistant onboarding
@@ -111,18 +21,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Pre-commit hooks configuration
 - CODEOWNERS file for automatic review requests
 - Automatic CHANGELOG.md updates on release
+
 ### Fixed
 - ShellCheck warnings in all shell scripts
 - Podman machine checks now only run on macOS (Linux runs natively)
 - Dry-run mode properly skips container and pre-flight checks
 - yq raw output mode for proper YAML parsing
+
 ### Changed
 - Container tests and security scans only run on merge to main (not on PRs)
 - CI Success job properly gates all required checks
-
-
-### Fixed
-- Update all packages to v0.7.6 with hardened CI automation (#56)
 
 ## [0.7.6] - 2025-12-28
 
@@ -280,32 +188,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v0.8.23...HEAD
-[0.8.23]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.23
-[0.8.22]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.22
-[0.8.21]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.21
-[0.8.20]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.20
-[0.8.19]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.19
-[0.8.18]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.18
-[0.8.17]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.17
-[0.8.16]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.16
-[0.8.15]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.15
-[0.8.14]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.14
-[0.8.13]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.13
-[0.8.12]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.12
-[0.8.11]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.11
-[0.8.10]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.10
-[0.8.9]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.9
-[0.8.8]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.8
-[0.8.7]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.7
-[0.8.6]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.6
-[0.8.5]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.5
-[0.8.4]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.4
-[0.8.3]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.3
-[0.8.2]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.2
-[0.8.1]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.1
-[0.7.8]: https://github.com/aviadshiber/kapsis/compare/v0.7.7...v0.7.8
-[0.7.7]: https://github.com/aviadshiber/kapsis/compare/v0.7.6...v0.7.7
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/aviadshiber/kapsis/compare/v0.7.6...v0.8.3
 [0.7.6]: https://github.com/aviadshiber/kapsis/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/aviadshiber/kapsis/compare/v0.7.4...v0.7.5
 [0.7.4]: https://github.com/aviadshiber/kapsis/compare/v0.7.3...v0.7.4
