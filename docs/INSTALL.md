@@ -24,18 +24,15 @@ brew upgrade kapsis
 Download the `.deb` package from the [releases page](https://github.com/aviadshiber/kapsis/releases):
 
 ```bash
-# Set version (check releases page for latest)
-VERSION="1.0.0"
+# Get latest version automatically (requires jq - see troubleshooting if not installed)
+VERSION=$(curl -s https://api.github.com/repos/aviadshiber/kapsis/releases/latest | jq -r '.tag_name | ltrimstr("v")')
 
 # Download package and checksums
 curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/kapsis_${VERSION}-1_all.deb"
 curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/checksums.sha256"
 
 # Verify checksum (IMPORTANT: always verify before installing)
-# Linux:
 grep "kapsis_${VERSION}-1_all.deb" checksums.sha256 | sha256sum -c -
-# macOS:
-# grep "kapsis_${VERSION}-1_all.deb" checksums.sha256 | shasum -a 256 -c -
 
 # Install (apt handles dependencies automatically)
 sudo apt install "./kapsis_${VERSION}-1_all.deb"
@@ -58,8 +55,8 @@ sudo apt install kapsis
 Download the `.rpm` package from the [releases page](https://github.com/aviadshiber/kapsis/releases):
 
 ```bash
-# Set version (check releases page for latest)
-VERSION="1.0.0"
+# Get latest version automatically (requires jq - see troubleshooting if not installed)
+VERSION=$(curl -s https://api.github.com/repos/aviadshiber/kapsis/releases/latest | jq -r '.tag_name | ltrimstr("v")')
 
 # Download package and checksums
 curl -LO "https://github.com/aviadshiber/kapsis/releases/download/v${VERSION}/kapsis-${VERSION}-1.noarch.rpm"
@@ -308,6 +305,32 @@ Try building with verbose output:
 
 ```bash
 KAPSIS_DEBUG=1 kapsis-build
+```
+
+### jq not installed (for manual package installation)
+
+The automatic version fetching in the APT/DNF install commands requires `jq` to parse JSON from the GitHub API.
+
+**Install jq:**
+
+```bash
+# Debian/Ubuntu
+sudo apt install jq
+
+# Fedora/RHEL
+sudo dnf install jq
+
+# macOS
+brew install jq
+```
+
+**Or set the version manually:**
+
+If you prefer not to install jq, you can set the version manually by checking the [releases page](https://github.com/aviadshiber/kapsis/releases):
+
+```bash
+# Replace with the latest version from the releases page
+VERSION="1.0.0"
 ```
 
 ## System Requirements
