@@ -43,6 +43,24 @@ tail -f ~/.kapsis/logs/kapsis-launch-agent.log
 - **Logging:** Use `scripts/lib/logging.sh` - see `CONTRIBUTING.md` for details
 - **Tests:** Files in `tests/test-*.sh`, use `tests/lib/test-framework.sh`
 
+## Git Workflow
+
+**IMPORTANT: Always create Pull Requests for review. Never push directly to main.**
+
+```bash
+# 1. Create feature branch
+git checkout -b feat/description-of-change
+
+# 2. Make changes and commit
+git add . && git commit -m "feat: description"
+
+# 3. Push branch and create PR
+git push -u origin feat/description-of-change
+gh pr create --fill
+```
+
+The only exception is the automated release workflow which updates package versions.
+
 ## Commits
 
 Use [Conventional Commits](https://www.conventionalcommits.org/):
