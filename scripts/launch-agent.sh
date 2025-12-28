@@ -84,6 +84,21 @@ print_banner() {
 }
 
 #===============================================================================
+# DRY-RUN AWARE HELPERS
+#===============================================================================
+
+# Create directory unless in dry-run mode
+# Usage: ensure_dir <path>
+ensure_dir() {
+    local path="$1"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_debug "[DRY-RUN] Would create directory: $path"
+    else
+        mkdir -p "$path" 2>/dev/null || true
+    fi
+}
+
+#===============================================================================
 # SECRET STORE HELPERS (macOS Keychain, Linux secret-tool)
 #===============================================================================
 
@@ -507,8 +522,19 @@ setup_worktree_sandbox() {
 
     log_info "Setting up worktree sandbox: $SANDBOX_ID"
 
-    # Source the worktree manager
+    # Source the worktree manager (needed for constants even in dry-run)
     source "$SCRIPT_DIR/worktree-manager.sh"
+
+    # In dry-run mode, compute paths without creating anything
+    if [[ "$DRY_RUN" == "true" ]]; then
+        WORKTREE_PATH="${KAPSIS_WORKTREE_BASE:-$HOME/.kapsis/worktrees}/${project_name}-${AGENT_ID}"
+        SANITIZED_GIT_PATH="${KAPSIS_SANITIZED_GIT_BASE:-$HOME/.kapsis/sanitized-git}/${AGENT_ID}"
+        OBJECTS_PATH="${PROJECT_PATH}/.git/objects"
+        log_info "  [DRY-RUN] Would create worktree: $WORKTREE_PATH"
+        log_info "  [DRY-RUN] Would create sanitized git: $SANITIZED_GIT_PATH"
+        log_info "  [DRY-RUN] Objects path: $OBJECTS_PATH"
+        return
+    fi
 
     # Create worktree on host
     WORKTREE_PATH=$(create_worktree "$PROJECT_PATH" "$AGENT_ID" "$BRANCH")
@@ -537,10 +563,16 @@ setup_overlay_sandbox() {
 
     log_info "Setting up overlay sandbox: $SANDBOX_ID"
 
-    mkdir -p "$UPPER_DIR" "$WORK_DIR"
+    ensure_dir "$UPPER_DIR"
+    ensure_dir "$WORK_DIR"
 
-    log_info "  Upper directory: $UPPER_DIR"
-    log_info "  Work directory: $WORK_DIR"
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_info "  [DRY-RUN] Would create upper directory: $UPPER_DIR"
+        log_info "  [DRY-RUN] Would create work directory: $WORK_DIR"
+    else
+        log_info "  Upper directory: $UPPER_DIR"
+        log_info "  Work directory: $WORK_DIR"
+    fi
 }
 
 #===============================================================================
@@ -565,7 +597,7 @@ generate_volume_mounts_worktree() {
 
     # Status reporting directory (shared between host and container)
     local status_dir="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
-    mkdir -p "$status_dir" 2>/dev/null || true
+    ensure_dir "$status_dir"
     VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
 
     # Mount sanitized git at $CONTAINER_GIT_PATH, replacing the worktree's .git file
@@ -611,7 +643,7 @@ generate_volume_mounts_overlay() {
 
     # Status reporting directory (shared between host and container)
     local status_dir="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
-    mkdir -p "$status_dir" 2>/dev/null || true
+    ensure_dir "$status_dir"
     VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
 
     # Maven repository (isolated per agent)
@@ -666,7 +698,7 @@ generate_filesystem_includes() {
             # Home directory paths: use staging-and-copy pattern
             if [[ "$path" == "~"* ]] || [[ "$expanded_path" == "$HOME"* ]]; then
                 # Extract relative path (e.g., .claude, .gitconfig)
-                relative_path="${expanded_path#$HOME/}"
+                relative_path="${expanded_path#"$HOME"/}"
                 staging_path="${staging_dir}/${relative_path}"
 
                 # Mount to staging directory (read-only)
@@ -705,6 +737,12 @@ generate_ssh_known_hosts() {
     # Skip if no hosts to verify
     if [[ -z "$SSH_VERIFY_HOSTS" ]]; then
         log_debug "No SSH hosts to verify (ssh.verify_hosts not configured)"
+        return 0
+    fi
+
+    # Skip file creation in dry-run mode
+    if [[ "$DRY_RUN" == "true" ]]; then
+        log_debug "[DRY-RUN] Would generate SSH known_hosts for: $SSH_VERIFY_HOSTS"
         return 0
     fi
 
@@ -933,9 +971,14 @@ build_container_command() {
 
     # Add inline task spec mount if needed (must be before image name)
     if [[ -n "$TASK_INLINE" ]] && [[ "$INTERACTIVE" != "true" ]]; then
-        INLINE_SPEC_FILE=$(mktemp)
-        echo "$TASK_INLINE" > "$INLINE_SPEC_FILE"
-        CONTAINER_CMD+=("-v" "${INLINE_SPEC_FILE}:/task-spec.md:ro")
+        if [[ "$DRY_RUN" == "true" ]]; then
+            # Use placeholder path in dry-run mode
+            CONTAINER_CMD+=("-v" "/tmp/kapsis-inline-spec.XXXXXX:/task-spec.md:ro")
+        else
+            INLINE_SPEC_FILE=$(mktemp)
+            echo "$TASK_INLINE" > "$INLINE_SPEC_FILE"
+            CONTAINER_CMD+=("-v" "${INLINE_SPEC_FILE}:/task-spec.md:ro")
+        fi
     fi
 
     # Add environment variables
@@ -1150,7 +1193,7 @@ post_container_overlay() {
             echo "Changed files:"
             # Cross-platform: use parameter expansion to strip prefix (safer than sed with special chars)
             find "$UPPER_DIR" -type f 2>/dev/null | while IFS= read -r file; do
-                echo "  ${file#${UPPER_DIR}/}"
+                echo "  ${file#"${UPPER_DIR}"/}"
             done | head -20
             echo ""
             echo "Upper directory: $UPPER_DIR"
