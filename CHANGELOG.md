@@ -5,34 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+## [0.8.4] - 2025-12-28
+
+### Changed
+- Release v0.8.4
+
 ## [Unreleased]
 
 ## [0.8.3] - 2025-12-28
-
-### Added
-- CLAUDE.md guidelines for AI assistant onboarding
-- GitHub Actions CI/CD pipeline with ShellCheck and tests
-- Branch protection setup script for enforcing PR-only merges
-- Security policy (SECURITY.md)
-- Dependabot configuration for automated updates
-- Container vulnerability scanning with Trivy
-- Secret detection with TruffleHog
-- Issue and PR templates
-- Pre-commit hooks configuration
-- CODEOWNERS file for automatic review requests
-- Automatic CHANGELOG.md updates on release
-
-### Fixed
-- ShellCheck warnings in all shell scripts
-- Podman machine checks now only run on macOS (Linux runs natively)
-- Dry-run mode properly skips container and pre-flight checks
-- yq raw output mode for proper YAML parsing
-
-### Changed
-- Container tests and security scans only run on merge to main (not on PRs)
-- CI Success job properly gates all required checks
-
-## [0.7.6] - 2025-12-28
 
 ### Fixed
 - Package manager installations now work without GitHub authentication
@@ -188,7 +169,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.4
 [0.8.3]: https://github.com/aviadshiber/kapsis/compare/v0.7.6...v0.8.3
 [0.7.6]: https://github.com/aviadshiber/kapsis/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/aviadshiber/kapsis/compare/v0.7.4...v0.7.5
