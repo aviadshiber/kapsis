@@ -71,10 +71,17 @@ jobs:
       - name: Check release conditions
         id: check
         run: |
-          # Skip if this push was from the auto-release workflow itself
+          # Skip if this push was from the release workflow or auto-release itself
           COMMIT_MSG=$(git log -1 --pretty=%B)
           if [[ "$COMMIT_MSG" == *"[skip ci]"* ]] || [[ "$COMMIT_MSG" == *"[auto-release]"* ]]; then
-            echo "Skipping: commit from auto-release workflow"
+            echo "Skipping: commit contains skip marker"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Defense-in-depth: also skip release package update commits
+          if [[ "$COMMIT_MSG" == "chore(release): update CHANGELOG and packages"* ]]; then
+            echo "Skipping: package update commit from release workflow"
             echo "should_release=false" >> $GITHUB_OUTPUT
             exit 0
           fi
