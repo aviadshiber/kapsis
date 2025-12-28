@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [0.8.3] - 2025-12-28
+## [0.8.4] - 2025-12-28
 
 ### Changed
-- Release v0.8.3
+- Release v0.8.4
 
 ## [Unreleased]
 
 ## [0.7.8] - 2025-12-28
+
+### Changed
+- Release v0.8.3
+
 
 ### Changed
 - Release v0.8.2
@@ -200,7 +204,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.4
 [0.8.3]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.3
 [0.8.2]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.2
 [0.8.1]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.1
