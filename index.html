@@ -1,10 +1,892 @@
 <!DOCTYPE html>
-<html>
+<html lang="en" class="scroll-smooth">
 <head>
-    <title>Kapsis Package Repository</title>
-    <meta http-equiv="refresh" content="0; url=https://github.com/aviadshiber/kapsis#installation">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kapsis | Isolated AI Agent Sandbox</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        kapsis: {
+                            dark: '#0f172a',
+                            card: '#1e293b',
+                            neon: '#10b981', // Emerald 500
+                            danger: '#ef4444', // Red 500
+                            beta: '#f59e0b',   // Amber 500
+                            accent: '#6366f1' // Indigo 500
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', "Liberation Mono", "Courier New", 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .glow-text {
+            text-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+        }
+        .code-block {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+        /* Mobile menu */
+        .mobile-menu {
+            transform: translateX(100%);
+            transition: transform 0.3s ease-in-out;
+        }
+        .mobile-menu.open {
+            transform: translateX(0);
+        }
+        /* Copy button visibility on touch devices */
+        @media (hover: none) and (pointer: coarse) {
+            .copy-btn {
+                opacity: 1 !important;
+            }
+        }
+        /* Scroll indicator for overflowing code blocks */
+        .code-scroll-container {
+            position: relative;
+        }
+        .code-scroll-container::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 30px;
+            background: linear-gradient(to right, transparent, #0d1117);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .code-scroll-container.has-overflow::after {
+            opacity: 1;
+        }
+        /* Ensure copy button is above scroll indicator */
+        .copy-btn {
+            z-index: 10;
+        }
+        /* Body scroll lock when mobile menu is open */
+        body.mobile-menu-open {
+            overflow: hidden;
+        }
+        /* Toast notification */
+        .toast {
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease-in-out;
+        }
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+    </style>
 </head>
-<body>
-    <p>Redirecting to <a href="https://github.com/aviadshiber/kapsis#installation">installation instructions</a>...</p>
+<body class="bg-kapsis-dark text-slate-300 font-sans antialiased selection:bg-kapsis-neon selection:text-white">
+
+    <!-- Skip to main content (accessibility) -->
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100] focus:bg-kapsis-neon focus:text-slate-900 focus:px-4 focus:py-2 focus:rounded-lg focus:font-medium">
+        Skip to main content
+    </a>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-kapsis-neon text-slate-900 px-4 py-2 rounded-lg font-medium shadow-lg flex items-center gap-2">
+        <i class="fa-solid fa-check"></i>
+        <span id="toast-message">Copied to clipboard!</span>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 bg-kapsis-dark/90 backdrop-blur-md border-b border-slate-800" role="navigation" aria-label="Main navigation">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-box-open text-kapsis-neon text-2xl" aria-hidden="true"></i>
+                    <span class="text-white text-xl font-bold tracking-wider">KAPSIS <span class="text-xs text-kapsis-beta ml-1 border border-kapsis-beta px-1 rounded uppercase">Beta</span></span>
+                </div>
+                <div class="hidden md:block">
+                    <div class="ml-10 flex items-baseline space-x-6" role="menubar">
+                        <a href="#install" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Install</a>
+                        <a href="#yolo" role="menuitem" class="text-kapsis-danger hover:text-red-400 transition-colors px-3 py-2 rounded-md text-sm font-bold"><i class="fa-solid fa-biohazard mr-1" aria-hidden="true"></i> YOLO Mode</a>
+                        <a href="#security" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium"><i class="fa-solid fa-shield-halved mr-1" aria-hidden="true"></i> Security</a>
+                        <a href="#docs" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Docs & Profiles</a>
+                        <a href="#quickstart" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Quick Start</a>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <a href="https://github.com/aviadshiber/kapsis" target="_blank" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all border border-slate-700">
+                        <i class="fa-brands fa-github mr-2" aria-hidden="true"></i><span class="hidden sm:inline">GitHub</span>
+                    </a>
+                    <!-- Mobile menu button -->
+                    <button onclick="toggleMobileMenu()" class="md:hidden p-2 text-slate-400 hover:text-white transition-colors" aria-label="Toggle mobile menu" aria-expanded="false" aria-controls="mobile-menu">
+                        <i class="fa-solid fa-bars text-xl" id="mobile-menu-icon"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Mobile menu overlay -->
+    <div id="mobile-menu" class="mobile-menu fixed inset-y-0 right-0 z-[60] w-64 bg-kapsis-dark border-l border-slate-800 md:hidden" aria-hidden="true">
+        <div class="p-6">
+            <button onclick="toggleMobileMenu()" class="absolute top-4 right-4 p-2 text-slate-400 hover:text-white" aria-label="Close menu">
+                <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+            <nav class="mt-8 flex flex-col space-y-4" role="menu">
+                <a href="#install" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Install</a>
+                <a href="#yolo" onclick="toggleMobileMenu()" role="menuitem" class="text-kapsis-danger hover:text-red-400 transition-colors py-2 text-lg font-bold"><i class="fa-solid fa-biohazard mr-2" aria-hidden="true"></i>YOLO Mode</a>
+                <a href="#security" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium"><i class="fa-solid fa-shield-halved mr-2" aria-hidden="true"></i>Security</a>
+                <a href="#docs" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Docs & Profiles</a>
+                <a href="#quickstart" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Quick Start</a>
+                <hr class="border-slate-700 my-2">
+                <a href="https://github.com/aviadshiber/kapsis" target="_blank" class="text-slate-300 hover:text-white transition-colors py-2 text-lg font-medium"><i class="fa-brands fa-github mr-2" aria-hidden="true"></i>GitHub</a>
+            </nav>
+        </div>
+    </div>
+    <div id="mobile-menu-backdrop" onclick="toggleMobileMenu()" class="fixed inset-0 bg-black/50 z-[55] hidden md:hidden"></div>
+
+    <!-- Hero Section -->
+    <main id="main-content">
+    <section class="pt-32 pb-20 relative overflow-hidden">
+        <!-- Background Grid Effect -->
+        <div class="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
+
+            <div class="inline-flex items-center px-4 py-1 rounded-full border border-kapsis-beta/30 bg-kapsis-beta/10 text-kapsis-beta text-sm mb-8">
+                <span class="animate-pulse mr-2">●</span> Public Beta Release
+            </div>
+
+            <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 leading-tight">
+                Hermetically Isolated <br>
+                <span class="text-transparent bg-clip-text bg-gradient-to-r from-kapsis-neon to-emerald-600 glow-text">AI Agent Sandbox</span>
+            </h1>
+
+            <p class="mt-4 max-w-2xl mx-auto text-xl text-slate-400">
+                Run multiple AI coding agents in parallel. Total isolation. Zero conflicts.
+                <br>The safest way to let LLMs edit your code.
+            </p>
+
+            <div class="mt-10 flex justify-center gap-4">
+                <a href="#install" class="px-8 py-3 rounded-lg bg-kapsis-neon hover:bg-emerald-400 text-slate-900 font-bold text-lg transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+                    Install Now
+                </a>
+                <a href="#docs" class="px-8 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-medium text-lg border border-slate-700 transition-all">
+                    Read Docs
+                </a>
+            </div>
+
+            <!-- Terminal Visual -->
+            <div class="mt-16 mx-auto max-w-4xl bg-[#0d1117] rounded-xl border border-slate-700 shadow-2xl overflow-hidden text-left">
+                <div class="flex items-center px-4 py-2 bg-slate-800 border-b border-slate-700">
+                    <div class="flex gap-2">
+                        <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    </div>
+                    <div class="mx-auto text-xs text-slate-400 font-mono">kapsis-manager — zsh</div>
+                </div>
+                <div class="p-6 font-mono text-sm overflow-x-auto">
+                    <div class="flex mb-2">
+                        <span class="text-emerald-400 mr-2">➜</span>
+                        <span class="text-white">./scripts/launch-agent.sh 1 ~/project --config claude.yaml &</span>
+                    </div>
+                    <div class="text-slate-500 mb-2">[1] 45121 launched: Claude Code (Container ID: 8f9a2b)</div>
+                    <div class="flex mb-2">
+                        <span class="text-emerald-400 mr-2">➜</span>
+                        <span class="text-white">./scripts/launch-agent.sh 2 ~/project --config aider.yaml &</span>
+                    </div>
+                    <div class="text-slate-500 mb-2">[2] 45122 launched: Aider (Container ID: 3c2d1e)</div>
+                    <div class="flex mb-2">
+                        <span class="text-emerald-400 mr-2">➜</span>
+                        <span class="text-white">./scripts/kapsis-status.sh</span>
+                    </div>
+                    <div class="text-blue-400">AGENT 1 (Claude): <span class="text-green-400">RUNNING</span> | ISO: Active | FS: CoW Layer</div>
+                    <div class="text-blue-400">AGENT 2 (Aider): &nbsp;<span class="text-green-400">RUNNING</span> | ISO: Active | FS: CoW Layer</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation Section -->
+    <section id="install" class="py-20 bg-slate-800/50">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-8 flex items-center">
+                <i class="fa-solid fa-download text-kapsis-neon mr-3"></i> Installation
+            </h2>
+
+            <!-- Tabbed Installation -->
+            <div class="mb-10">
+                <!-- Tab Buttons -->
+                <div class="flex flex-wrap gap-2 mb-6" role="tablist" aria-label="Installation methods">
+                    <button onclick="switchInstallTab('homebrew')" id="install-tab-homebrew" role="tab" aria-selected="true" aria-controls="install-content-homebrew" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-kapsis-neon text-slate-900 transition-all">
+                        <i class="fa-brands fa-apple mr-1" aria-hidden="true"></i><i class="fa-brands fa-linux mr-2" aria-hidden="true"></i>Homebrew
+                    </button>
+                    <button onclick="switchInstallTab('apt')" id="install-tab-apt" role="tab" aria-selected="false" aria-controls="install-content-apt" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-brands fa-ubuntu mr-1" aria-hidden="true"></i><i class="fa-brands fa-debian mr-2" aria-hidden="true"></i>APT
+                    </button>
+                    <button onclick="switchInstallTab('dnf')" id="install-tab-dnf" role="tab" aria-selected="false" aria-controls="install-content-dnf" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-brands fa-fedora mr-1" aria-hidden="true"></i><i class="fa-brands fa-redhat mr-2" aria-hidden="true"></i>DNF
+                    </button>
+                    <button onclick="switchInstallTab('script')" id="install-tab-script" role="tab" aria-selected="false" aria-controls="install-content-script" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-solid fa-terminal mr-2" aria-hidden="true"></i>Script
+                    </button>
+                    <button onclick="switchInstallTab('manual')" id="install-tab-manual" role="tab" aria-selected="false" aria-controls="install-content-manual" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-solid fa-code-branch mr-2" aria-hidden="true"></i>Git Clone
+                    </button>
+                </div>
+
+                <!-- Tab Contents -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <!-- Homebrew -->
+                    <div id="install-content-homebrew" class="install-content" role="tabpanel" aria-labelledby="install-tab-homebrew">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-kapsis-neon border border-kapsis-neon px-2 py-0.5 rounded">RECOMMENDED</span>
+                            <span class="text-xs text-slate-500">macOS & Linux</span>
+                        </div>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                            <button onclick="copyCode(event, 'cmd-homebrew')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy Homebrew install command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <pre id="cmd-homebrew" class="text-blue-300 whitespace-pre overflow-x-auto">brew tap aviadshiber/kapsis && brew install kapsis</pre>
+                        </div>
+                    </div>
+
+                    <!-- APT -->
+                    <div id="install-content-apt" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-apt">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">APT Repository · <a href="https://aviadshiber.github.io/kapsis/apt" class="text-kapsis-neon hover:underline">browse</a></span>
+                            <span class="text-xs text-slate-500">Debian, Ubuntu, Mint</span>
+                        </div>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-xs overflow-x-auto relative group">
+                            <button onclick="copyCode(event, 'cmd-apt')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy APT install command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <pre id="cmd-apt" class="text-blue-300 whitespace-pre overflow-x-auto"><span class="text-slate-500"># Add GPG key</span>
+curl -fsSL https://aviadshiber.github.io/kapsis/gpg/kapsis.asc | sudo gpg --dearmor -o /etc/apt/keyrings/kapsis.gpg
+
+<span class="text-slate-500"># Add repository</span>
+echo "deb [signed-by=/etc/apt/keyrings/kapsis.gpg] https://aviadshiber.github.io/kapsis/apt stable main" | sudo tee /etc/apt/sources.list.d/kapsis.list
+
+<span class="text-slate-500"># Install</span>
+sudo apt update && sudo apt install kapsis</pre>
+                        </div>
+                    </div>
+
+                    <!-- DNF -->
+                    <div id="install-content-dnf" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-dnf">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">DNF Repository · <a href="https://aviadshiber.github.io/kapsis/rpm/packages" class="text-kapsis-neon hover:underline">browse</a></span>
+                            <span class="text-xs text-slate-500">Fedora, RHEL, CentOS</span>
+                        </div>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-xs overflow-x-auto relative group">
+                            <button onclick="copyCode(event, 'cmd-dnf')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy DNF install command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <pre id="cmd-dnf" class="text-blue-300 whitespace-pre overflow-x-auto"><span class="text-slate-500"># Add repository</span>
+sudo tee /etc/yum.repos.d/kapsis.repo &lt;&lt;EOF
+[kapsis]
+name=Kapsis Repository
+baseurl=https://aviadshiber.github.io/kapsis/rpm/packages
+enabled=1
+gpgcheck=1
+gpgkey=https://aviadshiber.github.io/kapsis/gpg/kapsis.asc
+EOF
+
+<span class="text-slate-500"># Install</span>
+sudo dnf install kapsis</pre>
+                        </div>
+                    </div>
+
+                    <!-- Script -->
+                    <div id="install-content-script" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-script">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">For systems without a package manager</span>
+                            <span class="text-xs text-slate-500">Installs to ~/.local</span>
+                        </div>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                            <button onclick="copyCode(event, 'cmd-script')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy install script command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <pre id="cmd-script" class="text-kapsis-neon whitespace-pre overflow-x-auto">curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash</pre>
+                        </div>
+                    </div>
+
+                    <!-- Manual -->
+                    <div id="install-content-manual" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-manual">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">Clone and run setup</span>
+                            <span class="text-xs text-slate-500">Auto-installs dependencies</span>
+                        </div>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                            <button onclick="copyCode(event, 'cmd-manual')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy git clone command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <pre id="cmd-manual" class="text-blue-300 whitespace-pre overflow-x-auto">git clone https://github.com/aviadshiber/kapsis.git && cd kapsis && ./setup.sh --all</pre>
+                        </div>
+                    </div>
+
+                    <!-- Post-install note -->
+                    <div class="mt-4 pt-4 border-t border-slate-700 text-xs text-slate-500">
+                        <strong class="text-slate-400">Post-install:</strong> Run <code class="bg-slate-700 px-1 rounded">kapsis-setup --build</code> to build the container image.
+                    </div>
+
+                    <!-- Security note -->
+                    <div class="mt-3 flex items-start text-xs">
+                        <i class="fa-solid fa-shield-halved text-kapsis-neon mt-0.5 mr-2"></i>
+                        <span class="text-slate-500"><strong class="text-slate-400">Package security:</strong> All packages are <a href="https://aviadshiber.github.io/kapsis/gpg/kapsis.asc" class="text-kapsis-neon hover:underline">GPG signed</a>. Releases include <code class="bg-slate-700 px-1 rounded">checksums.sha256</code> for verification.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Requirements (compact) -->
+            <div class="flex flex-wrap gap-6 text-sm text-slate-400">
+                <span><i class="fa-solid fa-check text-kapsis-neon mr-2"></i><strong>macOS</strong> (Apple Silicon) or <strong>Linux</strong></span>
+                <span><i class="fa-solid fa-check text-kapsis-neon mr-2"></i><strong>Git</strong> 2.0+</span>
+                <span><i class="fa-solid fa-check text-kapsis-neon mr-2"></i><strong>Podman</strong> 4.0+ <span class="text-slate-500">(auto-installed by setup)</span></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- YOLO Mode Spotlight -->
+    <section id="yolo" class="py-20 relative">
+        <div class="absolute inset-0 bg-gradient-to-b from-kapsis-dark via-red-900/10 to-kapsis-dark pointer-events-none"></div>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="bg-gradient-to-r from-slate-900 to-slate-800 rounded-2xl border border-red-500/30 p-8 md:p-12 shadow-[0_0_50px_rgba(239,68,68,0.1)]">
+                <div class="md:flex items-center gap-12">
+                    <div class="md:w-1/2">
+                        <div class="inline-flex items-center px-3 py-1 rounded text-xs font-bold bg-red-500/20 text-red-400 mb-4 border border-red-500/30">
+                            <i class="fa-solid fa-triangle-exclamation mr-2"></i> GAME CHANGER
+                        </div>
+                        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+                            Work in <span class="text-red-500 italic">YOLO Mode</span> safely.
+                        </h2>
+                        <p class="text-slate-300 text-lg mb-6">
+                            Normally, flags like <code class="bg-red-900/30 text-red-400 px-1 py-0.5 rounded text-sm">--dangerously-skip-permissions</code> or <code class="bg-red-900/30 text-red-400 px-1 py-0.5 rounded text-sm">--yes-always</code> are terrifying. They risk your OS and your files.
+                        </p>
+                        <p class="text-slate-300 text-lg mb-6">
+                            With <strong>Kapsis</strong>, they are safe. Every destructive command is trapped inside a disposable container.
+                        </p>
+                        <ul class="space-y-3 mb-8">
+                            <li class="flex items-center text-slate-400">
+                                <i class="fa-solid fa-check text-green-500 mr-3"></i> Agent deletes root? Container dies, Host lives.
+                            </li>
+                            <li class="flex items-center text-slate-400">
+                                <i class="fa-solid fa-check text-green-500 mr-3"></i> Agent installs malware? It's isolated.
+                            </li>
+                            <li class="flex items-center text-slate-400">
+                                <i class="fa-solid fa-check text-green-500 mr-3"></i> Full autonomy without the anxiety.
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="md:w-1/2 mt-8 md:mt-0">
+                        <!-- Visual representation of containment -->
+                        <div class="bg-black rounded-lg border border-red-500/30 p-4 font-mono text-xs relative overflow-hidden">
+                            <div class="absolute top-0 right-0 bg-red-600 text-white text-[10px] px-2 py-1 font-bold rounded-bl">CONTAINER ISOLATION</div>
+                            <div class="text-red-400 mb-2">$ claude --dangerously-skip-permissions</div>
+                            <div class="text-slate-500 italic mb-2">> Agent attempting to delete database config...</div>
+                            <div class="text-slate-500 italic mb-2">> Agent installing unknown npm packages...</div>
+                            <div class="text-slate-500 italic mb-2">> Agent modifying system PATH...</div>
+                            <div class="mt-4 pt-4 border-t border-dashed border-slate-700 text-green-400 font-bold">
+                                [KAPSIS MONITOR]: Host System Integrity: 100% (Safe)
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Security Features Section -->
+    <section id="security" class="py-20 bg-slate-900/50">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-4 text-center">
+                <i class="fa-solid fa-shield-halved text-kapsis-neon mr-3"></i> Defense in Depth
+            </h2>
+            <p class="text-center text-slate-400 mb-12 max-w-2xl mx-auto">
+                Multiple layers of isolation protect your host system from rogue AI agents.
+            </p>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                <!-- Network Isolation -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-network-wired text-blue-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-white font-bold text-lg mb-2">Network Filtering</h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        DNS-based allowlist blocks unknown hosts. Agents can only reach approved destinations (GitHub, npm, PyPI).
+                    </p>
+                    <div class="code-block p-3 rounded text-xs font-mono">
+                        <span class="text-slate-500"># agent-sandbox.yaml</span><br>
+                        <span class="text-purple-400">network:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;mode:</span> <span class="text-green-400">filtered</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;allowlist:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">github.com</span>
+                    </div>
+                </div>
+
+                <!-- SSH Key Verification -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="w-12 h-12 bg-emerald-500/20 rounded-lg flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-key text-emerald-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-white font-bold text-lg mb-2">SSH Key Verification</h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        Host keys are verified against official provider APIs (GitHub, GitLab, Bitbucket) to prevent MITM attacks.
+                    </p>
+                    <div class="code-block p-3 rounded text-xs font-mono">
+                        <span class="text-slate-500"># Verified via API</span><br>
+                        <span class="text-purple-400">ssh:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;verify_hosts:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">github.com</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">gitlab.com</span>
+                    </div>
+                </div>
+
+                <!-- Container Isolation -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="w-12 h-12 bg-red-500/20 rounded-lg flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-box text-red-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-white font-bold text-lg mb-2">Rootless Containers</h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        Podman runs without root privileges. Even container escape leaves attacker as unprivileged user.
+                    </p>
+                    <div class="code-block p-3 rounded text-xs font-mono">
+                        <span class="text-slate-500"># Copy-on-Write filesystem</span><br>
+                        <span class="text-purple-400">filesystem:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;mode:</span> <span class="text-green-400">overlay</span><br>
+                        <span class="text-slate-500"># Host files unchanged</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Security Guarantees -->
+            <div class="mt-12 bg-gradient-to-r from-slate-800 to-slate-900 rounded-xl border border-slate-700 p-6">
+                <h4 class="text-white font-bold mb-4 flex items-center">
+                    <i class="fa-solid fa-check-double text-kapsis-neon mr-2"></i> Security Guarantees
+                </h4>
+                <div class="grid md:grid-cols-2 gap-4 text-sm">
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Data exfiltration blocked</strong> — Unknown hosts return NXDOMAIN</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>MITM prevention</strong> — SSH keys verified against official APIs</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Host filesystem safe</strong> — Changes trapped in overlay layer</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Credential isolation</strong> — API keys injected at runtime from keychain</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Documentation: Config & Profiles -->
+    <section id="docs" class="py-20">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-8 text-center">Docs & Agent Profiles</h2>
+            <p class="text-center text-slate-400 mb-12 max-w-2xl mx-auto">
+                Kapsis separates the <strong>Container Environment</strong> (resources, mounts) from the <strong>Agent Logic</strong> (commands, flags).
+            </p>
+
+            <div class="grid lg:grid-cols-2 gap-12">
+
+                <!-- Section 1: Agent Profiles -->
+                <div>
+                    <h3 class="text-xl font-bold text-white mb-4 flex items-center">
+                        <span class="bg-indigo-500/20 text-indigo-400 w-8 h-8 rounded flex items-center justify-center mr-3 text-sm">1</span>
+                        Agent Profiles
+                    </h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        Profiles define <em>what</em> runs inside the container. You can create custom YAML files for any CLI tool.
+                    </p>
+
+                    <!-- Interactive Profile Viewer -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                        <div class="flex border-b border-slate-700">
+                            <button onclick="switchDocTab('claude')" id="doc-tab-claude" class="flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white border-r border-slate-700">configs/claude.yaml</button>
+                            <button onclick="switchDocTab('aider')" id="doc-tab-aider" class="flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500">configs/aider.yaml</button>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] overflow-x-auto h-64">
+                            <!-- Claude Code -->
+                            <pre id="doc-content-claude" class="text-xs font-mono text-green-400">
+agent:
+  command: "claude --dangerously-skip-permissions -p \"$(cat /task-spec.md)\""
+  workdir: /workspace
+
+# API keys injected from host keychain
+environment:
+  keychain:
+    ANTHROPIC_API_KEY:
+      service: "Claude Code-credentials"
+
+# SSH hosts verified against official APIs
+ssh:
+  verify_hosts:
+    - github.com
+    - gitlab.com</pre>
+
+                            <!-- Aider Code -->
+                            <pre id="doc-content-aider" class="text-xs font-mono text-blue-400 hidden">
+agent:
+  command: "aider --yes-always --message-file /task-spec.md"
+
+# Git behaviors specifically for this agent
+git:
+  auto_push:
+    enabled: true
+    remote: origin
+
+# Additional files to mount from host
+filesystem:
+  include:
+    - ~/.gitconfig
+    - ~/.ssh</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: Global Configuration -->
+                <div>
+                    <h3 class="text-xl font-bold text-white mb-4 flex items-center">
+                        <span class="bg-orange-500/20 text-orange-400 w-8 h-8 rounded flex items-center justify-center mr-3 text-sm">2</span>
+                        Sandbox Resources
+                    </h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        The `agent-sandbox.yaml` (or CLI overrides) controls the container's physical limits and isolation rules.
+                    </p>
+
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl p-4">
+                        <ul class="space-y-4">
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">resources:</div>
+                                <div class="text-slate-500 text-xs">Controls <code>memory</code> (e.g., 8g) and <code>cpus</code> (e.g., 4). Crucial for heavy compile tasks.</div>
+                            </li>
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">network:</div>
+                                <div class="text-slate-500 text-xs">
+                                    <code>mode: filtered</code> enables DNS allowlist. <code>mode: none</code> for air-gapped operation.
+                                </div>
+                            </li>
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">ssh:</div>
+                                <div class="text-slate-500 text-xs">
+                                    <code>verify_hosts: [github.com]</code> enables MITM-protected SSH via official API verification.
+                                </div>
+                            </li>
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">maven:</div>
+                                <div class="text-slate-500 text-xs">
+                                    <code>block_remote_snapshots: true</code> prevents the agent from fetching unstable dependencies.
+                                </div>
+                            </li>
+                            <li>
+                                <div class="text-white font-mono text-sm mb-1">filesystem:</div>
+                                <div class="text-slate-500 text-xs">
+                                    Defines overlay mounts. By default, the project is mounted Read-Only + Copy-On-Write layer.
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick Start -->
+    <section id="quickstart" class="py-20">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-8 text-center">Launch Your First Agent</h2>
+
+            <div class="space-y-8">
+                <!-- Launch Command -->
+                <div>
+                    <p class="text-slate-400 mb-4 text-center">Once installed, launch an agent by specifying an ID, the project path, and the config profile.</p>
+                    <div class="code-block code-scroll-container rounded-lg p-6 font-mono text-sm text-slate-300 overflow-x-auto relative group shadow-lg border-l-4 border-kapsis-neon">
+                        <button onclick="copyCode(event, 'launch-code')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy launch command">
+                            <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                        </button>
+                        <div class="text-slate-500 mb-2"># Syntax: ./scripts/launch-agent.sh [ID] [PROJECT_PATH] [FLAGS]</div>
+                        <pre id="launch-code">./scripts/launch-agent.sh 1 ~/my-project \
+    --config configs/claude.yaml \
+    --branch feature/new-api</pre>
+                    </div>
+                </div>
+
+                <!-- Monitor -->
+                <div class="text-center">
+                    <p class="text-slate-400 mb-2">Watch the agents work in real-time:</p>
+                    <code class="bg-slate-800 px-3 py-1 rounded text-kapsis-neon font-mono">./scripts/kapsis-status.sh --watch</code>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Troubleshooting -->
+    <section class="py-20 border-t border-slate-800 bg-slate-900">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-2xl font-bold text-white mb-6">Troubleshooting & Ops</h2>
+            <div class="grid md:grid-cols-2 gap-6">
+                <div class="bg-slate-800 p-6 rounded-lg border border-slate-700">
+                    <h4 class="text-white font-bold mb-2"><i class="fa-solid fa-magnifying-glass text-indigo-400 mr-2"></i> Debug Logs</h4>
+                    <p class="text-sm text-slate-400 mb-2">View the launch sequence and container output.</p>
+                    <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-indigo-300">tail -f ~/.kapsis/logs/kapsis-launch-agent.log</code>
+                </div>
+                <div class="bg-slate-800 p-6 rounded-lg border border-slate-700">
+                    <h4 class="text-white font-bold mb-2"><i class="fa-solid fa-broom text-red-400 mr-2"></i> Cleanup</h4>
+                    <p class="text-sm text-slate-400 mb-2">Reclaim disk space and kill hanging containers.</p>
+                    <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-red-300">./scripts/kapsis-cleanup.sh --all</code>
+                </div>
+            </div>
+        </div>
+    </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-kapsis-dark border-t border-slate-800 py-12">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="md:flex justify-between items-center">
+                <div class="mb-6 md:mb-0">
+                    <div class="flex items-center gap-2 mb-2">
+                        <i class="fa-solid fa-box-open text-slate-600"></i>
+                        <span class="text-slate-300 font-bold">KAPSIS</span>
+                        <span class="text-xs text-kapsis-beta border border-kapsis-beta px-1 rounded uppercase">Beta</span>
+                    </div>
+                    <p class="text-slate-500 text-sm">The Secure Lab for AI Agents.</p>
+                </div>
+                <div class="flex space-x-6">
+                    <a href="https://github.com/aviadshiber/kapsis" class="text-slate-400 hover:text-white transition-colors">GitHub</a>
+                    <a href="https://github.com/aviadshiber/kapsis/issues" class="text-slate-400 hover:text-white transition-colors">Issues</a>
+                    <a href="#" class="text-slate-400 hover:text-white transition-colors">License</a>
+                </div>
+            </div>
+            <div class="border-t border-slate-800 mt-8 pt-8 text-center text-slate-600 text-sm">
+                <p>&copy; 2025 Kapsis Project. All rights reserved.</p>
+                <p class="mt-2">
+                    Website built by <a href="https://github.com/aviadshiber" target="_blank" class="text-kapsis-neon hover:underline">Aviad Shiber</a>
+                </p>
+                <p class="text-xs mt-1 opacity-50">Powered by Nano Banana Infographics</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script>
+        // Mobile menu toggle
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobile-menu');
+            const backdrop = document.getElementById('mobile-menu-backdrop');
+            const button = document.querySelector('[aria-controls="mobile-menu"]');
+            const icon = document.getElementById('mobile-menu-icon');
+
+            const isOpen = menu.classList.contains('open');
+
+            if (isOpen) {
+                menu.classList.remove('open');
+                backdrop.classList.add('hidden');
+                button.setAttribute('aria-expanded', 'false');
+                menu.setAttribute('aria-hidden', 'true');
+                icon.className = 'fa-solid fa-bars text-xl';
+                document.body.classList.remove('mobile-menu-open');
+            } else {
+                menu.classList.add('open');
+                backdrop.classList.remove('hidden');
+                button.setAttribute('aria-expanded', 'true');
+                menu.setAttribute('aria-hidden', 'false');
+                icon.className = 'fa-solid fa-xmark text-xl';
+                document.body.classList.add('mobile-menu-open');
+            }
+        }
+
+        // Toast notification
+        let toastTimeout;
+        function showToast(message = 'Copied to clipboard!') {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toast-message');
+
+            // Clear any existing timeout
+            if (toastTimeout) clearTimeout(toastTimeout);
+
+            toastMessage.textContent = message;
+            toast.classList.add('show');
+
+            toastTimeout = setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2000);
+        }
+
+        // Unified copy function with toast and icon feedback
+        function copyCode(e, elementId) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const element = document.getElementById(elementId);
+            if (!element) return;
+
+            const text = element.innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                // Show toast
+                showToast();
+
+                // Also update button icon
+                const btn = e.target.closest('button');
+                if (btn) {
+                    const icon = btn.querySelector('i');
+                    if (icon) {
+                        const originalClass = icon.className;
+                        icon.className = 'fa-solid fa-check';
+                        setTimeout(() => { icon.className = 'fa-regular fa-copy'; }, 1500);
+                    }
+                }
+            }).catch(err => {
+                showToast('Failed to copy');
+            });
+        }
+
+        // Install tab switching with accessibility
+        function switchInstallTab(tabName) {
+            // Hide all contents and update aria-selected
+            document.querySelectorAll('.install-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.install-tab').forEach(el => {
+                el.className = 'install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all';
+                el.setAttribute('aria-selected', 'false');
+            });
+
+            // Show selected content and highlight tab
+            document.getElementById('install-content-' + tabName).classList.remove('hidden');
+            const activeTab = document.getElementById('install-tab-' + tabName);
+            activeTab.className = 'install-tab px-4 py-2 rounded-lg text-sm font-medium bg-kapsis-neon text-slate-900 transition-all';
+            activeTab.setAttribute('aria-selected', 'true');
+
+            // Recheck scroll overflow for newly visible content
+            setTimeout(checkScrollOverflow, 50);
+        }
+
+        // Doc tab switching
+        function switchDocTab(tabName) {
+            document.getElementById('doc-content-claude').classList.add('hidden');
+            document.getElementById('doc-content-aider').classList.add('hidden');
+
+            document.getElementById('doc-tab-claude').className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 border-r border-slate-700 transition-colors";
+            document.getElementById('doc-tab-aider').className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 transition-colors";
+
+            document.getElementById('doc-content-' + tabName).classList.remove('hidden');
+            const activeBtn = document.getElementById('doc-tab-' + tabName);
+            activeBtn.className = "flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white " + (tabName === 'claude' ? "border-r border-slate-700" : "");
+        }
+
+        // Check for horizontal scroll overflow and add indicator
+        function checkScrollOverflow() {
+            document.querySelectorAll('.code-scroll-container').forEach(container => {
+                const pre = container.querySelector('pre');
+                if (pre) {
+                    // Use requestAnimationFrame to ensure layout is complete
+                    requestAnimationFrame(() => {
+                        if (pre.scrollWidth > container.clientWidth) {
+                            container.classList.add('has-overflow');
+                        } else {
+                            container.classList.remove('has-overflow');
+                        }
+                    });
+                }
+            });
+        }
+
+        // Hide scroll indicator when user has scrolled to the end
+        document.querySelectorAll('.code-scroll-container').forEach(container => {
+            container.addEventListener('scroll', function() {
+                const pre = this.querySelector('pre');
+                if (pre) {
+                    const atEnd = this.scrollLeft + this.clientWidth >= pre.scrollWidth - 5;
+                    if (atEnd) {
+                        this.classList.remove('has-overflow');
+                    } else if (pre.scrollWidth > this.clientWidth) {
+                        this.classList.add('has-overflow');
+                    }
+                }
+            });
+        });
+
+        // Keyboard navigation for install tabs
+        document.addEventListener('keydown', function(e) {
+            if (e.target.classList.contains('install-tab')) {
+                const tabs = Array.from(document.querySelectorAll('.install-tab'));
+                const currentIndex = tabs.indexOf(e.target);
+
+                if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    const nextIndex = (currentIndex + 1) % tabs.length;
+                    tabs[nextIndex].focus();
+                    tabs[nextIndex].click();
+                } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+                    tabs[prevIndex].focus();
+                    tabs[prevIndex].click();
+                }
+            }
+        });
+
+        // Close mobile menu on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const menu = document.getElementById('mobile-menu');
+                if (menu.classList.contains('open')) {
+                    toggleMobileMenu();
+                }
+            }
+        });
+
+        // Fetch latest version from GitHub and update install commands
+        async function fetchLatestVersion() {
+            try {
+                const response = await fetch('https://api.github.com/repos/aviadshiber/kapsis/releases/latest');
+                if (!response.ok) return;
+                const data = await response.json();
+                const version = data.tag_name.replace(/^v/, ''); // Remove 'v' prefix
+
+                // Update all version placeholders
+                document.querySelectorAll('.version-placeholder').forEach(el => {
+                    el.textContent = version;
+                });
+            } catch (error) {
+                console.warn('Failed to fetch latest version:', error);
+            }
+        }
+
+        // Initialize on load
+        window.addEventListener('load', () => {
+            checkScrollOverflow();
+            fetchLatestVersion();
+        });
+        window.addEventListener('resize', checkScrollOverflow);
+    </script>
 </body>
 </html>
