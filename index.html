@@ -273,28 +273,46 @@
                     <!-- APT -->
                     <div id="install-content-apt" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-apt">
                         <div class="flex items-center justify-between mb-4">
-                            <span class="text-xs text-slate-400">Download from <a href="https://github.com/aviadshiber/kapsis/releases" class="text-kapsis-neon hover:underline">releases</a></span>
+                            <span class="text-xs text-slate-400">APT Repository · <a href="https://aviadshiber.github.io/kapsis/apt" class="text-kapsis-neon hover:underline">browse</a></span>
                             <span class="text-xs text-slate-500">Debian, Ubuntu, Mint</span>
                         </div>
-                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-xs overflow-x-auto relative group">
                             <button onclick="copyCode(event, 'cmd-apt')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy APT install command">
                                 <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
-                            <pre id="cmd-apt" class="text-blue-300 whitespace-pre overflow-x-auto">sudo apt install ./kapsis_<span class="version-placeholder">VERSION</span>-1_all.deb</pre>
+                            <pre id="cmd-apt" class="text-blue-300 whitespace-pre overflow-x-auto"><span class="text-slate-500"># Add GPG key</span>
+curl -fsSL https://aviadshiber.github.io/kapsis/gpg/kapsis.asc | sudo gpg --dearmor -o /etc/apt/keyrings/kapsis.gpg
+
+<span class="text-slate-500"># Add repository</span>
+echo "deb [signed-by=/etc/apt/keyrings/kapsis.gpg] https://aviadshiber.github.io/kapsis/apt stable main" | sudo tee /etc/apt/sources.list.d/kapsis.list
+
+<span class="text-slate-500"># Install</span>
+sudo apt update && sudo apt install kapsis</pre>
                         </div>
                     </div>
 
                     <!-- DNF -->
                     <div id="install-content-dnf" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-dnf">
                         <div class="flex items-center justify-between mb-4">
-                            <span class="text-xs text-slate-400">Download from <a href="https://github.com/aviadshiber/kapsis/releases" class="text-kapsis-neon hover:underline">releases</a></span>
+                            <span class="text-xs text-slate-400">DNF Repository · <a href="https://aviadshiber.github.io/kapsis/rpm/packages" class="text-kapsis-neon hover:underline">browse</a></span>
                             <span class="text-xs text-slate-500">Fedora, RHEL, CentOS</span>
                         </div>
-                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-xs overflow-x-auto relative group">
                             <button onclick="copyCode(event, 'cmd-dnf')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy DNF install command">
                                 <i class="fa-regular fa-copy" aria-hidden="true"></i>
                             </button>
-                            <pre id="cmd-dnf" class="text-blue-300 whitespace-pre overflow-x-auto">sudo dnf install ./kapsis-<span class="version-placeholder">VERSION</span>-1.noarch.rpm</pre>
+                            <pre id="cmd-dnf" class="text-blue-300 whitespace-pre overflow-x-auto"><span class="text-slate-500"># Add repository</span>
+sudo tee /etc/yum.repos.d/kapsis.repo &lt;&lt;EOF
+[kapsis]
+name=Kapsis Repository
+baseurl=https://aviadshiber.github.io/kapsis/rpm/packages
+enabled=1
+gpgcheck=1
+gpgkey=https://aviadshiber.github.io/kapsis/gpg/kapsis.asc
+EOF
+
+<span class="text-slate-500"># Install</span>
+sudo dnf install kapsis</pre>
                         </div>
                     </div>
 
@@ -334,7 +352,7 @@
                     <!-- Security note -->
                     <div class="mt-3 flex items-start text-xs">
                         <i class="fa-solid fa-shield-halved text-kapsis-neon mt-0.5 mr-2"></i>
-                        <span class="text-slate-500"><strong class="text-slate-400">Verify downloads:</strong> Each <a href="https://github.com/aviadshiber/kapsis/releases" class="text-kapsis-neon hover:underline">release</a> includes <code class="bg-slate-700 px-1 rounded">checksums.sha256</code> for integrity verification.</span>
+                        <span class="text-slate-500"><strong class="text-slate-400">Package security:</strong> All packages are <a href="https://aviadshiber.github.io/kapsis/gpg/kapsis.asc" class="text-kapsis-neon hover:underline">GPG signed</a>. Releases include <code class="bg-slate-700 px-1 rounded">checksums.sha256</code> for verification.</span>
                     </div>
                 </div>
             </div>
