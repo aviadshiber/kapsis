@@ -359,9 +359,11 @@ jobs:
 
             if [[ -n "$PREV_VERSION" ]]; then
               # Insert new version link before the first version link
-              sed -i.bak "/^\[${PREV_VERSION}\]:/i\\
-[${VERSION}]: https://github.com/${REPO}/releases/tag/v${VERSION}
-" "${CHANGELOG_FILE}.new"
+              # Use awk for portability instead of sed -i with newlines
+              awk -v ver="[${VERSION}]: https://github.com/${REPO}/releases/tag/v${VERSION}" \
+                  -v prev="${PREV_VERSION}" \
+                  'BEGIN{printed=0} /^\[/ && $0 ~ prev && !printed {print ver; printed=1} {print}' \
+                  "${CHANGELOG_FILE}.new" > "${CHANGELOG_FILE}.tmp" && mv "${CHANGELOG_FILE}.tmp" "${CHANGELOG_FILE}.new"
             else
               # Append at end if no version links exist
               echo "[${VERSION}]: https://github.com/${REPO}/releases/tag/v${VERSION}" >> "${CHANGELOG_FILE}.new"
