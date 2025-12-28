@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [0.8.1] - 2025-12-28
+## [0.8.2] - 2025-12-28
+
+### Changed
+- Release v0.8.2
+
+## [Unreleased]
+
+## [0.7.8] - 2025-12-28
 
 ### Added
 - CLAUDE.md guidelines for AI assistant onboarding
@@ -29,9 +36,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Container tests and security scans only run on merge to main (not on PRs)
 - CI Success job properly gates all required checks
 
-## [Unreleased]
-
-## [0.7.8] - 2025-12-28
 
 ### Fixed
 - Update all packages to v0.7.6 with hardened CI automation (#56)
@@ -192,7 +196,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.2
 [0.8.1]: https://github.com/aviadshiber/kapsis/releases/tag/v0.8.1
 [0.7.8]: https://github.com/aviadshiber/kapsis/compare/v0.7.7...v0.7.8
 [0.7.7]: https://github.com/aviadshiber/kapsis/compare/v0.7.6...v0.7.7
