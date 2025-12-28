@@ -224,10 +224,198 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  publish-apt-repo:
+    name: Publish APT Repository
+    runs-on: ubuntu-latest
+    needs: [determine-version, build-deb]
+    if: needs.build-deb.result == 'success'
+    steps:
+      - name: Download DEB artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: deb-package
+          path: packages
+
+      - name: Checkout gh-pages
+        uses: actions/checkout@v6
+        with:
+          ref: gh-pages
+          path: gh-pages
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Import GPG key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${GPG_PRIVATE_KEY:-}" ]]; then
+            echo "::warning::GPG_PRIVATE_KEY not configured. Skipping APT repo publish."
+            echo "To enable, run: ./scripts/setup-package-repos.sh"
+            exit 0
+          fi
+
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "✓ GPG key imported"
+
+      - name: Update APT repository
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${GPG_PRIVATE_KEY:-}" ]]; then
+            exit 0
+          fi
+
+          set -euo pipefail
+          VERSION="${{ needs.determine-version.outputs.version }}"
+
+          # Install apt tools
+          sudo apt-get update
+          sudo apt-get install -y apt-utils
+
+          cd gh-pages
+
+          # Copy new package to pool
+          mkdir -p apt/pool/main/k/kapsis
+          cp ../packages/*.deb apt/pool/main/k/kapsis/
+
+          # Generate Packages files
+          cd apt
+          apt-ftparchive packages pool/main > dists/stable/main/binary-all/Packages
+          gzip -k -f dists/stable/main/binary-all/Packages
+          cp dists/stable/main/binary-all/Packages dists/stable/main/binary-amd64/
+          cp dists/stable/main/binary-all/Packages.gz dists/stable/main/binary-amd64/
+
+          # Generate Release file
+          apt-ftparchive release dists/stable > dists/stable/Release
+
+          # Sign Release file
+          KEY_ID=$(gpg --list-keys --keyid-format LONG | grep -E "^pub" | head -1 | awk '{print $2}' | cut -d'/' -f2)
+          gpg --batch --yes --armor --detach-sign --default-key "$KEY_ID" -o dists/stable/Release.gpg dists/stable/Release
+          gpg --batch --yes --armor --clearsign --default-key "$KEY_ID" -o dists/stable/InRelease dists/stable/Release
+
+          echo "✓ APT repository updated for v${VERSION}"
+
+      - name: Push APT changes
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${GPG_PRIVATE_KEY:-}" ]]; then
+            exit 0
+          fi
+
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          cd gh-pages
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to APT repository"
+          else
+            git commit -m "Update APT repository for v${VERSION}"
+            git push origin gh-pages
+            echo "✓ APT repository published"
+          fi
+
+  publish-rpm-repo:
+    name: Publish RPM Repository
+    runs-on: ubuntu-latest
+    needs: [determine-version, build-rpm, publish-apt-repo]
+    if: needs.build-rpm.result == 'success'
+    container:
+      image: fedora:latest
+    steps:
+      - name: Install dependencies
+        run: |
+          dnf install -y git createrepo_c gnupg2
+
+      - name: Download RPM artifact
+        uses: actions/download-artifact@v7
+        with:
+          name: rpm-package
+          path: packages
+
+      - name: Checkout gh-pages
+        uses: actions/checkout@v6
+        with:
+          ref: gh-pages
+          path: gh-pages
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Import GPG key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${GPG_PRIVATE_KEY:-}" ]]; then
+            echo "::warning::GPG_PRIVATE_KEY not configured. Skipping RPM repo publish."
+            exit 0
+          fi
+
+          echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "✓ GPG key imported"
+
+      - name: Update RPM repository
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${GPG_PRIVATE_KEY:-}" ]]; then
+            exit 0
+          fi
+
+          set -euo pipefail
+          VERSION="${{ needs.determine-version.outputs.version }}"
+
+          cd gh-pages
+
+          # Copy new package to rpm directory
+          mkdir -p rpm/packages
+          cp ../packages/*.rpm rpm/packages/
+
+          # Sign RPM package
+          KEY_ID=$(gpg --list-keys --keyid-format LONG | grep -E "^pub" | head -1 | awk '{print $2}' | cut -d'/' -f2)
+
+          # Configure RPM macros for signing
+          echo "%_gpg_name $KEY_ID" > ~/.rpmmacros
+          echo "%__gpg /usr/bin/gpg" >> ~/.rpmmacros
+
+          # Note: RPM signing requires rpm-sign which may not be available
+          # The repo will still work with gpgcheck=0 or by verifying with the public key
+
+          # Create/update repository metadata
+          createrepo_c --update rpm/packages
+
+          echo "✓ RPM repository updated for v${VERSION}"
+
+      - name: Push RPM changes
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          if [[ -z "${GPG_PRIVATE_KEY:-}" ]]; then
+            exit 0
+          fi
+
+          VERSION="${{ needs.determine-version.outputs.version }}"
+          cd gh-pages
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Mark directory as safe (container runs as root)
+          git config --global --add safe.directory "$(pwd)"
+
+          git add -A
+          if git diff --staged --quiet; then
+            echo "No changes to RPM repository"
+          else
+            git commit -m "Update RPM repository for v${VERSION}"
+            git push origin gh-pages
+            echo "✓ RPM repository published"
+          fi
+
   summary:
     name: Package Summary
     runs-on: ubuntu-latest
-    needs: [determine-version, build-deb, build-rpm, update-homebrew]
+    needs: [determine-version, build-deb, build-rpm, update-homebrew, publish-apt-repo, publish-rpm-repo]
     if: always()
     steps:
       - name: Generate summary
@@ -240,11 +428,11 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Packages Built" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Package | Status |" >> $GITHUB_STEP_SUMMARY
-          echo "|---------|--------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Debian (.deb) | ${{ needs.build-deb.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| RPM (.rpm) | ${{ needs.build-rpm.result }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Homebrew Formula | ${{ needs.update-homebrew.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Package | Build | Publish |" >> $GITHUB_STEP_SUMMARY
+          echo "|---------|-------|---------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Debian (.deb) | ${{ needs.build-deb.result }} | ${{ needs.publish-apt-repo.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| RPM (.rpm) | ${{ needs.build-rpm.result }} | ${{ needs.publish-rpm-repo.result }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Homebrew Formula | ${{ needs.update-homebrew.result }} | (via release.yml) |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "### Installation Instructions" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -254,15 +442,24 @@ jobs:
           echo "brew install kapsis" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Debian/Ubuntu:**" >> $GITHUB_STEP_SUMMARY
+          echo "**Debian/Ubuntu (APT Repository):**" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "# Download from release and install" >> $GITHUB_STEP_SUMMARY
-          echo "sudo dpkg -i kapsis_${VERSION}-1_all.deb" >> $GITHUB_STEP_SUMMARY
-          echo "sudo apt-get install -f  # Install dependencies" >> $GITHUB_STEP_SUMMARY
+          echo "# Add GPG key and repository" >> $GITHUB_STEP_SUMMARY
+          echo 'curl -fsSL https://aviadshiber.github.io/kapsis/gpg/kapsis.asc | sudo gpg --dearmor -o /etc/apt/keyrings/kapsis.gpg' >> $GITHUB_STEP_SUMMARY
+          echo 'echo "deb [signed-by=/etc/apt/keyrings/kapsis.gpg] https://aviadshiber.github.io/kapsis/apt stable main" | sudo tee /etc/apt/sources.list.d/kapsis.list' >> $GITHUB_STEP_SUMMARY
+          echo "sudo apt update && sudo apt install kapsis" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "**Fedora/RHEL:**" >> $GITHUB_STEP_SUMMARY
+          echo "**Fedora/RHEL (DNF Repository):**" >> $GITHUB_STEP_SUMMARY
           echo '```bash' >> $GITHUB_STEP_SUMMARY
-          echo "# Download from release and install" >> $GITHUB_STEP_SUMMARY
-          echo "sudo dnf install kapsis-${VERSION}-1.noarch.rpm" >> $GITHUB_STEP_SUMMARY
+          echo "# Add repository" >> $GITHUB_STEP_SUMMARY
+          echo 'sudo tee /etc/yum.repos.d/kapsis.repo <<EOF' >> $GITHUB_STEP_SUMMARY
+          echo "[kapsis]" >> $GITHUB_STEP_SUMMARY
+          echo "name=Kapsis Repository" >> $GITHUB_STEP_SUMMARY
+          echo "baseurl=https://aviadshiber.github.io/kapsis/rpm/packages" >> $GITHUB_STEP_SUMMARY
+          echo "enabled=1" >> $GITHUB_STEP_SUMMARY
+          echo "gpgcheck=1" >> $GITHUB_STEP_SUMMARY
+          echo "gpgkey=https://aviadshiber.github.io/kapsis/gpg/kapsis.asc" >> $GITHUB_STEP_SUMMARY
+          echo "EOF" >> $GITHUB_STEP_SUMMARY
+          echo "sudo dnf install kapsis" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY

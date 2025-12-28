@@ -569,16 +569,88 @@ jobs:
           echo "::error::Failed to push after $MAX_RETRIES attempts"
           exit 1
 
+  sync-homebrew-tap:
+    name: Sync Homebrew Tap
+    runs-on: ubuntu-latest
+    needs: [validate, update-packages]
+    if: needs.update-packages.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          ref: main
+          # Need to fetch the updated formula from main
+          fetch-depth: 1
+
+      - name: Sync formula to tap repository
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate.outputs.version }}"
+
+          # Skip if no deploy key configured
+          if [[ -z "${TAP_DEPLOY_KEY:-}" ]]; then
+            echo "::warning::TAP_DEPLOY_KEY not configured. Skipping tap sync."
+            echo "To enable automatic tap updates, run: ./scripts/setup-homebrew-tap-sync.sh"
+            exit 0
+          fi
+
+          # Fetch latest main to get the updated formula
+          git fetch origin main
+          git checkout origin/main -- packaging/homebrew/kapsis.rb
+
+          # Setup SSH for tap repo access
+          mkdir -p ~/.ssh
+          echo "$TAP_DEPLOY_KEY" > ~/.ssh/tap_deploy_key
+          chmod 600 ~/.ssh/tap_deploy_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+          # Clone tap repo
+          echo "Cloning tap repository..."
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_deploy_key" \
+            git clone git@github.com:aviadshiber/homebrew-kapsis.git /tmp/tap
+
+          # Copy formula
+          cp packaging/homebrew/kapsis.rb /tmp/tap/Formula/kapsis.rb
+
+          cd /tmp/tap
+
+          # Check for changes
+          if git diff --quiet; then
+            echo "No changes to formula"
+            exit 0
+          fi
+
+          # Commit and push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/kapsis.rb
+          git commit -m "Update kapsis to v${VERSION}"
+
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_deploy_key" git push origin main
+
+          echo "✓ Synced formula v${VERSION} to tap repository"
+
+      - name: Summary
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          echo "## Homebrew Tap Sync" >> $GITHUB_STEP_SUMMARY
+          echo "- Formula version: v${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- Tap: [aviadshiber/homebrew-kapsis](https://github.com/aviadshiber/homebrew-kapsis)" >> $GITHUB_STEP_SUMMARY
+
   notify:
     name: Post-Release
     runs-on: ubuntu-latest
-    needs: [validate, release, update-packages]
+    needs: [validate, release, update-packages, sync-homebrew-tap]
     if: always() && needs.release.result == 'success'
     steps:
       - name: Release Summary
         run: |
           VERSION="${{ needs.validate.outputs.version }}"
           PACKAGES_STATUS="${{ needs.update-packages.result }}"
+          TAP_STATUS="${{ needs.sync-homebrew-tap.result }}"
 
           echo "## Release v$VERSION completed!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -591,4 +663,12 @@ jobs:
             echo "- ✅ All package definitions updated (Homebrew, RPM, Debian)" >> $GITHUB_STEP_SUMMARY
           else
             echo "- ⚠️ Package updates: $PACKAGES_STATUS" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ "$TAP_STATUS" == "success" ]]; then
+            echo "- ✅ Homebrew tap synced" >> $GITHUB_STEP_SUMMARY
+          elif [[ "$TAP_STATUS" == "skipped" ]]; then
+            echo "- ⏭️ Homebrew tap sync skipped (no deploy key configured)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️ Homebrew tap sync: $TAP_STATUS" >> $GITHUB_STEP_SUMMARY
           fi

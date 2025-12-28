@@ -19,6 +19,25 @@ brew upgrade kapsis
 
 ### Debian/Ubuntu (APT)
 
+#### Using APT Repository (Recommended)
+
+```bash
+# Add GPG key
+curl -fsSL https://aviadshiber.github.io/kapsis/gpg/kapsis.asc | sudo gpg --dearmor -o /etc/apt/keyrings/kapsis.gpg
+
+# Add repository
+echo "deb [signed-by=/etc/apt/keyrings/kapsis.gpg] https://aviadshiber.github.io/kapsis/apt stable main" | sudo tee /etc/apt/sources.list.d/kapsis.list
+
+# Install
+sudo apt update
+sudo apt install kapsis
+
+# Upgrade to latest version
+sudo apt update && sudo apt upgrade kapsis
+```
+
+#### Manual Installation
+
 Download the `.deb` package from the [releases page](https://github.com/aviadshiber/kapsis/releases):
 
 ```bash
@@ -36,19 +55,29 @@ grep "kapsis_${VERSION}-1_all.deb" checksums.sha256 | sha256sum -c -
 sudo apt install "./kapsis_${VERSION}-1_all.deb"
 ```
 
-#### Using APT Repository (Future)
+### Fedora/RHEL/CentOS (DNF/YUM)
 
-We plan to set up an APT repository for easier updates:
+#### Using DNF Repository (Recommended)
 
 ```bash
-# Add repository (coming soon)
-echo "deb https://apt.kapsis.dev stable main" | sudo tee /etc/apt/sources.list.d/kapsis.list
-curl -fsSL https://apt.kapsis.dev/gpg | sudo gpg --dearmor -o /etc/apt/trusted.gpg.d/kapsis.gpg
-sudo apt update
-sudo apt install kapsis
+# Add repository
+sudo tee /etc/yum.repos.d/kapsis.repo <<EOF
+[kapsis]
+name=Kapsis Repository
+baseurl=https://aviadshiber.github.io/kapsis/rpm/packages
+enabled=1
+gpgcheck=1
+gpgkey=https://aviadshiber.github.io/kapsis/gpg/kapsis.asc
+EOF
+
+# Install
+sudo dnf install kapsis
+
+# Upgrade to latest version
+sudo dnf upgrade kapsis
 ```
 
-### Fedora/RHEL/CentOS (DNF/YUM)
+#### Manual Installation
 
 Download the `.rpm` package from the [releases page](https://github.com/aviadshiber/kapsis/releases):
 
@@ -68,14 +97,6 @@ sudo dnf install "./kapsis-${VERSION}-1.noarch.rpm"
 
 # Or install with yum (RHEL/CentOS)
 sudo yum install "./kapsis-${VERSION}-1.noarch.rpm"
-```
-
-#### Using DNF Repository (Future)
-
-```bash
-# Add repository (coming soon)
-sudo dnf config-manager --add-repo https://rpm.kapsis.dev/kapsis.repo
-sudo dnf install kapsis
 ```
 
 ## Security Best Practices

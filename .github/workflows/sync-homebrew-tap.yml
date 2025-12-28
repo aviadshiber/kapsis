@@ -1,15 +1,21 @@
 name: Sync Homebrew Tap
 
-# Syncs the Homebrew formula to the homebrew-kapsis tap repository
-# after each release, so users get the latest version via brew upgrade
+# Fallback/manual workflow for syncing the Homebrew formula to the tap repository.
+#
+# NOTE: During releases, the tap is synced directly by the release.yml workflow
+# (the sync-homebrew-tap job). This workflow exists for:
+#   1. Manual re-syncs (workflow_dispatch)
+#   2. Direct formula updates outside of releases (push trigger)
+#
+# The push trigger won't fire for release commits since they use [skip ci].
 
 on:
-  # Trigger after release workflow updates the formula
+  # Trigger on direct formula updates (outside of releases)
   push:
     branches: [main]
     paths:
       - 'packaging/homebrew/kapsis.rb'
-  # Manual trigger
+  # Manual trigger for re-syncs
   workflow_dispatch:
 
 permissions:
