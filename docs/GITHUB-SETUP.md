@@ -1,6 +1,6 @@
 # GitHub Repository Setup
 
-This guide explains how to configure GitHub branch protection and CI/CD for the Kapsis repository.
+This guide explains how to configure GitHub branch protection, CI/CD, and GitHub Pages for the Kapsis repository.
 
 ## CI/CD Pipeline
 
@@ -182,6 +182,74 @@ gh auth login
 
 # Verify authentication
 gh auth status
+```
+
+## GitHub Pages
+
+The project website and package repositories are hosted on GitHub Pages at [aviadshiber.github.io/kapsis](https://aviadshiber.github.io/kapsis/).
+
+### Branch Structure
+
+GitHub Pages serves content from the `gh-pages` branch:
+
+| Path | Content |
+|------|---------|
+| `/` | Landing page (`index.html`) |
+| `/apt/` | APT/Debian package repository |
+| `/rpm/` | RPM/Fedora package repository |
+| `/gpg/` | GPG signing keys |
+
+### Updating the Landing Page
+
+The landing page source is maintained in `main` branch (`index.html`). To update it:
+
+```bash
+# Switch to gh-pages branch
+git checkout gh-pages
+
+# Copy latest landing page from main
+git checkout main -- index.html
+
+# Commit and push
+git add index.html
+git commit -m "docs: update landing page"
+git push origin gh-pages
+
+# Return to main
+git checkout main
+```
+
+### Package Repository Updates
+
+Package repositories (`/apt`, `/rpm`) are automatically updated by the Release workflow (`.github/workflows/release.yml`) when a new version is tagged. The workflow:
+
+1. Builds `.deb` and `.rpm` packages
+2. Updates repository metadata (Packages, repomd.xml)
+3. Signs packages with GPG
+4. Commits changes to `gh-pages`
+
+### Pages Configuration
+
+GitHub Pages is configured via repository settings:
+
+| Setting | Value |
+|---------|-------|
+| Source | `gh-pages` branch, `/` (root) |
+| HTTPS | Enforced |
+| Custom domain | None (uses github.io) |
+
+To verify or update configuration:
+
+```bash
+# Check current config
+gh api repos/aviadshiber/kapsis/pages --jq '.source'
+
+# Update source branch (if needed)
+gh api repos/aviadshiber/kapsis/pages -X PUT \
+  --input - <<< '{"source":{"branch":"gh-pages","path":"/"}}'
+
+# Trigger a rebuild
+gh api repos/aviadshiber/kapsis/pages/builds -X POST
 ```
 
 ## Security Considerations
