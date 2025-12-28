@@ -1,4 +1,11 @@
-kapsis (1.0.0-1) unstable; urgency=medium
+kapsis (0.7.6-1) unstable; urgency=medium
+
+  * Update to v0.7.6
+  * Fix package versioning to match actual releases
+
+ -- Aviad Shiber <aviadshiber@gmail.com>  Sat, 28 Dec 2025 07:13:00 +0000
+
+kapsis (0.1.0-1) unstable; urgency=medium
 
   * Initial release
   * Multi-agent support: Claude Code, Aider, Codex, Gemini
@@ -10,4 +17,4 @@ kapsis (1.0.0-1) unstable; urgency=medium
   * Status reporting and monitoring CLI
   * Cleanup and disk reclamation utilities
 
- -- Aviad Shiber <aviadshiber@gmail.com>  Fri, 27 Dec 2024 12:00:00 +0000
+ -- Aviad Shiber <aviadshiber@gmail.com>  Wed, 24 Dec 2025 12:00:00 +0000

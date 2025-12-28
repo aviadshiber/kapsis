@@ -9,11 +9,18 @@ class Kapsis < Formula
   license "MIT"
   head "https://github.com/aviadshiber/kapsis.git", branch: "main"
 
-  # Stable release - updated by CI on each release
-  # RELEASE_VERSION_MARKER - Do not remove, used by CI
-  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v1.0.0.tar.gz"
-  sha256 "PLACEHOLDER_SHA256"
-  version "1.0.0"
+  # Stable release - automatically updated by CI on each release
+  # RELEASE_VERSION_MARKER_START - Do not remove, used by CI
+  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v0.7.6.tar.gz"
+  sha256 "55ccd5d9f614153996cb2e7fcf2e7d2231ef320444be6d00dae3cddff9958d89"
+  version "0.7.6"
+  # RELEASE_VERSION_MARKER_END
+
+  # Homebrew livecheck - detects new releases automatically
+  livecheck do
+    url :stable
+    strategy :github_latest
+  end
 
   depends_on "bash" => "3.2"
   depends_on "git" => "2.0"

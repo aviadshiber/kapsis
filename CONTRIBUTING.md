@@ -387,8 +387,40 @@ BREAKING CHANGE: Config files must now use YAML format instead of JSON."
 4. **Determines version** → Calculates new version based on commit types (feat → minor, fix → patch, breaking → major)
 5. **Creates git tag** → Pushes `v{X.Y.Z}` tag
 6. **Release workflow triggers** → Builds container, creates GitHub Release
+7. **Package definitions updated** → Homebrew, RPM, and Debian packages are automatically updated
 
 > **Note:** Since `main` is a protected branch, the Auto Release workflow creates only the git tag. Git tags are the source of truth for versioning.
+
+### What's Automated vs Manual
+
+| Task | Status | Notes |
+|------|--------|-------|
+| Version bump | ✅ Automated | Based on conventional commits |
+| Git tag creation | ✅ Automated | Auto-release workflow |
+| GitHub Release | ✅ Automated | With auto-generated release notes |
+| Container image | ✅ Automated | Built and attached to release |
+| Homebrew formula | ✅ Automated | Version + SHA256 updated |
+| RPM spec | ✅ Automated | Version updated |
+| Debian changelog | ✅ Automated | New entry prepended |
+| **CHANGELOG.md** | ⚠️ **Manual** | Move entries from `[Unreleased]` to version section |
+| **docs/INSTALL.md** | ⚠️ **Manual** | Update version examples if needed |
+| **README badges** | ⚠️ **Manual** | Update if version badges are used |
+
+### Post-Release Manual Steps
+
+After a release is created, maintainers should:
+
+1. **Update CHANGELOG.md** (if not done in the PR):
+   - Move entries from `[Unreleased]` to the new version section
+   - Update the comparison links at the bottom
+
+2. **Review documentation** for version-specific content:
+   - `docs/INSTALL.md` - version examples
+   - `README.md` - any hardcoded versions
+
+3. **Announce the release** (if significant):
+   - Update project documentation
+   - Notify users of breaking changes
 
 ### Manual Releases
 
