@@ -54,15 +54,6 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Release version: $VERSION"
 
-      - name: Check CHANGELOG entry
-        run: |
-          VERSION="${{ steps.version.outputs.version }}"
-          if ! grep -q "\[$VERSION\]" CHANGELOG.md; then
-            echo "::warning::No CHANGELOG entry found for version $VERSION"
-          else
-            echo "CHANGELOG entry found for version $VERSION"
-          fi
-
   test:
     name: Run Tests
     runs-on: ubuntu-latest
