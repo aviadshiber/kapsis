@@ -1,5 +1,5 @@
 Name:           kapsis
-Version:        1.0.0
+Version:        0.7.6  # RELEASE_VERSION_MARKER - Do not remove, used by CI
 Release:        1%{?dist}
 Summary:        Hermetically isolated AI agent sandbox
 
@@ -133,7 +133,11 @@ chmod 755 %{buildroot}%{_bindir}/kapsis-quick
 %{_datadir}/%{name}/
 
 %changelog
-* Fri Dec 27 2024 Aviad Shiber <aviadshiber@gmail.com> - 1.0.0-1
+* Sun Dec 28 2025 Aviad Shiber <aviadshiber@gmail.com> - 0.7.6-1
+- Update to v0.7.6
+- Fix package versioning to match actual releases
+
+* Wed Dec 24 2025 Aviad Shiber <aviadshiber@gmail.com> - 0.1.0-1
 - Initial release
 - Multi-agent support: Claude Code, Aider, Codex, Gemini
 - Podman-based container isolation with rootless execution

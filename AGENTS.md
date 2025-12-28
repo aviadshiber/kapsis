@@ -44,19 +44,25 @@
 ## Version Documentation Updates
 When completing a PR that will trigger a release, update version references in documentation:
 
-1. **Determine the new version** based on conventional commit type:
+1. **Verify current date**: Always run `date -u` to get the correct UTC date before updating changelogs or documentation with dates. Do not assume the year.
+
+2. **Determine the new version** based on conventional commit type:
    - `feat:` → minor bump (0.7.5 → 0.8.0)
    - `fix:` → patch bump (0.7.5 → 0.7.6)
    - `feat!:` or `BREAKING CHANGE:` → major bump (0.7.5 → 1.0.0)
 
-2. **Check current version**: `git tag --sort=-v:refname | head -1`
+3. **Check current version**: `git tag --sort=-v:refname | head -1`
 
-3. **Update hardcoded versions** in these files if they exist:
+4. **Update hardcoded versions** in these files if they exist:
    - `docs/INSTALL.md` - example version in install commands
-   - `packaging/homebrew/kapsis.rb` - formula version
+   - `packaging/homebrew/kapsis.rb` - formula version (auto-updated by CI)
+   - `packaging/rpm/kapsis.spec` - RPM version (auto-updated by CI)
+   - `packaging/debian/debian/changelog` - Debian changelog (auto-updated by CI)
    - Any other docs with explicit version numbers
 
-4. **Prefer dynamic fetching** where possible - the landing page and install docs already fetch versions dynamically from GitHub API.
+5. **Prefer dynamic fetching** where possible - the landing page and install docs already fetch versions dynamically from GitHub API.
+
+6. **Package definitions are auto-updated** by CI on release - see `.github/workflows/release.yml` `update-packages` job.
 
 ## Security & Configuration Tips
 - Copy `agent-sandbox.yaml.template` to `agent-sandbox.yaml` and keep secrets in keychain-backed fields.

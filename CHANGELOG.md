@@ -29,7 +29,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Container tests and security scans only run on merge to main (not on PRs)
 - CI Success job properly gates all required checks
 
-## [1.0.0] - 2024-XX-XX
+## [0.7.6] - 2025-12-28
+
+### Fixed
+- Package manager installations now work without GitHub authentication
+- Homebrew formula updated to v0.7.6 with correct SHA256
+- RPM spec updated to v0.7.6
+- Debian changelog updated to v0.7.6
+
+### Added
+- CI automation to update all package definitions (Homebrew, RPM, Debian) on release
+- Input validation and retry logic for package updates
+- Livecheck block in Homebrew formula for version tracking
+
+## [0.1.0] - 2025-12-24
 
 ### Added
 - Initial release of Kapsis sandbox orchestration platform
@@ -58,5 +71,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/aviadshiber/kapsis/releases/tag/v1.0.0
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v0.7.6...HEAD
+[0.7.6]: https://github.com/aviadshiber/kapsis/releases/tag/v0.7.6
+[0.1.0]: https://github.com/aviadshiber/kapsis/releases/tag/v0.1.0
