@@ -346,7 +346,8 @@ cleanup_inject_test_env() {
     # Reset logging state to prevent writes to deleted temp directory
     # The logging library caches the log file path
     _KAPSIS_LOG_FILE_PATH=""
-    KAPSIS_LOG_TO_FILE="false"
+    # shellcheck disable=SC2034  # Used by logging.sh
+    export KAPSIS_LOG_TO_FILE="false"
 }
 
 test_inject_claude_creates_settings_if_missing() {
