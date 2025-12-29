@@ -90,6 +90,32 @@ jobs:
           fi
           echo "All scripts passed ShellCheck!"
 
+  config-validation:
+    name: Config Validation
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq yamllint
+          # Install yq for YAML parsing
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Validate YAML configs
+        run: |
+          chmod +x ./scripts/lib/config-verifier.sh
+          chmod +x ./scripts/hooks/*.sh 2>/dev/null || true
+          chmod +x ./scripts/hooks/agent-adapters/*.sh 2>/dev/null || true
+
+          # Run config verifier with pattern matching tests
+          ./scripts/lib/config-verifier.sh --all --test
+
   quick-tests:
     name: Quick Tests
     runs-on: ubuntu-latest
@@ -223,7 +249,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [changes, lint, quick-tests, container-tests]
+    needs: [changes, lint, config-validation, quick-tests, container-tests]
     if: always()
     steps:
       - name: Check all jobs passed
@@ -235,9 +261,13 @@ jobs:
             exit 0
           fi
 
-          # Script changes detected - lint and quick-tests must pass
+          # Script changes detected - lint, config-validation, and quick-tests must pass
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
             echo "Lint job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.config-validation.result }}" != "success" ]]; then
+            echo "Config validation job failed"
             exit 1
           fi
           if [[ "${{ needs.quick-tests.result }}" != "success" ]]; then

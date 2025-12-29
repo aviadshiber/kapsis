@@ -1,0 +1,162 @@
+# Tool-to-Phase Mapping Configuration
+#
+# Maps AI agent tool calls to semantic phases for progress tracking.
+# Pattern format matches Claude Code settings.json style: "Tool(pattern:*)"
+#
+# Categories:
+#   exploring    - Reading files, searching, understanding codebase
+#   implementing - Writing code, editing files
+#   building     - Compilation, builds, dependency installation
+#   testing      - Running tests, test commands
+#   committing   - Git commit operations
+#   other        - Miscellaneous operations
+
+version: "1.0"
+
+# Progress ranges for each phase (min, max percentage)
+phase_ranges:
+  exploring: [25, 35]
+  implementing: [35, 60]
+  building: [50, 70]
+  testing: [60, 80]
+  committing: [85, 90]
+  other: [25, 50]
+
+# Default category for unmatched tools/commands
+default_category: other
+
+# Tool patterns to category mapping
+# Format: "ToolName" or "ToolName(pattern)" for command matching
+# Patterns use glob-like syntax: * matches anything
+# Order matters for Bash patterns - first match wins
+patterns:
+  exploring:
+    # File reading/searching tools
+    - "Read"
+    - "Glob"
+    - "Grep"
+    - "LS"
+    - "Find"
+    - "Tree"
+    - "WebFetch"
+    - "WebSearch"
+    # Bash file reading commands
+    - "Bash(cat *)"
+    - "Bash(head *)"
+    - "Bash(tail *)"
+    - "Bash(less *)"
+    - "Bash(more *)"
+    - "Bash(grep *)"
+    - "Bash(rg *)"
+    - "Bash(ag *)"
+    - "Bash(find *)"
+    - "Bash(ls *)"
+    - "Bash(tree *)"
+    - "Bash(wc *)"
+    - "Bash(file *)"
+    - "Bash(stat *)"
+    # Git read operations
+    - "Bash(git status*)"
+    - "Bash(git log*)"
+    - "Bash(git diff*)"
+    - "Bash(git show*)"
+    - "Bash(git branch*)"
+    - "Bash(git blame*)"
+    - "Bash(git describe*)"
+
+  implementing:
+    # File modification tools
+    - "Edit"
+    - "Write"
+    - "NotebookEdit"
+    # Bash file modification commands
+    - "Bash(mkdir *)"
+    - "Bash(cp *)"
+    - "Bash(mv *)"
+    - "Bash(touch *)"
+    - "Bash(chmod *)"
+    - "Bash(chown *)"
+    - "Bash(sed *)"
+    - "Bash(awk *)"
+    # Linting/formatting
+    - "Bash(eslint *)"
+    - "Bash(prettier *)"
+    - "Bash(black *)"
+    - "Bash(ruff *)"
+    - "Bash(gofmt *)"
+    - "Bash(rustfmt *)"
+    - "Bash(shellcheck *)"
+    - "Bash(yamllint *)"
+
+  building:
+    # Build/compile commands
+    - "Bash(mvn *)"
+    - "Bash(maven *)"
+    - "Bash(gradle *)"
+    - "Bash(./gradlew *)"
+    - "Bash(./mvnw *)"
+    - "Bash(npm run build*)"
+    - "Bash(npm build*)"
+    - "Bash(yarn build*)"
+    - "Bash(pnpm build*)"
+    - "Bash(cargo build*)"
+    - "Bash(go build*)"
+    - "Bash(make*)"
+    - "Bash(cmake *)"
+    - "Bash(ant *)"
+    - "Bash(bazel *)"
+    # Package installation
+    - "Bash(npm install*)"
+    - "Bash(npm i *)"
+    - "Bash(npm i)"
+    - "Bash(yarn install*)"
+    - "Bash(yarn)"
+    - "Bash(pnpm install*)"
+    - "Bash(pip install*)"
+    - "Bash(pip3 install*)"
+    - "Bash(go mod *)"
+    - "Bash(cargo fetch*)"
+    - "Bash(bundle install*)"
+    # Container operations
+    - "Bash(docker build*)"
+    - "Bash(docker push*)"
+    - "Bash(docker pull*)"
+    - "Bash(podman build*)"
+    - "Bash(podman push*)"
+    - "Bash(podman pull*)"
+
+  testing:
+    # Test commands (must be checked before generic build patterns)
+    - "Bash(mvn test*)"
+    - "Bash(mvn *test*)"
+    - "Bash(gradle test*)"
+    - "Bash(gradle *test*)"
+    - "Bash(./gradlew test*)"
+    - "Bash(./gradlew *test*)"
+    - "Bash(./mvnw test*)"
+    - "Bash(./mvnw *test*)"
+    - "Bash(npm test*)"
+    - "Bash(npm run test*)"
+    - "Bash(yarn test*)"
+    - "Bash(pnpm test*)"
+    - "Bash(pytest*)"
+    - "Bash(jest*)"
+    - "Bash(mocha*)"
+    - "Bash(cargo test*)"
+    - "Bash(go test*)"
+    - "Bash(rspec*)"
+    - "Bash(phpunit*)"
+
+  committing:
+    # Git commit/push operations
+    - "Bash(git commit*)"
+    - "Bash(git push*)"
+
+  other:
+    # Task management tools
+    - "TodoWrite"
+    - "AskUserQuestion"
+    - "Task"
+    - "Agent"
+    # MCP tools (prefix match)
+    - "mcp__*"

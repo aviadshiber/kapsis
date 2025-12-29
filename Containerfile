@@ -194,6 +194,19 @@ RUN mkdir -p /opt/kapsis/lib
 COPY scripts/lib/constants.sh /opt/kapsis/lib/constants.sh
 COPY scripts/lib/logging.sh /opt/kapsis/lib/logging.sh
 COPY scripts/lib/status.sh /opt/kapsis/lib/status.sh
+COPY scripts/lib/agent-types.sh /opt/kapsis/lib/agent-types.sh
+COPY scripts/lib/progress-monitor.sh /opt/kapsis/lib/progress-monitor.sh
+COPY scripts/lib/progress-instructions.md /opt/kapsis/lib/progress-instructions.md
+COPY scripts/lib/status.py /opt/kapsis/lib/status.py
+
+# Create hooks directory and copy status tracking hooks
+RUN mkdir -p /opt/kapsis/hooks/agent-adapters
+COPY scripts/hooks/kapsis-status-hook.sh /opt/kapsis/hooks/kapsis-status-hook.sh
+COPY scripts/hooks/kapsis-stop-hook.sh /opt/kapsis/hooks/kapsis-stop-hook.sh
+COPY scripts/hooks/tool-phase-mapping.sh /opt/kapsis/hooks/tool-phase-mapping.sh
+COPY scripts/hooks/agent-adapters/claude-adapter.sh /opt/kapsis/hooks/agent-adapters/claude-adapter.sh
+COPY scripts/hooks/agent-adapters/codex-adapter.sh /opt/kapsis/hooks/agent-adapters/codex-adapter.sh
+COPY scripts/hooks/agent-adapters/gemini-adapter.sh /opt/kapsis/hooks/agent-adapters/gemini-adapter.sh
 
 # Copy entrypoint and helper scripts
 COPY scripts/entrypoint.sh /opt/kapsis/entrypoint.sh
@@ -205,8 +218,9 @@ COPY scripts/switch-java.sh /opt/kapsis/switch-java.sh
 RUN mkdir -p /opt/kapsis/agents && chown ${USER_ID}:${GROUP_ID} /opt/kapsis/agents
 
 # Make all scripts executable and readable
-RUN chmod 755 /opt/kapsis/*.sh /opt/kapsis/lib/*.sh && \
-    chmod 644 /opt/kapsis/maven/settings.xml
+RUN chmod 755 /opt/kapsis/*.sh /opt/kapsis/lib/*.sh /opt/kapsis/lib/status.py && \
+    chmod 755 /opt/kapsis/hooks/*.sh /opt/kapsis/hooks/agent-adapters/*.sh && \
+    chmod 644 /opt/kapsis/maven/settings.xml /opt/kapsis/lib/progress-instructions.md
 
 #===============================================================================
 # ENVIRONMENT CONFIGURATION
