@@ -21,7 +21,7 @@ configs/
 │   ├── aider.yaml
 │   └── codex.yaml
 └── users/            # User configs (reference agent + customize)
-    └── aviad-claude.yaml
+    └── my-claude.yaml
 ```
 
 ### Agent Profile Schema
@@ -81,7 +81,7 @@ workdir: /workspace
 ### User Config References Agent Profile
 
 ```yaml
-# configs/users/aviad-claude.yaml
+# configs/users/my-claude.yaml
 agent:
   profile: claude-cli    # References configs/agents/claude-cli.yaml
 
@@ -259,7 +259,7 @@ command: my-agent --task /task-spec.md
 # Launch with agent profile
 ./scripts/launch-agent.sh 1 ~/git/products \
   --agent claude-cli \
-  --config configs/users/aviad-claude.yaml \
+  --config configs/users/my-claude.yaml \
   --task "Research Guava RateLimiter"
 
 # Or inline agent (uses base image + runtime install)
