@@ -797,8 +797,8 @@ start_progress_monitor() {
     "$monitor_script" &
     PROGRESS_MONITOR_PID=$!
 
-    # Register cleanup trap
-    trap "kill $PROGRESS_MONITOR_PID 2>/dev/null || true" EXIT
+    # Register cleanup trap (single quotes to defer expansion until trap execution)
+    trap 'kill $PROGRESS_MONITOR_PID 2>/dev/null || true' EXIT
 
     log_debug "Progress monitor started (PID: $PROGRESS_MONITOR_PID)"
 }
