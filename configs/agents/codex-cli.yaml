@@ -1,0 +1,43 @@
+# OpenAI Codex CLI Agent Profile
+# Official OpenAI CLI for Codex code generation
+#
+# Build: ./scripts/build-agent-image.sh codex-cli
+# Result: kapsis-codex-cli:latest
+
+name: codex-cli
+description: OpenAI Codex CLI (official OpenAI)
+version: latest
+
+install:
+  npm: "@openai/codex"
+
+dependencies:
+  - nodejs >= 18
+
+auth:
+  required:
+    - name: OPENAI_API_KEY
+      description: "OpenAI API key for Codex"
+      keychain:
+        macos: "openai-api-key"
+        linux: "openai-api-key"
+
+config_mounts:
+  - source: ~/.codex
+    target: ~/.codex
+
+# Codex CLI command with full-auto approval mode
+# --approval-mode full-auto: Automatically approve all operations
+command: codex --approval-mode full-auto
+
+# Hook support
+hooks:
+  supported: true
+  types:
+    - exec.pre
+    - exec.post
+    - item.create
+    - item.update
+    - item.delete
+    - completion
+  config_path: ~/.codex/config.yaml

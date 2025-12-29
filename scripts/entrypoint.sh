@@ -618,6 +618,227 @@ Branch: ${KAPSIS_BRANCH}"
 }
 
 #===============================================================================
+# STATUS TRACKING SETUP
+#
+# Sets up agent-specific status tracking mechanisms:
+# - For Claude Code, Codex CLI, Gemini CLI: Install hooks
+# - For Aider and others: Start background progress monitor
+#===============================================================================
+
+# Load agent types library if available
+AGENT_TYPES_LIB="$KAPSIS_HOME/lib/agent-types.sh"
+if [[ -f "$AGENT_TYPES_LIB" ]]; then
+    # shellcheck source=lib/agent-types.sh
+    source "$AGENT_TYPES_LIB"
+fi
+
+setup_status_tracking() {
+    local agent_type="${KAPSIS_AGENT_TYPE:-unknown}"
+
+    # Normalize agent type if library available
+    if type normalize_agent_type &>/dev/null; then
+        agent_type=$(normalize_agent_type "$agent_type")
+    fi
+
+    log_info "Setting up status tracking for agent: $agent_type"
+
+    # Use library functions if available for capability detection
+    if type agent_supports_hooks &>/dev/null; then
+        if agent_supports_hooks "$agent_type"; then
+            case "$agent_type" in
+                "$AGENT_TYPE_CLAUDE_CLI"|claude-cli)   setup_claude_hooks ;;
+                "$AGENT_TYPE_CODEX_CLI"|codex-cli)     setup_codex_hooks ;;
+                "$AGENT_TYPE_GEMINI_CLI"|gemini-cli)   setup_gemini_hooks ;;
+            esac
+        elif agent_uses_python_status "$agent_type" 2>/dev/null; then
+            log_info "Python agent - status.py library available for direct integration"
+        else
+            log_info "Using progress monitor fallback for agent: $agent_type"
+            start_progress_monitor
+            inject_progress_instructions
+        fi
+    else
+        # Fallback if library not loaded
+        case "$agent_type" in
+            claude|claude-cli)
+                setup_claude_hooks
+                ;;
+            codex|codex-cli)
+                setup_codex_hooks
+                ;;
+            gemini|gemini-cli)
+                setup_gemini_hooks
+                ;;
+            python|claude-api)
+                log_info "Python agent - status.py library available for direct integration"
+                ;;
+            *)
+                log_info "Using progress monitor fallback for agent: $agent_type"
+                start_progress_monitor
+                inject_progress_instructions
+                ;;
+        esac
+    fi
+}
+
+# Install Claude Code hooks for status tracking
+setup_claude_hooks() {
+    log_info "Installing Claude Code status hooks..."
+
+    local hooks_dir="$HOME/.claude"
+    local hook_script="$KAPSIS_HOME/hooks/kapsis-status-hook.sh"
+    local stop_script="$KAPSIS_HOME/hooks/kapsis-stop-hook.sh"
+
+    # Create hooks directory
+    mkdir -p "$hooks_dir" 2>/dev/null || true
+
+    # Create settings.local.json with hook configuration
+    cat > "$hooks_dir/settings.local.json" << EOF
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$hook_script",
+            "timeout": 5
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "$stop_script",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
+EOF
+
+    log_success "Claude Code hooks installed"
+}
+
+# Install Codex CLI hooks for status tracking
+setup_codex_hooks() {
+    log_info "Installing Codex CLI status hooks..."
+
+    local config_dir="$HOME/.codex"
+    local hook_script="$KAPSIS_HOME/hooks/kapsis-status-hook.sh"
+    local stop_script="$KAPSIS_HOME/hooks/kapsis-stop-hook.sh"
+
+    # Create config directory
+    mkdir -p "$config_dir" 2>/dev/null || true
+
+    # Create or append to config.yaml with hook configuration
+    cat > "$config_dir/kapsis-hooks.yaml" << EOF
+# Kapsis status tracking hooks
+hooks:
+  exec.post:
+    - $hook_script
+  item.create:
+    - $hook_script
+  item.update:
+    - $hook_script
+  completion:
+    - $stop_script
+EOF
+
+    log_success "Codex CLI hooks installed"
+}
+
+# Install Gemini CLI hooks for status tracking
+setup_gemini_hooks() {
+    log_info "Installing Gemini CLI status hooks..."
+
+    local hooks_dir="$HOME/.gemini/hooks"
+    local hook_script="$KAPSIS_HOME/hooks/kapsis-status-hook.sh"
+    local stop_script="$KAPSIS_HOME/hooks/kapsis-stop-hook.sh"
+
+    # Create hooks directory
+    mkdir -p "$hooks_dir" 2>/dev/null || true
+
+    # Create hook wrapper scripts
+    cat > "$hooks_dir/post-tool.sh" << EOF
+#!/usr/bin/env bash
+exec "$hook_script"
+EOF
+    chmod +x "$hooks_dir/post-tool.sh"
+
+    cat > "$hooks_dir/completion.sh" << EOF
+#!/usr/bin/env bash
+exec "$stop_script"
+EOF
+    chmod +x "$hooks_dir/completion.sh"
+
+    log_success "Gemini CLI hooks installed"
+}
+
+# Start background progress monitor for agents without hook support
+start_progress_monitor() {
+    local monitor_script="$KAPSIS_HOME/lib/progress-monitor.sh"
+
+    if [[ ! -x "$monitor_script" ]]; then
+        log_warn "Progress monitor script not found: $monitor_script"
+        return 0
+    fi
+
+    log_info "Starting background progress monitor..."
+
+    # Start monitor in background
+    "$monitor_script" &
+    PROGRESS_MONITOR_PID=$!
+
+    # Register cleanup trap (single quotes to defer expansion until trap execution)
+    trap 'kill $PROGRESS_MONITOR_PID 2>/dev/null || true' EXIT
+
+    log_debug "Progress monitor started (PID: $PROGRESS_MONITOR_PID)"
+}
+
+# Inject progress reporting instructions into task spec
+inject_progress_instructions() {
+    local task_spec="/task-spec.md"
+    local instructions="$KAPSIS_HOME/lib/progress-instructions.md"
+
+    if [[ ! -f "$task_spec" ]]; then
+        log_debug "No task spec to inject into"
+        return 0
+    fi
+
+    if [[ ! -f "$instructions" ]]; then
+        log_debug "Progress instructions template not found"
+        return 0
+    fi
+
+    log_info "Injecting progress reporting instructions..."
+
+    # Create workspace directory for progress file
+    mkdir -p "/workspace/.kapsis" 2>/dev/null || true
+
+    # Append instructions to task spec (copy to writable location first)
+    local injected_spec="/workspace/.kapsis/task-spec-with-progress.md"
+    {
+        cat "$task_spec"
+        echo ""
+        echo ""
+        cat "$instructions"
+    } > "$injected_spec"
+
+    # Export path to injected spec
+    export KAPSIS_INJECTED_TASK_SPEC="$injected_spec"
+
+    log_debug "Injected task spec: $injected_spec"
+}
+
+#===============================================================================
 # PRINT WELCOME BANNER
 #===============================================================================
 print_welcome() {
@@ -708,6 +929,9 @@ main() {
             "${KAPSIS_SANDBOX_MODE:-overlay}" \
             ""
         status_phase "running" 25 "Agent starting execution"
+
+        # Set up agent-specific status tracking (hooks or fallback monitor)
+        setup_status_tracking
     fi
 
     # Execute command

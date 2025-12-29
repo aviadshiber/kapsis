@@ -883,6 +883,21 @@ generate_env_vars() {
     ENV_VARS+=("-e" "KAPSIS_STATUS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_STATUS_BRANCH=${BRANCH:-}")
 
+    # Agent type for status tracking hooks (detected from config file name)
+    # Maps to hook mechanism: claude-cli, codex-cli, gemini-cli use hooks; others use monitor
+    # Use agent-types.sh library for normalization if available
+    local agent_type="${AGENT_NAME:-unknown}"
+    local agent_types_lib="$KAPSIS_ROOT/scripts/lib/agent-types.sh"
+    if [[ -f "$agent_types_lib" ]]; then
+        # shellcheck source=lib/agent-types.sh
+        source "$agent_types_lib"
+        agent_type=$(normalize_agent_type "$agent_type")
+    fi
+    # Note: No fallback needed - if library not found, we keep the agent type as-is
+    # The entrypoint will handle normalization inside the container
+    ENV_VARS+=("-e" "KAPSIS_AGENT_TYPE=${agent_type}")
+    log_debug "Agent type for status tracking: $agent_type"
+
     # Mode-specific variables
     if [[ "$SANDBOX_MODE" == "worktree" ]]; then
         ENV_VARS+=("-e" "KAPSIS_WORKTREE_MODE=true")
