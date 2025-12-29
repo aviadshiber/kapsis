@@ -36,7 +36,8 @@ fi
 #===============================================================================
 
 # Hook paths inside container
-KAPSIS_HOOK_DIR="${KAPSIS_SCRIPTS:-/opt/kapsis/scripts}/hooks"
+# Hooks are at /opt/kapsis/hooks/, not in the scripts subdirectory
+KAPSIS_HOOK_DIR="${KAPSIS_HOME:-/opt/kapsis}/hooks"
 STATUS_HOOK="${KAPSIS_HOOK_DIR}/kapsis-status-hook.sh"
 STOP_HOOK="${KAPSIS_HOOK_DIR}/kapsis-stop-hook.sh"
 
