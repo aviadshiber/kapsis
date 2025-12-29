@@ -27,7 +27,21 @@ set -euo pipefail
 # Configuration
 KAPSIS_HOME="${KAPSIS_HOME:-/opt/kapsis}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-STATE_FILE="/tmp/kapsis-hook-state-${KAPSIS_STATUS_AGENT_ID:-0}.json"
+
+# Validate agent_id format (defense-in-depth for file path safety)
+_validate_agent_id() {
+    local agent_id="$1"
+    [[ "$agent_id" =~ ^[a-zA-Z0-9_-]+$ ]]
+}
+
+# Sanitize agent_id for use in file paths (fallback to "0" if invalid)
+_safe_agent_id="${KAPSIS_STATUS_AGENT_ID:-0}"
+if ! _validate_agent_id "$_safe_agent_id"; then
+    echo "[KAPSIS-HOOK] Warning: Invalid agent_id format, using '0'" >&2
+    _safe_agent_id="0"
+fi
+
+STATE_FILE="/tmp/kapsis-hook-state-${_safe_agent_id}.json"
 
 # Source dependencies
 if [[ -f "$KAPSIS_HOME/lib/status.sh" ]]; then
@@ -253,7 +267,7 @@ log_decision() {
     local description="$2"
     local file_path="${3:-}"
 
-    local decisions_file="/kapsis-status/decisions-${KAPSIS_STATUS_AGENT_ID:-0}.json"
+    local decisions_file="/kapsis-status/decisions-${_safe_agent_id}.json"
     local timestamp
     timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 

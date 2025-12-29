@@ -96,6 +96,22 @@ _status_json_escape() {
     echo "$str"
 }
 
+# Validate agent_id format (defense-in-depth for file path safety)
+# Only allows alphanumeric characters, hyphens, and underscores
+# Arguments:
+#   $1 - Agent ID to validate
+# Returns:
+#   0 if valid, 1 if invalid
+_status_validate_agent_id() {
+    local agent_id="$1"
+    if [[ "$agent_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        return 0
+    else
+        echo "[status] Error: Invalid agent_id format: $agent_id (must match ^[a-zA-Z0-9_-]+$)" >&2
+        return 1
+    fi
+}
+
 # =============================================================================
 # Initialization
 # =============================================================================
@@ -119,6 +135,11 @@ status_init() {
     # Validate required parameters
     if [[ -z "$project" || -z "$agent_id" ]]; then
         echo "[status] Warning: status_init requires project and agent_id" >&2
+        return 1
+    fi
+
+    # Validate agent_id format (defense-in-depth for file path safety)
+    if ! _status_validate_agent_id "$agent_id"; then
         return 1
     fi
 
