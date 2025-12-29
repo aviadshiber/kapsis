@@ -34,11 +34,17 @@ _validate_agent_id() {
     [[ "$agent_id" =~ ^[a-zA-Z0-9_-]+$ ]]
 }
 
-# Sanitize agent_id for use in file paths (fallback to "0" if invalid)
-_safe_agent_id="${KAPSIS_STATUS_AGENT_ID:-0}"
+# Validate agent_id - skip status tracking if invalid or missing
+_safe_agent_id="${KAPSIS_STATUS_AGENT_ID:-}"
+if [[ -z "$_safe_agent_id" ]]; then
+    # No agent_id set - status tracking disabled, output empty JSON and exit
+    echo "{}"
+    exit 0
+fi
 if ! _validate_agent_id "$_safe_agent_id"; then
-    echo "[KAPSIS-HOOK] Warning: Invalid agent_id format, using '0'" >&2
-    _safe_agent_id="0"
+    echo "[KAPSIS-HOOK] Error: Invalid agent_id format '$_safe_agent_id' - skipping status update" >&2
+    echo "{}"
+    exit 0
 fi
 
 STATE_FILE="/tmp/kapsis-hook-state-${_safe_agent_id}.json"
