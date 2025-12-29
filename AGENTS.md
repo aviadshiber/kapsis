@@ -29,6 +29,19 @@
 - Use `shellcheck` for linting and prefer the shared logger in `scripts/lib/logging.sh`.
 - Test files live in `tests/` and follow `test-<feature>.sh` naming.
 
+## Pre-Push Checklist
+Before pushing changes, run these checks locally to avoid CI feedback delays:
+```bash
+# Required: Run shellcheck on all modified scripts
+shellcheck scripts/**/*.sh tests/*.sh
+
+# Required: Run quick tests
+./tests/run-all-tests.sh --quick
+
+# Optional: Validate YAML configs if configs/ was modified
+./scripts/lib/config-verifier.sh --all --test
+```
+
 ## Testing Guidelines
 - Quick tests do not require containers; container tests require Podman (`podman machine start`).
 - Run a single test with `./tests/test-input-validation.sh`.
