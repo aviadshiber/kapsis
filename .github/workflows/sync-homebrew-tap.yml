@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout kapsis
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Sync formula to tap repository
         env:

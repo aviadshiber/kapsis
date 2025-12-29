@@ -205,7 +205,7 @@ jobs:
 
       - name: Restore cached container image
         id: cache-restore
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v5
         with:
           path: /tmp/kapsis-image.tar
           key: ${{ steps.cache-key.outputs.key }}
@@ -231,7 +231,7 @@ jobs:
 
       - name: Upload image cache
         if: steps.cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v5
         with:
           path: /tmp/kapsis-image.tar
           key: ${{ steps.cache-key.outputs.key }}
