@@ -43,10 +43,46 @@ shellcheck scripts/**/*.sh tests/*.sh
 ```
 
 ## Testing Guidelines
+
+**References:**
+- `tests/README.md` - Test categories, prerequisites, and platform caveats
+- `tests/lib/test-framework.sh` - Shared test utilities (`assert_equals`, `assert_true`, `run_test`, etc.)
+
+**Quick start:**
 - Quick tests do not require containers; container tests require Podman (`podman machine start`).
 - Run a single test with `./tests/test-input-validation.sh`.
 - Use quiet mode with `KAPSIS_TEST_QUIET=1` or `./tests/run-all-tests.sh -q`.
 - Some container overlay tests may not be reliable on macOS; run full coverage on Linux if needed.
+
+### Test Plan Requirement
+Every PR that adds or modifies functionality **must include a test plan**:
+
+1. **New features** → Add tests covering the expected behavior
+2. **Bug fixes** → Add regression tests that fail without the fix
+3. **Refactoring** → Ensure existing tests still pass; add tests if coverage gaps exist
+
+### Writing Effective Tests
+- **Test behavior, not implementation** - Tests should verify what the code does, not how it does it
+- **Use descriptive test names** - `test_agent_id_invalid_path_traversal_skips` is better than `test_validation`
+- **Cover edge cases** - Empty input, invalid input, boundary conditions
+- **Test error paths** - Verify graceful handling of failures (exit codes, error messages)
+
+Example test structure:
+```bash
+test_feature_behavior_description() {
+    # Setup
+    local input="test_value"
+
+    # Execute
+    local result exit_code
+    result=$(some_function "$input")
+    exit_code=$?
+
+    # Assert
+    assert_equals "$exit_code" "0" "Exits successfully"
+    assert_equals "$result" "expected" "Returns expected value"
+}
+```
 
 ## Commit & Pull Request Guidelines
 - Use Conventional Commits: `feat:`, `fix:`, `docs:`, `chore:`; include optional scopes.

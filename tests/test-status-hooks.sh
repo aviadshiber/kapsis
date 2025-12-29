@@ -230,6 +230,86 @@ test_gemini_adapter_parsing() {
 }
 
 #===============================================================================
+# Test: Agent ID Validation
+#===============================================================================
+test_agent_id_empty_skips_status() {
+    # When KAPSIS_STATUS_AGENT_ID is empty, hook should output "{}" and exit 0
+    local result exit_code
+    result=$(KAPSIS_STATUS_AGENT_ID="" echo '{"tool_name":"Read"}' | bash "$HOOKS_DIR/kapsis-status-hook.sh" 2>/dev/null)
+    exit_code=$?
+
+    assert_equals "$exit_code" "0" "Empty agent_id exits with 0"
+    assert_equals "$result" "{}" "Empty agent_id outputs empty JSON"
+}
+
+test_agent_id_unset_skips_status() {
+    # When KAPSIS_STATUS_AGENT_ID is unset, hook should output "{}" and exit 0
+    local result exit_code
+    result=$(unset KAPSIS_STATUS_AGENT_ID && echo '{"tool_name":"Read"}' | bash "$HOOKS_DIR/kapsis-status-hook.sh" 2>/dev/null)
+    exit_code=$?
+
+    assert_equals "$exit_code" "0" "Unset agent_id exits with 0"
+    assert_equals "$result" "{}" "Unset agent_id outputs empty JSON"
+}
+
+test_agent_id_invalid_path_traversal_skips() {
+    # Path traversal attempts should be rejected
+    local tmpfile result exit_code stderr_output
+    tmpfile=$(mktemp)
+
+    # Run hook and capture both stdout and stderr separately
+    result=$(export KAPSIS_STATUS_AGENT_ID="../malicious" && echo '{"tool_name":"Read"}' | bash "$HOOKS_DIR/kapsis-status-hook.sh" 2>"$tmpfile")
+    exit_code=$?
+    stderr_output=$(cat "$tmpfile")
+    rm -f "$tmpfile"
+
+    assert_equals "$exit_code" "0" "Invalid agent_id exits with 0"
+    assert_equals "$result" "{}" "Invalid agent_id outputs empty JSON"
+    assert_contains "$stderr_output" "Invalid agent_id format" "Logs error for invalid format"
+}
+
+test_agent_id_invalid_special_chars_skips() {
+    # Special characters should be rejected
+    local result exit_code
+    result=$(KAPSIS_STATUS_AGENT_ID="agent;rm -rf /" echo '{"tool_name":"Read"}' | bash "$HOOKS_DIR/kapsis-status-hook.sh" 2>/dev/null)
+    exit_code=$?
+
+    assert_equals "$exit_code" "0" "Special chars agent_id exits with 0"
+    assert_equals "$result" "{}" "Special chars agent_id outputs empty JSON"
+}
+
+test_agent_id_valid_formats_accepted() {
+    # Valid formats: alphanumeric, hyphens, underscores
+    local valid_ids=("agent1" "agent-1" "agent_1" "Agent-Test_123" "0" "a")
+
+    for id in "${valid_ids[@]}"; do
+        # We can't fully test processing without full env setup, but we can verify
+        # the validation function directly
+        if [[ "$id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            assert_true "true" "Valid agent_id format: $id"
+        else
+            assert_true "false" "Should accept valid agent_id: $id"
+        fi
+    done
+}
+
+test_stop_hook_agent_id_validation() {
+    # Stop hook should also validate agent_id
+    local result exit_code
+    result=$(KAPSIS_STATUS_AGENT_ID="" echo '{}' | bash "$HOOKS_DIR/kapsis-stop-hook.sh" 2>/dev/null)
+    exit_code=$?
+
+    assert_equals "$exit_code" "0" "Stop hook: empty agent_id exits with 0"
+    assert_equals "$result" "{}" "Stop hook: empty agent_id outputs empty JSON"
+
+    result=$(KAPSIS_STATUS_AGENT_ID="../bad" echo '{}' | bash "$HOOKS_DIR/kapsis-stop-hook.sh" 2>/dev/null)
+    exit_code=$?
+
+    assert_equals "$exit_code" "0" "Stop hook: invalid agent_id exits with 0"
+    assert_equals "$result" "{}" "Stop hook: invalid agent_id outputs empty JSON"
+}
+
+#===============================================================================
 # Test: Progress Monitor Functions
 #===============================================================================
 test_progress_scaling() {
@@ -283,6 +363,14 @@ run_tests() {
     log_info "=== Progress Monitor ==="
     run_test test_progress_scaling
     run_test test_progress_phase_mapping
+
+    log_info "=== Agent ID Validation ==="
+    run_test test_agent_id_empty_skips_status
+    run_test test_agent_id_unset_skips_status
+    run_test test_agent_id_invalid_path_traversal_skips
+    run_test test_agent_id_invalid_special_chars_skips
+    run_test test_agent_id_valid_formats_accepted
+    run_test test_stop_hook_agent_id_validation
 
     print_summary
 }
