@@ -883,9 +883,9 @@ generate_env_vars() {
     ENV_VARS+=("-e" "KAPSIS_STATUS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_STATUS_BRANCH=${BRANCH:-}")
 
-    # Agent type for status tracking hooks (detected from config file name)
+    # Agent type for status tracking hooks
     # Maps to hook mechanism: claude-cli, codex-cli, gemini-cli use hooks; others use monitor
-    # Use agent-types.sh library for normalization if available
+    # Try multiple sources: AGENT_NAME, then infer from image name
     local agent_type="${AGENT_NAME:-unknown}"
     local agent_types_lib="$KAPSIS_ROOT/scripts/lib/agent-types.sh"
     if [[ -f "$agent_types_lib" ]]; then
@@ -893,8 +893,18 @@ generate_env_vars() {
         source "$agent_types_lib"
         agent_type=$(normalize_agent_type "$agent_type")
     fi
-    # Note: No fallback needed - if library not found, we keep the agent type as-is
-    # The entrypoint will handle normalization inside the container
+
+    # If agent_type is still unknown, try to infer from image name
+    # E.g., kapsis-claude-cli -> claude-cli, kapsis-codex-cli -> codex-cli
+    if [[ "$agent_type" == "unknown" && -n "$IMAGE_NAME" ]]; then
+        case "$IMAGE_NAME" in
+            *claude-cli*)  agent_type="claude-cli" ;;
+            *codex-cli*)   agent_type="codex-cli" ;;
+            *gemini-cli*)  agent_type="gemini-cli" ;;
+            *aider*)       agent_type="aider" ;;
+        esac
+        log_debug "Inferred agent type from image name: $agent_type"
+    fi
     ENV_VARS+=("-e" "KAPSIS_AGENT_TYPE=${agent_type}")
     log_debug "Agent type for status tracking: $agent_type"
 

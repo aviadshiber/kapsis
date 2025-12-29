@@ -761,7 +761,11 @@ inject_progress_instructions() {
     log_info "Injecting progress reporting instructions..."
 
     # Create workspace directory for progress file
-    mkdir -p "/workspace/.kapsis" 2>/dev/null || true
+    # Must succeed for injection to work
+    if ! mkdir -p "/workspace/.kapsis" 2>/dev/null; then
+        log_warn "Could not create /workspace/.kapsis - skipping progress injection"
+        return 0
+    fi
 
     # Append instructions to task spec (copy to writable location first)
     local injected_spec="/workspace/.kapsis/task-spec-with-progress.md"
