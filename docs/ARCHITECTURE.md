@@ -347,6 +347,37 @@ CLAUDE CODE     CODEX CLI    GEMINI CLI    AIDER/OTHER    PYTHON AGENT
 }
 ```
 
+**Automatic Hook Injection:**
+
+Kapsis automatically injects status tracking hooks at container startup. This happens inside the container
+after Copy-on-Write setup, so **user's host configuration is never modified**.
+
+```
+Container Startup (entrypoint.sh)
+        │
+        ├─→ CoW/Worktree setup (host configs mounted read-only)
+        │
+        ├─→ Copy staged configs to home directory (~/.claude/, etc.)
+        │
+        └─→ inject-status-hooks.sh (merges Kapsis hooks)
+            │
+            ├─→ Claude Code: ~/.claude/settings.local.json
+            │   (Claude merges settings.local.json with settings.json)
+            │
+            ├─→ Codex CLI: ~/.codex/config.yaml
+            │   (Adds exec.post, item.create, completion hooks)
+            │
+            └─→ Gemini CLI: ~/.gemini/hooks/*.sh
+                (Creates or appends to hook scripts)
+```
+
+**Key design decisions:**
+- **Merge-based injection**: User's existing hooks are preserved, Kapsis hooks are added
+- **Idempotent**: Running injection twice doesn't duplicate hooks
+- **Agent type inference**: When config name doesn't normalize (e.g., `aviad-claude.yaml`),
+  agent type is inferred from image name (`kapsis-claude-cli` → `claude-cli`)
+- **CoW isolation**: All modifications happen in container's overlay layer
+
 **Container-to-Host Communication:**
 
 ```
@@ -494,14 +525,15 @@ Kapsis scripts use shared libraries for common functionality:
 
 ```
 scripts/lib/
-├── compat.sh           # Cross-platform compatibility helpers
-├── logging.sh          # File-based logging with rotation
-├── status.sh           # JSON status file management
-├── json-utils.sh       # JSON parsing utilities
-├── agent-types.sh      # Agent type detection and normalization
-├── progress-monitor.sh # Background progress file monitor (fallback)
-├── config-verifier.sh  # YAML config validation for CI
-└── status.py           # Python status library for custom agents
+├── compat.sh              # Cross-platform compatibility helpers
+├── logging.sh             # File-based logging with rotation
+├── status.sh              # JSON status file management
+├── json-utils.sh          # JSON parsing utilities
+├── agent-types.sh         # Agent type detection and normalization
+├── progress-monitor.sh    # Background progress file monitor (fallback)
+├── config-verifier.sh     # YAML config validation for CI
+├── inject-status-hooks.sh # Auto-inject status hooks for all agents
+└── status.py              # Python status library for custom agents
 
 scripts/hooks/
 ├── kapsis-status-hook.sh      # Universal hook for all agents
