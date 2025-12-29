@@ -246,163 +246,42 @@ allow mounting a directory over a file.
 
 ### Status Reporting Flow
 
-Kapsis provides JSON-based status reporting for external monitoring with **agent-agnostic hook-based tracking**:
+Kapsis provides JSON-based status reporting for external monitoring with **agent-agnostic hook-based tracking**.
 
 ```
 1. launch-agent.sh
    │
    ├─→ status_init()              → initializing (0%)
-   │   └── Creates ~/.kapsis/status/kapsis-{project}-{agent_id}.json
    │
-   ├─→ Validate inputs            → initializing (5%)
-   ├─→ Parse config               → initializing (10%)
-   ├─→ Setup sandbox              → preparing (18%)
-   ├─→ Configure container        → preparing (20%)
+   ├─→ Validate/Setup             → initializing → preparing (0-20%)
+   │
    ├─→ Launch container           → starting (22%)
    │
-   ├─→ entrypoint.sh (in container)
-   │   ├─→ setup_status_tracking() → Sets up hooks or monitor
-   │   │   ├─→ Claude Code: PostToolUse hooks
-   │   │   ├─→ Codex CLI: exec.post hooks
-   │   │   ├─→ Gemini CLI: tool_call hooks
-   │   │   └─→ Other agents: progress-monitor.sh (polling)
-   │   │
-   │   └─→ Agent executes task
-   │       │
-   │       ├─→ Tool: Read/Grep/Glob  → exploring (25-35%)
-   │       ├─→ Tool: Edit/Write      → implementing (35-60%)
-   │       ├─→ Tool: Bash(mvn/npm)   → building (50-70%)
-   │       ├─→ Tool: Bash(*test*)    → testing (60-80%)
-   │       └─→ Tool: git commit      → committing (85-90%)
+   ├─→ entrypoint.sh
+   │   ├─→ Auto-inject hooks (Claude, Codex, Gemini)
+   │   └─→ Agent executes         → exploring → implementing → testing (25-85%)
    │
-   ├─→ Agent exits                → running (90%)
-   │
-   ├─→ post-container-git.sh (on host)
-   │   ├─→ commit_changes()       → committing (92%)
-   │   └─→ push_changes()         → pushing (97%)
+   ├─→ post-container-git.sh      → committing → pushing (85-99%)
    │
    └─→ status_complete()          → complete (100%)
-       └── exit_code, error, pr_url recorded
 ```
 
-**Hook-Based Status Tracking Architecture:**
+**Status Phases:**
 
-```
-                         KAPSIS STATUS TRACKER
-                                  │
-    ┌────────────────┬────────────┼────────────┬────────────────┐
-    ▼                ▼            ▼            ▼                ▼
-CLAUDE CODE     CODEX CLI    GEMINI CLI    AIDER/OTHER    PYTHON AGENT
-┌──────────┐   ┌──────────┐  ┌──────────┐  ┌──────────┐   ┌──────────┐
-│PostToolUse│   │exec.post │  │tool_call │  │Instruction│   │Direct    │
-│hook       │   │hook      │  │hook      │  │injection +│   │status.py │
-│           │   │          │  │          │  │file monitor│   │import    │
-└─────┬─────┘   └─────┬────┘  └─────┬────┘  └─────┬─────┘   └─────┬────┘
-      │               │            │              │              │
-      ▼               ▼            ▼              ▼              ▼
-    claude-       codex-        gemini-       progress-       status.py
-    adapter.sh    adapter.sh    adapter.sh    monitor.sh
-      │               │            │              │              │
-      └───────────────┴────────────┼──────────────┴──────────────┘
-                                   ▼
-                    kapsis-status-hook.sh
-                           │
-                           ▼
-                    tool-phase-mapping.sh
-                    (config: tool-phase-mapping.yaml)
-                           │
-                           ▼
-               /kapsis-status/kapsis-{project}-{id}.json
-```
+| Phase | Progress | Description |
+|-------|----------|-------------|
+| `initializing` | 0-10% | Validating inputs, config |
+| `preparing` | 10-20% | Creating sandbox, volumes |
+| `starting` | 20-25% | Launching container |
+| `exploring` | 25-35% | Reading files, searching |
+| `implementing` | 35-60% | Writing code, editing |
+| `building` | 50-70% | Compilation, dependencies |
+| `testing` | 60-80% | Running tests |
+| `committing` | 85-95% | Git commit operations |
+| `pushing` | 95-99% | Pushing to remote |
+| `complete` | 100% | Final status |
 
-**Tool-to-Phase Mapping (configs/tool-phase-mapping.yaml):**
-
-| Category | Tool Patterns | Progress Range |
-|----------|---------------|----------------|
-| `exploring` | Read, Grep, Glob, Bash(git status*) | 25-35% |
-| `implementing` | Edit, Write, Bash(mkdir*) | 35-60% |
-| `building` | Bash(mvn*), Bash(npm build*) | 50-70% |
-| `testing` | Bash(mvn test*), Bash(pytest*) | 60-80% |
-| `committing` | Bash(git commit*) | 85-90% |
-| `other` | TodoWrite, mcp__* | 25-50% |
-
-**Status File Schema:**
-
-```json
-{
-  "version": "1.0",
-  "agent_id": "1",
-  "project": "products",
-  "branch": "feature/DEV-123",
-  "sandbox_mode": "worktree",
-  "phase": "implementing",
-  "progress": 45,
-  "message": "Implementing feature",
-  "started_at": "2025-12-16T14:30:00Z",
-  "updated_at": "2025-12-16T14:35:00Z",
-  "exit_code": null,
-  "error": null,
-  "worktree_path": "/Users/user/.kapsis/worktrees/products-1",
-  "pr_url": null
-}
-```
-
-**Automatic Hook Injection:**
-
-Kapsis automatically injects status tracking hooks at container startup. This happens inside the container
-after Copy-on-Write setup, so **user's host configuration is never modified**.
-
-```
-Container Startup (entrypoint.sh)
-        │
-        ├─→ CoW/Worktree setup (host configs mounted read-only)
-        │
-        ├─→ Copy staged configs to home directory (~/.claude/, etc.)
-        │
-        └─→ inject-status-hooks.sh (merges Kapsis hooks)
-            │
-            ├─→ Claude Code: ~/.claude/settings.local.json
-            │   (Claude merges settings.local.json with settings.json)
-            │
-            ├─→ Codex CLI: ~/.codex/config.yaml
-            │   (Adds exec.post, item.create, completion hooks)
-            │
-            └─→ Gemini CLI: ~/.gemini/hooks/*.sh
-                (Creates or appends to hook scripts)
-```
-
-**Key design decisions:**
-- **Merge-based injection**: User's existing hooks are preserved, Kapsis hooks are added
-- **Idempotent**: Running injection twice doesn't duplicate hooks
-- **Agent type inference**: When config name doesn't normalize (e.g., `aviad-claude.yaml`),
-  agent type is inferred from image name (`kapsis-claude-cli` → `claude-cli`)
-- **CoW isolation**: All modifications happen in container's overlay layer
-
-**Container-to-Host Communication:**
-
-```
-HOST                                    CONTAINER
-~/.kapsis/status/  ←──volume mount──→  /kapsis-status/
-     ↓                                       ↓
-kapsis-products-1.json              /kapsis-status/kapsis-products-1.json
-     ↑                                       ↑
-External tools poll                  Agent hooks write updates
-```
-
-**Phases:**
-
-| Phase | Progress | Location | Description |
-|-------|----------|----------|-------------|
-| `initializing` | 0-10% | launch-agent.sh | Validating inputs, config |
-| `preparing` | 10-20% | launch-agent.sh | Creating sandbox, volumes |
-| `starting` | 20-25% | launch-agent.sh | Launching container |
-| `exploring` | 25-35% | hook (in container) | Reading files, searching |
-| `implementing` | 35-60% | hook (in container) | Writing code, editing |
-| `building` | 50-70% | hook (in container) | Compilation, dependencies |
-| `testing` | 60-80% | hook (in container) | Running tests |
-| `committing` | 85-95% | hook / post-git | Git commit operations |
-| `pushing` | 95-99% | post-container-git.sh | Pushing to remote |
-| `complete` | 100% | launch-agent.sh | Final status |
+**For detailed hook architecture, injection methods, and tool-to-phase mapping, see [STATUS-TRACKING.md](STATUS-TRACKING.md).**
 
 ## Volume Mounts
 
@@ -535,14 +414,11 @@ scripts/lib/
 ├── inject-status-hooks.sh # Auto-inject status hooks for all agents
 └── status.py              # Python status library for custom agents
 
-scripts/hooks/
+scripts/hooks/               # See STATUS-TRACKING.md for details
 ├── kapsis-status-hook.sh      # Universal hook for all agents
 ├── kapsis-stop-hook.sh        # Completion hook
-├── tool-phase-mapping.sh      # Tool → phase mapping (loads YAML config)
-└── agent-adapters/
-    ├── claude-adapter.sh      # Parse Claude Code hook format
-    ├── codex-adapter.sh       # Parse Codex CLI hook format
-    └── gemini-adapter.sh      # Parse Gemini CLI hook format
+├── tool-phase-mapping.sh      # Tool → phase mapping
+└── agent-adapters/            # Per-agent JSON/YAML parsers
 
 configs/
 ├── tool-phase-mapping.yaml    # Tool → phase mapping configuration
@@ -551,11 +427,6 @@ configs/
 ├── aider.yaml                 # Aider launch config
 ├── interactive.yaml           # Interactive mode config
 └── agents/                    # Agent profiles (detailed definitions)
-    ├── claude-cli.yaml
-    ├── codex-cli.yaml
-    ├── gemini-cli.yaml
-    ├── aider.yaml
-    └── claude-api.yaml
 ```
 
 ### compat.sh - Cross-Platform Helpers
