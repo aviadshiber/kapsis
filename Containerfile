@@ -198,6 +198,7 @@ COPY scripts/lib/agent-types.sh /opt/kapsis/lib/agent-types.sh
 COPY scripts/lib/progress-monitor.sh /opt/kapsis/lib/progress-monitor.sh
 COPY scripts/lib/progress-instructions.md /opt/kapsis/lib/progress-instructions.md
 COPY scripts/lib/status.py /opt/kapsis/lib/status.py
+COPY scripts/lib/inject-status-hooks.sh /opt/kapsis/lib/inject-status-hooks.sh
 
 # Create hooks directory and copy status tracking hooks
 RUN mkdir -p /opt/kapsis/hooks/agent-adapters

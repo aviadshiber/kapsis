@@ -681,106 +681,46 @@ setup_status_tracking() {
     fi
 }
 
-# Install Claude Code hooks for status tracking
-setup_claude_hooks() {
-    log_info "Installing Claude Code status hooks..."
+#===============================================================================
+# AGENT HOOK INSTALLATION
+#
+# Installs Kapsis status tracking hooks for supported agents.
+# Uses inject-status-hooks.sh which handles:
+#   - Claude Code: JSON merge into ~/.claude/settings.local.json
+#   - Codex CLI: YAML merge into ~/.codex/config.yaml
+#   - Gemini CLI: Shell scripts in ~/.gemini/hooks/
+#
+# All injection is merge-based to preserve user's existing configuration.
+# Runs inside container with CoW, so host config is never modified.
+#===============================================================================
 
-    local hooks_dir="$HOME/.claude"
-    local hook_script="$KAPSIS_HOME/hooks/kapsis-status-hook.sh"
-    local stop_script="$KAPSIS_HOME/hooks/kapsis-stop-hook.sh"
+# Common hook installation function
+# Usage: install_agent_hooks <agent-type> <display-name>
+install_agent_hooks() {
+    local agent_type="$1"
+    local display_name="${2:-$agent_type}"
 
-    # Create hooks directory
-    mkdir -p "$hooks_dir" 2>/dev/null || true
+    log_info "Installing ${display_name} status hooks..."
 
-    # Create settings.local.json with hook configuration
-    cat > "$hooks_dir/settings.local.json" << EOF
-{
-  "hooks": {
-    "PostToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$hook_script",
-            "timeout": 5
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "$stop_script",
-            "timeout": 5
-          }
-        ]
-      }
-    ]
-  }
-}
-EOF
+    local inject_script="$KAPSIS_HOME/lib/inject-status-hooks.sh"
 
-    log_success "Claude Code hooks installed"
+    if [[ -x "$inject_script" ]]; then
+        if "$inject_script" "$agent_type"; then
+            return 0
+        else
+            log_warn "${display_name} hook injection failed"
+            return 1
+        fi
+    else
+        log_warn "Hook injection script not found: $inject_script"
+        return 1
+    fi
 }
 
-# Install Codex CLI hooks for status tracking
-setup_codex_hooks() {
-    log_info "Installing Codex CLI status hooks..."
-
-    local config_dir="$HOME/.codex"
-    local hook_script="$KAPSIS_HOME/hooks/kapsis-status-hook.sh"
-    local stop_script="$KAPSIS_HOME/hooks/kapsis-stop-hook.sh"
-
-    # Create config directory
-    mkdir -p "$config_dir" 2>/dev/null || true
-
-    # Create or append to config.yaml with hook configuration
-    cat > "$config_dir/kapsis-hooks.yaml" << EOF
-# Kapsis status tracking hooks
-hooks:
-  exec.post:
-    - $hook_script
-  item.create:
-    - $hook_script
-  item.update:
-    - $hook_script
-  completion:
-    - $stop_script
-EOF
-
-    log_success "Codex CLI hooks installed"
-}
-
-# Install Gemini CLI hooks for status tracking
-setup_gemini_hooks() {
-    log_info "Installing Gemini CLI status hooks..."
-
-    local hooks_dir="$HOME/.gemini/hooks"
-    local hook_script="$KAPSIS_HOME/hooks/kapsis-status-hook.sh"
-    local stop_script="$KAPSIS_HOME/hooks/kapsis-stop-hook.sh"
-
-    # Create hooks directory
-    mkdir -p "$hooks_dir" 2>/dev/null || true
-
-    # Create hook wrapper scripts
-    cat > "$hooks_dir/post-tool.sh" << EOF
-#!/usr/bin/env bash
-exec "$hook_script"
-EOF
-    chmod +x "$hooks_dir/post-tool.sh"
-
-    cat > "$hooks_dir/completion.sh" << EOF
-#!/usr/bin/env bash
-exec "$stop_script"
-EOF
-    chmod +x "$hooks_dir/completion.sh"
-
-    log_success "Gemini CLI hooks installed"
-}
+# Agent-specific wrappers (for backward compatibility and clarity)
+setup_claude_hooks() { install_agent_hooks "claude-cli" "Claude Code"; }
+setup_codex_hooks()  { install_agent_hooks "codex-cli" "Codex CLI"; }
+setup_gemini_hooks() { install_agent_hooks "gemini-cli" "Gemini CLI"; }
 
 # Start background progress monitor for agents without hook support
 start_progress_monitor() {
