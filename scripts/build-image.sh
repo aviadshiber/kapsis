@@ -117,4 +117,4 @@ fi
 
 echo ""
 log_info "To run a container:"
-echo "  ./scripts/launch-agent.sh 1 ~/project --task \"your task\""
+echo "  ./scripts/launch-agent.sh ~/project --task \"your task\""

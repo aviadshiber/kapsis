@@ -4,7 +4,7 @@
 # Usage:
 #   cp agent-sandbox.yaml.template agent-sandbox.yaml
 #   # Edit agent-sandbox.yaml with your settings
-#   ./scripts/launch-agent.sh 1 ~/project --spec ./specs/task.md
+#   ./scripts/launch-agent.sh ~/project --spec ./specs/task.md
 
 #===============================================================================
 # AGENT CONFIGURATION

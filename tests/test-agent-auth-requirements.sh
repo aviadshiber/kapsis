@@ -28,7 +28,7 @@ test_present_auth_succeeds() {
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || exit_code=$?
 
     # Restore original
     if [[ -n "$original_key" ]]; then
@@ -60,7 +60,7 @@ EOF
     export ANTHROPIC_API_KEY="test-auth-key"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset ANTHROPIC_API_KEY
     rm -f "$test_config"
@@ -88,7 +88,7 @@ EOF
     export CUSTOM_TOKEN="custom-token"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset ANTHROPIC_API_KEY OPENAI_API_KEY CUSTOM_TOKEN
     rm -f "$test_config"
@@ -118,7 +118,7 @@ EOF
     export MY_API_KEY="env-value-wins"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset MY_API_KEY
     rm -f "$test_config"
@@ -145,7 +145,7 @@ EOF
     export MY_SECRET_KEY="$secret_key"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset MY_SECRET_KEY
     rm -f "$test_config"
@@ -182,7 +182,7 @@ EOF
     export CREDENTIALS="secret6"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset API_KEY SECRET_TOKEN AUTH_PASSWORD PRIVATE_KEY ACCESS_KEY CREDENTIALS
     rm -f "$test_config"
@@ -203,7 +203,7 @@ test_empty_key_handling() {
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || exit_code=$?
 
     unset ANTHROPIC_API_KEY
 
@@ -228,7 +228,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     rm -f "$test_config"
 
@@ -286,7 +286,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     rm -f "$test_config"
 

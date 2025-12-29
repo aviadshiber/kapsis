@@ -207,12 +207,12 @@
                 <div class="p-6 font-mono text-sm overflow-x-auto">
                     <div class="flex mb-2">
                         <span class="text-emerald-400 mr-2">➜</span>
-                        <span class="text-white">./scripts/launch-agent.sh 1 ~/project --config claude.yaml &</span>
+                        <span class="text-white">./scripts/launch-agent.sh ~/project --config claude.yaml &</span>
                     </div>
                     <div class="text-slate-500 mb-2">[1] 45121 launched: Claude Code (Container ID: 8f9a2b)</div>
                     <div class="flex mb-2">
                         <span class="text-emerald-400 mr-2">➜</span>
-                        <span class="text-white">./scripts/launch-agent.sh 2 ~/project --config aider.yaml &</span>
+                        <span class="text-white">./scripts/launch-agent.sh ~/project --config aider.yaml &</span>
                     </div>
                     <div class="text-slate-500 mb-2">[2] 45122 launched: Aider (Container ID: 3c2d1e)</div>
                     <div class="flex mb-2">
@@ -634,7 +634,7 @@ filesystem:
                             <i class="fa-regular fa-copy" aria-hidden="true"></i>
                         </button>
                         <div class="text-slate-500 mb-2"># Syntax: ./scripts/launch-agent.sh [ID] [PROJECT_PATH] [FLAGS]</div>
-                        <pre id="launch-code">./scripts/launch-agent.sh 1 ~/my-project \
+                        <pre id="launch-code">./scripts/launch-agent.sh ~/my-project \
     --config configs/claude.yaml \
     --branch feature/new-api</pre>
                     </div>

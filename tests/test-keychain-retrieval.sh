@@ -36,7 +36,7 @@ EOF
     export MY_API_KEY="$secret_key"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset MY_API_KEY
     rm -f "$test_config"
@@ -79,7 +79,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     rm -f "$test_config"
 
@@ -134,7 +134,7 @@ EOF
     export SHARED_API_KEY="passthrough-value"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset SHARED_API_KEY
     rm -f "$test_config"
@@ -194,7 +194,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     rm -f "$test_config"
 
@@ -219,7 +219,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     unset MY_VAR
     rm -f "$test_config"

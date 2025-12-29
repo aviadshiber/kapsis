@@ -25,7 +25,7 @@ Kapsis is a **hermetically isolated AI agent sandbox** for running multiple AI c
 ```bash
 # Build & run
 ./scripts/build-image.sh                    # Build container image
-./scripts/launch-agent.sh 1 ~/project --agent claude --task "..."
+./scripts/launch-agent.sh ~/project --agent claude --task "..."
 
 # Test
 ./tests/run-all-tests.sh --quick            # Fast tests (~10s)

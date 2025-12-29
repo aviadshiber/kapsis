@@ -7,7 +7,7 @@
 # git branch workflow.
 #
 # Usage:
-#   ./launch-agent.sh <agent-id> <project-path> [options]
+#   ./launch-agent.sh <project-path> [options]
 #
 # Options:
 #   --agent <name>        Agent shortcut: claude, codex, aider, interactive
@@ -23,9 +23,9 @@
 #   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
 #
 # Examples:
-#   ./launch-agent.sh 1 ~/project --agent claude --task "fix failing tests"
-#   ./launch-agent.sh 1 ~/project --agent codex --spec ./specs/feature.md
-#   ./launch-agent.sh 1 ~/project --agent aider --branch feature/DEV-123 --spec ./task.md
+#   ./launch-agent.sh ~/project --agent claude --task "fix failing tests"
+#   ./launch-agent.sh ~/project --agent codex --spec ./specs/feature.md
+#   ./launch-agent.sh ~/project --agent aider --branch feature/DEV-123 --spec ./task.md
 #===============================================================================
 
 set -euo pipefail
@@ -46,6 +46,28 @@ to_upper() {
     echo "$1" | tr '[:lower:]' '[:upper:]'
 }
 
+# Generate 6-character lowercase UUID for agent identification
+generate_agent_id() {
+    if command -v uuidgen &>/dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]' | cut -c1-6
+    elif [[ -r /dev/urandom ]]; then
+        head -c 3 /dev/urandom | xxd -p
+    else
+        printf '%x' "$(( $(date +%s)$$ ))" | cut -c1-6
+    fi
+}
+
+# Check if argument looks like a filesystem path (for backward compat detection)
+is_likely_path() {
+    local arg="$1"
+    # A path if: absolute, home-relative, dot-relative, contains slash, or exists as directory
+    [[ "$arg" == /* ]] || \
+    [[ "$arg" == ~* ]] || \
+    [[ "$arg" == .* ]] || \
+    [[ "$arg" == */* ]] || \
+    [[ -d "${arg/#\~/$HOME}" ]]
+}
+
 #===============================================================================
 # DEFAULT VALUES
 #===============================================================================
@@ -63,6 +85,7 @@ IMAGE_NAME="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 SANDBOX_MODE=""  # auto-detect, worktree, or overlay
 WORKTREE_PATH=""
 SANITIZED_GIT_PATH=""
+AGENT_ID_AUTO_GENERATED=false  # Track if ID was auto-generated
 
 # Source shared constants
 source "$SCRIPT_DIR/lib/constants.sh"
@@ -154,17 +177,17 @@ query_secret_store() {
 #===============================================================================
 usage() {
     cat << EOF
-Usage: $(basename "$0") <agent-id> <project-path> [options]
+Usage: $(basename "$0") <project-path> [options]
 
 Launch an AI coding agent in an isolated Podman container.
 
 Arguments:
-  agent-id        Unique identifier for this agent instance (e.g., 1, 2, agent-a)
   project-path    Path to the project directory to work on
 
 Options:
   --agent <name>        Agent to use: claude, codex, aider, interactive
                         (shortcut for --config configs/<name>.yaml)
+  --agent-id <id>       Specify agent ID (for continuing sessions); auto-generated if omitted
   --config <file>       Config file (overrides --agent)
   --task <description>  Inline task description (for simple tasks)
   --spec <file>         Task specification file (for complex tasks)
@@ -189,22 +212,25 @@ Task Input (one required unless --interactive):
   --spec ./spec.md      File with detailed specification
 
 Examples:
-  # Simple task
-  $(basename "$0") 1 ~/project --task "fix failing tests in UserService"
+  # Simple task (agent ID auto-generated)
+  $(basename "$0") ~/project --task "fix failing tests in UserService"
 
   # Complex task with spec file
-  $(basename "$0") 1 ~/project --spec ./specs/user-preferences.md
+  $(basename "$0") ~/project --spec ./specs/user-preferences.md
 
   # With git branch workflow (creates or continues)
-  $(basename "$0") 1 ~/project --branch feature/DEV-123 --spec ./task.md
+  $(basename "$0") ~/project --branch feature/DEV-123 --spec ./task.md
 
-  # Multiple agents in parallel
-  $(basename "$0") 1 ~/project --branch feature/DEV-123-api --spec ./api.md &
-  $(basename "$0") 2 ~/project --branch feature/DEV-123-ui --spec ./ui.md &
+  # Continue a previous session (use same agent ID)
+  $(basename "$0") ~/project --agent-id a3f2b1 --branch feature/DEV-123 --task "continue"
+
+  # Multiple agents in parallel (each gets unique auto-ID)
+  $(basename "$0") ~/project --branch feature/DEV-123-api --spec ./api.md &
+  $(basename "$0") ~/project --branch feature/DEV-123-ui --spec ./ui.md &
   wait
 
   # Interactive exploration
-  $(basename "$0") 1 ~/project --interactive --branch experiment/explore
+  $(basename "$0") ~/project --interactive --branch experiment/explore
 
 EOF
     exit 1
@@ -214,18 +240,36 @@ EOF
 # ARGUMENT PARSING
 #===============================================================================
 parse_args() {
-    if [[ $# -lt 2 ]]; then
+    # Handle help flags first (before any argument requirement check)
+    if [[ $# -eq 0 ]] || [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
         usage
     fi
 
-    AGENT_ID="$1"
-    PROJECT_PATH="$2"
-    shift 2
+    # Detect deprecated positional agent-id usage for backward compatibility
+    # Old CLI: launch-agent.sh <agent-id> <project-path> [options]
+    # New CLI: launch-agent.sh <project-path> [options]
+    if [[ $# -ge 2 ]] && ! is_likely_path "$1" && is_likely_path "$2"; then
+        log_warn "DEPRECATED: Positional agent-id is deprecated. Use --agent-id instead."
+        log_warn "  Old: $(basename "$0") $1 $2 ..."
+        log_warn "  New: $(basename "$0") $2 --agent-id $1 ..."
+        AGENT_ID="$1"
+        PROJECT_PATH="$2"
+        shift 2
+    else
+        # New CLI: first arg is project path
+        PROJECT_PATH="$1"
+        AGENT_ID=""  # Will be auto-generated later if not specified via --agent-id
+        shift 1
+    fi
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --agent)
                 AGENT_NAME="$2"
+                shift 2
+                ;;
+            --agent-id)
+                AGENT_ID="$2"
                 shift 2
                 ;;
             --config)
@@ -281,6 +325,12 @@ parse_args() {
                 ;;
         esac
     done
+
+    # Auto-generate agent ID if not provided
+    if [[ -z "$AGENT_ID" ]]; then
+        AGENT_ID=$(generate_agent_id)
+        AGENT_ID_AUTO_GENERATED=true
+    fi
 }
 
 #===============================================================================
@@ -299,6 +349,12 @@ validate_inputs() {
         exit 1
     }
     log_debug "Resolved PROJECT_PATH=$PROJECT_PATH"
+
+    # Validate agent ID format
+    if [[ ! "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log_error "Invalid agent ID format: $AGENT_ID (must match [a-zA-Z0-9_-]+)"
+        exit 1
+    fi
 
     # Validate task input
     if [[ -z "$TASK_INLINE" && -z "$SPEC_FILE" && "$INTERACTIVE" != "true" ]]; then
@@ -1079,7 +1135,11 @@ main() {
     echo ""
     log_info "Agent Configuration:"
     echo "  Agent:         $(to_upper "$AGENT_NAME") (${CONFIG_FILE})"
-    echo "  Instance ID:   $AGENT_ID"
+    if [[ "${AGENT_ID_AUTO_GENERATED:-false}" == "true" ]]; then
+        echo -e "  Instance ID:   ${CYAN}$AGENT_ID${NC} (auto-generated)"
+    else
+        echo "  Instance ID:   $AGENT_ID"
+    fi
     echo "  Project:       $PROJECT_PATH"
     echo "  Image:         $IMAGE_NAME"
     echo "  Resources:     ${RESOURCE_MEMORY} RAM, ${RESOURCE_CPUS} CPUs"
@@ -1088,6 +1148,10 @@ main() {
     [[ "$SANDBOX_MODE" == "worktree" ]] && echo "  Worktree:      $WORKTREE_PATH"
     [[ -n "$SPEC_FILE" ]] && echo "  Spec File:     $SPEC_FILE"
     [[ -n "$TASK_INLINE" ]] && echo "  Task:          ${TASK_INLINE:0:50}..."
+    if [[ "${AGENT_ID_AUTO_GENERATED:-false}" == "true" ]]; then
+        echo ""
+        echo -e "  ${CYAN}To continue this session:${NC} --agent-id $AGENT_ID"
+    fi
     echo ""
 
     if [[ "$DRY_RUN" == "true" ]]; then

@@ -152,7 +152,7 @@ Implement a new logging feature.
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent interactive --spec "$spec_file" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent interactive --spec "$spec_file" --dry-run 2>&1) || true
 
     rm -f "$spec_file"
 
@@ -165,7 +165,7 @@ test_workflow_interactive_mode() {
     log_test "Testing interactive mode workflow"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent interactive --interactive --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent interactive --interactive --dry-run 2>&1) || true
 
     # Should show interactive config
     assert_contains "$output" "INTERACTIVE" "Should use interactive agent"
@@ -175,7 +175,7 @@ test_workflow_dry_run_complete() {
     log_test "Testing dry-run shows complete workflow"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" \
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" \
         --agent claude \
         --task "fix tests" \
         --branch "feature/dry-run-test" \
@@ -194,7 +194,7 @@ test_workflow_error_handling() {
     # Non-existent project
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "/nonexistent" --task "test" 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "/nonexistent" --task "test" 2>&1) || exit_code=$?
 
     assert_not_equals 0 "$exit_code" "Should fail on invalid input"
     assert_contains "$output" "not exist" "Should show error message"

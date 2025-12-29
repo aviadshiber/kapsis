@@ -62,7 +62,7 @@ cp agent-sandbox.yaml.template agent-sandbox.yaml
 
 # 5. Run an agent
 kapsis 1 ~/project --task "fix failing tests"
-# or: ./scripts/launch-agent.sh 1 ~/project --task "fix failing tests"
+# or: ./scripts/launch-agent.sh ~/project --task "fix failing tests"
 ```
 
 ## Agent Profiles
@@ -86,7 +86,7 @@ Kapsis includes pre-built agent profiles that install the agent directly into th
 
 ```bash
 # Use the pre-built agent image
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --image kapsis-claude-cli:latest \
     --task "implement rate limiting"
 
@@ -112,20 +112,20 @@ Profiles are defined in `configs/agents/`. Create custom profiles by copying an 
 
 ```bash
 # Simple inline task
-./scripts/launch-agent.sh 1 ~/project --task "fix failing tests in UserService"
+./scripts/launch-agent.sh ~/project --task "fix failing tests in UserService"
 
 # Complex task with spec file
-./scripts/launch-agent.sh 1 ~/project --spec ./specs/feature.md
+./scripts/launch-agent.sh ~/project --spec ./specs/feature.md
 
 # Interactive mode (manual exploration)
-./scripts/launch-agent.sh 1 ~/project --interactive
+./scripts/launch-agent.sh ~/project --interactive
 ```
 
 ### Git Branch Workflow
 
 ```bash
 # Create new branch and work on task
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --branch feature/DEV-123 \
     --spec ./specs/task.md
 
@@ -133,7 +133,7 @@ Profiles are defined in `configs/agents/`. Create custom profiles by copying an 
 # Review PR, request changes
 # Update spec with feedback, re-run:
 
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --branch feature/DEV-123 \
     --spec ./specs/task-v2.md
 
@@ -144,17 +144,17 @@ Profiles are defined in `configs/agents/`. Create custom profiles by copying an 
 
 ```bash
 # Run multiple agents on same project, different branches
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --config configs/claude.yaml \
     --branch feature/DEV-123-api \
     --spec ./specs/api.md &
 
-./scripts/launch-agent.sh 2 ~/project \
+./scripts/launch-agent.sh ~/project \
     --config configs/codex.yaml \
     --branch feature/DEV-123-ui \
     --spec ./specs/ui.md &
 
-./scripts/launch-agent.sh 3 ~/project \
+./scripts/launch-agent.sh ~/project \
     --config configs/aider.yaml \
     --branch feature/DEV-123-tests \
     --spec ./specs/tests.md &
@@ -264,7 +264,7 @@ See [docs/CLEANUP.md](docs/CLEANUP.md) for full options and troubleshooting.
 
 ```bash
 # Enable debug output
-KAPSIS_DEBUG=1 ./scripts/launch-agent.sh 1 ~/project --task "test"
+KAPSIS_DEBUG=1 ./scripts/launch-agent.sh ~/project --task "test"
 
 # View logs
 tail -f ~/.kapsis/logs/kapsis-launch-agent.log

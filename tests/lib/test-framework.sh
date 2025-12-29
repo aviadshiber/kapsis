@@ -341,6 +341,22 @@ assert_false() {
     fi
 }
 
+# assert_matches <text> <regex_pattern> <message>
+# Checks if text matches a regex pattern (extended regex)
+# Example: assert_matches "$output" "[a-f0-9]{6}" "Should contain 6-char hex"
+assert_matches() {
+    local text="$1"
+    local pattern="$2"
+    local message="${3:-Text should match pattern}"
+
+    if echo "$text" | grep -qE "$pattern"; then
+        return 0
+    else
+        _log_failure "$message" "Pattern '$pattern' not found in text"
+        return 1
+    fi
+}
+
 #===============================================================================
 # TEST EXECUTION
 #===============================================================================

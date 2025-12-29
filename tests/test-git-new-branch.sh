@@ -78,7 +78,7 @@ test_auto_branch_generates_name() {
 
     # This tests the launch script's auto-branch logic
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --auto-branch --task "fix login bug" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --auto-branch --task "fix login bug" --dry-run 2>&1) || true
 
     # Should have generated a branch name
     assert_contains "$output" "Branch:" "Should show branch name"
@@ -197,7 +197,7 @@ test_branch_flag_validation() {
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$non_git_dir" --branch "test" --task "test" 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$non_git_dir" --branch "test" --task "test" 2>&1) || exit_code=$?
 
     rm -rf "$non_git_dir"
 

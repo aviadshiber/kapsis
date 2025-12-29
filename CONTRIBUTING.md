@@ -62,7 +62,7 @@ For log environment variables, file locations, and rotation settings, see [docs/
 Quick reference:
 ```bash
 # Enable debug logging
-KAPSIS_DEBUG=1 ./scripts/launch-agent.sh 1 ~/project --task "test"
+KAPSIS_DEBUG=1 ./scripts/launch-agent.sh ~/project --task "test"
 
 # View logs
 tail -f ~/.kapsis/logs/kapsis-launch-agent.log

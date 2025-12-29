@@ -846,7 +846,7 @@ main() {
     echo "     export ANTHROPIC_API_KEY='your-key'"
     echo ""
     echo "  3. Launch an agent:"
-    echo "     ./scripts/launch-agent.sh 1 ~/your-project --branch feature/test"
+    echo "     ./scripts/launch-agent.sh ~/your-project --branch feature/test"
     echo ""
     echo "  Or use the quick-start script:"
     echo "     ./quick-start.sh 1 project-name feature/branch"

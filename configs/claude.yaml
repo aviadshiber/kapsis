@@ -1,5 +1,5 @@
 # Kapsis Configuration - Claude Code Agent
-# Use with: ./scripts/launch-agent.sh 1 ~/project --config configs/claude.yaml
+# Use with: ./scripts/launch-agent.sh ~/project --config configs/claude.yaml
 
 agent:
   # Claude Code with spec file input

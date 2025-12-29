@@ -36,7 +36,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config" "$test_file"
 
@@ -64,7 +64,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config" "$test_file1" "$test_file2"
 
@@ -89,7 +89,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config" "$test_file"
 
@@ -110,7 +110,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -160,7 +160,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -182,7 +182,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     rm -f "$test_config"
 
@@ -209,7 +209,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
     rm -rf "$test_dir"
@@ -231,7 +231,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     rm -f "$test_config"
 
@@ -254,7 +254,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     rm -f "$test_config"
 
@@ -278,7 +278,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config" "$test_file"
 
