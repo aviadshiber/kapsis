@@ -548,10 +548,14 @@ agent:
   workdir: /workspace
 
 # API keys injected from host keychain
+# account can be string or array (for fallback)
 environment:
   keychain:
     ANTHROPIC_API_KEY:
       service: "Claude Code-credentials"
+    JIRA_TOKEN:
+      service: "my-jira"
+      account: ["primary@example.com", "${USER}"]
 
 # SSH hosts verified against official APIs
 ssh:

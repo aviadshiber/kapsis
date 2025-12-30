@@ -161,6 +161,42 @@ query_secret_store() {
     esac
 }
 
+# Query secret store with fallback accounts
+# Usage: query_secret_store_with_fallbacks "service" "account1,account2,..." "var_name"
+# Returns: credential on stdout, exit 1 if none found
+# Logs which account succeeded (obfuscated for security)
+query_secret_store_with_fallbacks() {
+    local service="$1"
+    local accounts="$2"  # Comma-separated list or single account
+    local var_name="${3:-}"  # For logging context
+
+    # If no commas, treat as single account (backward compat)
+    if [[ "$accounts" != *,* ]]; then
+        if value=$(query_secret_store "$service" "$accounts"); then
+            echo "$value"
+            return 0
+        fi
+        return 1
+    fi
+
+    # Split accounts and try each in order
+    IFS=',' read -ra account_list <<< "$accounts"
+    for account in "${account_list[@]}"; do
+        account="${account## }"  # Trim leading space
+        account="${account%% }"  # Trim trailing space
+        [[ -z "$account" ]] && continue
+
+        if value=$(query_secret_store "$service" "$account"); then
+            # Log which account worked (obfuscate: show first 3 chars + ***)
+            local masked_account="${account:0:3}***"
+            log_debug "Found $var_name via account: $masked_account"
+            echo "$value"
+            return 0
+        fi
+    done
+    return 1
+}
+
 #===============================================================================
 # USAGE
 #===============================================================================
@@ -482,7 +518,8 @@ parse_config() {
         # Output format: VAR_NAME|service|account|inject_to_file|mode per line
         # inject_to_file: optional file path to write the secret to (agent-agnostic)
         # mode: optional file permissions (default 0600)
-        ENV_KEYCHAIN=$(yq '.environment.keychain // {} | to_entries | .[] | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600")' "$CONFIG_FILE" 2>/dev/null || echo "")
+        # account: can be string or array (array joined with comma for fallback support)
+        ENV_KEYCHAIN=$(yq '.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600")' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse SSH host verification list
         SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
@@ -879,9 +916,9 @@ generate_env_vars() {
                 continue
             fi
 
-            # Query secret store (keychain/secret-tool)
+            # Query secret store (keychain/secret-tool) with fallback account support
             local value
-            if value=$(query_secret_store "$service" "$account"); then
+            if value=$(query_secret_store_with_fallbacks "$service" "$account" "$var_name"); then
                 ENV_VARS+=("-e" "${var_name}=${value}")
                 log_success "Loaded $var_name from secret store (service: $service)"
 
