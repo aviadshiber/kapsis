@@ -103,13 +103,29 @@ get_current_version() {
             rpm -q kapsis --queryformat '%{VERSION}' 2>/dev/null
             ;;
         "$INSTALL_SCRIPT"|"$INSTALL_GIT")
+            local version=""
             if [[ -d "$kapsis_root/.git" ]]; then
-                git -C "$kapsis_root" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//'
-            elif [[ -f "$kapsis_root/VERSION" ]]; then
-                cat "$kapsis_root/VERSION"
-            else
-                echo "unknown"
+                # Try git describe first
+                version=$(git -C "$kapsis_root" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+
+                # If empty (shallow clone or no tags), try fetching tags
+                if [[ -z "$version" ]]; then
+                    git -C "$kapsis_root" fetch --tags --depth=1 2>/dev/null || true
+                    version=$(git -C "$kapsis_root" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+                fi
             fi
+
+            # Fallback to VERSION file
+            if [[ -z "$version" ]] && [[ -f "$kapsis_root/VERSION" ]]; then
+                version=$(cat "$kapsis_root/VERSION")
+            fi
+
+            # Fallback to parsing CHANGELOG.md for latest version
+            if [[ -z "$version" ]] && [[ -f "$kapsis_root/CHANGELOG.md" ]]; then
+                version=$(grep -oE '## \[[0-9]+\.[0-9]+\.[0-9]+\]' "$kapsis_root/CHANGELOG.md" | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+')
+            fi
+
+            echo "${version:-unknown}"
             ;;
         *)
             echo "unknown"
