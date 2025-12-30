@@ -128,7 +128,8 @@ EOF
     if [[ -f "$gitignore_path" ]]; then
         # File exists - append our patterns to the existing content
         local original_lines
-        original_lines=$(wc -l < "$gitignore_path" 2>/dev/null || echo "0")
+        # Note: tr -d ' ' needed because macOS wc adds leading spaces
+        original_lines=$(wc -l < "$gitignore_path" 2>/dev/null | tr -d ' ' || echo "0")
         log_info "Appending protective patterns to existing .gitignore (${original_lines} lines)"
 
         # Use printf to avoid issues with echo and special characters

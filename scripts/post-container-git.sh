@@ -77,10 +77,11 @@ validate_staged_files() {
         has_issues=1
     fi
 
-    # Check for new submodule references (mode 160000)
+    # Check for submodule references (mode 160000)
     # These can happen when a directory with .git is accidentally staged
+    # Pattern :000000 160000 catches NEW submodules being added
     local submodule_refs
-    submodule_refs=$(git diff --cached --raw 2>/dev/null | grep "^:000000 160000" || true)
+    submodule_refs=$(git diff --cached --raw 2>/dev/null | grep "160000" || true)
     if [[ -n "$submodule_refs" ]]; then
         log_warn "Found new submodule references being added (potential accident):"
         while IFS= read -r line; do
