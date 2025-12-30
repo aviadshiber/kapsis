@@ -162,6 +162,63 @@ test_upgrade_command_specific_version() {
 }
 
 #===============================================================================
+# SECURITY TESTS: Input validation
+#===============================================================================
+
+test_validate_version_format_valid() {
+    log_test "Testing version validation accepts valid versions"
+
+    # Valid versions should pass
+    assert_true "validate_version_format '1.2.3'" "Should accept 1.2.3"
+    assert_true "validate_version_format 'v1.2.3'" "Should accept v1.2.3"
+    assert_true "validate_version_format '0.16.0'" "Should accept 0.16.0"
+    assert_true "validate_version_format '99.0.0'" "Should accept 99.0.0"
+}
+
+test_validate_version_format_rejects_injection() {
+    log_test "Testing version validation rejects command injection attempts"
+
+    # These should all be rejected to prevent command injection
+    # SC2016: Single quotes intentional - we're testing literal injection strings
+    local exit_code
+
+    exit_code=0
+    validate_version_format '1.0.0;whoami' 2>/dev/null || exit_code=$?
+    assert_not_equals 0 "$exit_code" "Should reject semicolon injection"
+
+    exit_code=0
+    # shellcheck disable=SC2016
+    validate_version_format '1$(id)' 2>/dev/null || exit_code=$?
+    assert_not_equals 0 "$exit_code" "Should reject command substitution"
+
+    exit_code=0
+    # shellcheck disable=SC2016
+    validate_version_format 'v$(whoami)' 2>/dev/null || exit_code=$?
+    assert_not_equals 0 "$exit_code" "Should reject v-prefixed injection"
+
+    exit_code=0
+    validate_version_format '1.0.0|cat /etc/passwd' 2>/dev/null || exit_code=$?
+    assert_not_equals 0 "$exit_code" "Should reject pipe injection"
+
+    exit_code=0
+    # shellcheck disable=SC2016
+    validate_version_format '`whoami`' 2>/dev/null || exit_code=$?
+    assert_not_equals 0 "$exit_code" "Should reject backtick injection"
+}
+
+test_upgrade_rejects_malicious_version() {
+    log_test "Testing --upgrade rejects malicious version strings"
+
+    local output
+    local exit_code=0
+    # shellcheck disable=SC2016
+    output=$("$LAUNCH_SCRIPT" --upgrade '1$(id)' --dry-run 2>&1) || exit_code=$?
+
+    assert_not_equals 0 "$exit_code" "Should fail on malicious input"
+    assert_contains "$output" "Invalid version format" "Should show validation error"
+}
+
+#===============================================================================
 # INTEGRATION TESTS: CLI flags
 #===============================================================================
 
@@ -334,6 +391,11 @@ main() {
     run_test test_compare_versions_with_v_prefix
     run_test test_upgrade_command_generates_output
     run_test test_upgrade_command_specific_version
+
+    # Security tests
+    run_test test_validate_version_format_valid
+    run_test test_validate_version_format_rejects_injection
+    run_test test_upgrade_rejects_malicious_version
 
     # Integration tests
     run_test test_version_flag_output

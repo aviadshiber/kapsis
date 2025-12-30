@@ -193,6 +193,26 @@ list_available_versions() {
     fi
 }
 
+# Validate version string is safe semver format
+# Arguments: $1 - version string
+# Returns: 0 if valid, 1 if invalid
+# Security: Prevents command injection by ensuring version is strictly numeric with dots
+validate_version_format() {
+    local version="$1"
+
+    # Remove 'v' prefix if present
+    version="${version#v}"
+
+    # Must match strict semver pattern: MAJOR.MINOR.PATCH (all numeric)
+    # This prevents command injection via $(cmd), `cmd`, ;cmd, etc.
+    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "Error: Invalid version format '$version'" >&2
+        echo "Version must be in format: X.Y.Z (e.g., 1.2.3 or v1.2.3)" >&2
+        return 1
+    fi
+    return 0
+}
+
 # Compare two semantic versions
 # Arguments: $1 - version1, $2 - version2
 # Returns: -1 if v1 < v2, 0 if equal, 1 if v1 > v2
@@ -266,6 +286,14 @@ get_upgrade_command() {
     local install_method
     install_method=$(detect_install_method)
     local kapsis_root="${KAPSIS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
+    # Security: Validate version format if specified (defense-in-depth)
+    if [[ -n "$target_version" ]]; then
+        if ! validate_version_format "$target_version"; then
+            echo "echo 'Error: Invalid version format'"
+            return 1
+        fi
+    fi
 
     case "$install_method" in
         "$INSTALL_HOMEBREW")
@@ -374,6 +402,11 @@ perform_upgrade() {
 
     # Remove 'v' prefix if present
     target_version="${target_version#v}"
+
+    # Security: Validate version format to prevent command injection
+    if ! validate_version_format "$target_version"; then
+        return 1
+    fi
 
     local current
     current=$(get_current_version)
@@ -494,6 +527,11 @@ perform_downgrade() {
 
     # Remove 'v' prefix if present
     target_version="${target_version#v}"
+
+    # Security: Validate version format to prevent command injection
+    if ! validate_version_format "$target_version"; then
+        return 1
+    fi
 
     # Validate target is actually older
     local cmp
