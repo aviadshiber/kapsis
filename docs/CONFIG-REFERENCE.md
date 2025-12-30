@@ -57,7 +57,9 @@ environment:
   #
   # Options:
   #   service: (required) Exact keychain service name
-  #   account: (optional) Keychain account (supports ${VAR} expansion)
+  #   account: (optional) Keychain account - can be string or array for fallback
+  #            Supports ${VAR} expansion (e.g., ${USER})
+  #            Array example: ["primary@example.com", "fallback@example.com"]
   #   inject_to_file: (optional) Also write credential to file path in container
   #   mode: (optional) File permissions for inject_to_file (default: 0600)
   keychain:
@@ -75,6 +77,11 @@ environment:
     BITBUCKET_TOKEN:
       service: "my-bitbucket-token"
       account: "${USER}"  # Supports variable expansion
+
+    # Example: Fallback accounts (tries each in order until one succeeds)
+    JIRA_TOKEN:
+      service: "my-jira-token"
+      account: ["primary@example.com", "fallback@example.com", "${USER}@example.com"]
 
   # Variables to pass from host to container
   # Values are taken from host environment
@@ -432,12 +439,35 @@ environment:
       service: "keychain-service-name"  # Required: exact service name
       account: "optional-account"        # Optional: keychain account (supports ${VAR} expansion)
 
+    # Fallback accounts - tries each in order until one succeeds
+    MY_TOKEN:
+      service: "my-service"
+      account: ["primary@example.com", "fallback@example.com", "${USER}@example.com"]
+
     # Environment variable + file injection (agent-agnostic)
     AGENT_CREDENTIALS:
       service: "my-agent-creds"          # Required: keychain service name
       inject_to_file: "~/.agent/creds"   # Optional: also write to this file in container
       mode: "0600"                        # Optional: file permissions (default: 0600)
 ```
+
+### Account Fallback
+
+When `account` is specified as an array, Kapsis tries each account in order until it finds a matching credential. This is useful when:
+
+- Tokens may be stored under different account names on different machines
+- You want to support multiple users with the same config file
+- You need backward compatibility with existing keychain entries
+
+```yaml
+environment:
+  keychain:
+    JIRA_TOKEN:
+      service: "my-jira"
+      account: ["team-lead@example.com", "developer@example.com", "${USER}@example.com"]
+```
+
+Debug logging shows which account succeeded (obfuscated for security).
 
 ### File Injection (Agent-Agnostic)
 
