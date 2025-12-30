@@ -57,17 +57,6 @@ generate_agent_id() {
     fi
 }
 
-# Check if argument looks like a filesystem path (for backward compat detection)
-is_likely_path() {
-    local arg="$1"
-    # A path if: absolute, home-relative, dot-relative, contains slash, or exists as directory
-    [[ "$arg" == /* ]] || \
-    [[ "$arg" == ~* ]] || \
-    [[ "$arg" == .* ]] || \
-    [[ "$arg" == */* ]] || \
-    [[ -d "${arg/#\~/$HOME}" ]]
-}
-
 #===============================================================================
 # DEFAULT VALUES
 #===============================================================================
@@ -245,22 +234,10 @@ parse_args() {
         usage
     fi
 
-    # Detect deprecated positional agent-id usage for backward compatibility
-    # Old CLI: launch-agent.sh <agent-id> <project-path> [options]
-    # New CLI: launch-agent.sh <project-path> [options]
-    if [[ $# -ge 2 ]] && ! is_likely_path "$1" && is_likely_path "$2"; then
-        log_warn "DEPRECATED: Positional agent-id is deprecated. Use --agent-id instead."
-        log_warn "  Old: $(basename "$0") $1 $2 ..."
-        log_warn "  New: $(basename "$0") $2 --agent-id $1 ..."
-        AGENT_ID="$1"
-        PROJECT_PATH="$2"
-        shift 2
-    else
-        # New CLI: first arg is project path
-        PROJECT_PATH="$1"
-        AGENT_ID=""  # Will be auto-generated later if not specified via --agent-id
-        shift 1
-    fi
+    # First argument is always the project path
+    PROJECT_PATH="$1"
+    AGENT_ID=""  # Will be auto-generated if not specified via --agent-id
+    shift 1
 
     while [[ $# -gt 0 ]]; do
         case "$1" in

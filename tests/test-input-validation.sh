@@ -57,20 +57,6 @@ test_explicit_agent_id() {
     assert_not_contains "$output" "auto-generated" "Should NOT mention auto-generated"
 }
 
-test_deprecated_positional_agent_id() {
-    log_test "Testing deprecated positional agent-id shows warning"
-
-    local output
-    local exit_code=0
-
-    # Old CLI: launch-agent.sh <agent-id> <project-path>
-    output=$("$LAUNCH_SCRIPT" "old-id" "$TEST_PROJECT" --task "test" --dry-run 2>&1) || exit_code=$?
-
-    assert_equals 0 "$exit_code" "Should succeed with deprecated syntax"
-    assert_contains "$output" "DEPRECATED" "Should show deprecation warning"
-    assert_contains "$output" "old-id" "Should use the specified agent ID"
-}
-
 test_invalid_agent_id_format() {
     log_test "Testing invalid agent ID format is rejected"
 
@@ -220,7 +206,6 @@ main() {
     # Run tests - agent ID handling
     run_test test_auto_generated_agent_id
     run_test test_explicit_agent_id
-    run_test test_deprecated_positional_agent_id
     run_test test_invalid_agent_id_format
 
     # Run tests - task and spec validation
