@@ -69,6 +69,18 @@ See `CONTRIBUTING.md` for full release process.
 4. Skipping shellcheck
 5. Committing secrets - use keychain integration
 
+## Push Fallback (Agent Recovery)
+
+When push fails (common in containers without credentials), Kapsis outputs a structured fallback:
+
+```
+KAPSIS_PUSH_FALLBACK: cd /path/to/worktree && git push -u origin branch-name
+```
+
+**For orchestrating agents:** Grep output for `KAPSIS_PUSH_FALLBACK:` and execute the command from the host where git credentials are available.
+
+**In status.json:** The `push_fallback_command` field contains the same command when `push_status` is `"failed"`.
+
 ## Cross-Platform
 
 macOS container overlay tests may fail due to virtio-fs limitations. Run full test coverage on Linux. Use `compat.sh` helpers for OS-specific commands.

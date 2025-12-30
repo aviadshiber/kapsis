@@ -282,11 +282,15 @@ push_changes() {
         else
             log_error "Push reported success but verification failed!"
             log_error "Commits may not have been pushed to remote."
+            # Set fallback command for agent recovery
+            status_set_push_fallback "$worktree_path" "$remote" "$branch"
             return 2  # Distinct exit code for verification failure
         fi
     else
         log_error "Push failed"
         status_set_push_info "failed" "$local_commit" ""
+        # Set fallback command for agent recovery
+        status_set_push_fallback "$worktree_path" "$remote" "$branch"
         return 1
     fi
 }
