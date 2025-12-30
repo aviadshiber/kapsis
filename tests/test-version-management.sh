@@ -208,27 +208,30 @@ test_check_upgrade_flag() {
 test_upgrade_dry_run() {
     log_test "Testing --upgrade --dry-run flag"
 
+    # Use a specific future version to ensure dry-run output is always shown
+    # (avoids "Already on version" when current equals latest)
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" --upgrade --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" --upgrade 99.0.0 --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should exit with 0 on dry-run"
     assert_contains "$output" "[DRY-RUN]" "Should indicate dry run mode"
     assert_contains "$output" "Would execute" "Should show planned command"
 }
 
-test_upgrade_specific_version_dry_run() {
-    log_test "Testing --upgrade VERSION --dry-run flag"
+test_upgrade_already_on_latest() {
+    log_test "Testing --upgrade when already on target version"
 
-    # Use a version that's different from current to ensure dry-run output is shown
-    # We use a future version that definitely doesn't match current
+    # Get current version and try to upgrade to the same version
+    local current
+    current=$(get_current_version)
+
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" --upgrade 99.0.0 --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" --upgrade "$current" --dry-run 2>&1) || exit_code=$?
 
-    assert_equals 0 "$exit_code" "Should exit with 0 on dry-run"
-    assert_contains "$output" "99.0.0" "Should reference target version"
-    assert_contains "$output" "[DRY-RUN]" "Should indicate dry run mode"
+    assert_equals 0 "$exit_code" "Should exit with 0"
+    assert_contains "$output" "Already on version" "Should indicate already on target"
 }
 
 test_upgrade_with_v_prefix_dry_run() {
@@ -337,7 +340,7 @@ main() {
     run_test test_version_short_flag
     run_test test_check_upgrade_flag
     run_test test_upgrade_dry_run
-    run_test test_upgrade_specific_version_dry_run
+    run_test test_upgrade_already_on_latest
     run_test test_upgrade_with_v_prefix_dry_run
     run_test test_downgrade_without_version
     run_test test_downgrade_dry_run
