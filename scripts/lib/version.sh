@@ -213,6 +213,35 @@ validate_version_format() {
     return 0
 }
 
+# Validate path is safe (no command injection characters)
+# Arguments: $1 - path to validate
+# Returns: 0 if safe, 1 if potentially dangerous
+# Security: Prevents command injection via paths containing shell metacharacters
+validate_safe_path() {
+    local path="$1"
+
+    # Path must be absolute
+    if [[ ! "$path" =~ ^/ ]]; then
+        echo "Error: Path must be absolute: $path" >&2
+        return 1
+    fi
+
+    # Path must not contain dangerous shell metacharacters
+    # Reject: $, `, ;, &, |, newlines, and other shell operators
+    if [[ "$path" =~ [\$\`\;\&\|\<\>\(\)\{\}\[\]\'\"\!\\] ]] || [[ "$path" == *$'\n'* ]]; then
+        echo "Error: Path contains unsafe characters: $path" >&2
+        return 1
+    fi
+
+    # Path must exist and be a directory
+    if [[ ! -d "$path" ]]; then
+        echo "Error: Path is not a directory: $path" >&2
+        return 1
+    fi
+
+    return 0
+}
+
 # Compare two semantic versions
 # Arguments: $1 - version1, $2 - version2
 # Returns: -1 if v1 < v2, 0 if equal, 1 if v1 > v2
@@ -346,6 +375,77 @@ EOF
     esac
 }
 
+# Execute upgrade command safely without eval
+# Arguments: $1 - install method, $2 - target version (optional), $3 - kapsis_root (for git installs)
+# Security: Executes commands directly, avoiding eval and command injection
+execute_upgrade_command() {
+    local install_method="$1"
+    local target_version="${2:-}"
+    local kapsis_root="${3:-}"
+
+    case "$install_method" in
+        "$INSTALL_HOMEBREW")
+            if [[ -n "$target_version" ]]; then
+                echo "Uninstalling current version..."
+                brew uninstall kapsis || true
+                echo "Installing version $target_version..."
+                KAPSIS_VERSION="$target_version" bash -c "curl -fsSL '$KAPSIS_INSTALL_SCRIPT' | bash"
+            else
+                brew update
+                brew upgrade kapsis
+            fi
+            ;;
+        "$INSTALL_APT")
+            if [[ -n "$target_version" ]]; then
+                sudo apt-get update
+                sudo apt-get install -y "kapsis=$target_version"
+            else
+                sudo apt-get update
+                sudo apt-get upgrade -y kapsis
+            fi
+            ;;
+        "$INSTALL_RPM")
+            if [[ -n "$target_version" ]]; then
+                sudo dnf makecache
+                sudo dnf install -y "kapsis-$target_version"
+            else
+                sudo dnf makecache
+                sudo dnf upgrade -y kapsis
+            fi
+            ;;
+        "$INSTALL_SCRIPT")
+            if [[ -n "$target_version" ]]; then
+                KAPSIS_VERSION="$target_version" bash -c "curl -fsSL '$KAPSIS_INSTALL_SCRIPT' | bash"
+            else
+                bash -c "curl -fsSL '$KAPSIS_INSTALL_SCRIPT' | bash"
+            fi
+            ;;
+        "$INSTALL_GIT")
+            # Validate kapsis_root before using it
+            if ! validate_safe_path "$kapsis_root"; then
+                echo "Error: Invalid Kapsis installation path" >&2
+                return 1
+            fi
+            # Execute in subshell to avoid changing current directory
+            (
+                cd "$kapsis_root" || exit 1
+                git fetch --tags
+                if [[ -n "$target_version" ]]; then
+                    git checkout "v$target_version"
+                else
+                    git pull origin main
+                fi
+                ./scripts/build-image.sh
+            )
+            ;;
+        *)
+            echo "Error: Cannot execute upgrade for unknown installation method" >&2
+            echo "Please upgrade manually from: https://github.com/$KAPSIS_GITHUB_REPO/releases" >&2
+            return 1
+            ;;
+    esac
+}
+
 # Check if upgrade is available
 # Returns: 0 if upgrade available, 1 otherwise
 # Outputs: current and latest versions
@@ -424,14 +524,17 @@ perform_upgrade() {
         return 0
     fi
 
+    # Get kapsis_root for git installs (needed for display and execution)
+    local kapsis_root="${KAPSIS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+
     # When upgrading to latest, use simple upgrade command (no version arg)
     # When upgrading to specific version, pass the version
     local cmd
-    if [[ "$upgrade_to_latest" == "true" ]]; then
-        cmd=$(get_upgrade_command)
-    else
-        cmd=$(get_upgrade_command "$target_version")
+    local version_for_command=""
+    if [[ "$upgrade_to_latest" != "true" ]]; then
+        version_for_command="$target_version"
     fi
+    cmd=$(get_upgrade_command "$version_for_command")
 
     if [[ "$dry_run" == "true" ]]; then
         echo "[DRY-RUN] Would execute:"
@@ -463,7 +566,8 @@ perform_upgrade() {
 
     echo "Executing upgrade..."
     echo ""
-    eval "$cmd"
+    # Security: Use safe execution function instead of eval
+    execute_upgrade_command "$install_method" "$version_for_command" "$kapsis_root"
 }
 
 # Get the previous version (one version older than current)

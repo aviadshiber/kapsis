@@ -218,6 +218,49 @@ test_upgrade_rejects_malicious_version() {
     assert_contains "$output" "Invalid version format" "Should show validation error"
 }
 
+test_validate_safe_path_accepts_valid() {
+    log_test "Testing path validation accepts valid paths"
+
+    # Use KAPSIS_ROOT which should be valid
+    assert_true "validate_safe_path '$KAPSIS_ROOT'" "Should accept KAPSIS_ROOT"
+
+    # Test with /tmp which should exist
+    assert_true "validate_safe_path '/tmp'" "Should accept /tmp"
+}
+
+test_validate_safe_path_rejects_injection() {
+    log_test "Testing path validation rejects injection attempts"
+
+    local exit_code
+
+    # Relative path
+    exit_code=0
+    validate_safe_path 'relative/path' 2>/dev/null || exit_code=$?
+    assert_not_equals 0 "$exit_code" "Should reject relative path"
+
+    # Command substitution in path
+    exit_code=0
+    # shellcheck disable=SC2016
+    validate_safe_path '/tmp/$(whoami)' 2>/dev/null || exit_code=$?
+    assert_not_equals 0 "$exit_code" "Should reject command substitution in path"
+
+    # Semicolon in path
+    exit_code=0
+    validate_safe_path '/tmp/foo;rm -rf /' 2>/dev/null || exit_code=$?
+    assert_not_equals 0 "$exit_code" "Should reject semicolon in path"
+
+    # Backticks in path
+    exit_code=0
+    # shellcheck disable=SC2016
+    validate_safe_path '/tmp/`id`' 2>/dev/null || exit_code=$?
+    assert_not_equals 0 "$exit_code" "Should reject backticks in path"
+
+    # Pipe in path
+    exit_code=0
+    validate_safe_path '/tmp/foo|cat /etc/passwd' 2>/dev/null || exit_code=$?
+    assert_not_equals 0 "$exit_code" "Should reject pipe in path"
+}
+
 #===============================================================================
 # INTEGRATION TESTS: CLI flags
 #===============================================================================
@@ -396,6 +439,8 @@ main() {
     run_test test_validate_version_format_valid
     run_test test_validate_version_format_rejects_injection
     run_test test_upgrade_rejects_malicious_version
+    run_test test_validate_safe_path_accepts_valid
+    run_test test_validate_safe_path_rejects_injection
 
     # Integration tests
     run_test test_version_flag_output
