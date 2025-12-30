@@ -203,8 +203,19 @@ query_secret_store_with_fallbacks() {
 usage() {
     cat << EOF
 Usage: $(basename "$0") <project-path> [options]
+       $(basename "$0") --version
+       $(basename "$0") --check-upgrade
+       $(basename "$0") --upgrade [VERSION] [--dry-run]
+       $(basename "$0") --downgrade [VERSION] [--dry-run]
 
 Launch an AI coding agent in an isolated Podman container.
+
+Global Options (no project path required):
+  --version, -V         Display current Kapsis version and installation info
+  --check-upgrade       Check if a newer version is available
+  --upgrade [VERSION]   Upgrade to latest or specified version
+  --downgrade [VERSION] Downgrade to previous or specified version
+  --dry-run             Preview upgrade/downgrade commands without executing
 
 Arguments:
   project-path    Path to the project directory to work on
@@ -264,8 +275,67 @@ EOF
 #===============================================================================
 # ARGUMENT PARSING
 #===============================================================================
+
+# Parse version arguments for upgrade/downgrade commands
+# Sets: VERSION_ARG, DRY_RUN_ARG
+# Arguments: remaining args after the main flag
+parse_version_args() {
+    VERSION_ARG=""
+    DRY_RUN_ARG=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run)
+                DRY_RUN_ARG=true
+                shift
+                ;;
+            v*|[0-9]*)
+                VERSION_ARG="$1"
+                shift
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+}
+
+# Handle global version management flags
+# These flags don't require a project path and exit immediately
+handle_global_flags() {
+    case "${1:-}" in
+        --version|-V)
+            source "$SCRIPT_DIR/lib/version.sh"
+            print_version
+            exit 0
+            ;;
+        --check-upgrade)
+            source "$SCRIPT_DIR/lib/version.sh"
+            check_upgrade_available
+            exit $?
+            ;;
+        --upgrade)
+            source "$SCRIPT_DIR/lib/version.sh"
+            shift
+            parse_version_args "$@"
+            perform_upgrade "$VERSION_ARG" "$DRY_RUN_ARG"
+            exit $?
+            ;;
+        --downgrade)
+            source "$SCRIPT_DIR/lib/version.sh"
+            shift
+            parse_version_args "$@"
+            perform_downgrade "$VERSION_ARG" "$DRY_RUN_ARG"
+            exit $?
+            ;;
+    esac
+}
+
 parse_args() {
-    # Handle help flags first (before any argument requirement check)
+    # Handle global flags first (version management - no project path required)
+    handle_global_flags "$@"
+
+    # Handle help flags (before any argument requirement check)
     if [[ $# -eq 0 ]] || [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
         usage
     fi

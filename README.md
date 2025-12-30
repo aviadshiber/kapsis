@@ -43,6 +43,32 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 
 See [docs/INSTALL.md](docs/INSTALL.md) for detailed instructions.
 
+### Version Management
+
+```bash
+# Check current version
+kapsis --version
+
+# Check if upgrade is available
+kapsis --check-upgrade
+
+# Upgrade to latest version
+kapsis --upgrade
+
+# Upgrade to specific version
+kapsis --upgrade 0.15.0
+
+# Downgrade to previous version
+kapsis --downgrade
+
+# Downgrade to specific version
+kapsis --downgrade 0.14.0
+
+# Preview upgrade/downgrade without executing
+kapsis --upgrade --dry-run
+kapsis --downgrade --dry-run
+```
+
 ## Quick Start
 
 ```bash
