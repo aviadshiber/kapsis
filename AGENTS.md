@@ -23,6 +23,38 @@
 - `./tests/run-all-tests.sh` runs the full test suite (requires Podman).
 - `./tests/run-all-tests.sh --quick` runs fast, non-container tests.
 
+## Branch Workflow (IMPORTANT)
+
+**NEVER work directly on `main` branch.** All development must happen on feature branches.
+
+### When to Use Each Approach
+
+| Scenario | Approach | Isolation Level |
+|----------|----------|-----------------|
+| Feature development with full isolation | Kapsis container | Full (filesystem + process) |
+| Quick fixes, docs, or Kapsis development itself | Git worktree | Branch isolation only |
+
+### Creating a Feature Branch (Non-Kapsis)
+
+When not using Kapsis (e.g., working on Kapsis itself), always create a worktree:
+
+```bash
+# Create worktree with feature branch
+git worktree add -b feature/my-feature ~/.kapsis/worktrees/kapsis-feature main
+
+# Work in the worktree
+cd ~/.kapsis/worktrees/kapsis-feature
+
+# When done, clean up
+git worktree remove ~/.kapsis/worktrees/kapsis-feature
+```
+
+### Why This Matters
+- Protects `main` from accidental commits or broken states
+- Enables parallel work on multiple features
+- Keeps your primary checkout clean for reviews and quick switches
+- Matches the isolation model Kapsis provides for other projects
+
 ## Coding Style & Naming Conventions
 - Bash scripts should use `set -euo pipefail` and `[[ ... ]]` for conditionals.
 - Indent with 4 spaces and always quote variables (`"$var"`).
