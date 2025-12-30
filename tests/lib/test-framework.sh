@@ -271,6 +271,46 @@ assert_dir_not_exists() {
     fi
 }
 
+# assert_file_contains <file> <pattern> <message>
+# Checks if file contains a pattern (using grep -F for literal match)
+assert_file_contains() {
+    local file="$1"
+    local pattern="$2"
+    local message="${3:-File should contain pattern}"
+
+    if [[ ! -f "$file" ]]; then
+        _log_failure "$message" "File does not exist: $file"
+        return 1
+    fi
+
+    if grep -qF "$pattern" "$file" 2>/dev/null; then
+        return 0
+    else
+        _log_failure "$message" "Pattern not found: $pattern" "In file: $file"
+        return 1
+    fi
+}
+
+# assert_file_not_contains <file> <pattern> <message>
+# Checks if file does NOT contain a pattern
+assert_file_not_contains() {
+    local file="$1"
+    local pattern="$2"
+    local message="${3:-File should not contain pattern}"
+
+    if [[ ! -f "$file" ]]; then
+        # File doesn't exist, so it doesn't contain the pattern
+        return 0
+    fi
+
+    if ! grep -qF "$pattern" "$file" 2>/dev/null; then
+        return 0
+    else
+        _log_failure "$message" "Pattern found but shouldn't be: $pattern" "In file: $file"
+        return 1
+    fi
+}
+
 # assert_exit_code <expected> <actual> <message>
 assert_exit_code() {
     local expected="$1"

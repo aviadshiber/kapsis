@@ -67,6 +67,87 @@ run_git() {
 }
 
 #===============================================================================
+# ENSURE PROTECTIVE GITIGNORE
+#
+# Adds protective .gitignore patterns to a worktree to prevent accidental
+# commits of Kapsis internal files and paths with literal ~ characters.
+#
+# This addresses the issue where agents can accidentally create directories
+# with literal "~" in the path (when tilde expansion fails), or commit
+# internal .kapsis/ files. These patterns ensure such files are ignored
+# even if the target project's .gitignore doesn't include them.
+#
+# Patterns added:
+# - .kapsis/           : Internal Kapsis spec/task files
+# - ~                  : Literal tilde directory (failed expansion)
+# - ~/**               : All files under literal tilde
+# - .claude/           : Claude Code config files
+# - .codex/            : Codex CLI config files
+#===============================================================================
+ensure_protective_gitignore() {
+    local worktree_path="$1"
+    local gitignore_path="$worktree_path/.gitignore"
+
+    # Marker comment to identify Kapsis-added patterns
+    local marker="# Kapsis protective patterns (auto-added)"
+
+    # Check if patterns are already present (idempotency check)
+    if [[ -f "$gitignore_path" ]] && grep -qF "$marker" "$gitignore_path" 2>/dev/null; then
+        log_debug "Protective .gitignore patterns already present"
+        return 0
+    fi
+
+    # Patterns to add - these prevent accidental commits of:
+    # 1. Internal Kapsis directories
+    # 2. Literal ~ paths (when tilde expansion fails)
+    # 3. AI tool config directories
+    local patterns
+    patterns=$(cat << 'EOF'
+
+# Kapsis protective patterns (auto-added)
+# These patterns prevent accidental commits of internal files
+# Do not remove - they protect against agent misconfigurations
+
+# Kapsis internal files
+.kapsis/
+
+# Literal tilde paths (failed tilde expansion creates directory named "~")
+# This is NOT the same as *~ which matches backup files ending in ~
+~
+~/
+
+# AI tool configuration directories (should stay local)
+.claude/
+.codex/
+.aider/
+EOF
+)
+
+    # IMPORTANT: We APPEND to existing .gitignore, never overwrite
+    # This preserves all project-specific ignore rules
+    if [[ -f "$gitignore_path" ]]; then
+        # File exists - append our patterns to the existing content
+        local original_lines
+        original_lines=$(wc -l < "$gitignore_path" 2>/dev/null || echo "0")
+        log_info "Appending protective patterns to existing .gitignore (${original_lines} lines)"
+
+        # Use printf to avoid issues with echo and special characters
+        # The >> operator appends without affecting existing content
+        printf '%s\n' "$patterns" >> "$gitignore_path"
+
+        log_debug "Appended patterns to existing $gitignore_path"
+    else
+        # File doesn't exist - create new .gitignore with our patterns
+        log_info "Creating .gitignore with protective patterns (no existing file)"
+
+        # Create the file with patterns (no existing content to preserve)
+        printf '%s\n' "$patterns" > "$gitignore_path"
+
+        log_debug "Created new $gitignore_path with protective patterns"
+    fi
+}
+
+#===============================================================================
 # CREATE WORKTREE
 #
 # Creates a git worktree for an agent on the host filesystem.
@@ -185,6 +266,14 @@ create_worktree() {
     # Security: Use u+rwX,g+rX instead of a+rwX to avoid world-writable files
     # With --userns=keep-id, the container user maps to the host user
     chmod -R u+rwX,g+rX "$worktree_path" 2>/dev/null || true
+
+    # Add protective .gitignore patterns to prevent accidental commits of:
+    # - .kapsis/ directory (internal spec/task files)
+    # - Literal ~ paths (tilde not expanded, creates directory named "~")
+    # - Claude/Codex config files that shouldn't be committed
+    # These patterns are appended to ensure they're always present, even if
+    # the project already has a .gitignore
+    ensure_protective_gitignore "$worktree_path"
 
     log_success "Worktree ready: $worktree_path"
     echo "$worktree_path"
