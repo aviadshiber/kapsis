@@ -1,0 +1,275 @@
+# agent-sandbox.yaml — Configuration for sandboxed AI coding agents
+# Copy this template and customize for your environment
+#
+# Usage:
+#   cp agent-sandbox.yaml.template agent-sandbox.yaml
+#   # Edit agent-sandbox.yaml with your settings
+#   ./scripts/launch-agent.sh ~/project --spec ./specs/task.md
+
+#===============================================================================
+# AGENT CONFIGURATION
+#===============================================================================
+agent:
+  # Command to launch the agent (required)
+  # Use {task} placeholder for task injection, or omit for interactive mode
+  # The spec file content replaces {task} or is available at /task-spec.md
+  command: "claude --dangerously-skip-permissions -p \"$(cat /task-spec.md)\""
+
+  # Examples for other agents:
+  # command: "codex --approval-mode full-auto \"$(cat /task-spec.md)\""
+  # command: "aider --yes-always --message-file /task-spec.md"
+  # command: "gemini -s docker \"$(cat /task-spec.md)\""
+  # command: "bash"  # For manual/interactive use
+
+  # Working directory inside container (default: /workspace)
+  workdir: /workspace
+
+#===============================================================================
+# FILESYSTEM MOUNTS (Whitelist)
+#===============================================================================
+filesystem:
+  # Paths/patterns to mount READ-ONLY from host into container
+  # These give the agent access to your configs, credentials, etc.
+  # Supports ~ expansion (globs not yet implemented)
+
+  include:
+    # Shell configuration
+    - ~/.zshrc
+    - ~/.bashrc
+    - ~/.profile
+
+    # Git configuration
+    - ~/.gitconfig
+    - ~/.config/git
+
+    # SSH keys (for git operations)
+    - ~/.ssh
+
+    # Agent-specific config directories
+    - ~/.claude           # Claude Code
+    - ~/.claude.json      # Claude Code config
+    # - ~/.codex          # Codex CLI
+    # - ~/.aider          # Aider
+    # - ~/.config/gemini  # Gemini CLI
+
+    # Maven settings (base config, will be overridden for isolation)
+    # - ~/.m2/settings.xml
+    # - ~/.m2/settings-security.xml
+
+    # Gradle Enterprise / Develocity credentials
+    # - ~/.gradle/gradle.properties
+    # - ~/.gradle-enterprise
+
+    # Cloud credentials (if needed)
+    # - ~/.aws
+    # - ~/.kube/config
+
+  # Paths to explicitly EXCLUDE (even if matched by include patterns)
+  exclude: []
+    # Example: exclude private keys but keep known_hosts
+    # - ~/.ssh/id_*
+    # - ~/.aws/credentials
+
+#===============================================================================
+# ENVIRONMENT VARIABLES
+#===============================================================================
+environment:
+  # Variables to pass from host to container
+  # Just list the names — values are taken from host environment
+  passthrough:
+    - ANTHROPIC_API_KEY
+    # - OPENAI_API_KEY
+    # - GITHUB_TOKEN
+    # - GITLAB_TOKEN
+    # - GRADLE_ENTERPRISE_ACCESS_KEY
+    # - DEVELOCITY_ACCESS_KEY
+
+  # Variables to set explicitly (override host values)
+  set:
+    # Maven JVM settings (scale down from typical 10g for parallel agents)
+    MAVEN_OPTS: "-Xmx4g -XX:+UseG1GC"
+
+    # REQUIRED: Maven mirror URL for isolated-settings.xml
+    # This env var is substituted in maven/isolated-settings.xml
+    # Without it, Maven falls back to public Maven Central!
+    KAPSIS_MAVEN_MIRROR_URL: "https://repo1.maven.org/maven2"
+    # Example for corporate Artifactory:
+    # KAPSIS_MAVEN_MIRROR_URL: "https://artifactory.example.org/artifactory/releases"
+
+    # REQUIRED for authenticated mirrors: Maven username (literal value, NOT keychain)
+    # Keychain lookups return the password field, not the account name!
+    # KAPSIS_MAVEN_USERNAME: "your-username"
+
+    # RECOMMENDED: Belt-and-suspenders SNAPSHOT blocking
+    # Works together with isolated-settings.xml SNAPSHOT disable
+    MAVEN_ARGS: "--no-snapshot-updates"
+
+    # JAVA_HOME: "/usr/lib/jvm/java-17"
+
+  # Variables retrieved from system secret store (macOS Keychain, Linux secret-tool)
+  # These are queried at launch time and injected into the container
+  # Priority: passthrough > keychain (passthrough wins if same var in both)
+  #
+  # Options:
+  #   service: (required) Exact keychain service name
+  #   account: (optional) Keychain account (supports ${USER} expansion)
+  #   inject_to_file: (optional) Also write credential to file path in container
+  #   mode: (optional) File permissions for inject_to_file (default: 0600)
+  keychain:
+    # REQUIRED for corporate Maven mirrors: Artifactory PASSWORD only
+    # NOTE: Only store PASSWORD in keychain - USERNAME should be in environment.set
+    #       (keychain lookup returns the password field, not the account name!)
+    # KAPSIS_MAVEN_PASSWORD:
+    #   service: "my-artifactory"
+    #   account: "${USER}"
+
+    # Example: API key as environment variable only
+    # ANTHROPIC_API_KEY:
+    #   service: "anthropic-api"
+    #
+    # Example: OAuth credentials written to file (agent-agnostic pattern)
+    # AGENT_OAUTH_CREDENTIALS:
+    #   service: "my-agent-credentials"
+    #   inject_to_file: "~/.config/my-agent/credentials.json"
+    #   mode: "0600"
+    #
+    # Example: Token with account name
+    # GIT_TOKEN:
+    #   service: "my-git-token"
+    #   account: "${USER}"
+
+#===============================================================================
+# RESOURCE LIMITS
+#===============================================================================
+resources:
+  memory: 8g
+  cpus: 4
+  # pids: 1000  # Optional: limit number of processes
+
+#===============================================================================
+# MAVEN ISOLATION SETTINGS
+#===============================================================================
+# IMPORTANT: These settings define intent, but actual isolation is enforced via:
+#   1. maven/isolated-settings.xml (uses env vars below)
+#   2. KAPSIS_MAVEN_MIRROR_URL env var (set in environment.set above)
+#   3. KAPSIS_MAVEN_USERNAME/PASSWORD env vars (set in environment.keychain above)
+#   4. MAVEN_ARGS env var for --no-snapshot-updates flag
+#
+maven:
+  # Corporate mirror URL (customize for your organization)
+  # NOTE: Also set KAPSIS_MAVEN_MIRROR_URL in environment.set section!
+  mirror_url: "https://artifactory.example.org/artifactory/releases"
+
+  # Block SNAPSHOT downloads from remote (recommended: true)
+  # Enforced via isolated-settings.xml + MAVEN_ARGS=--no-snapshot-updates
+  block_remote_snapshots: true
+
+  # Block deploy operations (recommended: true)
+  # Enforced via kapsis-block-deploy profile in isolated-settings.xml
+  block_deploy: true
+
+#===============================================================================
+# GRADLE ENTERPRISE / DEVELOCITY SETTINGS
+#===============================================================================
+gradle_enterprise:
+  # Server URL (customize for your organization)
+  server_url: "https://ge.example.org/"
+
+  # Keep build scans for observability (recommended: true)
+  build_scans_enabled: true
+
+  # Disable remote cache to prevent cross-agent contamination (recommended: true)
+  remote_cache_disabled: true
+
+#===============================================================================
+# SANDBOX BEHAVIOR
+#===============================================================================
+sandbox:
+  # Where to store upper layers (agent changes)
+  upper_dir_base: ~/.ai-sandboxes
+
+  # Auto-cleanup after merge? (default: false - preserve for review)
+  cleanup_after_merge: false
+
+  # Interactive merge prompt after agent exits? (default: true)
+  interactive_merge: true
+
+#===============================================================================
+# GIT WORKFLOW (Auto-Push to Branch for PR Review)
+#===============================================================================
+git:
+  # Enable git auto-push workflow (requires --branch flag at launch)
+  auto_push:
+    enabled: true
+
+    # Remote to push to (default: origin)
+    remote: origin
+
+    # Commit message template
+    # Available placeholders: {task}, {agent}, {timestamp}, {branch}
+    commit_message: |
+      feat: {task}
+
+      Generated by AI agent ({agent})
+      Branch: {branch}
+
+    # Automatically stage all changes before commit (default: true)
+    stage_all: true
+
+    # Push flags (e.g., --force, --set-upstream)
+    push_flags:
+      - "--set-upstream"
+
+  # Branch naming (used if --branch not provided but --auto-branch is)
+  branch:
+    # Prefix for auto-generated branch names
+    prefix: "ai-agent/"
+
+    # Include timestamp in auto-generated names (default: true)
+    include_timestamp: true
+
+    # Example auto-generated: ai-agent/fix-tests-20241209-143052
+
+#===============================================================================
+# SSH HOST KEY VERIFICATION
+#===============================================================================
+# Kapsis verifies SSH host keys before git push to prevent MITM attacks.
+# Public providers (github.com, gitlab.com, bitbucket.org) are verified
+# automatically against their official APIs.
+#
+# Enterprise/self-hosted git servers require one-time setup:
+#   ./scripts/lib/ssh-keychain.sh add-host git.company.com
+#
+ssh:
+  # Hosts to verify and include in container's known_hosts
+  # Add your git remotes here (determined from project's .git/config)
+  verify_hosts:
+    - github.com
+    - gitlab.com
+    - bitbucket.org
+    # - git.company.com  # Enterprise host (run add-host first!)
+
+#===============================================================================
+# CONTAINER IMAGE
+#===============================================================================
+image:
+  # Name for the built image
+  name: kapsis-sandbox
+  tag: latest
+
+  # Base image
+  base: ubuntu:24.04
+
+  # Java versions to install (supports multiple)
+  java_versions:
+    - "17"
+    - "8"
+
+  # Default Java version
+  default_java: "17"
+
+  # Additional packages to install
+  extra_packages:
+    # - kafkacat
+    # - postgresql-client
+    # - your-custom-package

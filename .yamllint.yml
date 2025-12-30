@@ -1,0 +1,59 @@
+# yamllint configuration
+# https://yamllint.readthedocs.io/en/stable/configuration.html
+
+extends: default
+
+rules:
+  # Line length - be lenient for readability
+  line-length:
+    max: 120
+    level: warning
+    allow-non-breakable-words: true
+    allow-non-breakable-inline-mappings: true
+
+  # Allow multiple documents in a file
+  document-start: disable
+
+  # Comments
+  comments:
+    require-starting-space: true
+    ignore-shebangs: true
+    min-spaces-from-content: 1
+
+  # Indentation
+  indentation:
+    spaces: 2
+    indent-sequences: true
+    check-multi-line-strings: false
+
+  # Truthy values
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no', 'on', 'off']
+    check-keys: false
+
+  # Empty lines
+  empty-lines:
+    max: 2
+    max-start: 0
+    max-end: 1
+
+  # Braces
+  braces:
+    min-spaces-inside: 0
+    max-spaces-inside: 1
+
+  # Brackets
+  brackets:
+    min-spaces-inside: 0
+    max-spaces-inside: 0
+
+  # Colons
+  colons:
+    max-spaces-before: 0
+    max-spaces-after: 1
+
+  # Commas
+  commas:
+    max-spaces-before: 0
+    min-spaces-after: 1
+    max-spaces-after: 1
