@@ -24,7 +24,7 @@ test_project_path_with_spaces() {
     mkdir -p "$project_with_spaces"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$project_with_spaces" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$project_with_spaces" --task "test" --dry-run 2>&1) || true
 
     rm -rf "$project_with_spaces"
 
@@ -41,7 +41,7 @@ test_spec_file_with_spaces() {
     echo "# Test Spec" > "$spec_file"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --spec "$spec_file" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --spec "$spec_file" --dry-run 2>&1) || true
 
     rm -f "$spec_file"
 
@@ -70,7 +70,7 @@ resources:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$config_file" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$config_file" --task "test" --dry-run 2>&1) || true
 
     rm -f "$config_file"
 
@@ -87,7 +87,7 @@ test_nested_path_with_spaces() {
     mkdir -p "$nested_path"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$nested_path" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$nested_path" --task "test" --dry-run 2>&1) || true
 
     rm -rf "/tmp/kapsis tests"
 
@@ -103,7 +103,7 @@ test_path_with_special_chars() {
     mkdir -p "$special_path"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$special_path" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$special_path" --task "test" --dry-run 2>&1) || true
 
     rm -rf "$special_path"
 

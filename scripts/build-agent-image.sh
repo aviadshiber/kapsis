@@ -133,7 +133,7 @@ if [[ $BUILD_EXIT -eq 0 ]]; then
     log_success "Image built successfully: $IMAGE_NAME"
     echo ""
     echo "To use this image, run:"
-    echo "  ./scripts/launch-agent.sh 1 ~/git/products --image $IMAGE_NAME --task \"Your task\""
+    echo "  ./scripts/launch-agent.sh ~/git/products --image $IMAGE_NAME --task \"Your task\""
     echo ""
     echo "Or update your config to use this image:"
     echo "  agent:"

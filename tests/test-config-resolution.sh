@@ -65,7 +65,7 @@ test_agent_flag_takes_precedence() {
     create_project_config
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" \
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" \
         --agent codex \
         --task "test" \
         --dry-run 2>&1) || true
@@ -83,7 +83,7 @@ test_project_config_found() {
     # Run from project directory without --agent
     cd "$TEST_PROJECT"
     local output
-    output=$("$LAUNCH_SCRIPT" 1 . --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" . --task "test" --dry-run 2>&1) || true
 
     # Should find and use project config
     assert_contains "$output" "agent-sandbox.yaml" "Should find project config"
@@ -99,7 +99,7 @@ test_kapsis_dir_config() {
 
     cd "$TEST_PROJECT"
     local output
-    output=$("$LAUNCH_SCRIPT" 1 . --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" . --task "test" --dry-run 2>&1) || true
 
     # Should find .kapsis/config.yaml (now that agent-sandbox.yaml is removed)
     assert_contains "$output" ".kapsis/config.yaml" "Should find .kapsis config"
@@ -113,7 +113,7 @@ test_fallback_to_claude() {
     rm -rf "$TEST_PROJECT/.kapsis"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --task "test" --dry-run 2>&1) || true
 
     # Should fall back to claude.yaml
     assert_contains "$output" "claude" "Should fall back to claude config"
@@ -144,7 +144,7 @@ test_resolution_order_logging() {
     create_project_config
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --task "test" --dry-run 2>&1) || true
 
     # Should show which config was used
     assert_contains "$output" "Using agent:" "Should log which agent/config is used"

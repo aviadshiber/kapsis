@@ -1,5 +1,5 @@
 # Kapsis Configuration - Aider Agent
-# Use with: ./scripts/launch-agent.sh 1 ~/project --config configs/aider.yaml
+# Use with: ./scripts/launch-agent.sh ~/project --config configs/aider.yaml
 
 agent:
   # Aider with message file input and auto-yes

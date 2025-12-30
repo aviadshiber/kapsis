@@ -87,7 +87,7 @@ test_keys_not_in_dry_run() {
 
     export ANTHROPIC_API_KEY="$secret_key"
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
     unset ANTHROPIC_API_KEY
 
     # The actual key value should not appear in output
@@ -276,7 +276,7 @@ environment:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -309,7 +309,7 @@ EOF
     export ANTHROPIC_API_KEY="passthrough-value"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset ANTHROPIC_API_KEY
     rm -f "$test_config"
@@ -355,7 +355,7 @@ agent:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test task" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test task" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -403,7 +403,7 @@ agent:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test task" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test task" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -428,7 +428,7 @@ agent:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --interactive --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --interactive --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -467,7 +467,7 @@ environment:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -494,7 +494,7 @@ EOF
     export GRAFANA_READONLY_TOKEN="graf-secret-value"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset CONTEXT7_API_KEY GRAFANA_READONLY_TOKEN
     rm -f "$test_config"
@@ -522,7 +522,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -551,7 +551,7 @@ image:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --image "my-custom-image:latest" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --image "my-custom-image:latest" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -584,7 +584,7 @@ environment:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config" "$test_file1" "$test_file2"
 
@@ -618,7 +618,7 @@ EOF
     export TEST_VAR3="value3"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset TEST_VAR1 TEST_VAR2 TEST_VAR3
     rm -f "$test_config"
@@ -651,7 +651,7 @@ EOF
     # We can't actually query keychain in tests, but we can verify the config parsing
     # by checking the dry-run output shows the variable would be processed
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -870,7 +870,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config" "$test_file1" "$test_file2"
 
@@ -895,7 +895,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config" "$test_file"
 
@@ -916,7 +916,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 

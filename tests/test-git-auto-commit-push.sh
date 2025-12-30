@@ -105,7 +105,7 @@ test_no_push_flag_respected() {
 
     # Check dry-run output includes no-push setting
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --branch "test-branch" --no-push --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --branch "test-branch" --no-push --dry-run 2>&1) || true
 
     # Should show KAPSIS_NO_PUSH in env or command
     assert_contains "$output" "KAPSIS_NO_PUSH" "Should set KAPSIS_NO_PUSH env var" || \

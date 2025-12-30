@@ -72,7 +72,7 @@ The git workflow enables AI agents to push changes to branches for PR-based revi
 │  │   # Add: "PR Feedback: Handle null case gracefully"                 │   │
 │  │                                                                     │   │
 │  │   # Re-launch — agent continues from remote branch state!           │   │
-│  │   ./launch-agent.sh 1 ~/project \                                   │   │
+│  │   ./launch-agent.sh ~/project \                                   │   │
 │  │       --branch feature/DEV-123 \                                    │   │
 │  │       --spec ./specs/task.md                                        │   │
 │  │                                                                     │   │
@@ -160,7 +160,7 @@ cat > specs/add-user-endpoint.md << 'EOF'
 EOF
 
 # Launch agent with new branch
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --branch feature/DEV-123-user-preferences \
     --spec ./specs/add-user-endpoint.md
 ```
@@ -177,7 +177,7 @@ cat >> specs/add-user-endpoint.md << 'EOF'
 EOF
 
 # Re-launch with same branch — continues from remote state
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --branch feature/DEV-123-user-preferences \
     --spec ./specs/add-user-endpoint.md
 ```
@@ -186,7 +186,7 @@ EOF
 
 ```bash
 # Let Kapsis generate branch name
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --auto-branch \
     --spec ./specs/fix-tests.md
 
@@ -197,7 +197,7 @@ EOF
 
 ```bash
 # Commit but don't push (for review before push)
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --branch feature/DEV-123 \
     --no-push \
     --spec ./specs/task.md
@@ -257,17 +257,17 @@ One-line description (used for commit message)
 
 ```bash
 # Run multiple agents on same project, different branches
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --config configs/claude.yaml \
     --branch feature/DEV-123-backend \
     --spec ./specs/backend.md &
 
-./scripts/launch-agent.sh 2 ~/project \
+./scripts/launch-agent.sh ~/project \
     --config configs/claude.yaml \
     --branch feature/DEV-123-frontend \
     --spec ./specs/frontend.md &
 
-./scripts/launch-agent.sh 3 ~/project \
+./scripts/launch-agent.sh ~/project \
     --config configs/claude.yaml \
     --branch feature/DEV-123-tests \
     --spec ./specs/tests.md &
@@ -338,7 +338,7 @@ Kapsis automatically generates PR/MR URLs for:
 
 ```bash
 # Check SSH key is mounted
-./scripts/launch-agent.sh 1 ~/project --interactive
+./scripts/launch-agent.sh ~/project --interactive
 # Inside container:
 ssh -T git@github.com
 ```
@@ -367,7 +367,7 @@ git checkout feature/DEV-123
 git pull origin feature/DEV-123
 
 # Then launch agent
-./scripts/launch-agent.sh 1 ~/project --branch feature/DEV-123 --spec task.md
+./scripts/launch-agent.sh ~/project --branch feature/DEV-123 --spec task.md
 ```
 
 ### No Changes Detected

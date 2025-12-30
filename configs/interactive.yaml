@@ -1,5 +1,5 @@
 # Kapsis Configuration - Interactive Shell
-# Use with: ./scripts/launch-agent.sh 1 ~/project --config configs/interactive.yaml --interactive
+# Use with: ./scripts/launch-agent.sh ~/project --config configs/interactive.yaml --interactive
 
 agent:
   # Just drop into bash for manual exploration

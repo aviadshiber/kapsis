@@ -48,13 +48,13 @@ source ~/.zshrc
 
 ```bash
 # Interactive shell in sandbox
-./scripts/launch-agent.sh 1 ~/your-project
+./scripts/launch-agent.sh ~/your-project
 
 # With git branch (recommended)
-./scripts/launch-agent.sh 1 ~/your-project --branch feature/test
+./scripts/launch-agent.sh ~/your-project --branch feature/test
 
 # With task specification
-./scripts/launch-agent.sh 1 ~/your-project --branch feature/DEV-123 --spec task.md
+./scripts/launch-agent.sh ~/your-project --branch feature/DEV-123 --spec task.md
 ```
 
 ## Setup Script Options

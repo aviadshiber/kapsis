@@ -138,7 +138,7 @@ maven:
 #
 # Example setup:
 #   export DOCKER_ARTIFACTORY_TOKEN=$(echo -n "user:pass" | base64)
-#   ./scripts/launch-agent.sh 1 ~/project --task "build"
+#   ./scripts/launch-agent.sh ~/project --task "build"
 #
 # In your config:
 environment:
@@ -705,7 +705,7 @@ Use `build-agent-image.sh` to create agent-specific container images:
 
 ```bash
 # Method 1: --image flag (highest priority)
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --image kapsis-claude-cli:latest \
     --task "implement feature"
 
@@ -785,14 +785,14 @@ kapsis-launch-agent.log.5    # Oldest (will be deleted on next rotation)
 
 ```bash
 # Enable debug logging for troubleshooting
-KAPSIS_DEBUG=1 ./scripts/launch-agent.sh 1 ~/project --task "test"
+KAPSIS_DEBUG=1 ./scripts/launch-agent.sh ~/project --task "test"
 
 # Debug with custom log directory
 KAPSIS_LOG_LEVEL=DEBUG KAPSIS_LOG_DIR=/tmp/kapsis-debug \
-  ./scripts/launch-agent.sh 1 ~/project --task "test"
+  ./scripts/launch-agent.sh ~/project --task "test"
 
 # Console-only logging (no file)
-KAPSIS_LOG_TO_FILE=false ./scripts/launch-agent.sh 1 ~/project --task "test"
+KAPSIS_LOG_TO_FILE=false ./scripts/launch-agent.sh ~/project --task "test"
 
 # View logs in real-time
 tail -f ~/.kapsis/logs/kapsis-launch-agent.log
@@ -924,7 +924,7 @@ for a in active:
 To disable status reporting entirely:
 
 ```bash
-KAPSIS_STATUS_ENABLED=false ./scripts/launch-agent.sh 1 ~/project --task "test"
+KAPSIS_STATUS_ENABLED=false ./scripts/launch-agent.sh ~/project --task "test"
 ```
 
 ---

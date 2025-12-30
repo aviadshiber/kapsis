@@ -1,5 +1,5 @@
 # Kapsis Configuration - Codex CLI Agent
-# Use with: ./scripts/launch-agent.sh 1 ~/project --config configs/codex.yaml
+# Use with: ./scripts/launch-agent.sh ~/project --config configs/codex.yaml
 
 agent:
   # Codex CLI with full auto approval
