@@ -79,7 +79,15 @@ if [[ "$NO_PUSH" != "true" ]]; then
 
     git push --set-upstream "$REMOTE" "$BRANCH" || {
         log_warn "Push failed. Changes are committed locally."
-        echo "To push manually: git push $REMOTE $BRANCH"
+        echo ""
+        echo "┌────────────────────────────────────────────────────────────────┐"
+        echo "│ PUSH FALLBACK (for agent recovery)                             │"
+        echo "└────────────────────────────────────────────────────────────────┘"
+        echo "KAPSIS_PUSH_FALLBACK: git push $REMOTE $BRANCH"
+        echo ""
+        echo "The orchestrating agent can run this command from the host where"
+        echo "git credentials are available."
+        echo ""
         exit 1
     }
 

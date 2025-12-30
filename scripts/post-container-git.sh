@@ -33,6 +33,89 @@ fi
 # Note: status functions are provided by lib/status.sh
 
 #===============================================================================
+# VALIDATE AND CLEAN STAGED FILES
+#
+# Checks for suspicious files that should never be committed and removes them
+# from staging. This is a safety net to prevent accidental commits of:
+# - Literal ~ paths (tilde not expanded, creates directory named "~")
+# - .kapsis/ internal files
+# - Submodule references (mode 160000) that weren't intentional
+#
+# Returns: 0 if validation passed (or issues were auto-fixed), 1 if blocking issues
+#===============================================================================
+validate_staged_files() {
+    local worktree_path="$1"
+
+    cd "$worktree_path"
+
+    local has_issues=0
+    local suspicious_files=()
+
+    # Check for literal ~ paths in staged files
+    # These occur when tilde expansion fails inside container
+    local tilde_files
+    tilde_files=$(git diff --cached --name-only 2>/dev/null | grep "^~" || true)
+    if [[ -n "$tilde_files" ]]; then
+        log_warn "Found staged files with literal ~ path (should be ignored):"
+        # Use process substitution to avoid subshell (array would be lost in pipe)
+        while IFS= read -r f; do
+            log_warn "  - $f"
+            suspicious_files+=("$f")
+        done <<< "$tilde_files"
+        has_issues=1
+    fi
+
+    # Check for .kapsis/ internal files
+    local kapsis_files
+    kapsis_files=$(git diff --cached --name-only 2>/dev/null | grep "^\.kapsis/" || true)
+    if [[ -n "$kapsis_files" ]]; then
+        log_warn "Found staged .kapsis/ internal files (should be ignored):"
+        while IFS= read -r f; do
+            log_warn "  - $f"
+            suspicious_files+=("$f")
+        done <<< "$kapsis_files"
+        has_issues=1
+    fi
+
+    # Check for submodule references (mode 160000)
+    # These can happen when a directory with .git is accidentally staged
+    # Pattern :000000 160000 catches NEW submodules being added
+    local submodule_refs
+    submodule_refs=$(git diff --cached --raw 2>/dev/null | grep "160000" || true)
+    if [[ -n "$submodule_refs" ]]; then
+        log_warn "Found new submodule references being added (potential accident):"
+        while IFS= read -r line; do
+            local path
+            path=$(echo "$line" | awk '{print $NF}')
+            log_warn "  - $path (submodule)"
+            suspicious_files+=("$path")
+        done <<< "$submodule_refs"
+        has_issues=1
+    fi
+
+    # If issues found, unstage the suspicious files
+    if [[ $has_issues -eq 1 ]]; then
+        log_warn "Removing suspicious files from staging..."
+        for file in "${suspicious_files[@]}"; do
+            if [[ -n "$file" ]]; then
+                git reset HEAD -- "$file" 2>/dev/null || true
+                log_info "  Unstaged: $file"
+            fi
+        done
+
+        # Also try to remove literal ~ directory if it exists
+        if [[ -d "~" ]]; then
+            log_warn "Removing literal ~ directory from worktree..."
+            rm -rf "~" 2>/dev/null || true
+        fi
+
+        log_info "Suspicious files removed from staging. Continuing with clean files."
+    fi
+
+    return 0
+}
+
+#===============================================================================
 # CHECK FOR CHANGES
 #
 # Returns 0 if there are uncommitted changes, 1 otherwise.
@@ -63,6 +146,10 @@ commit_changes() {
 
     log_info "Staging changes..."
     git add -A
+
+    # Validate staged files and remove suspicious ones
+    # This catches literal ~ paths, .kapsis/ files, and accidental submodules
+    validate_staged_files "$worktree_path"
 
     # Show what's being committed
     echo ""
@@ -196,11 +283,15 @@ push_changes() {
         else
             log_error "Push reported success but verification failed!"
             log_error "Commits may not have been pushed to remote."
+            # Set fallback command for agent recovery
+            status_set_push_fallback "$worktree_path" "$remote" "$branch"
             return 2  # Distinct exit code for verification failure
         fi
     else
         log_error "Push failed"
         status_set_push_info "failed" "$local_commit" ""
+        # Set fallback command for agent recovery
+        status_set_push_fallback "$worktree_path" "$remote" "$branch"
         return 1
     fi
 }
