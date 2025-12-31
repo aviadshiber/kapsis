@@ -575,6 +575,13 @@ parse_config() {
         GIT_REMOTE=$(yq -r '.git.auto_push.remote // "origin"' "$CONFIG_FILE")
         GIT_COMMIT_MSG=$(yq -r '.git.auto_push.commit_message // "feat: AI agent changes"' "$CONFIG_FILE")
 
+        # Parse co-authors (newline-separated list)
+        GIT_CO_AUTHORS=$(yq -r '.git.co_authors[]' "$CONFIG_FILE" 2>/dev/null | tr '\n' '|' | sed 's/|$//' || echo "")
+
+        # Parse fork workflow settings
+        GIT_FORK_ENABLED=$(yq -r '.git.fork_workflow.enabled // "false"' "$CONFIG_FILE")
+        GIT_FORK_FALLBACK=$(yq -r '.git.fork_workflow.fallback // "fork"' "$CONFIG_FILE")
+
         # Parse filesystem includes
         FILESYSTEM_INCLUDES=$(yq -r '.filesystem.include[]' "$CONFIG_FILE" 2>/dev/null || echo "")
 
@@ -602,6 +609,9 @@ parse_config() {
         SANDBOX_UPPER_BASE="$HOME/.ai-sandboxes"
         GIT_REMOTE="origin"
         GIT_COMMIT_MSG="feat: AI agent changes"
+        GIT_CO_AUTHORS=""
+        GIT_FORK_ENABLED="false"
+        GIT_FORK_FALLBACK="fork"
         FILESYSTEM_INCLUDES=""
         ENV_PASSTHROUGH="ANTHROPIC_API_KEY"
         ENV_SET="{}"
@@ -1333,7 +1343,10 @@ post_container_worktree() {
             "$GIT_REMOTE" \
             "$NO_PUSH" \
             "$AGENT_ID" \
-            "$SANITIZED_GIT_PATH"
+            "$SANITIZED_GIT_PATH" \
+            "$GIT_CO_AUTHORS" \
+            "$GIT_FORK_ENABLED" \
+            "$GIT_FORK_FALLBACK"
     else
         log_info "No file changes detected"
     fi
