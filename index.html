@@ -126,10 +126,10 @@
                 <div class="hidden md:block">
                     <div class="ml-10 flex items-baseline space-x-6" role="menubar">
                         <a href="#install" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Install</a>
+                        <a href="#workflow" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium"><i class="fa-solid fa-diagram-project mr-1" aria-hidden="true"></i> Workflow</a>
                         <a href="#yolo" role="menuitem" class="text-kapsis-danger hover:text-red-400 transition-colors px-3 py-2 rounded-md text-sm font-bold"><i class="fa-solid fa-biohazard mr-1" aria-hidden="true"></i> YOLO Mode</a>
                         <a href="#security" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium"><i class="fa-solid fa-shield-halved mr-1" aria-hidden="true"></i> Security</a>
-                        <a href="#docs" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Docs & Profiles</a>
-                        <a href="#quickstart" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Quick Start</a>
+                        <a href="#docs" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Docs</a>
                     </div>
                 </div>
                 <div class="flex items-center gap-3">
@@ -153,10 +153,10 @@
             </button>
             <nav class="mt-8 flex flex-col space-y-4" role="menu">
                 <a href="#install" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Install</a>
+                <a href="#workflow" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium"><i class="fa-solid fa-diagram-project mr-2" aria-hidden="true"></i>Workflow</a>
                 <a href="#yolo" onclick="toggleMobileMenu()" role="menuitem" class="text-kapsis-danger hover:text-red-400 transition-colors py-2 text-lg font-bold"><i class="fa-solid fa-biohazard mr-2" aria-hidden="true"></i>YOLO Mode</a>
                 <a href="#security" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium"><i class="fa-solid fa-shield-halved mr-2" aria-hidden="true"></i>Security</a>
-                <a href="#docs" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Docs & Profiles</a>
-                <a href="#quickstart" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Quick Start</a>
+                <a href="#docs" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Docs</a>
                 <hr class="border-slate-700 my-2">
                 <a href="https://github.com/aviadshiber/kapsis" target="_blank" class="text-slate-300 hover:text-white transition-colors py-2 text-lg font-medium"><i class="fa-brands fa-github mr-2" aria-hidden="true"></i>GitHub</a>
             </nav>
@@ -202,32 +202,37 @@
                         <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
                         <div class="w-3 h-3 rounded-full bg-green-500"></div>
                     </div>
-                    <div class="mx-auto text-xs text-slate-400 font-mono">kapsis-manager — zsh</div>
+                    <div class="mx-auto text-xs text-slate-400 font-mono">kapsis — zsh</div>
                 </div>
                 <div class="p-6 font-mono text-sm overflow-x-auto">
+                    <div class="text-slate-500 mb-2"># Launch 3 agents in parallel on different features</div>
                     <div class="flex mb-2">
                         <span class="text-emerald-400 mr-2">➜</span>
-                        <span class="text-white">kapsis ~/project --agent claude --branch feature/api &</span>
+                        <span class="text-white">kapsis ~/ecommerce --spec specs/rate-limit.md --branch feature/rate-limiting &</span>
                     </div>
-                    <div class="text-slate-500 mb-1">Instance ID: <span class="text-cyan-400">a3f2b1</span> (auto-generated)</div>
+                    <div class="text-slate-500 mb-1">Agent ID: <span class="text-cyan-400">a3f2b1</span> · Branch: <span class="text-purple-400">feature/rate-limiting</span></div>
                     <div class="flex mb-2">
                         <span class="text-emerald-400 mr-2">➜</span>
-                        <span class="text-white">kapsis ~/project --agent codex --branch feature/refactor &</span>
+                        <span class="text-white">kapsis ~/ecommerce --spec specs/auth-refactor.md --branch feature/auth-v2 &</span>
                     </div>
-                    <div class="text-slate-500 mb-1">Instance ID: <span class="text-cyan-400">e8b4c2</span> (auto-generated)</div>
+                    <div class="text-slate-500 mb-1">Agent ID: <span class="text-cyan-400">e8b4c2</span> · Branch: <span class="text-purple-400">feature/auth-v2</span></div>
                     <div class="flex mb-2">
                         <span class="text-emerald-400 mr-2">➜</span>
-                        <span class="text-white">kapsis ~/project --agent aider --branch feature/tests &</span>
+                        <span class="text-white">kapsis ~/ecommerce --spec specs/test-coverage.md --branch feature/tests &</span>
                     </div>
-                    <div class="text-slate-500 mb-3">Instance ID: <span class="text-cyan-400">7c9e4d</span> (auto-generated)</div>
+                    <div class="text-slate-500 mb-3">Agent ID: <span class="text-cyan-400">7c9e4d</span> · Branch: <span class="text-purple-400">feature/tests</span></div>
                     <div class="flex mb-2">
                         <span class="text-emerald-400 mr-2">➜</span>
-                        <span class="text-white">kapsis-status</span>
+                        <span class="text-white">kapsis-status --watch</span>
                     </div>
-                    <div class="text-cyan-400 text-xs">PROJECT &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; AGENT &nbsp;&nbsp; PHASE &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; PROG &nbsp;MESSAGE</div>
-                    <div class="text-cyan-400">project &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span class="text-white">a3f2b1</span> &nbsp; <span class="text-green-400">running</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 45% &nbsp;Implementing feature</div>
-                    <div class="text-cyan-400">project &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span class="text-white">e8b4c2</span> &nbsp; <span class="text-green-400">running</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 60% &nbsp;Building project</div>
-                    <div class="text-cyan-400">project &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <span class="text-white">7c9e4d</span> &nbsp; <span class="text-green-400">running</span> &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; 30% &nbsp;Exploring codebase</div>
+                    <div class="text-slate-600 text-xs mb-1">┌─────────────┬──────────┬──────────────┬──────┬─────────────────────────────────┐</div>
+                    <div class="text-cyan-400 text-xs">│ PROJECT     │ AGENT    │ PHASE        │ PROG │ MESSAGE                         │</div>
+                    <div class="text-slate-600 text-xs">├─────────────┼──────────┼──────────────┼──────┼─────────────────────────────────┤</div>
+                    <div class="text-slate-300 text-xs">│ ecommerce   │ <span class="text-cyan-400">a3f2b1</span>   │ <span class="text-yellow-400">implementing</span> │  45% │ Adding RateLimiter middleware   │</div>
+                    <div class="text-slate-300 text-xs">│ ecommerce   │ <span class="text-cyan-400">e8b4c2</span>   │ <span class="text-blue-400">building</span>     │  60% │ Running mvn compile             │</div>
+                    <div class="text-slate-300 text-xs">│ ecommerce   │ <span class="text-cyan-400">7c9e4d</span>   │ <span class="text-purple-400">testing</span>      │  75% │ Running pytest test_auth.py     │</div>
+                    <div class="text-slate-600 text-xs mb-3">└─────────────┴──────────┴──────────────┴──────┴─────────────────────────────────┘</div>
+                    <div class="text-slate-500 text-xs italic"># Each agent works in complete isolation — zero conflicts, zero interference</div>
                 </div>
             </div>
         </div>
@@ -415,6 +420,212 @@ sudo dnf install kapsis</pre>
                             <div class="mt-4 pt-4 border-t border-dashed border-slate-700 text-green-400 font-bold">
                                 [KAPSIS MONITOR]: Host System Integrity: 100% (Safe)
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Complete Workflow Example -->
+    <section id="workflow" class="py-20 bg-gradient-to-b from-slate-800/30 to-kapsis-dark">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-4 text-center">
+                <i class="fa-solid fa-diagram-project text-kapsis-neon mr-3"></i> Complete Workflow Example
+            </h2>
+            <p class="text-center text-slate-400 mb-12 max-w-2xl mx-auto">
+                See exactly how Kapsis works: from task specification to pull request.
+            </p>
+
+            <div class="grid lg:grid-cols-2 gap-8">
+                <!-- Left Column: Input Files -->
+                <div class="space-y-6">
+                    <!-- Step 1: Task Spec -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                        <div class="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
+                            <div class="flex items-center gap-2">
+                                <span class="bg-kapsis-neon text-slate-900 text-xs font-bold px-2 py-0.5 rounded">STEP 1</span>
+                                <span class="text-white text-sm font-mono">specs/rate-limit.md</span>
+                            </div>
+                            <span class="text-xs text-slate-500">Task Specification</span>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto">
+<pre class="text-slate-300"><span class="text-purple-400"># Add Rate Limiting to API Endpoints</span>
+
+<span class="text-cyan-400">## Objective</span>
+Implement rate limiting for all public API endpoints to prevent abuse.
+
+<span class="text-cyan-400">## Requirements</span>
+<span class="text-green-400">- [ ]</span> Add RateLimiter middleware using Redis
+<span class="text-green-400">- [ ]</span> Limit: 100 requests/minute per API key
+<span class="text-green-400">- [ ]</span> Return 429 status with Retry-After header
+
+<span class="text-cyan-400">## Context</span>
+- JIRA: <span class="text-yellow-400">DEV-1234</span>
+- Files: <span class="text-blue-400">src/middleware/</span>, <span class="text-blue-400">src/api/</span>
+
+<span class="text-cyan-400">## Testing</span>
+<span class="text-green-400">- [ ]</span> Unit tests for RateLimiter class
+<span class="text-green-400">- [ ]</span> Integration test with Redis mock</pre>
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Config File (optional) -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                        <div class="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
+                            <div class="flex items-center gap-2">
+                                <span class="bg-indigo-500 text-white text-xs font-bold px-2 py-0.5 rounded">STEP 2</span>
+                                <span class="text-white text-sm font-mono">agent-sandbox.yaml</span>
+                            </div>
+                            <span class="text-xs text-slate-500">Configuration (optional)</span>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto">
+<pre class="text-slate-300"><span class="text-purple-400">agent:</span>
+  <span class="text-slate-400">command:</span> <span class="text-green-400">"claude --dangerously-skip-permissions"</span>
+
+<span class="text-purple-400">environment:</span>
+  <span class="text-slate-400">keychain:</span>
+    <span class="text-cyan-400">ANTHROPIC_API_KEY:</span>
+      <span class="text-slate-400">service:</span> <span class="text-green-400">"Claude Code-credentials"</span>
+
+<span class="text-purple-400">resources:</span>
+  <span class="text-slate-400">memory:</span> <span class="text-yellow-400">8g</span>
+  <span class="text-slate-400">cpus:</span> <span class="text-yellow-400">4</span>
+
+<span class="text-purple-400">git:</span>
+  <span class="text-slate-400">auto_push:</span>
+    <span class="text-slate-400">enabled:</span> <span class="text-yellow-400">true</span></pre>
+                        </div>
+                    </div>
+
+                    <!-- Step 3: Launch Command -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                        <div class="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
+                            <div class="flex items-center gap-2">
+                                <span class="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded">STEP 3</span>
+                                <span class="text-white text-sm font-mono">Terminal</span>
+                            </div>
+                            <span class="text-xs text-slate-500">Launch the Agent</span>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] font-mono text-sm overflow-x-auto">
+                            <div class="flex mb-2">
+                                <span class="text-emerald-400 mr-2">➜</span>
+                                <span class="text-white">kapsis ~/ecommerce-api \</span>
+                            </div>
+                            <div class="text-white pl-6">--spec specs/rate-limit.md \</div>
+                            <div class="text-white pl-6">--branch feature/DEV-1234-rate-limiting</div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <div>✓ Sandbox created with Copy-on-Write filesystem</div>
+                                <div>✓ API key retrieved from keychain</div>
+                                <div>✓ Branch feature/DEV-1234-rate-limiting created</div>
+                                <div class="text-kapsis-neon">▶ Agent running in container...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Output -->
+                <div class="space-y-6">
+                    <!-- Real-time Status -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                        <div class="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
+                            <div class="flex items-center gap-2">
+                                <span class="bg-cyan-500 text-white text-xs font-bold px-2 py-0.5 rounded animate-pulse">LIVE</span>
+                                <span class="text-white text-sm font-mono">kapsis-status --json</span>
+                            </div>
+                            <span class="text-xs text-slate-500">Real-time Progress</span>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto">
+<pre class="text-slate-300">{
+  <span class="text-cyan-400">"agent_id"</span>: <span class="text-green-400">"a3f2b1"</span>,
+  <span class="text-cyan-400">"project"</span>: <span class="text-green-400">"ecommerce-api"</span>,
+  <span class="text-cyan-400">"branch"</span>: <span class="text-green-400">"feature/DEV-1234-rate-limiting"</span>,
+  <span class="text-cyan-400">"phase"</span>: <span class="text-yellow-400">"implementing"</span>,
+  <span class="text-cyan-400">"progress"</span>: <span class="text-yellow-400">52</span>,
+  <span class="text-cyan-400">"message"</span>: <span class="text-green-400">"Writing src/middleware/RateLimiter.ts"</span>,
+  <span class="text-cyan-400">"started_at"</span>: <span class="text-green-400">"2025-01-15T10:30:00Z"</span>,
+  <span class="text-cyan-400">"updated_at"</span>: <span class="text-green-400">"2025-01-15T10:34:22Z"</span>
+}</pre>
+                        </div>
+                    </div>
+
+                    <!-- Final Result -->
+                    <div class="bg-kapsis-card border border-green-500/30 rounded-xl overflow-hidden">
+                        <div class="flex items-center justify-between px-4 py-2 bg-green-900/30 border-b border-green-500/30">
+                            <div class="flex items-center gap-2">
+                                <span class="bg-green-500 text-white text-xs font-bold px-2 py-0.5 rounded">COMPLETE</span>
+                                <span class="text-white text-sm font-mono">Final Result</span>
+                            </div>
+                            <span class="text-xs text-green-400">~8 minutes</span>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto">
+<pre class="text-slate-300">{
+  <span class="text-cyan-400">"phase"</span>: <span class="text-green-400">"complete"</span>,
+  <span class="text-cyan-400">"progress"</span>: <span class="text-green-400">100</span>,
+  <span class="text-cyan-400">"exit_code"</span>: <span class="text-green-400">0</span>,
+  <span class="text-cyan-400">"message"</span>: <span class="text-green-400">"Task completed successfully"</span>,
+  <span class="text-cyan-400">"pr_url"</span>: <span class="text-blue-400">"https://github.com/acme/ecommerce-api/pull/127"</span>,
+  <span class="text-cyan-400">"commits"</span>: [
+    <span class="text-green-400">"feat: add RateLimiter middleware with Redis"</span>,
+    <span class="text-green-400">"test: add unit tests for rate limiting"</span>
+  ],
+  <span class="text-cyan-400">"files_changed"</span>: <span class="text-yellow-400">6</span>
+}</pre>
+                        </div>
+                    </div>
+
+                    <!-- What the Agent Created -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl p-4">
+                        <h4 class="text-white font-bold mb-3 flex items-center text-sm">
+                            <i class="fa-solid fa-code-commit text-kapsis-neon mr-2"></i> Files Created by Agent
+                        </h4>
+                        <div class="space-y-2 text-xs font-mono">
+                            <div class="flex items-center text-slate-300">
+                                <span class="text-green-400 mr-2">+</span>
+                                <span>src/middleware/RateLimiter.ts</span>
+                                <span class="ml-auto text-slate-500">+142 lines</span>
+                            </div>
+                            <div class="flex items-center text-slate-300">
+                                <span class="text-green-400 mr-2">+</span>
+                                <span>src/middleware/RateLimiter.test.ts</span>
+                                <span class="ml-auto text-slate-500">+89 lines</span>
+                            </div>
+                            <div class="flex items-center text-slate-300">
+                                <span class="text-yellow-400 mr-2">~</span>
+                                <span>src/api/routes.ts</span>
+                                <span class="ml-auto text-slate-500">+12 lines</span>
+                            </div>
+                            <div class="flex items-center text-slate-300">
+                                <span class="text-yellow-400 mr-2">~</span>
+                                <span>package.json</span>
+                                <span class="ml-auto text-slate-500">+2 lines</span>
+                            </div>
+                        </div>
+                        <div class="mt-4 pt-3 border-t border-slate-700">
+                            <a href="#" class="text-kapsis-neon hover:underline text-sm flex items-center">
+                                <i class="fa-brands fa-github mr-2"></i>
+                                View Pull Request #127 →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Feedback Loop Note -->
+            <div class="mt-10 bg-gradient-to-r from-indigo-900/30 to-purple-900/30 border border-indigo-500/30 rounded-xl p-6">
+                <div class="flex items-start gap-4">
+                    <div class="bg-indigo-500/20 p-3 rounded-lg">
+                        <i class="fa-solid fa-arrows-rotate text-indigo-400 text-xl"></i>
+                    </div>
+                    <div>
+                        <h4 class="text-white font-bold mb-2">Feedback Loop: Need changes?</h4>
+                        <p class="text-slate-400 text-sm mb-3">
+                            Review the PR, add comments, then re-run with an updated spec. The agent continues from the current branch state.
+                        </p>
+                        <div class="bg-[#0d1117] rounded-lg p-3 font-mono text-xs text-slate-300">
+                            <span class="text-slate-500"># Update spec with PR feedback, re-run same command</span><br>
+                            <span class="text-emerald-400">➜</span> kapsis ~/ecommerce-api --spec specs/rate-limit-v2.md --branch feature/DEV-1234-rate-limiting<br>
+                            <span class="text-slate-500"># Agent pulls latest, reads feedback, continues work...</span>
                         </div>
                     </div>
                 </div>
@@ -633,43 +844,104 @@ filesystem:
 
     <!-- Quick Start -->
     <section id="quickstart" class="py-20">
-        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <h2 class="text-3xl font-bold text-white mb-8 text-center">Launch Your First Agent</h2>
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-8 text-center">Quick Start: 3 Steps</h2>
 
-            <div class="space-y-8">
-                <!-- Launch Command -->
-                <div>
-                    <p class="text-slate-400 mb-4 text-center">Once installed, launch an agent by specifying the project path and agent type. An ID is auto-generated.</p>
-                    <div class="code-block code-scroll-container rounded-lg p-6 font-mono text-sm text-slate-300 overflow-x-auto relative group shadow-lg border-l-4 border-kapsis-neon">
-                        <button onclick="copyCode(event, 'launch-code')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy launch command">
-                            <i class="fa-regular fa-copy" aria-hidden="true"></i>
-                        </button>
-                        <div class="text-slate-500 mb-2"># Syntax: kapsis [PROJECT_PATH] --agent [TYPE] [FLAGS]</div>
-                        <pre id="launch-code">kapsis ~/my-project \
-    --agent claude \
-    --branch feature/new-api</pre>
+            <div class="grid md:grid-cols-3 gap-6">
+                <!-- Step 1: Create Spec -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                    <div class="px-4 py-3 bg-slate-800 border-b border-slate-700">
+                        <div class="flex items-center gap-2">
+                            <span class="bg-kapsis-neon text-slate-900 text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">1</span>
+                            <span class="text-white font-medium">Create a task spec</span>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto h-48">
+<pre class="text-slate-300"><span class="text-slate-500"># specs/fix-auth.md</span>
+
+<span class="text-purple-400"># Fix Login Bug</span>
+
+<span class="text-cyan-400">## Problem</span>
+Users get 401 errors when
+logging in with email+password
+
+<span class="text-cyan-400">## Requirements</span>
+<span class="text-green-400">- [ ]</span> Fix token validation
+<span class="text-green-400">- [ ]</span> Add error logging
+<span class="text-green-400">- [ ]</span> Add regression test</pre>
                     </div>
                 </div>
 
-                <!-- Continue Session -->
-                <div>
-                    <p class="text-slate-400 mb-4 text-center">Continue an existing session by specifying the agent ID:</p>
-                    <div class="code-block code-scroll-container rounded-lg p-6 font-mono text-sm text-slate-300 overflow-x-auto relative group shadow-lg border-l-4 border-cyan-400">
-                        <button onclick="copyCode(event, 'continue-code')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy continue command">
-                            <i class="fa-regular fa-copy" aria-hidden="true"></i>
-                        </button>
-                        <div class="text-slate-500 mb-2"># Continue with --agent-id</div>
-                        <pre id="continue-code">kapsis ~/my-project \
-    --agent-id a3f2b1 \
-    --agent claude \
-    --branch feature/new-api</pre>
+                <!-- Step 2: Run Kapsis -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                    <div class="px-4 py-3 bg-slate-800 border-b border-slate-700">
+                        <div class="flex items-center gap-2">
+                            <span class="bg-kapsis-neon text-slate-900 text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">2</span>
+                            <span class="text-white font-medium">Launch the agent</span>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto h-48">
+<pre class="text-slate-300"><span class="text-emerald-400">➜</span> kapsis ~/my-app \
+    --spec specs/fix-auth.md \
+    --branch fix/login-401
+
+<span class="text-slate-500">Agent ID: <span class="text-cyan-400">b7c3a1</span></span>
+<span class="text-slate-500">Branch: <span class="text-purple-400">fix/login-401</span></span>
+<span class="text-kapsis-neon">▶ Running in isolated container...</span>
+
+<span class="text-slate-600"># Agent reads spec, explores code,
+# makes changes, commits, pushes</span></pre>
                     </div>
                 </div>
 
-                <!-- Monitor -->
-                <div class="text-center">
-                    <p class="text-slate-400 mb-2">Watch the agents work in real-time:</p>
-                    <code class="bg-slate-800 px-3 py-1 rounded text-kapsis-neon font-mono">kapsis-status --watch</code>
+                <!-- Step 3: Monitor & Review -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                    <div class="px-4 py-3 bg-slate-800 border-b border-slate-700">
+                        <div class="flex items-center gap-2">
+                            <span class="bg-kapsis-neon text-slate-900 text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">3</span>
+                            <span class="text-white font-medium">Monitor & review PR</span>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto h-48">
+<pre class="text-slate-300"><span class="text-emerald-400">➜</span> kapsis-status --watch
+
+<span class="text-cyan-400">b7c3a1</span> │ <span class="text-yellow-400">implementing</span> │ 65%
+       │ Editing AuthService.ts
+
+<span class="text-slate-500"># Few minutes later...</span>
+
+<span class="text-cyan-400">b7c3a1</span> │ <span class="text-green-400">complete</span> │ 100%
+       │ PR: <span class="text-blue-400">github.com/.../pull/42</span></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Additional Options -->
+            <div class="mt-10 grid md:grid-cols-2 gap-6">
+                <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-bold mb-3 flex items-center text-sm">
+                        <i class="fa-solid fa-terminal text-cyan-400 mr-2"></i> Quick inline task
+                    </h4>
+                    <div class="code-block code-scroll-container rounded-lg p-3 font-mono text-xs overflow-x-auto relative group">
+                        <button onclick="copyCode(event, 'inline-task')" class="copy-btn absolute top-1 right-1 text-slate-500 hover:text-white bg-slate-800 p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy command">
+                            <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                        </button>
+                        <pre id="inline-task" class="text-slate-300">kapsis ~/project --task "add input validation to UserForm component"</pre>
+                    </div>
+                    <p class="text-slate-500 text-xs mt-2">For simple tasks, skip the spec file entirely.</p>
+                </div>
+
+                <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-bold mb-3 flex items-center text-sm">
+                        <i class="fa-solid fa-hands-asl-interpreting text-purple-400 mr-2"></i> Interactive mode
+                    </h4>
+                    <div class="code-block code-scroll-container rounded-lg p-3 font-mono text-xs overflow-x-auto relative group">
+                        <button onclick="copyCode(event, 'interactive-mode')" class="copy-btn absolute top-1 right-1 text-slate-500 hover:text-white bg-slate-800 p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy command">
+                            <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                        </button>
+                        <pre id="interactive-mode" class="text-slate-300">kapsis ~/project --interactive</pre>
+                    </div>
+                    <p class="text-slate-500 text-xs mt-2">Drop into an isolated shell for manual exploration.</p>
                 </div>
             </div>
         </div>
