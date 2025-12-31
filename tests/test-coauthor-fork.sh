@@ -146,6 +146,56 @@ test_build_coauthor_trailers_empty() {
     log_info "Empty input handled correctly"
 }
 
+test_build_coauthor_trailers_duplicate_in_list() {
+    log_test "Testing deduplication of duplicate entries in co-authors list"
+
+    local temp_repo
+    temp_repo=$(create_temp_git_repo)
+
+    source "$POST_CONTAINER_GIT"
+
+    # Same email appears twice in the list
+    local result
+    result=$(build_coauthor_trailers "Aviad Shiber <aviadshiber@gmail.com>|Aviad Shiber <aviadshiber@gmail.com>" "$temp_repo")
+
+    rm -rf "$temp_repo"
+
+    # Should only appear once
+    local count
+    count=$(echo "$result" | grep -c "aviadshiber@gmail.com" || echo "0")
+    if [[ "$count" -ne 1 ]]; then
+        log_error "Expected 1 occurrence, got: $count"
+        return 1
+    fi
+    log_info "Duplicate entries correctly deduplicated"
+}
+
+test_build_coauthor_trailers_already_in_message() {
+    log_test "Testing deduplication against commit message template"
+
+    local temp_repo
+    temp_repo=$(create_temp_git_repo)
+
+    source "$POST_CONTAINER_GIT"
+
+    # Commit message already contains the co-author email
+    local commit_msg="feat: test
+
+Co-authored-by: Aviad Shiber <aviadshiber@gmail.com>"
+
+    local result
+    result=$(build_coauthor_trailers "Aviad Shiber <aviadshiber@gmail.com>" "$temp_repo" "$commit_msg")
+
+    rm -rf "$temp_repo"
+
+    # Should be empty (co-author already in message)
+    if [[ -n "$result" ]]; then
+        log_error "Expected empty result when co-author already in message, got: $result"
+        return 1
+    fi
+    log_info "Co-author in commit message correctly deduplicated"
+}
+
 #===============================================================================
 # TEST CASES: Fork Workflow
 #===============================================================================
@@ -402,6 +452,8 @@ main() {
     run_test test_build_coauthor_trailers_dedup
     run_test test_build_coauthor_trailers_partial_dedup
     run_test test_build_coauthor_trailers_empty
+    run_test test_build_coauthor_trailers_duplicate_in_list
+    run_test test_build_coauthor_trailers_already_in_message
 
     # Fork workflow tests
     run_test test_is_github_repo_https

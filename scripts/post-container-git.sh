@@ -157,15 +157,20 @@ get_kapsis_version() {
 #===============================================================================
 # BUILD CO-AUTHOR TRAILERS
 #
-# Generates Co-authored-by trailers, deduplicating against git config user.
+# Generates Co-authored-by trailers with full deduplication:
+#   - Against git config user.email (avoid listing yourself as co-author)
+#   - Against duplicate entries in the co_authors list
+#   - Against co-authors already present in the commit message
 # Arguments:
 #   $1 - Pipe-separated list of co-authors (e.g., "Name1 <email1>|Name2 <email2>")
 #   $2 - Worktree path (for git config lookup)
+#   $3 - Commit message (optional, to check for existing co-authors)
 # Returns: Newline-separated Co-authored-by trailers
 #===============================================================================
 build_coauthor_trailers() {
     local co_authors_list="$1"
     local worktree_path="$2"
+    local commit_message="${3:-}"
 
     [[ -z "$co_authors_list" ]] && return 0
 
@@ -176,6 +181,7 @@ build_coauthor_trailers() {
     git_user_email=$(git config user.email 2>/dev/null || echo "")
 
     local trailers=""
+    local seen_emails=""  # Track emails we've already processed
     local IFS='|'
     for co_author in $co_authors_list; do
         [[ -z "$co_author" ]] && continue
@@ -184,11 +190,29 @@ build_coauthor_trailers() {
         local email
         email=$(echo "$co_author" | grep -oE '<[^>]+>' | tr -d '<>')
 
-        # Skip if this is the same as the git config user (avoid duplicate authorship)
-        if [[ -n "$email" && "$email" == "$git_user_email" ]]; then
+        # Skip if no email found
+        [[ -z "$email" ]] && continue
+
+        # Skip if this is the same as the git config user (avoid listing yourself as co-author)
+        if [[ "$email" == "$git_user_email" ]]; then
             log_debug "Skipping co-author (same as git user): $co_author"
             continue
         fi
+
+        # Skip if we've already seen this email (duplicate in config)
+        if [[ "$seen_emails" == *"|$email|"* ]]; then
+            log_debug "Skipping duplicate co-author: $co_author"
+            continue
+        fi
+
+        # Skip if this email is already in the commit message (user added manually in template)
+        if [[ -n "$commit_message" && "$commit_message" == *"$email"* ]]; then
+            log_debug "Skipping co-author (already in commit message): $co_author"
+            continue
+        fi
+
+        # Track this email as seen
+        seen_emails+="|$email|"
 
         trailers+="Co-authored-by: ${co_author}"$'\n'
     done
@@ -225,10 +249,10 @@ commit_changes() {
     git status --short
     echo ""
 
-    # Build co-author trailers (with deduplication)
+    # Build co-author trailers (with full deduplication against git user, duplicates, and commit message)
     local coauthor_trailers=""
     if [[ -n "$co_authors" ]]; then
-        coauthor_trailers=$(build_coauthor_trailers "$co_authors" "$worktree_path")
+        coauthor_trailers=$(build_coauthor_trailers "$co_authors" "$worktree_path" "$commit_message")
     fi
 
     # Get Kapsis version
