@@ -139,7 +139,8 @@ has_changes() {
 #===============================================================================
 get_kapsis_version() {
     local version=""
-    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
     # Try to get version from package.json
     if [[ -f "$script_dir/../package.json" ]]; then
