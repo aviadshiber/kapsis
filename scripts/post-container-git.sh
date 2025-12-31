@@ -174,7 +174,7 @@ build_coauthor_trailers() {
 
     [[ -z "$co_authors_list" ]] && return 0
 
-    cd "$worktree_path"
+    cd "$worktree_path" || return 1
 
     # Get current git user email for deduplication
     local git_user_email
@@ -504,7 +504,7 @@ is_github_repo() {
     local worktree_path="$1"
     local remote="${2:-origin}"
 
-    cd "$worktree_path"
+    cd "$worktree_path" || return 1
 
     local remote_url
     remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
@@ -522,7 +522,7 @@ has_push_access() {
     local remote="${2:-origin}"
     local branch="$3"
 
-    cd "$worktree_path"
+    cd "$worktree_path" || return 1
 
     # Try a dry-run push to check access
     if git push --dry-run "$remote" "$branch" 2>/dev/null; then
@@ -543,7 +543,7 @@ generate_fork_fallback() {
     local branch="$2"
     local remote="${3:-origin}"
 
-    cd "$worktree_path"
+    cd "$worktree_path" || return 1
 
     local remote_url
     remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
@@ -553,11 +553,25 @@ generate_fork_fallback() {
         return 1
     fi
 
-    # Extract repo info (owner/repo)
+    # Extract repo info (owner/repo) - validate format
     local repo_path
     repo_path=$(echo "$remote_url" | sed -E 's|.*github\.com[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
 
-    echo "cd ${worktree_path} && gh repo fork ${repo_path} --remote --remote-name fork 2>/dev/null || true && git push -u fork ${branch}"
+    # Validate repo_path format (should be owner/repo with safe characters)
+    if [[ ! "$repo_path" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]]; then
+        log_warn "Invalid repository path format: $repo_path"
+        return 1
+    fi
+
+    # Validate branch name (safe characters only)
+    if [[ ! "$branch" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+        log_warn "Invalid branch name format: $branch"
+        return 1
+    fi
+
+    # Use single quotes to prevent shell injection when command is eval'd
+    printf "cd '%s' && gh repo fork '%s' --remote --remote-name fork 2>/dev/null || true && git push -u fork '%s'" \
+        "$worktree_path" "$repo_path" "$branch"
 }
 
 #===============================================================================
@@ -570,7 +584,7 @@ generate_fork_pr_url() {
     local branch="$2"
     local remote="${3:-origin}"
 
-    cd "$worktree_path"
+    cd "$worktree_path" || return 1
 
     local remote_url
     remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")

@@ -286,8 +286,9 @@ test_generate_fork_fallback() {
         "Should include gh repo fork command"
     assert_contains "$result" "aviadshiber/kapsis" \
         "Should include repo path"
-    assert_contains "$result" "git push -u fork feature/test" \
-        "Should include push to fork command"
+    # Note: branch is now quoted for shell safety
+    assert_contains "$result" "git push -u fork 'feature/test'" \
+        "Should include push to fork command with quoted branch"
 }
 
 test_generate_fork_fallback_ssh() {
@@ -308,8 +309,8 @@ test_generate_fork_fallback_ssh() {
 
     assert_contains "$result" "someuser/somerepo" \
         "Should extract repo from SSH URL"
-    assert_contains "$result" "my-branch" \
-        "Should include branch name"
+    assert_contains "$result" "'my-branch'" \
+        "Should include quoted branch name"
 }
 
 test_generate_fork_fallback_not_github() {
