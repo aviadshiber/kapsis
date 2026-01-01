@@ -244,6 +244,26 @@ git:
     push_flags:
       - "--set-upstream"
 
+  # Co-authors added to every commit (Git trailer format)
+  # These are appended as "Co-authored-by:" trailers
+  # Automatically deduplicated against git config user.email
+  co_authors:
+    - "Aviad Shiber <aviadshiber@gmail.com>"
+    # - "Another Author <another@example.com>"
+
+  # Fork-first workflow for contributing to external repos
+  # When enabled, provides fork fallback command when push fails
+  fork_workflow:
+    # Enable fork workflow fallback
+    # Default: false
+    enabled: false
+
+    # Fallback behavior when push fails:
+    #   "fork" - Generate gh repo fork + push command
+    #   "manual" - Just show manual push command
+    # Default: fork
+    fallback: fork
+
   # Branch naming for auto-generated branches
   branch:
     # Prefix for branch names
