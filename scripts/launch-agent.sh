@@ -659,7 +659,7 @@ resolve_config() {
 }
 
 #===============================================================================
-# CONFIG PARSING (Simple YAML parsing with yq or fallback)
+# CONFIG PARSING (YAML parsing with yq - required dependency)
 #===============================================================================
 parse_config() {
     log_debug "Parsing config file: $CONFIG_FILE"
@@ -706,22 +706,10 @@ parse_config() {
         # Parse SSH host verification list
         SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
     else
-        log_warn "yq not found. Using default config values."
-        AGENT_COMMAND="bash"
-        export AGENT_WORKDIR="/workspace"
-        RESOURCE_MEMORY="8g"
-        RESOURCE_CPUS="4"
-        SANDBOX_UPPER_BASE="$HOME/.ai-sandboxes"
-        GIT_REMOTE="origin"
-        GIT_COMMIT_MSG="feat: AI agent changes"
-        GIT_CO_AUTHORS=""
-        GIT_FORK_ENABLED="false"
-        GIT_FORK_FALLBACK="fork"
-        FILESYSTEM_INCLUDES=""
-        ENV_PASSTHROUGH="ANTHROPIC_API_KEY"
-        ENV_SET="{}"
-        ENV_KEYCHAIN=""
-        SSH_VERIFY_HOSTS=""
+        log_error "yq is required but not installed."
+        log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
+        log_error "Or run: ./setup.sh --install"
+        exit 1
     fi
 
     # Expand ~ in paths
