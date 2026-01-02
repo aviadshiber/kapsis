@@ -428,6 +428,7 @@ test_log_var_outputs_variable() {
         source "$KAPSIS_ROOT/scripts/lib/logging.sh"
         log_init "var"
 
+        # shellcheck disable=SC2034  # Variable used by log_var
         MY_TEST_VAR="hello world"
         log_var MY_TEST_VAR
     )
