@@ -83,7 +83,8 @@ json_escape_string() {
 json_is_valid() {
     local json="$1"
     # Basic checks: starts with { or [, ends with } or ]
-    if [[ "$json" =~ ^[[:space:]]*[\{\[] && "$json" =~ [\}\]][[:space:]]*$ ]]; then
+    # Note: Using alternation (\}|\]) because character class with ] is tricky in bash regex
+    if [[ "$json" =~ ^[[:space:]]*[\{\[] && "$json" =~ (\}|\])[[:space:]]*$ ]]; then
         return 0
     fi
     return 1

@@ -45,7 +45,7 @@ get_tests_for_category() {
             echo "test-maven-snapshot-block.sh test-maven-auth.sh test-gradle-cache-isolation.sh"
             ;;
         security)
-            echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh test-ssh-keychain.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh"
+            echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh test-ssh-keychain.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-config-security.sh"
             ;;
         git)
             echo "test-git-new-branch.sh test-git-auto-commit-push.sh test-worktree-isolation.sh test-push-verification.sh test-protective-gitignore.sh test-validate-staged-files.sh test-coauthor-fork.sh"
@@ -56,17 +56,20 @@ get_tests_for_category() {
         integration)
             echo "test-parallel-agents.sh test-full-workflow.sh"
             ;;
+        libs)
+            echo "test-compat.sh test-logging.sh test-json-utils.sh"
+            ;;
         *)
             return 1
             ;;
     esac
 }
 
-ALL_CATEGORIES="agent validation status filesystem maven security git cleanup integration"
+ALL_CATEGORIES="libs agent validation status filesystem maven security git cleanup integration"
 
 # Quick tests (no container required)
 # These tests either don't need a container or gracefully skip container-dependent tests
-QUICK_TESTS="test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-status-reporting.sh test-status-hooks.sh test-preflight-check.sh test-push-verification.sh test-ssh-keychain.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-agent-config-mounts.sh test-gradle-cache-isolation.sh test-agent-image-build.sh test-version-fetch.sh test-version-management.sh test-protective-gitignore.sh test-validate-staged-files.sh test-coauthor-fork.sh"
+QUICK_TESTS="test-compat.sh test-logging.sh test-json-utils.sh test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-status-reporting.sh test-status-hooks.sh test-preflight-check.sh test-push-verification.sh test-ssh-keychain.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-agent-config-mounts.sh test-gradle-cache-isolation.sh test-agent-image-build.sh test-version-fetch.sh test-version-management.sh test-protective-gitignore.sh test-validate-staged-files.sh test-coauthor-fork.sh test-config-security.sh"
 
 #===============================================================================
 # ARGUMENT PARSING
