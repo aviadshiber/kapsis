@@ -356,7 +356,7 @@ kapsis/
 - **Podman** 4.0+ (5.0+ recommended) — automatically installed by `./setup.sh --install`
 - **macOS** with Apple Silicon (tested) or Linux
 - **Git** 2.0+
-- **yq** (optional, for config parsing)
+- **yq** 4.0+ — required for YAML config parsing, agent image builds, and status hooks
 
 ## License
 

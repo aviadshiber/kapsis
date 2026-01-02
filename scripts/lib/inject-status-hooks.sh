@@ -115,9 +115,9 @@ inject_codex_hooks() {
     # Ensure directory exists
     mkdir -p "$config_dir"
 
-    # Check if yq is available
+    # Check if yq is available (required dependency)
     if ! command -v yq &>/dev/null; then
-        log_warn "yq not found - cannot inject Codex hooks"
+        log_error "yq is required but not installed - cannot inject Codex hooks"
         return 1
     fi
 
