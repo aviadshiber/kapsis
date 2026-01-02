@@ -1386,22 +1386,31 @@ main() {
     log_timer_start "post_container"
     if [[ "$SANDBOX_MODE" == "worktree" ]]; then
         post_container_worktree
+        POST_EXIT_CODE=$?
     else
         post_container_overlay
+        POST_EXIT_CODE=$?
     fi
     log_timer_end "post_container"
 
     log_timer_end "total"
-    log_finalize $EXIT_CODE
 
-    # Final status update
-    if [[ "$EXIT_CODE" -eq 0 ]]; then
-        status_complete 0 "" "${PR_URL:-}"
-    else
+    # Combine exit codes - fail if either container or post-container operations failed
+    if [[ "$EXIT_CODE" -ne 0 ]]; then
+        FINAL_EXIT_CODE=$EXIT_CODE
+        log_finalize $EXIT_CODE
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
+    elif [[ "$POST_EXIT_CODE" -ne 0 ]]; then
+        FINAL_EXIT_CODE=$POST_EXIT_CODE
+        log_finalize $POST_EXIT_CODE
+        status_complete "$POST_EXIT_CODE" "Post-container operations failed (push)"
+    else
+        FINAL_EXIT_CODE=0
+        log_finalize 0
+        status_complete 0 "" "${PR_URL:-}"
     fi
 
-    exit $EXIT_CODE
+    exit $FINAL_EXIT_CODE
 }
 
 #===============================================================================
