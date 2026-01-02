@@ -1244,6 +1244,8 @@ build_container_command() {
         "--memory=${RESOURCE_MEMORY}"
         "--cpus=${RESOURCE_CPUS}"
         "--security-opt" "label=disable"
+        # Security: drop all capabilities (userns=keep-id runs as regular user)
+        "--cap-drop=ALL"
     )
 
     # Add volume mounts

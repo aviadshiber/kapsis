@@ -422,9 +422,12 @@ status_get_file() {
 # Get current phase
 status_get_phase() {
     if [[ -f "$_KAPSIS_STATUS_FILE" ]]; then
-        # Simple grep-based extraction (no jq dependency)
-        grep -o '"phase": *"[^"]*"' "$_KAPSIS_STATUS_FILE" 2>/dev/null | \
-            sed 's/"phase": *"\([^"]*\)"/\1/'
+        # Native bash regex extraction (no subprocess overhead)
+        local content
+        content=$(<"$_KAPSIS_STATUS_FILE") 2>/dev/null || return
+        if [[ "$content" =~ \"phase\":\ *\"([^\"]*)\" ]]; then
+            echo "${BASH_REMATCH[1]}"
+        fi
     fi
 }
 
