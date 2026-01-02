@@ -50,8 +50,11 @@ to_upper() {
 generate_agent_id() {
     if command -v uuidgen &>/dev/null; then
         uuidgen | tr '[:upper:]' '[:lower:]' | cut -c1-6
-    elif [[ -r /dev/urandom ]]; then
+    elif [[ -r /dev/urandom ]] && command -v xxd &>/dev/null; then
         head -c 3 /dev/urandom | xxd -p
+    elif [[ -r /dev/urandom ]]; then
+        # Fallback: use od instead of xxd
+        head -c 3 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-6
     else
         printf '%x' "$(( $(date +%s)$$ ))" | cut -c1-6
     fi
@@ -492,6 +495,108 @@ validate_inputs() {
 #===============================================================================
 # CONFIG RESOLUTION
 #===============================================================================
+
+# Validate config file is from a trusted location
+# Security: Config files can contain commands (agent.command) that will be executed
+# Only allow configs from:
+#   - Kapsis installation: $KAPSIS_ROOT/configs/
+#   - User config: $HOME/.config/kapsis/ or $HOME/.kapsis/
+#   - Project-local: $PROJECT_PATH/.kapsis/ or $PROJECT_PATH/agent-sandbox.yaml
+#   - Current directory: ./agent-sandbox.yaml or ./.kapsis/
+validate_config_security() {
+    local config_path="$1"
+
+    # Resolve to absolute path
+    local abs_path
+    abs_path=$(cd "$(dirname "$config_path")" 2>/dev/null && pwd)/$(basename "$config_path")
+
+    log_debug "Validating config security: $abs_path"
+
+    # Define trusted directories (resolved to absolute paths)
+    local trusted_dirs=()
+
+    # Kapsis installation configs
+    trusted_dirs+=("$KAPSIS_ROOT/configs")
+
+    # User config directories
+    trusted_dirs+=("$HOME/.config/kapsis")
+    trusted_dirs+=("$HOME/.kapsis")
+
+    # Project-local configs (if PROJECT_PATH is set)
+    if [[ -n "${PROJECT_PATH:-}" ]]; then
+        local abs_project
+        abs_project=$(cd "$PROJECT_PATH" 2>/dev/null && pwd) || true
+        if [[ -n "$abs_project" ]]; then
+            trusted_dirs+=("$abs_project/.kapsis")
+            trusted_dirs+=("$abs_project")  # For agent-sandbox.yaml in project root
+        fi
+    fi
+
+    # Current directory configs
+    local abs_cwd
+    abs_cwd=$(pwd)
+    trusted_dirs+=("$abs_cwd/.kapsis")
+    trusted_dirs+=("$abs_cwd")  # For ./agent-sandbox.yaml
+
+    # Check if config is in a trusted directory
+    local config_dir
+    config_dir=$(dirname "$abs_path")
+    local is_trusted=false
+
+    for trusted in "${trusted_dirs[@]}"; do
+        # Normalize trusted path
+        local abs_trusted
+        abs_trusted=$(cd "$trusted" 2>/dev/null && pwd) || continue
+
+        # Check if config_dir starts with trusted directory
+        if [[ "$config_dir" == "$abs_trusted" || "$config_dir" == "$abs_trusted"/* ]]; then
+            is_trusted=true
+            break
+        fi
+    done
+
+    if [[ "$is_trusted" != "true" ]]; then
+        log_error "Security: Config file is not in a trusted location"
+        log_error "  Config path: $abs_path"
+        log_error "  Trusted locations:"
+        log_error "    - \$KAPSIS_ROOT/configs/ ($KAPSIS_ROOT/configs)"
+        log_error "    - \$HOME/.config/kapsis/"
+        log_error "    - \$HOME/.kapsis/"
+        log_error "    - \$PROJECT_PATH/.kapsis/"
+        log_error "    - Current directory (./.kapsis/ or ./agent-sandbox.yaml)"
+        exit 1
+    fi
+
+    # Security: Warn about world-writable config files
+    # World-writable config = potential privilege escalation via command injection
+    if [[ -f "$abs_path" ]]; then
+        local perms
+        if [[ "$(uname)" == "Darwin" ]]; then
+            perms=$(stat -f "%Lp" "$abs_path" 2>/dev/null) || perms=""
+        else
+            perms=$(stat -c "%a" "$abs_path" 2>/dev/null) || perms=""
+        fi
+
+        # Check if world-writable (last digit includes 2 or greater for write)
+        if [[ -n "$perms" && "${perms: -1}" =~ [2367] ]]; then
+            log_warn "Security: Config file is world-writable: $abs_path"
+            log_warn "  This is a security risk. Run: chmod o-w '$abs_path'"
+        fi
+    fi
+
+    # Validate filename doesn't contain suspicious characters
+    local filename
+    filename=$(basename "$abs_path")
+    if [[ ! "$filename" =~ ^[a-zA-Z0-9._-]+\.yaml$ ]]; then
+        log_error "Security: Config filename contains suspicious characters: $filename"
+        log_error "  Only alphanumeric, dots, dashes, and underscores allowed"
+        exit 1
+    fi
+
+    log_debug "Config security validation passed: $abs_path"
+    return 0
+}
+
 resolve_config() {
     log_debug "Resolving configuration..."
 
@@ -1195,6 +1300,7 @@ main() {
 
     log_timer_start "config"
     resolve_config
+    validate_config_security "$CONFIG_FILE"
     parse_config
     log_timer_end "config"
     status_phase "initializing" 10 "Configuration loaded"
