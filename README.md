@@ -188,6 +188,31 @@ Profiles are defined in `configs/agents/`. Create custom profiles by copying an 
 wait
 ```
 
+### Isolation Modes
+
+Kapsis supports two isolation modes for the project filesystem:
+
+| Mode | Flag | When Used | Best For |
+|------|------|-----------|----------|
+| **Worktree** | `--worktree-mode` | Auto when `--branch` + git repo | Git-based projects, PR workflows |
+| **Overlay** | `--overlay-mode` | Auto when no branch specified | Non-git projects, quick tasks |
+
+```bash
+# Worktree mode (recommended for git projects)
+# Creates isolated git worktree, real commits, pushable branches
+./scripts/launch-agent.sh ~/project --branch feature/task --task "..."
+
+# Overlay mode (legacy)
+# Uses fuse-overlayfs, writes go to ephemeral upper layer
+./scripts/launch-agent.sh ~/project --task "quick exploration"
+
+# Force specific mode
+./scripts/launch-agent.sh ~/project --worktree-mode --branch feature/x --task "..."
+./scripts/launch-agent.sh ~/project --overlay-mode --task "..."
+```
+
+See [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md) for detailed comparison.
+
 ### Monitor Agent Progress
 
 ```bash
@@ -304,6 +329,22 @@ tail -f ~/.kapsis/logs/kapsis-launch-agent.log
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full logging configuration and test framework documentation.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flows, and component interactions |
+| [CONFIG-REFERENCE.md](docs/CONFIG-REFERENCE.md) | Complete configuration options for agent-sandbox.yaml |
+| [GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md) | Branch-based workflow, worktree vs overlay modes |
+| [STATUS-TRACKING.md](docs/STATUS-TRACKING.md) | Real-time progress monitoring and hook system |
+| [INSTALL.md](docs/INSTALL.md) | Detailed installation instructions |
+| [SETUP.md](docs/SETUP.md) | Initial setup and dependency configuration |
+| [CLEANUP.md](docs/CLEANUP.md) | Disk space management and cleanup operations |
+| [SECURITY-HARDENING.md](docs/SECURITY-HARDENING.md) | Container security design and hardening options |
+| [NETWORK-ISOLATION.md](docs/NETWORK-ISOLATION.md) | Network security and isolation configuration |
+| [GITHUB-SETUP.md](docs/GITHUB-SETUP.md) | GitHub integration and authentication |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development guide, testing, and logging |
 
 ## Project Structure
 
