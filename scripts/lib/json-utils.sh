@@ -53,8 +53,15 @@ json_get_number() {
 json_get_bool() {
     local json="$1"
     local key="$2"
-    echo "$json" | grep -o "\"$key\": *\(true\|false\)" 2>/dev/null | \
-        sed "s/\"$key\": *\(true\|false\)/\1/" | head -1 || true
+    # Use grep -E for extended regex and proper capture
+    local match
+    match=$(echo "$json" | grep -oE "\"$key\":[[:space:]]*(true|false)" 2>/dev/null | head -1) || true
+    if [[ -n "$match" ]]; then
+        # Extract just true/false from the match
+        if [[ "$match" =~ (true|false) ]]; then
+            echo "${BASH_REMATCH[1]}"
+        fi
+    fi
 }
 
 #===============================================================================

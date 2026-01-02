@@ -1,11 +1,16 @@
 # Kapsis - Hermetically Isolated AI Agent Sandbox
 # Build: podman build -t kapsis-sandbox -f Containerfile .
 
-ARG BASE_IMAGE=ubuntu:24.04
-FROM ${BASE_IMAGE}
+# Security: Pin base image to specific digest for supply chain integrity
+# Digest represents ubuntu:24.04 as of 2026-01-02
+# To update: podman image inspect ubuntu:24.04 --format '{{.Digest}}'
+ARG BASE_IMAGE_DIGEST=sha256:955364933d0d91afa6e10fb045948c16d2b191114aa54bed3ab5430d8bbc58cc
+FROM ubuntu@${BASE_IMAGE_DIGEST}
 
 LABEL maintainer="Kapsis Project"
 LABEL description="Hermetically isolated sandbox for AI coding agents"
+LABEL org.opencontainers.image.base.name="ubuntu:24.04"
+LABEL org.opencontainers.image.base.digest="${BASE_IMAGE_DIGEST}"
 
 # Avoid interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive

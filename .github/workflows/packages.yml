@@ -47,7 +47,7 @@ jobs:
     needs: determine-version
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
         with:
           ref: ${{ needs.determine-version.outputs.tag }}
 
@@ -86,7 +86,7 @@ jobs:
           mv ../kapsis_${VERSION}*.deb ../../artifacts/
 
       - name: Upload DEB artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6
         with:
           name: deb-package
           path: artifacts/*.deb
@@ -100,7 +100,7 @@ jobs:
       image: fedora:latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
         with:
           ref: ${{ needs.determine-version.outputs.tag }}
 
@@ -134,7 +134,7 @@ jobs:
           cp ~/rpmbuild/RPMS/noarch/*.rpm artifacts/
 
       - name: Upload RPM artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6
         with:
           name: rpm-package
           path: artifacts/*.rpm
@@ -146,7 +146,7 @@ jobs:
     needs: determine-version
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
         with:
           ref: ${{ needs.determine-version.outputs.tag }}
 
@@ -175,7 +175,7 @@ jobs:
           sed -i "s/version \".*\"/version \"${VERSION}\"/" packaging/homebrew/kapsis.rb
 
       - name: Upload updated formula
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6
         with:
           name: homebrew-formula
           path: packaging/homebrew/kapsis.rb
@@ -188,7 +188,7 @@ jobs:
     if: github.event_name == 'release'
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7
         with:
           path: packages
 
@@ -213,7 +213,7 @@ jobs:
           cat checksums.sha256
 
       - name: Upload to release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2
         with:
           tag_name: ${{ needs.determine-version.outputs.tag }}
           files: |
@@ -231,13 +231,13 @@ jobs:
     if: needs.build-deb.result == 'success'
     steps:
       - name: Download DEB artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7
         with:
           name: deb-package
           path: packages
 
       - name: Checkout gh-pages
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
         with:
           ref: gh-pages
           path: gh-pages
@@ -330,13 +330,13 @@ jobs:
           dnf install -y git createrepo_c gnupg2
 
       - name: Download RPM artifact
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7
         with:
           name: rpm-package
           path: packages
 
       - name: Checkout gh-pages
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
         with:
           ref: gh-pages
           path: gh-pages
