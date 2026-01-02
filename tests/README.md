@@ -24,6 +24,10 @@ This directory contains tests to validate the isolation guarantees and functiona
 
 | Category | Script | Tests | Status |
 |----------|--------|-------|--------|
+| **Library Functions** | | | |
+| | test-compat.sh | 26 | PASS |
+| | test-logging.sh | 28 | PASS |
+| | test-json-utils.sh | 46 | PASS |
 | **Agent Selection** | | | |
 | | test-agent-shortcut.sh | 6 | PASS |
 | | test-agent-unknown.sh | 5 | PASS |
@@ -36,6 +40,8 @@ This directory contains tests to validate the isolation guarantees and functiona
 | | test-preflight-check.sh | 17 | PASS |
 | **Status Reporting** | | | |
 | | test-status-reporting.sh | 19 | PASS |
+| **Security** | | | |
+| | test-config-security.sh | 10 | PASS |
 
 ### Container Tests (Require Podman)
 
@@ -70,7 +76,9 @@ This directory contains tests to validate the isolation guarantees and functiona
 | P1 (Important) | 87 | Ready |
 | P2 (Robustness) | 54 | Ready |
 | P3 (Integration) | 16 | Ready |
-| **Total** | **197** | **Ready** |
+| Library Functions | 100 | Ready |
+| Security Validation | 10 | Ready |
+| **Total** | **307** | **Ready** |
 
 ## Prerequisites
 
