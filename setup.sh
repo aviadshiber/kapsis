@@ -252,8 +252,8 @@ check_yq() {
         version=$(yq --version 2>/dev/null | head -1)
         check_result pass "yq" "Installed ($version)"
     else
-        check_result warn "yq" "Not installed (optional)" \
-            "Install for better config parsing: brew install yq (macOS) or snap install yq (Linux)"
+        check_result fail "yq" "Not installed (required)" \
+            "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
     fi
 }
 

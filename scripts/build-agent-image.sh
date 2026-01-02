@@ -82,6 +82,15 @@ fi
 log_info "Building agent image from profile: $AGENT_PROFILE"
 
 #===============================================================================
+# VERIFY YQ (required for YAML parsing)
+#===============================================================================
+if ! command -v yq &>/dev/null; then
+    log_error "yq is required but not installed."
+    log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
+    exit 1
+fi
+
+#===============================================================================
 # PARSE PROFILE
 #===============================================================================
 AGENT_NAME=$(yq -r '.name // ""' "$PROFILE_PATH")
