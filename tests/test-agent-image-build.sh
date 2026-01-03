@@ -104,6 +104,7 @@ test_image_has_bash() {
 
     local output
     local exit_code=0
+    # shellcheck disable=SC2046 # Word splitting intentional for multiple -e args
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
@@ -128,6 +129,7 @@ test_image_has_git() {
 
     local output
     local exit_code=0
+    # shellcheck disable=SC2046 # Word splitting intentional for multiple -e args
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
@@ -152,6 +154,7 @@ test_image_has_curl() {
 
     local output
     local exit_code=0
+    # shellcheck disable=SC2046 # Word splitting intentional for multiple -e args
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
@@ -175,6 +178,7 @@ test_image_has_jq() {
 
     local output
     local exit_code=0
+    # shellcheck disable=SC2046 # Word splitting intentional for multiple -e args
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
@@ -197,6 +201,7 @@ test_image_developer_user() {
     setup_container_test "developer-user"
 
     local output
+    # shellcheck disable=SC2046 # Word splitting intentional for multiple -e args
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
@@ -225,6 +230,7 @@ test_image_home_directory() {
     setup_container_test "home-dir"
 
     local output
+    # shellcheck disable=SC2046 # Word splitting intentional for multiple -e args
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \

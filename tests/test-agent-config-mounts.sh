@@ -133,6 +133,7 @@ test_config_mount_accessible_in_container() {
 
     # Run container with mount
     local output
+    # shellcheck disable=SC2046 # Word splitting intentional for multiple -e args
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
