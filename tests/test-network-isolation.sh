@@ -28,7 +28,7 @@ test_network_mode_flag_validation() {
 
     assert_not_equals 0 "$exit_code" "Should fail with invalid network mode"
     assert_contains "$output" "Invalid network mode" "Should mention invalid network mode"
-    assert_contains "$output" "must be: none, open" "Should show valid options"
+    assert_contains "$output" "must be: none, filtered, open" "Should show valid options"
 }
 
 test_network_mode_none_accepted() {

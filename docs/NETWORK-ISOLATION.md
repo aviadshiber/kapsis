@@ -2,6 +2,14 @@
 
 This document describes the smart network isolation solution for Kapsis that enables secure, configurable network access for AI coding agents.
 
+## Implementation Status
+
+| Mode | Status | Description |
+|------|--------|-------------|
+| `none` | **Implemented** | Complete network isolation |
+| `filtered` | **Implemented** (v1.1.0) | DNS-based allowlist filtering |
+| `open` | **Implemented** | Unrestricted (default) |
+
 ## Problem Statement
 
 By default, Kapsis containers have unrestricted network access, which creates security risks:
@@ -156,38 +164,61 @@ Use when:
 
 ### How It Works
 
-1. **Container startup**: dnsmasq starts with allowlist configuration
-2. **DNS queries**: Container's resolv.conf points to local dnsmasq
-3. **Allowed hosts**: Forward to upstream DNS, return real IP
-4. **Blocked hosts**: Return NXDOMAIN immediately
+1. **Container startup**: `entrypoint.sh` detects `KAPSIS_NETWORK_MODE=filtered`
+2. **DNS filter init**: Sources `dns-filter.sh` and calls `dns_filter_init()`
+3. **Config generation**: Generates dnsmasq config from `KAPSIS_DNS_ALLOWLIST` env var
+4. **dnsmasq start**: Starts dnsmasq listening on 127.0.0.1:53
+5. **resolv.conf update**: Points to local dnsmasq for all DNS queries
+6. **Runtime**: Allowed hosts forward to upstream DNS, blocked hosts return 0.0.0.0
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `scripts/lib/dns-filter.sh` | DNS filtering library |
+| `configs/network-allowlist.yaml` | Default allowlist configuration |
+| `scripts/entrypoint.sh` | Starts DNS filter on container boot |
+| `scripts/launch-agent.sh` | Parses config and passes env vars |
 
 ### Podman Integration
 
 ```bash
-# Filtered mode adds:
+# Filtered mode passes environment variables:
 podman run \
-  --dns=127.0.0.1 \
-  -v /path/to/dnsmasq.conf:/etc/dnsmasq.conf:ro \
+  -e KAPSIS_NETWORK_MODE=filtered \
+  -e KAPSIS_DNS_ALLOWLIST="github.com,*.github.com,npmjs.org" \
+  -e KAPSIS_DNS_SERVERS="8.8.8.8,8.8.4.4" \
   ...
 
-# None mode adds:
+# None mode adds network isolation:
 podman run --network=none ...
 ```
 
 ### dnsmasq Configuration (Generated)
 
+The `dns-filter.sh` library generates this configuration:
+
 ```
-# Kapsis Network Allowlist
+# Kapsis DNS Filter Configuration
 domain-needed
 bogus-priv
+no-resolv
+no-poll
+no-hosts
+listen-address=127.0.0.1
+bind-interfaces
+port=53
+cache-size=1000
 
-# Allowed hosts (resolve normally)
+# Allowed domains (forward to upstream DNS)
 server=/github.com/8.8.8.8
+server=/.github.com/8.8.8.8    # Wildcard: *.github.com
 server=/gitlab.com/8.8.8.8
 server=/npmjs.org/8.8.8.8
 
-# Default: block everything else
+# Default: block everything else (return 0.0.0.0)
 address=/#/0.0.0.0
+address=/::/::
 ```
 
 ## Trade-offs

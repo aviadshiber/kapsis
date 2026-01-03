@@ -1,0 +1,116 @@
+# Kapsis Network Allowlist Configuration
+# ===============================================================================
+# Default allowlist for DNS-based network filtering in filtered mode.
+#
+# Usage:
+#   1. Use this file as-is for standard development workflows
+#   2. Copy and modify for project-specific needs
+#   3. Override via --config pointing to your custom config
+#
+# When network.mode is 'filtered', only domains listed here will resolve.
+# All other domains return NXDOMAIN (DNS failure).
+# ===============================================================================
+
+network:
+  # Network mode:
+  #   none     - No network access (--network=none)
+  #   filtered - DNS-based allowlist (this file defines what's allowed)
+  #   open     - Unrestricted network access (not recommended)
+  mode: filtered
+
+  # DNS allowlist for filtered mode
+  # Domains here will resolve; everything else is blocked
+  allowlist:
+    # Git hosting providers
+    hosts:
+      - github.com
+      - "*.github.com"
+      - gitlab.com
+      - "*.gitlab.com"
+      - bitbucket.org
+      - "*.bitbucket.org"
+      - dev.azure.com
+      - ssh.dev.azure.com
+      - "*.visualstudio.com"
+      # Taboola internal
+      - git.taboolasyndication.com
+
+    # Package registries
+    registries:
+      # npm
+      - registry.npmjs.org
+      - npmjs.org
+      - "*.npmjs.org"
+      - registry.yarnpkg.com
+
+      # Python
+      - pypi.org
+      - "*.pypi.org"
+      - files.pythonhosted.org
+
+      # Java/Maven
+      - repo1.maven.org
+      - repo.maven.apache.org
+      - plugins.gradle.org
+      - services.gradle.org
+      - jcenter.bintray.com
+      - dl.google.com
+      - maven.google.com
+
+      # Rust
+      - crates.io
+      - static.crates.io
+      - index.crates.io
+
+      # Go
+      - proxy.golang.org
+      - sum.golang.org
+      - storage.googleapis.com
+
+      # Ruby
+      - rubygems.org
+
+    # Container registries
+    containers:
+      - docker.io
+      - "*.docker.io"
+      - registry-1.docker.io
+      - auth.docker.io
+      - production.cloudflare.docker.com
+      - gcr.io
+      - "*.gcr.io"
+      - ghcr.io
+      - "*.ghcr.io"
+      - quay.io
+      - "*.quay.io"
+
+    # AI API endpoints
+    ai:
+      - api.anthropic.com
+      - api.openai.com
+      - "*.openai.com"
+      - generativelanguage.googleapis.com
+
+    # Custom/corporate hosts (add your internal registries here)
+    custom:
+      - artifactory.taboolasyndication.com
+      - ci.taboolasyndication.com
+
+  # DNS servers to use for resolving allowed domains
+  # These are only used when a domain is in the allowlist
+  dns_servers:
+    - 8.8.8.8
+    - 8.8.4.4
+
+  # Enable DNS query logging for debugging
+  # When true, all DNS queries are logged to /tmp/kapsis-dns.log
+  log_dns_queries: false
+
+  # Allowed ports (documented for reference)
+  # Note: Port filtering is NOT enforced - only DNS filtering
+  # These are the typical ports that allowed services use
+  allowed_ports:
+    - 22    # SSH (git)
+    - 80    # HTTP
+    - 443   # HTTPS
+    - 9418  # Git protocol

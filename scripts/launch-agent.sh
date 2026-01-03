@@ -21,7 +21,7 @@
 #   --dry-run             Show what would be executed without running
 #   --worktree-mode       Force worktree mode (git worktrees, simpler cleanup)
 #   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
-#   --network-mode <mode> Network isolation: none (isolated), open (default)
+#   --network-mode <mode> Network isolation: none, filtered, open (default)
 #
 # Examples:
 #   ./launch-agent.sh ~/project --agent claude --task "fix failing tests"
@@ -241,7 +241,8 @@ Options:
   --image <name>        Container image to use (e.g., kapsis-claude-cli:latest)
   --worktree-mode       Force worktree mode (requires git repo + branch)
   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
-  --network-mode <mode> Network isolation: none (isolated), open (default, unrestricted)
+  --network-mode <mode> Network isolation: none (isolated), filtered (DNS allowlist),
+                        open (default, unrestricted)
   -h, --help            Show this help message
 
 Available Agents:
@@ -451,8 +452,8 @@ validate_inputs() {
     fi
 
     # Validate network mode
-    if [[ ! "$NETWORK_MODE" =~ ^(none|open)$ ]]; then
-        log_error "Invalid network mode: $NETWORK_MODE (must be: none, open)"
+    if [[ ! "$NETWORK_MODE" =~ ^(none|filtered|open)$ ]]; then
+        log_error "Invalid network mode: $NETWORK_MODE (must be: none, filtered, open)"
         exit 1
     fi
 
@@ -724,10 +725,28 @@ parse_config() {
         if [[ "$NETWORK_MODE" == "open" ]]; then
             local config_network_mode
             config_network_mode=$(yq -r '.network.mode // "open"' "$CONFIG_FILE")
-            if [[ "$config_network_mode" =~ ^(none|open)$ ]]; then
+            if [[ "$config_network_mode" =~ ^(none|filtered|open)$ ]]; then
                 NETWORK_MODE="$config_network_mode"
             fi
         fi
+
+        # Parse DNS allowlist from config (for filtered mode)
+        # Extract all domains into a comma-separated list for passing to container
+        NETWORK_ALLOWLIST_DOMAINS=$(yq -r '
+            [
+                (.network.allowlist.hosts // [])[] // empty,
+                (.network.allowlist.registries // [])[] // empty,
+                (.network.allowlist.containers // [])[] // empty,
+                (.network.allowlist.ai // [])[] // empty,
+                (.network.allowlist.custom // [])[] // empty
+            ] | unique | join(",")
+        ' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+        # Parse DNS servers from config
+        NETWORK_DNS_SERVERS=$(yq -r '.network.dns_servers // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+        # Parse DNS logging setting
+        NETWORK_LOG_DNS=$(yq -r '.network.log_dns_queries // "false"' "$CONFIG_FILE" 2>/dev/null || echo "false")
     else
         log_error "yq is required but not installed."
         log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
@@ -1264,6 +1283,20 @@ build_container_command() {
         none)
             log_info "Network: isolated (no network access)"
             CONTAINER_CMD+=("--network=none")
+            ;;
+        filtered)
+            log_info "Network: filtered (DNS-based allowlist)"
+            # Pass environment variables to container for DNS filtering
+            CONTAINER_CMD+=("-e" "KAPSIS_NETWORK_MODE=filtered")
+            if [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
+                CONTAINER_CMD+=("-e" "KAPSIS_DNS_ALLOWLIST=${NETWORK_ALLOWLIST_DOMAINS}")
+            fi
+            if [[ -n "${NETWORK_DNS_SERVERS:-}" ]]; then
+                CONTAINER_CMD+=("-e" "KAPSIS_DNS_SERVERS=${NETWORK_DNS_SERVERS}")
+            fi
+            if [[ "${NETWORK_LOG_DNS:-false}" == "true" ]]; then
+                CONTAINER_CMD+=("-e" "KAPSIS_DNS_LOG_QUERIES=true")
+            fi
             ;;
         open)
             log_warn "Network: unrestricted (consider --network-mode=none for security)"
