@@ -242,8 +242,8 @@ jobs:
       - name: Generate cache key
         id: cache-key
         run: |
-          # Cache key based on Containerfile and base image references
-          echo "key=kapsis-image-${{ hashFiles('Containerfile', 'scripts/build-image.sh') }}" >> $GITHUB_OUTPUT
+          # Cache key based on Containerfile, build script, and runner architecture
+          echo "key=kapsis-image-${{ runner.arch }}-${{ hashFiles('Containerfile', 'scripts/build-image.sh') }}" >> $GITHUB_OUTPUT
 
       - name: Restore cached container image
         id: cache-restore
