@@ -837,11 +837,32 @@ setup_dns_filtering() {
 }
 
 #===============================================================================
-# DNS FILTERING WITH FAIL-SAFE
-# Abort container if DNS filtering is required but fails to initialize
+# DNS FILTERING WITH GRACEFUL DEGRADATION
+# - If KAPSIS_NETWORK_MODE is explicitly set to "filtered", fail-safe on error
+# - If KAPSIS_NETWORK_MODE is not set (using default), gracefully degrade to open
 #===============================================================================
+
+# Check if DNS filtering can run in this environment
+# Returns: 0 if environment supports DNS filtering, 1 otherwise
+can_run_dns_filtering() {
+    # Check if dnsmasq is available
+    if ! command -v dnsmasq &>/dev/null; then
+        log_debug "dnsmasq not installed - DNS filtering unavailable"
+        return 1
+    fi
+
+    # Check if we can write to resolv.conf (or if it's managed externally)
+    if [[ ! -w /etc/resolv.conf ]] && [[ ! -w /etc ]]; then
+        log_debug "Cannot modify /etc/resolv.conf - DNS filtering unavailable"
+        return 1
+    fi
+
+    return 0
+}
+
 init_dns_filtering_or_fail() {
     local network_mode="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
+    local explicitly_set="${KAPSIS_NETWORK_MODE:-}"
 
     # Only enforce fail-safe for filtered mode
     if [[ "$network_mode" != "filtered" ]]; then
@@ -849,20 +870,63 @@ init_dns_filtering_or_fail() {
         return 0
     fi
 
-    # In filtered mode, DNS filtering MUST succeed
+    # Check if environment supports DNS filtering before attempting
+    if ! can_run_dns_filtering; then
+        if [[ -n "$explicitly_set" ]]; then
+            # User explicitly requested filtered mode but environment doesn't support it
+            log_error "=========================================="
+            log_error "SECURITY: DNS filtering not supported in this environment"
+            log_error "=========================================="
+            log_error "KAPSIS_NETWORK_MODE=filtered was explicitly set, but:"
+            log_error "  - dnsmasq may not be installed"
+            log_error "  - resolv.conf may not be writable"
+            log_error "  - Container may lack required capabilities"
+            log_error ""
+            log_error "Options:"
+            log_error "  --network-mode=none   (complete network isolation)"
+            log_error "  --network-mode=open   (unrestricted access)"
+            log_error "=========================================="
+            exit 1
+        else
+            # Using default mode, gracefully degrade to open
+            log_warn "=========================================="
+            log_warn "DNS filtering unavailable in this environment"
+            log_warn "Falling back to unrestricted network access"
+            log_warn "=========================================="
+            log_warn "To use filtered mode, ensure dnsmasq is installed and"
+            log_warn "the container has permission to modify resolv.conf."
+            log_warn ""
+            # Update the network mode for display purposes
+            export KAPSIS_NETWORK_MODE="open"
+            return 0
+        fi
+    fi
+
+    # Environment supports filtering, attempt to set it up
     if ! setup_dns_filtering; then
-        log_error "=========================================="
-        log_error "SECURITY: DNS filtering failed to initialize"
-        log_error "=========================================="
-        log_error "Filtered network mode requires working DNS filtering."
-        log_error "Aborting to prevent unfiltered network access."
-        log_error ""
-        log_error "Options:"
-        log_error "  --network-mode=none   (complete network isolation)"
-        log_error "  --network-mode=open   (unrestricted access)"
-        log_error "  Fix the DNS configuration and retry"
-        log_error "=========================================="
-        exit 1
+        if [[ -n "$explicitly_set" ]]; then
+            # User explicitly requested filtered mode but it failed
+            log_error "=========================================="
+            log_error "SECURITY: DNS filtering failed to initialize"
+            log_error "=========================================="
+            log_error "Filtered network mode requires working DNS filtering."
+            log_error "Aborting to prevent unfiltered network access."
+            log_error ""
+            log_error "Options:"
+            log_error "  --network-mode=none   (complete network isolation)"
+            log_error "  --network-mode=open   (unrestricted access)"
+            log_error "  Fix the DNS configuration and retry"
+            log_error "=========================================="
+            exit 1
+        else
+            # Using default mode and filtering failed, gracefully degrade
+            log_warn "=========================================="
+            log_warn "DNS filtering failed to initialize"
+            log_warn "Falling back to unrestricted network access"
+            log_warn "=========================================="
+            export KAPSIS_NETWORK_MODE="open"
+            return 0
+        fi
     fi
 }
 
