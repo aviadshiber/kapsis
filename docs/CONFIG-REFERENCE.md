@@ -202,6 +202,64 @@ sandbox:
   interactive_merge: true
 
 #===============================================================================
+# NETWORK ISOLATION
+#===============================================================================
+network:
+  # Network isolation mode
+  # - none:     Complete network isolation (--network=none)
+  # - filtered: DNS-based allowlist filtering (default, recommended)
+  # - open:     Unrestricted network access
+  # Default: filtered
+  mode: filtered
+
+  # DNS allowlist - domains the agent can access in filtered mode
+  # Organized by category for maintainability
+  allowlist:
+    # Git hosting providers
+    hosts:
+      - github.com
+      - "*.github.com"
+      - gitlab.com
+      - "*.gitlab.com"
+      - bitbucket.org
+      - "*.bitbucket.org"
+
+    # Package registries
+    registries:
+      - registry.npmjs.org
+      - pypi.org
+      - "*.pypi.org"
+      - repo.maven.apache.org
+      - "*.maven.org"
+
+    # Container registries
+    containers:
+      - docker.io
+      - "*.docker.io"
+      - ghcr.io
+      - quay.io
+
+    # AI/LLM APIs (required for AI agents)
+    ai:
+      - api.anthropic.com
+      - api.openai.com
+
+    # Custom domains for your organization
+    custom:
+      - artifactory.company.com
+      - git.company.com
+
+  # DNS servers for domain resolution (filtered mode)
+  # Default: 8.8.8.8,8.8.4.4 (Google Public DNS)
+  dns_servers:
+    - 8.8.8.8
+    - 8.8.4.4
+
+  # Log DNS queries for debugging
+  # Default: false
+  log_dns_queries: false
+
+#===============================================================================
 # GIT HOOKS
 #===============================================================================
 # In a rootless isolated container, git hooks aren't a security concern -
@@ -726,10 +784,81 @@ Some config values can be overridden via command line:
 
 | Config | CLI Override |
 |--------|--------------|
+| `network.mode` | `--network-mode <none\|filtered\|open>` |
 | `git.auto_push.enabled` | `--no-push` |
 | `agent.command` | `--interactive` |
 | `image.name:image.tag` | `--image <name:tag>` |
 | `sandbox.upper_dir_base` | Set via environment |
+
+## Network Isolation
+
+Kapsis provides DNS-based network filtering to control which external services the agent can access.
+
+### Network Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `none` | Complete isolation (`--network=none`) | Maximum security, offline tasks |
+| `filtered` | DNS-based allowlist **(default)** | Standard development workflows |
+| `open` | Unrestricted network access | Special cases requiring full access |
+
+### Using Filtered Mode
+
+Filtered mode uses dnsmasq to implement DNS-based allowlisting. Only domains in the allowlist can be resolved; all other domains return NXDOMAIN.
+
+```bash
+# Default (filtered mode)
+kapsis ~/project --task "implement feature"
+
+# Explicit filtered mode
+kapsis ~/project --network-mode filtered --task "test"
+```
+
+### Configuration Priority
+
+Network mode can be set through multiple methods (highest to lowest priority):
+
+1. **CLI flag**: `--network-mode filtered`
+2. **Environment variable**: `KAPSIS_NETWORK_MODE=filtered`
+3. **Config file**: `network.mode: filtered`
+4. **Default**: `filtered`
+
+### Customizing Allowlist
+
+The default allowlist (`configs/network-allowlist.yaml`) includes common development domains. Override with your config:
+
+```yaml
+network:
+  mode: filtered
+  allowlist:
+    hosts:
+      - github.com
+      - git.company.com
+    registries:
+      - artifactory.company.com
+    ai:
+      - api.anthropic.com
+```
+
+### Security Features
+
+- **DNS rebinding protection**: Rejects DNS responses containing private IP ranges
+- **Fail-safe initialization**: Container aborts if DNS filtering fails to start
+- **Verification**: DNS filtering is verified before agent execution
+- **Query logging**: Enable `log_dns_queries: true` for debugging
+
+### Debugging Network Issues
+
+```bash
+# Enable DNS query logging
+export KAPSIS_DNS_LOG_QUERIES=true
+
+# Check if domain is blocked/allowed (inside container)
+nslookup github.com 127.0.0.1
+
+# View DNS logs (inside container)
+cat /tmp/kapsis-dns.log
+```
 
 ## Agent Profiles
 
