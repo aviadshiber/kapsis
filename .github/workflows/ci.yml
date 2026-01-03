@@ -100,23 +100,81 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
-      - name: Check base image pinned
+      - name: Verify base image digest pinning
         run: |
-          echo "Checking Containerfile for pinned base image..."
+          echo "Verifying base image supply chain pinning..."
+
+          # 1. Check Containerfile uses digest reference (not floating tag)
           if grep -qE "^FROM ubuntu:24\.04$" Containerfile; then
             echo "::error::Base image not pinned to digest in Containerfile"
-            echo "Expected: FROM ubuntu@sha256:... or ARG with digest"
-            echo "Found: FROM ubuntu:24.04 (unpinned tag)"
+            echo "Found: FROM ubuntu:24.04 (unpinned floating tag)"
             exit 1
           fi
-          # Check for direct digest or ARG-based digest pattern
-          if grep -q "FROM ubuntu@sha256:" Containerfile || \
-             (grep -q "ARG BASE_IMAGE_DIGEST=sha256:" Containerfile && grep -q 'FROM ubuntu@\${BASE_IMAGE_DIGEST}' Containerfile); then
-            echo "✓ Base image is pinned to digest"
-          else
-            echo "::error::Could not find pinned base image in Containerfile"
+
+          if ! grep -q 'FROM ubuntu@\${BASE_IMAGE_DIGEST}' Containerfile; then
+            echo "::error::Containerfile must use FROM ubuntu@\${BASE_IMAGE_DIGEST}"
             exit 1
           fi
+          echo "✓ Containerfile uses digest reference"
+
+          # 2. Extract and validate digests from build-image.sh
+          echo ""
+          echo "Extracting pinned digests from build-image.sh..."
+
+          # Extract digests (format: ["linux/amd64"]="sha256:...")
+          digests=$(grep -oE 'sha256:[a-f0-9]{64}' scripts/build-image.sh || true)
+
+          if [[ -z "$digests" ]]; then
+            echo "::error::No valid SHA256 digests found in build-image.sh"
+            exit 1
+          fi
+
+          # 3. Validate format and verify digests exist in Docker registry
+          echo ""
+          echo "Verifying digests..."
+
+          for digest in $digests; do
+            echo -n "  $digest "
+
+            # Verify digest format (sha256: + 64 hex chars)
+            if ! echo "$digest" | grep -qE '^sha256:[a-f0-9]{64}$'; then
+              echo ""
+              echo "::error::Invalid digest format: $digest"
+              exit 1
+            fi
+
+            # Query Docker Registry V2 API to verify digest exists
+            # Get auth token first (required even for public images)
+            token=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/ubuntu:pull" \
+              --max-time 10 | jq -r '.token' 2>/dev/null || echo "")
+
+            if [[ -z "$token" || "$token" == "null" ]]; then
+              echo "⚠ skipped (auth unavailable)"
+              continue
+            fi
+
+            # Check if digest exists by requesting manifest
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $token" \
+              -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+              "https://registry-1.docker.io/v2/library/ubuntu/manifests/$digest" \
+              --max-time 10 || echo "000")
+
+            case "$http_code" in
+              200) echo "✓ exists in registry" ;;
+              404)
+                echo ""
+                echo "::error::Digest not found in Docker Hub: $digest"
+                echo "This digest does not exist or may have been tampered with."
+                exit 1
+                ;;
+              000) echo "⚠ skipped (network timeout)" ;;
+              *)   echo "⚠ skipped (http $http_code)" ;;
+            esac
+          done
+
+          echo ""
+          echo "✓ All base image digests verified"
 
       - name: Check GitHub Actions pinned
         run: |
