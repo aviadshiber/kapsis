@@ -409,6 +409,7 @@ dns_filter_init() {
     fi
 
     # Verify filtering is actually working
+    # shellcheck disable=SC2119  # Optional arg not needed for basic verification
     if ! verify_dns_filtering; then
         log_error "DNS filtering verification failed"
         return 1
@@ -456,7 +457,10 @@ dns_filter_test() {
 
 # Verify DNS filtering is working correctly
 # Tests that blocked domains fail and optionally that allowed domains resolve
+# Arguments:
+#   $1 - Optional domain to verify is allowed (for future use/testing)
 # Returns: 0 if verification passes, 1 if filtering is not working
+# shellcheck disable=SC2120  # Optional arg for future use
 verify_dns_filtering() {
     local test_allowed="${1:-}"
     local test_blocked="kapsis-verify-blocked.invalid"
