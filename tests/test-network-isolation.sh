@@ -162,10 +162,20 @@ test_network_open_allows_network() {
     local exit_code=0
 
     # Run container with default network and try to access network
-    # Use curl to check connectivity (more reliable than ping in some environments)
+    # Test TCP connection to a reliable endpoint (DNS resolution + connection establishment)
+    # Using multiple fallback endpoints for reliability
     output=$(timeout 30 podman run --rm \
         "$image_name" \
-        bash -c "curl -s -o /dev/null -w '%{http_code}' --connect-timeout 10 https://github.com && echo 'NETWORK_WORKS' || echo 'NETWORK_FAILED'" \
+        bash -c '
+            # Try multiple endpoints for reliability (any success = network works)
+            for host in github.com google.com cloudflare.com; do
+                if curl -s -o /dev/null -w "%{http_code}" --connect-timeout 5 "https://$host" 2>/dev/null | grep -qE "^[23]"; then
+                    echo "NETWORK_WORKS"
+                    exit 0
+                fi
+            done
+            echo "NETWORK_FAILED"
+        ' \
         2>&1) || exit_code=$?
 
     assert_contains "$output" "NETWORK_WORKS" "Network should work with default network mode"

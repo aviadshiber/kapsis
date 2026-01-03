@@ -2,8 +2,9 @@
 # Build: podman build -t kapsis-sandbox -f Containerfile .
 
 # Security: Pin base image to specific digest for supply chain integrity
-# Digest represents ubuntu:24.04 as of 2026-01-02
-# To update: podman image inspect ubuntu:24.04 --format '{{.Digest}}'
+# NOTE: This default is for arm64. When using build-image.sh, the correct
+# architecture-specific digest is passed via --build-arg automatically.
+# For manual builds: podman manifest inspect docker.io/library/ubuntu:24.04
 ARG BASE_IMAGE_DIGEST=sha256:955364933d0d91afa6e10fb045948c16d2b191114aa54bed3ab5430d8bbc58cc
 FROM ubuntu@${BASE_IMAGE_DIGEST}
 
