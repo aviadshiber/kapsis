@@ -103,7 +103,7 @@ test_dns_filter_domain_validation() {
 
     # Source the library for testing
     # Disable logging to avoid noise
-    KAPSIS_DEBUG=""
+    export KAPSIS_DEBUG=""
     source "$DNS_FILTER_LIB"
 
     # Valid domains
@@ -122,13 +122,13 @@ test_dnsmasq_config_generation() {
     log_test "Testing dnsmasq config generation"
 
     # Source the library
-    KAPSIS_DEBUG=""
+    export KAPSIS_DEBUG=""
     source "$DNS_FILTER_LIB"
 
     # Set up temp config location
     local temp_config
     temp_config=$(mktemp)
-    KAPSIS_DNS_CONFIG_FILE="$temp_config"
+    export KAPSIS_DNS_CONFIG_FILE="$temp_config"
 
     # Set an allowlist via environment
     export KAPSIS_DNS_ALLOWLIST="github.com,*.gitlab.com,npmjs.org"
@@ -161,13 +161,13 @@ test_dnsmasq_config_from_yaml() {
     fi
 
     # Source the library
-    KAPSIS_DEBUG=""
+    export KAPSIS_DEBUG=""
     source "$DNS_FILTER_LIB"
 
     # Set up temp config location
     local temp_config
     temp_config=$(mktemp)
-    KAPSIS_DNS_CONFIG_FILE="$temp_config"
+    export KAPSIS_DNS_CONFIG_FILE="$temp_config"
 
     # Generate config from the default allowlist
     generate_dnsmasq_config "$ALLOWLIST_CONFIG"
