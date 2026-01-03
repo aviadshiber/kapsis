@@ -739,6 +739,7 @@ run_in_container() {
             -e KAPSIS_AGENT_ID="$CONTAINER_TEST_ID" \
             -e KAPSIS_PROJECT="test" \
             -e KAPSIS_USE_FUSE_OVERLAY=true \
+            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
             --timeout "$timeout" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "$command" 2>&1
@@ -756,6 +757,7 @@ run_in_container() {
             -v "${CONTAINER_TEST_ID}-m2:/home/developer/.m2/repository" \
             -e KAPSIS_AGENT_ID="$CONTAINER_TEST_ID" \
             -e KAPSIS_PROJECT="test" \
+            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
             --timeout "$timeout" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "$command" 2>&1
@@ -779,6 +781,7 @@ run_in_container_detached() {
         -v "${container_name}-m2:/home/developer/.m2/repository" \
         -e KAPSIS_AGENT_ID="$container_name" \
         -e KAPSIS_PROJECT="test" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         "$KAPSIS_TEST_IMAGE" \
         bash -c "$command" 2>&1
 }
