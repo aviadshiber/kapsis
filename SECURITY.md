@@ -123,6 +123,31 @@ Kapsis supports two network modes for container isolation:
 
 **Note**: The default is `open` for backward compatibility, but `none` is recommended for security-sensitive tasks.
 
+#### Configuration Precedence
+
+Network mode can be set through multiple methods with the following precedence (highest to lowest):
+
+1. **CLI argument**: `--network-mode none`
+2. **Environment variable**: `KAPSIS_NETWORK_MODE=none`
+3. **Config file**: `~/.kapsis/config.yaml` with `network_mode: none`
+4. **Default**: `open`
+
+Example using environment variable:
+
+```bash
+export KAPSIS_NETWORK_MODE=none
+./scripts/launch-agent.sh ~/project --task "offline refactoring"
+```
+
+Example config file (`~/.kapsis/config.yaml`):
+
+```yaml
+# Default network isolation mode
+network_mode: none
+
+# Other configuration options...
+```
+
 ### Filesystem Scope Enforcement
 
 Kapsis validates that container modifications stay within allowed boundaries:

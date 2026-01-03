@@ -173,6 +173,52 @@ test_audit_log_created_on_violation() {
     unset KAPSIS_AUDIT_DIR
 }
 
+test_audit_log_escapes_special_chars() {
+    log_test "Testing audit log escapes special characters in paths"
+
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    local test_audit_dir
+    test_audit_dir=$(mktemp -d)
+    export KAPSIS_AUDIT_DIR="$test_audit_dir"
+
+    # Simulate violation with special chars (quotes, backslashes)
+    log_scope_violation '/test/path"with"quotes' 'file"with"quotes.txt' 'path\with\backslash'
+
+    local audit_file="$test_audit_dir/scope-violations.jsonl"
+
+    assert_file_exists "$audit_file" "Audit file should be created"
+
+    # Verify JSON is valid (not malformed) using jq
+    if command -v jq &>/dev/null; then
+        if ! jq -e . "$audit_file" >/dev/null 2>&1; then
+            log_error "Audit log contains invalid JSON:"
+            cat "$audit_file"
+            rm -rf "$test_audit_dir"
+            unset KAPSIS_AUDIT_DIR
+            return 1
+        fi
+        log_info "JSON is valid"
+
+        # Verify the special characters are preserved after JSON parsing
+        # jq will unescape them, so we check for the original values
+        local parsed_violation
+        parsed_violation=$(jq -r '.violations[0]' "$audit_file")
+        if [[ "$parsed_violation" != 'file"with"quotes.txt' ]]; then
+            log_error "Expected violation 'file\"with\"quotes.txt' but got: $parsed_violation"
+            rm -rf "$test_audit_dir"
+            unset KAPSIS_AUDIT_DIR
+            return 1
+        fi
+        log_info "Quotes correctly escaped and preserved in JSON"
+    else
+        log_warn "jq not available - skipping JSON validation"
+    fi
+
+    rm -rf "$test_audit_dir"
+    unset KAPSIS_AUDIT_DIR
+}
+
 #===============================================================================
 # RUN TESTS
 #===============================================================================
@@ -190,6 +236,7 @@ main() {
 
     # Audit logging tests
     run_test test_audit_log_created_on_violation
+    run_test test_audit_log_escapes_special_chars
 
     print_summary
 }

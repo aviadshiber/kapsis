@@ -297,6 +297,9 @@ log_scope_violation() {
     shift
     local violations=("$@")
 
+    # Source json-utils for proper escaping
+    source "$SCRIPT_DIR/json-utils.sh"
+
     local audit_dir="${KAPSIS_AUDIT_DIR:-$HOME/.kapsis/audit}"
     local audit_file="$audit_dir/scope-violations.jsonl"
 
@@ -306,7 +309,11 @@ log_scope_violation() {
     local timestamp
     timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-    # Build violations JSON array
+    # Escape the path for JSON
+    local escaped_path
+    escaped_path=$(json_escape_string "$path")
+
+    # Build violations JSON array with proper escaping
     local violations_json="["
     local first=true
     for v in "${violations[@]}"; do
@@ -315,13 +322,15 @@ log_scope_violation() {
         else
             violations_json+=","
         fi
-        violations_json+="\"$v\""
+        local escaped_v
+        escaped_v=$(json_escape_string "$v")
+        violations_json+="\"$escaped_v\""
     done
     violations_json+="]"
 
     # Write audit entry
     cat >> "$audit_file" <<EOF
-{"timestamp":"$timestamp","path":"$path","violations":$violations_json,"action":"aborted"}
+{"timestamp":"$timestamp","path":"$escaped_path","violations":$violations_json,"action":"aborted"}
 EOF
 
     log_debug "Scope violation logged to: $audit_file"
