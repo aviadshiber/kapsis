@@ -22,6 +22,7 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 - **Agent Profiles** - Pre-built agent configurations with automatic container installation
 - **Config-Driven** - Single YAML file defines agent command and filesystem whitelist
 - **Copy-on-Write Filesystem** - Project files use overlay mounts (reads from host, writes isolated)
+- **Network Isolation** - DNS-based allowlist filtering (default), blocks unauthorized network access
 - **Maven Isolation** - Per-agent `.m2/repository`, blocked remote SNAPSHOTs, blocked deploy
 - **Build Cache Isolation** - Gradle Enterprise remote cache disabled, per-agent local cache
 - **Git Workflow** - Optional branch-based workflow with PR review feedback loop
@@ -297,6 +298,24 @@ Pre-built configs available in `configs/` directory.
 | Deploy operations | Blocked in isolated-settings.xml |
 | GE/Develocity cache | Remote cache disabled |
 | Host system | Podman rootless container |
+| Network access | DNS-based allowlist filtering (default) |
+
+### Network Isolation
+
+Kapsis provides DNS-based network filtering by default, allowing agents to access only whitelisted domains:
+
+```bash
+# Default: filtered mode (DNS allowlist)
+kapsis ~/project --task "implement feature"
+
+# Maximum isolation (no network)
+kapsis ~/project --network-mode none --task "refactor code"
+
+# Unrestricted network (use sparingly)
+kapsis ~/project --network-mode open --task "test"
+```
+
+See [docs/NETWORK-ISOLATION.md](docs/NETWORK-ISOLATION.md) for customizing the allowlist.
 
 ## Cleanup
 

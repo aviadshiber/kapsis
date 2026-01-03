@@ -119,9 +119,10 @@ Kapsis supports two network modes for container isolation:
 | Mode | Description | Use Case |
 |------|-------------|----------|
 | `none` | No network access (`--network=none`) | Maximum isolation, offline tasks |
-| `open` | Full network access (default) | Tasks requiring network (git clone, npm install) |
+| `filtered` | DNS-based allowlist **(default)** | Standard development (git, package registries) |
+| `open` | Full network access | Special cases requiring unrestricted access |
 
-**Note**: The default is `open` for backward compatibility, but `none` is recommended for security-sensitive tasks.
+**Note**: The default is `filtered` which allows access to common development domains (GitHub, npm, PyPI, Maven) while blocking unknown hosts.
 
 #### Configuration Precedence
 
@@ -130,7 +131,7 @@ Network mode can be set through multiple methods with the following precedence (
 1. **CLI argument**: `--network-mode none`
 2. **Environment variable**: `KAPSIS_NETWORK_MODE=none`
 3. **Config file**: `~/.kapsis/config.yaml` with `network_mode: none`
-4. **Default**: `open`
+4. **Default**: `filtered`
 
 Example using environment variable:
 
