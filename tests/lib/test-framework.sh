@@ -48,9 +48,22 @@ KAPSIS_TEST_IMAGE="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 
 # Standard environment variables to pass to containers
 # These should be used by all podman run calls in tests
-# Usage: podman run ... $KAPSIS_TEST_CONTAINER_ENV ...
-# Or:    podman run ... -e CI="${CI:-}" -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" ...
-export CI="${CI:-}"  # Pass CI env to detect CI environments in containers
+# Usage: podman run ... $(get_test_container_env_args) ...
+# Note: CI defaults to "true" during tests to enable entrypoint's CI fallback mode
+export CI="${CI:-true}"  # Pass CI=true to containers for DNS filtering fallback
+
+# Get standard environment arguments for podman run
+# Returns: -e CI=... (and KAPSIS_NETWORK_MODE only if explicitly set)
+# Note: We only pass CI to trigger auto-fallback in entrypoint
+# We don't pass KAPSIS_NETWORK_MODE unless explicitly set to avoid
+# triggering "explicitly_set" logic in entrypoint
+get_test_container_env_args() {
+    local args="-e CI=${CI:-true}"
+    if [[ -n "${KAPSIS_NETWORK_MODE:-}" ]]; then
+        args="$args -e KAPSIS_NETWORK_MODE=$KAPSIS_NETWORK_MODE"
+    fi
+    echo "$args"
+}
 
 #===============================================================================
 # CROSS-PLATFORM HELPERS
