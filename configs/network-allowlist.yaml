@@ -84,12 +84,76 @@ network:
       - quay.io
       - "*.quay.io"
 
-    # AI API endpoints
+    # AI API endpoints (for AI coding agents)
     ai:
+      # Anthropic (Claude Code, Claude API)
       - api.anthropic.com
+      - "*.anthropic.com"
+      - claude.ai
+      - "*.claude.ai"
+
+      # OpenAI (Codex CLI, ChatGPT, GPT API)
       - api.openai.com
       - "*.openai.com"
+      - chat.openai.com
+      - platform.openai.com
+
+      # Google (Gemini CLI, Vertex AI)
       - generativelanguage.googleapis.com
+      - "*.googleapis.com"
+      - gemini.google.com
+      - "*.gemini.google.com"
+      - aiplatform.googleapis.com
+
+      # Amazon (CodeWhisperer, Bedrock)
+      - codewhisperer.amazonaws.com
+      - "*.codewhisperer.amazonaws.com"
+      - bedrock.amazonaws.com
+      - "*.bedrock.amazonaws.com"
+      - bedrock-runtime.amazonaws.com
+
+      # Microsoft (GitHub Copilot, Azure OpenAI)
+      - copilot.github.com
+      - "*.copilot.github.com"
+      - api.githubcopilot.com
+      - "*.githubcopilot.com"
+      - openai.azure.com
+      - "*.openai.azure.com"
+      - cognitiveservices.azure.com
+      - "*.cognitiveservices.azure.com"
+
+      # Cohere
+      - api.cohere.ai
+      - "*.cohere.ai"
+
+      # Mistral
+      - api.mistral.ai
+      - "*.mistral.ai"
+
+      # Hugging Face
+      - huggingface.co
+      - "*.huggingface.co"
+      - api-inference.huggingface.co
+
+      # Replicate
+      - api.replicate.com
+      - "*.replicate.com"
+
+      # Together AI
+      - api.together.xyz
+      - "*.together.xyz"
+
+      # Groq
+      - api.groq.com
+      - "*.groq.com"
+
+      # Perplexity
+      - api.perplexity.ai
+      - "*.perplexity.ai"
+
+      # Aider (uses above APIs, but may need sentry for telemetry)
+      - sentry.io
+      - "*.sentry.io"
 
     # Custom/corporate hosts (add your internal registries here)
     custom:
