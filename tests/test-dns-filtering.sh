@@ -118,6 +118,49 @@ test_dns_filter_domain_validation() {
     assert_command_fails "validate_domain_pattern '#comment'" "Comment should be invalid"
 }
 
+test_dnsmasq_config_has_rebind_protection() {
+    log_test "Testing dnsmasq config includes DNS rebinding protection"
+
+    # Source the library
+    export KAPSIS_DEBUG=""
+    source "$DNS_FILTER_LIB"
+
+    # Set up temp config location
+    local temp_config
+    temp_config=$(mktemp)
+    export KAPSIS_DNS_CONFIG_FILE="$temp_config"
+
+    # Set an allowlist
+    export KAPSIS_DNS_ALLOWLIST="github.com"
+    export KAPSIS_DNS_SERVERS="8.8.8.8"
+
+    # Generate config
+    generate_dnsmasq_config
+
+    # Verify DNS rebinding protection is enabled
+    assert_file_contains "$temp_config" "stop-dns-rebind" "Should have DNS rebinding protection"
+    assert_file_contains "$temp_config" "rebind-localhost-ok" "Should allow localhost rebind"
+
+    # Cleanup
+    rm -f "$temp_config"
+    unset KAPSIS_DNS_ALLOWLIST KAPSIS_DNS_SERVERS KAPSIS_DNS_CONFIG_FILE
+}
+
+test_verify_dns_filtering_function_exists() {
+    log_test "Testing verify_dns_filtering function exists"
+
+    # Source the library
+    export KAPSIS_DEBUG=""
+    source "$DNS_FILTER_LIB"
+
+    # Check function exists
+    if declare -F verify_dns_filtering >/dev/null; then
+        log_pass "verify_dns_filtering function exists"
+    else
+        log_fail "verify_dns_filtering function not found"
+    fi
+}
+
 test_dnsmasq_config_generation() {
     log_test "Testing dnsmasq config generation"
 
@@ -168,6 +211,7 @@ test_dnsmasq_config_from_yaml() {
     local temp_config
     temp_config=$(mktemp)
     export KAPSIS_DNS_CONFIG_FILE="$temp_config"
+    export KAPSIS_DNS_SERVERS="8.8.8.8"  # Required for config generation
 
     # Generate config from the default allowlist
     generate_dnsmasq_config "$ALLOWLIST_CONFIG"
@@ -178,7 +222,7 @@ test_dnsmasq_config_from_yaml() {
 
     # Cleanup
     rm -f "$temp_config"
-    unset KAPSIS_DNS_CONFIG_FILE
+    unset KAPSIS_DNS_CONFIG_FILE KAPSIS_DNS_SERVERS
 }
 
 test_config_parsing_extracts_allowlist() {
@@ -417,6 +461,8 @@ main() {
     run_test test_default_allowlist_has_required_domains
     run_test test_allowlist_mode_is_filtered
     run_test test_dns_filter_domain_validation
+    run_test test_dnsmasq_config_has_rebind_protection
+    run_test test_verify_dns_filtering_function_exists
     run_test test_dnsmasq_config_generation
     run_test test_dnsmasq_config_from_yaml
     run_test test_config_parsing_extracts_allowlist
