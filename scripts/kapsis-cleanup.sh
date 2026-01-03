@@ -209,16 +209,16 @@ clean_worktrees() {
             print_item "worktree" "$name" "$size_human"
         fi
 
-        ((total_size += size))
-        ((count++))
+        ((total_size += size)) || true
+        ((count++)) || true
     done
 
     if (( count == 0 )); then
         echo "  No worktrees to clean"
     else
         echo -e "  ${BOLD}Total: $count worktrees ($(format_size $total_size))${NC}"
-        ((TOTAL_SIZE_FREED += total_size))
-        ((ITEMS_CLEANED += count))
+        ((TOTAL_SIZE_FREED += total_size)) || true
+        ((ITEMS_CLEANED += count)) || true
     fi
 }
 
@@ -297,8 +297,8 @@ clean_sandboxes() {
             fi
         fi
 
-        ((total_size += size))
-        ((count++))
+        ((total_size += size)) || true
+        ((count++)) || true
     done
 
     if (( count == 0 )) && (( skipped_sandboxes == 0 )); then
@@ -306,8 +306,8 @@ clean_sandboxes() {
     else
         if (( count > 0 )); then
             echo -e "  ${BOLD}Total: $count sandboxes ($(format_size $total_size))${NC}"
-            ((TOTAL_SIZE_FREED += total_size))
-            ((ITEMS_CLEANED += count))
+            ((TOTAL_SIZE_FREED += total_size)) || true
+            ((ITEMS_CLEANED += count)) || true
         fi
         if (( skipped_sandboxes > 0 )); then
             echo -e "  ${YELLOW}Skipped: $skipped_sandboxes sandboxes (overlay permissions)${NC}"
@@ -363,16 +363,16 @@ clean_status() {
             print_item "status" "$name" "$size_human"
         fi
 
-        ((total_size += size))
-        ((count++))
+        ((total_size += size)) || true
+        ((count++)) || true
     done
 
     if (( count == 0 )); then
         echo "  No status files to clean"
     else
         echo -e "  ${BOLD}Total: $count status files ($(format_size $total_size))${NC}"
-        ((TOTAL_SIZE_FREED += total_size))
-        ((ITEMS_CLEANED += count))
+        ((TOTAL_SIZE_FREED += total_size)) || true
+        ((ITEMS_CLEANED += count)) || true
     fi
 }
 
@@ -410,16 +410,16 @@ clean_sanitized_git() {
             print_item "sanitized-git" "$name" "$size_human"
         fi
 
-        ((total_size += size))
-        ((count++))
+        ((total_size += size)) || true
+        ((count++)) || true
     done
 
     if (( count == 0 )); then
         echo "  No sanitized git directories to clean"
     else
         echo -e "  ${BOLD}Total: $count directories ($(format_size $total_size))${NC}"
-        ((TOTAL_SIZE_FREED += total_size))
-        ((ITEMS_CLEANED += count))
+        ((TOTAL_SIZE_FREED += total_size)) || true
+        ((ITEMS_CLEANED += count)) || true
     fi
 }
 
@@ -457,14 +457,14 @@ clean_containers() {
             podman rm "$container" &>/dev/null || true
             print_item "container" "$container" "N/A"
         fi
-        ((count++))
+        ((count++)) || true
     done <<< "$containers"
 
     if (( count == 0 )); then
         echo "  No containers to clean"
     else
         echo -e "  ${BOLD}Total: $count containers${NC}"
-        ((ITEMS_CLEANED += count))
+        ((ITEMS_CLEANED += count)) || true
     fi
 }
 
@@ -514,16 +514,16 @@ clean_volumes() {
             print_item "volume" "$volume" "$size_human"
         fi
 
-        ((total_size += size))
-        ((count++))
+        ((total_size += size)) || true
+        ((count++)) || true
     done <<< "$volumes"
 
     if (( count == 0 )); then
         echo "  No volumes to clean"
     else
         echo -e "  ${BOLD}Total: $count volumes ($(format_size $total_size))${NC}"
-        ((TOTAL_SIZE_FREED += total_size))
-        ((ITEMS_CLEANED += count))
+        ((TOTAL_SIZE_FREED += total_size)) || true
+        ((ITEMS_CLEANED += count)) || true
     fi
 }
 
@@ -556,16 +556,16 @@ clean_logs() {
             print_item "log" "$name" "$size_human"
         fi
 
-        ((total_size += size))
-        ((count++))
+        ((total_size += size)) || true
+        ((count++)) || true
     done < <(find "$LOG_DIR" -name "*.log" -mtime +7 2>/dev/null || true)
 
     if (( count == 0 )); then
         echo "  No old log files to clean"
     else
         echo -e "  ${BOLD}Total: $count log files ($(format_size $total_size))${NC}"
-        ((TOTAL_SIZE_FREED += total_size))
-        ((ITEMS_CLEANED += count))
+        ((TOTAL_SIZE_FREED += total_size)) || true
+        ((ITEMS_CLEANED += count)) || true
     fi
 }
 
@@ -593,7 +593,7 @@ clean_ssh_cache() {
                         print_item "keychain" "kapsis-ssh-known-hosts/$host" "N/A"
                     fi
                 fi
-                ((count++))
+                ((count++)) || true
             done <<< "$entries"
         fi
     fi
@@ -616,7 +616,7 @@ clean_ssh_cache() {
                 rm -f "$cache_file"
                 print_item "ssh-cache" "$name" "N/A"
             fi
-            ((count++))
+            ((count++)) || true
         done
 
         if [[ "$DRY_RUN" != "true" ]] && [[ -d "$ssh_cache_dir" ]]; then
@@ -628,7 +628,7 @@ clean_ssh_cache() {
         echo "  No SSH cache entries to clean"
     else
         echo -e "  ${BOLD}Total: $count SSH cache entries${NC}"
-        ((ITEMS_CLEANED += count))
+        ((ITEMS_CLEANED += count)) || true
     fi
 
     # Note about persistent config
@@ -757,6 +757,8 @@ main() {
     if [[ "$DRY_RUN" != "true" ]] && (( ITEMS_CLEANED > 0 )); then
         echo -e "\n${YELLOW}Tip:${NC} Run 'git worktree prune' in your project repos to clean stale worktree references."
     fi
+
+    exit 0
 }
 
 main "$@"
