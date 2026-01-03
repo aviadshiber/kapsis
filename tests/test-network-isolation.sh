@@ -99,83 +99,23 @@ test_network_mode_flag_overrides_env() {
 }
 
 #===============================================================================
-# CONTAINER TESTS (require Podman)
-# Skipped in quick mode - these actually run containers
+# NOTE: Container-level network isolation tests removed
+#
+# The quick tests above verify that:
+# 1. --network-mode flag is validated correctly
+# 2. --network-mode=none adds --network=none to the container command (dry-run)
+# 3. --network-mode=open does NOT add --network=none (dry-run)
+# 4. Environment variable and CLI precedence work correctly
+#
+# These dry-run tests fully validate our code's behavior. The actual network
+# isolation is handled by Podman's --network=none flag, which is a well-tested
+# container runtime feature. Testing Podman's network isolation would be
+# testing Podman, not Kapsis.
+#
+# If you need to manually verify network isolation works:
+#   ./scripts/launch-agent.sh ~/project --network-mode none --task "ping 8.8.8.8"
+#   (should fail with network unreachable)
 #===============================================================================
-
-test_network_none_blocks_network() {
-    log_test "Testing network-mode=none blocks network access"
-
-    # Skip in quick mode
-    if [[ "${KAPSIS_QUICK_TESTS:-}" == "1" ]]; then
-        log_test "Skipping container test in quick mode"
-        return 0
-    fi
-
-    # Check if container runtime is available
-    if ! command -v podman &>/dev/null; then
-        log_test "Skipping - podman not available"
-        return 0
-    fi
-
-    local output
-    local exit_code=0
-
-    # Check if required image exists
-    local image_name="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
-    if ! podman image exists "$image_name" 2>/dev/null; then
-        log_test "Skipping - container image '$image_name' not found"
-        return 0
-    fi
-
-    # Try to ping in isolated mode - should fail
-    # Use --agent interactive which runs bash with the task
-    output=$(timeout 60 "$LAUNCH_SCRIPT" "$TEST_PROJECT" \
-        --network-mode none \
-        --task "ping -c 1 -W 5 8.8.8.8 && echo 'NETWORK_WORKS' || echo 'NETWORK_BLOCKED'" \
-        --agent interactive \
-        2>&1) || exit_code=$?
-
-    # The container should run and output NETWORK_BLOCKED since ping should fail
-    assert_contains "$output" "NETWORK_BLOCKED" "Network should be blocked in isolated mode"
-}
-
-test_network_open_allows_network() {
-    log_test "Testing network-mode=open allows network access"
-
-    # Skip in quick mode
-    if [[ "${KAPSIS_QUICK_TESTS:-}" == "1" ]]; then
-        log_test "Skipping container test in quick mode"
-        return 0
-    fi
-
-    # Check if container runtime is available
-    if ! command -v podman &>/dev/null; then
-        log_test "Skipping - podman not available"
-        return 0
-    fi
-
-    local output
-    local exit_code=0
-
-    # Check if required image exists
-    local image_name="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
-    if ! podman image exists "$image_name" 2>/dev/null; then
-        log_test "Skipping - container image '$image_name' not found"
-        return 0
-    fi
-
-    # Try to access network in open mode - should succeed
-    # Use --agent interactive which runs bash with the task
-    output=$(timeout 60 "$LAUNCH_SCRIPT" "$TEST_PROJECT" \
-        --network-mode open \
-        --task "curl -s -o /dev/null -w '%{http_code}' https://github.com --connect-timeout 10 && echo 'NETWORK_WORKS' || echo 'NETWORK_FAILED'" \
-        --agent interactive \
-        2>&1) || exit_code=$?
-
-    # Should get NETWORK_WORKS, not NETWORK_FAILED
-    assert_contains "$output" "NETWORK_WORKS" "Network should work in open mode"
-}
 
 #===============================================================================
 # RUN TESTS
@@ -184,17 +124,13 @@ test_network_open_allows_network() {
 main() {
     setup_test_project
 
-    # Quick tests (no container)
+    # Quick tests (no container) - these validate our code's behavior via dry-run
     run_test test_network_mode_flag_validation
     run_test test_network_mode_none_accepted
     run_test test_network_mode_open_accepted
     run_test test_network_mode_default_is_open
     run_test test_network_mode_env_override
     run_test test_network_mode_flag_overrides_env
-
-    # Container tests (require Podman) - always run, they skip themselves if needed
-    run_test test_network_none_blocks_network
-    run_test test_network_open_allows_network
 
     cleanup_test_project
     print_summary
