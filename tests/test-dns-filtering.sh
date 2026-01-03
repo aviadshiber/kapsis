@@ -234,9 +234,10 @@ test_config_parsing_extracts_allowlist() {
         return 0
     fi
 
-    # Create a test config with allowlist
+    # Create a test config (use KAPSIS_TRUST_ALL_CONFIGS for test flexibility)
     local test_config
-    test_config=$(mktemp --suffix=.yaml)
+    test_config=$(mktemp).yaml
+
     cat > "$test_config" << 'EOF'
 agent:
   command: bash
@@ -253,7 +254,8 @@ EOF
     local output
     local exit_code=0
 
-    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    # Use KAPSIS_TRUST_ALL_CONFIGS to allow test configs from /tmp
+    output=$(KAPSIS_TRUST_ALL_CONFIGS=1 "$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should succeed"
     assert_contains "$output" "KAPSIS_DNS_ALLOWLIST" "Should set DNS allowlist env var"

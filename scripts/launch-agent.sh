@@ -21,7 +21,7 @@
 #   --dry-run             Show what would be executed without running
 #   --worktree-mode       Force worktree mode (git worktrees, simpler cleanup)
 #   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
-#   --network-mode <mode> Network isolation: none, filtered, open (default)
+#   --network-mode <mode> Network isolation: none, filtered (default), open
 #
 # Examples:
 #   ./launch-agent.sh ~/project --agent claude --task "fix failing tests"
@@ -79,11 +79,11 @@ SANDBOX_MODE=""  # auto-detect, worktree, or overlay
 WORKTREE_PATH=""
 SANITIZED_GIT_PATH=""
 AGENT_ID_AUTO_GENERATED=false  # Track if ID was auto-generated
-# Network isolation mode: none (isolated), open (unrestricted - default for backward compatibility)
-NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}"
-
-# Source shared constants
+# Source shared constants (must come before using KAPSIS_DEFAULT_NETWORK_MODE)
 source "$SCRIPT_DIR/lib/constants.sh"
+
+# Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
+NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
 
 #===============================================================================
 # COLORS AND OUTPUT (colors used for banner only)
@@ -241,8 +241,8 @@ Options:
   --image <name>        Container image to use (e.g., kapsis-claude-cli:latest)
   --worktree-mode       Force worktree mode (requires git repo + branch)
   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
-  --network-mode <mode> Network isolation: none (isolated), filtered (DNS allowlist),
-                        open (default, unrestricted)
+  --network-mode <mode> Network isolation: none (isolated),
+                        filtered (default, DNS allowlist), open (unrestricted)
   -h, --help            Show this help message
 
 Available Agents:
@@ -518,8 +518,16 @@ validate_inputs() {
 #   - User config: $HOME/.config/kapsis/ or $HOME/.kapsis/
 #   - Project-local: $PROJECT_PATH/.kapsis/ or $PROJECT_PATH/agent-sandbox.yaml
 #   - Current directory: ./agent-sandbox.yaml or ./.kapsis/
+#
+# Set KAPSIS_TRUST_ALL_CONFIGS=1 to bypass this check (for testing only)
 validate_config_security() {
     local config_path="$1"
+
+    # Allow bypass for testing scenarios
+    if [[ "${KAPSIS_TRUST_ALL_CONFIGS:-}" == "1" ]]; then
+        log_warn "Security: Config trust validation bypassed (KAPSIS_TRUST_ALL_CONFIGS=1)"
+        return 0
+    fi
 
     # Resolve to absolute path
     local abs_path
@@ -732,21 +740,22 @@ parse_config() {
 
         # Parse DNS allowlist from config (for filtered mode)
         # Extract all domains into a comma-separated list for passing to container
-        NETWORK_ALLOWLIST_DOMAINS=$(yq -r '
+        # Uses yq v4 (mikefarah/yq) syntax
+        NETWORK_ALLOWLIST_DOMAINS=$(yq eval '
             [
-                (.network.allowlist.hosts // [])[] // empty,
-                (.network.allowlist.registries // [])[] // empty,
-                (.network.allowlist.containers // [])[] // empty,
-                (.network.allowlist.ai // [])[] // empty,
-                (.network.allowlist.custom // [])[] // empty
-            ] | unique | join(",")
+                ((.network.allowlist.hosts // [])[] // ""),
+                ((.network.allowlist.registries // [])[] // ""),
+                ((.network.allowlist.containers // [])[] // ""),
+                ((.network.allowlist.ai // [])[] // ""),
+                ((.network.allowlist.custom // [])[] // "")
+            ] | map(select(. != "")) | unique | join(",")
         ' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse DNS servers from config
-        NETWORK_DNS_SERVERS=$(yq -r '.network.dns_servers // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+        NETWORK_DNS_SERVERS=$(yq eval '.network.dns_servers // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse DNS logging setting
-        NETWORK_LOG_DNS=$(yq -r '.network.log_dns_queries // "false"' "$CONFIG_FILE" 2>/dev/null || echo "false")
+        NETWORK_LOG_DNS=$(yq eval '.network.log_dns_queries // "false"' "$CONFIG_FILE" 2>/dev/null || echo "false")
     else
         log_error "yq is required but not installed."
         log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"

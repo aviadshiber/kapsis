@@ -7,8 +7,8 @@ This document describes the smart network isolation solution for Kapsis that ena
 | Mode | Status | Description |
 |------|--------|-------------|
 | `none` | **Implemented** | Complete network isolation |
-| `filtered` | **Implemented** (v1.1.0) | DNS-based allowlist filtering |
-| `open` | **Implemented** | Unrestricted (default) |
+| `filtered` | **Implemented** (v1.1.0) | DNS-based allowlist filtering **(default)** |
+| `open` | **Implemented** | Unrestricted network access |
 
 ## Problem Statement
 
@@ -205,6 +205,12 @@ bogus-priv
 no-resolv
 no-poll
 no-hosts
+
+# Security: prevent DNS rebinding attacks
+# Rejects responses containing private IP ranges (RFC1918)
+stop-dns-rebind
+rebind-localhost-ok
+
 listen-address=127.0.0.1
 bind-interfaces
 port=53
@@ -220,6 +226,18 @@ server=/npmjs.org/8.8.8.8
 address=/#/0.0.0.0
 address=/::/::
 ```
+
+### Security Features
+
+**DNS Rebinding Protection**: The `stop-dns-rebind` directive prevents DNS rebinding attacks where a malicious domain resolves to internal IP addresses (10.x.x.x, 192.168.x.x, etc.). This protects internal services from being accessed via DNS manipulation.
+
+**Fail-Safe Initialization**: If DNS filtering fails to initialize in `filtered` mode, the container will abort rather than running with unrestricted network access. This prevents security bypass due to configuration errors.
+
+**Verification Before Agent Start**: Before the agent starts, the DNS filter verifies that:
+1. Blocked domains return NXDOMAIN (filtering is active)
+2. dnsmasq is running and responding
+
+This ensures the security boundary is actually enforced before any agent code executes.
 
 ## Trade-offs
 

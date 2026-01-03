@@ -56,3 +56,14 @@ readonly KAPSIS_DEFAULT_COMMIT_EXCLUDE=".gitignore
 **/.gitignore
 .gitattributes
 **/.gitattributes"
+
+#===============================================================================
+# NETWORK ISOLATION
+#
+# Default network mode for containers. Options: none, filtered, open
+# - none:     Complete network isolation (--network=none)
+# - filtered: DNS-based allowlist filtering (default, recommended)
+# - open:     Unrestricted network access (not recommended)
+#===============================================================================
+
+readonly KAPSIS_DEFAULT_NETWORK_MODE="filtered"

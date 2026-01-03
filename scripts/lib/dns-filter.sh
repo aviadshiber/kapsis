@@ -42,14 +42,13 @@ _DNS_FILTER_STARTED=false
 # LOGGING HELPERS
 #===============================================================================
 
-# Simple logging if the main logging library isn't loaded
-if ! type log_info &>/dev/null; then
-    log_info() { echo "[DNS-FILTER] INFO: $*" >&2; }
-    log_debug() { [[ -n "${KAPSIS_DEBUG:-}" ]] && echo "[DNS-FILTER] DEBUG: $*" >&2; }
-    log_warn() { echo "[DNS-FILTER] WARN: $*" >&2; }
-    log_error() { echo "[DNS-FILTER] ERROR: $*" >&2; }
-    log_success() { echo "[DNS-FILTER] SUCCESS: $*" >&2; }
-fi
+# Define logging fallbacks for any missing functions
+# Each function is checked independently since partial definitions may exist
+type log_info &>/dev/null || log_info() { echo "[DNS-FILTER] INFO: $*" >&2; }
+type log_debug &>/dev/null || log_debug() { [[ -n "${KAPSIS_DEBUG:-}" ]] && echo "[DNS-FILTER] DEBUG: $*" >&2 || true; }
+type log_warn &>/dev/null || log_warn() { echo "[DNS-FILTER] WARN: $*" >&2; }
+type log_error &>/dev/null || log_error() { echo "[DNS-FILTER] ERROR: $*" >&2; }
+type log_success &>/dev/null || log_success() { echo "[DNS-FILTER] SUCCESS: $*" >&2; }
 
 #===============================================================================
 # DOMAIN VALIDATION
@@ -167,18 +166,19 @@ EOF
             log_warn "yq not found, using environment-based allowlist only"
         else
             # Extract all domains from the allowlist (hosts, registries, custom, containers, ai)
+            # Uses yq v4 (mikefarah/yq) syntax
             local domains
-            domains=$(yq -r '
-                .network.allowlist.hosts // [] | .[] // empty,
-                .network.allowlist.registries // [] | .[] // empty,
-                .network.allowlist.containers // [] | .[] // empty,
-                .network.allowlist.ai // [] | .[] // empty,
-                .network.allowlist.custom // [] | .[] // empty
+            domains=$(yq eval '
+                ((.network.allowlist.hosts // [])[] // ""),
+                ((.network.allowlist.registries // [])[] // ""),
+                ((.network.allowlist.containers // [])[] // ""),
+                ((.network.allowlist.ai // [])[] // ""),
+                ((.network.allowlist.custom // [])[] // "")
             ' "$allowlist_file" 2>/dev/null | sort -u)
 
             # Extract DNS servers from allowlist if present
             local allowlist_dns
-            allowlist_dns=$(yq -r '.network.dns_servers // [] | .[]' "$allowlist_file" 2>/dev/null | head -1)
+            allowlist_dns=$(yq eval '(.network.dns_servers // [])[]' "$allowlist_file" 2>/dev/null | head -1)
             if [[ -n "$allowlist_dns" ]]; then
                 primary_dns="$allowlist_dns"
                 log_debug "Using DNS server from allowlist: $primary_dns"

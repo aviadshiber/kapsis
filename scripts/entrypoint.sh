@@ -789,7 +789,7 @@ inject_progress_instructions() {
 # passed via KAPSIS_DNS_ALLOWLIST environment variable.
 #===============================================================================
 setup_dns_filtering() {
-    local network_mode="${KAPSIS_NETWORK_MODE:-open}"
+    local network_mode="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
 
     if [[ "$network_mode" != "filtered" ]]; then
         log_debug "DNS filtering not enabled (network mode: $network_mode)"
@@ -841,7 +841,7 @@ setup_dns_filtering() {
 # Abort container if DNS filtering is required but fails to initialize
 #===============================================================================
 init_dns_filtering_or_fail() {
-    local network_mode="${KAPSIS_NETWORK_MODE:-open}"
+    local network_mode="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
 
     # Only enforce fail-safe for filtered mode
     if [[ "$network_mode" != "filtered" ]]; then
@@ -883,7 +883,7 @@ print_welcome() {
     [[ -f "/task-spec.md" ]] && echo "Spec File:   /task-spec.md"
 
     # Show network mode
-    local network_mode="${KAPSIS_NETWORK_MODE:-open}"
+    local network_mode="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
     case "$network_mode" in
         none)     echo "Network:     isolated (no access)" ;;
         filtered) echo "Network:     filtered (DNS allowlist)" ;;
