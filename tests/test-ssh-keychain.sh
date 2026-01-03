@@ -177,17 +177,19 @@ test_custom_fingerprint_not_found() {
 test_github_fingerprints_fetch() {
     log_test "Can fetch GitHub official fingerprints"
 
-    # Skip if no network or rate limited
+    # Fetch API response and check for rate limiting
     local api_response
-    api_response=$(curl -sS --max-time 5 https://api.github.com/meta 2>/dev/null) || {
-        log_skip "No network access to GitHub API"
-        return 0
+    api_response=$(curl -sS --max-time 10 https://api.github.com/meta 2>&1) || {
+        log_fail "Network error fetching GitHub API - rerun CI"
+        return 1
     }
 
-    # Check if we got a valid response with ssh_key_fingerprints (not rate limited)
+    # Check if rate limited (response won't have ssh_key_fingerprints)
     if ! echo "$api_response" | jq -e '.ssh_key_fingerprints' >/dev/null 2>&1; then
-        log_skip "GitHub API rate limited or invalid response"
-        return 0
+        log_warn "GitHub API response (check for rate limiting):"
+        echo "$api_response" | head -5 >&2
+        log_fail "GitHub API rate limited or invalid response - rerun CI"
+        return 1
     fi
 
     source "$SSH_KEYCHAIN_SCRIPT"
