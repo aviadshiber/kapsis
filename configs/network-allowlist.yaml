@@ -85,6 +85,7 @@ network:
       - "*.quay.io"
 
     # AI API endpoints (for AI coding agents)
+    # Only major providers included by default - add others to custom section
     ai:
       # Anthropic (Claude Code, Claude API)
       - api.anthropic.com
@@ -95,65 +96,32 @@ network:
       # OpenAI (Codex CLI, ChatGPT, GPT API)
       - api.openai.com
       - "*.openai.com"
-      - chat.openai.com
-      - platform.openai.com
 
       # Google (Gemini CLI, Vertex AI)
       - generativelanguage.googleapis.com
-      - "*.googleapis.com"
-      - gemini.google.com
-      - "*.gemini.google.com"
       - aiplatform.googleapis.com
+      - gemini.google.com
 
       # Amazon (CodeWhisperer, Bedrock)
-      - codewhisperer.amazonaws.com
-      - "*.codewhisperer.amazonaws.com"
       - bedrock.amazonaws.com
       - "*.bedrock.amazonaws.com"
       - bedrock-runtime.amazonaws.com
+      - codewhisperer.amazonaws.com
 
       # Microsoft (GitHub Copilot, Azure OpenAI)
-      - copilot.github.com
-      - "*.copilot.github.com"
       - api.githubcopilot.com
       - "*.githubcopilot.com"
       - openai.azure.com
       - "*.openai.azure.com"
-      - cognitiveservices.azure.com
-      - "*.cognitiveservices.azure.com"
 
-      # Cohere
-      - api.cohere.ai
-      - "*.cohere.ai"
-
-      # Mistral
-      - api.mistral.ai
-      - "*.mistral.ai"
-
-      # Hugging Face
-      - huggingface.co
-      - "*.huggingface.co"
-      - api-inference.huggingface.co
-
-      # Replicate
-      - api.replicate.com
-      - "*.replicate.com"
-
-      # Together AI
-      - api.together.xyz
-      - "*.together.xyz"
-
-      # Groq
-      - api.groq.com
-      - "*.groq.com"
-
-      # Perplexity
-      - api.perplexity.ai
-      - "*.perplexity.ai"
-
-      # Aider (uses above APIs, but may need sentry for telemetry)
-      - sentry.io
-      - "*.sentry.io"
+      # Other AI providers (uncomment if needed):
+      # - api.cohere.ai          # Cohere
+      # - api.mistral.ai         # Mistral
+      # - huggingface.co         # Hugging Face
+      # - api.replicate.com      # Replicate
+      # - api.together.xyz       # Together AI
+      # - api.groq.com           # Groq
+      # - api.perplexity.ai      # Perplexity
 
     # Custom/corporate hosts (add your internal registries here)
     custom:

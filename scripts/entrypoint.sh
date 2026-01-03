@@ -837,6 +837,36 @@ setup_dns_filtering() {
 }
 
 #===============================================================================
+# DNS FILTERING WITH FAIL-SAFE
+# Abort container if DNS filtering is required but fails to initialize
+#===============================================================================
+init_dns_filtering_or_fail() {
+    local network_mode="${KAPSIS_NETWORK_MODE:-open}"
+
+    # Only enforce fail-safe for filtered mode
+    if [[ "$network_mode" != "filtered" ]]; then
+        log_debug "DNS fail-safe not required (network mode: $network_mode)"
+        return 0
+    fi
+
+    # In filtered mode, DNS filtering MUST succeed
+    if ! setup_dns_filtering; then
+        log_error "=========================================="
+        log_error "SECURITY: DNS filtering failed to initialize"
+        log_error "=========================================="
+        log_error "Filtered network mode requires working DNS filtering."
+        log_error "Aborting to prevent unfiltered network access."
+        log_error ""
+        log_error "Options:"
+        log_error "  --network-mode=none   (complete network isolation)"
+        log_error "  --network-mode=open   (unrestricted access)"
+        log_error "  Fix the DNS configuration and retry"
+        log_error "=========================================="
+        exit 1
+    fi
+}
+
+#===============================================================================
 # PRINT WELCOME BANNER
 #===============================================================================
 print_welcome() {
@@ -891,7 +921,7 @@ main() {
 
     # Set up DNS filtering if in filtered network mode
     # Must happen early so all subsequent network operations go through the filter
-    setup_dns_filtering
+    init_dns_filtering_or_fail
 
     if [[ "$sandbox_mode" == "worktree" ]] || setup_worktree_git; then
         # Worktree mode: git is already set up by host

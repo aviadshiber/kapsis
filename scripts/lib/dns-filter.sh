@@ -123,6 +123,11 @@ no-resolv
 no-poll
 no-hosts
 
+# Security: prevent DNS rebinding attacks
+# Rejects responses containing private IP ranges (RFC1918)
+stop-dns-rebind
+rebind-localhost-ok
+
 # Listen only on localhost
 listen-address=127.0.0.1
 bind-interfaces
@@ -403,6 +408,12 @@ dns_filter_init() {
         # Don't fail completely - dnsmasq is running
     fi
 
+    # Verify filtering is actually working
+    if ! verify_dns_filtering; then
+        log_error "DNS filtering verification failed"
+        return 1
+    fi
+
     log_success "DNS filtering initialized and active"
     return 0
 }
@@ -441,4 +452,44 @@ dns_filter_test() {
         log_info "  Result: BLOCKED (lookup failed)"
         return 1
     fi
+}
+
+# Verify DNS filtering is working correctly
+# Tests that blocked domains fail and optionally that allowed domains resolve
+# Returns: 0 if verification passes, 1 if filtering is not working
+verify_dns_filtering() {
+    local test_allowed="${1:-}"
+    local test_blocked="kapsis-verify-blocked.invalid"
+
+    log_info "Verifying DNS filtering is active..."
+
+    # Test that blocked domain returns NXDOMAIN/0.0.0.0
+    local blocked_result
+    blocked_result=$(nslookup "$test_blocked" 127.0.0.1 2>&1) || true
+
+    if echo "$blocked_result" | grep -qE "(NXDOMAIN|0\.0\.0\.0|SERVFAIL|can't find)"; then
+        log_debug "Blocked domain test passed (returned NXDOMAIN)"
+    else
+        log_error "DNS filtering verification FAILED"
+        log_error "Blocked domain '$test_blocked' should not resolve but got:"
+        log_error "$blocked_result"
+        return 1
+    fi
+
+    # If an allowed domain was provided, verify it resolves
+    if [[ -n "$test_allowed" ]]; then
+        local allowed_result
+        allowed_result=$(nslookup "$test_allowed" 127.0.0.1 2>&1) || true
+
+        if echo "$allowed_result" | grep -qE "Address:.*[0-9]+\.[0-9]+"; then
+            log_debug "Allowed domain test passed ($test_allowed resolved)"
+        else
+            log_warn "Allowed domain '$test_allowed' did not resolve"
+            log_warn "This may indicate network issues, not a filtering failure"
+            # Don't fail - could be transient network issue
+        fi
+    fi
+
+    log_success "DNS filtering verified"
+    return 0
 }
