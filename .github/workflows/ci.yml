@@ -24,8 +24,8 @@ jobs:
       scripts: ${{ steps.filter.outputs.scripts }}
       container: ${{ steps.filter.outputs.container }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36  # v3
         id: filter
         with:
           filters: |
@@ -51,7 +51,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
@@ -90,6 +90,106 @@ jobs:
           fi
           echo "All scripts passed ShellCheck!"
 
+  # Verify supply chain pinning for security
+  verify-pinning:
+    name: Verify Supply Chain Pinning
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+
+      - name: Verify base image digest pinning
+        run: |
+          echo "Verifying base image supply chain pinning..."
+
+          # 1. Check Containerfile uses digest reference (not floating tag)
+          if grep -qE "^FROM ubuntu:24\.04$" Containerfile; then
+            echo "::error::Base image not pinned to digest in Containerfile"
+            echo "Found: FROM ubuntu:24.04 (unpinned floating tag)"
+            exit 1
+          fi
+
+          if ! grep -q 'FROM ubuntu@\${BASE_IMAGE_DIGEST}' Containerfile; then
+            echo "::error::Containerfile must use FROM ubuntu@\${BASE_IMAGE_DIGEST}"
+            exit 1
+          fi
+          echo "✓ Containerfile uses digest reference"
+
+          # 2. Extract and validate digests from build-image.sh
+          echo ""
+          echo "Extracting pinned digests from build-image.sh..."
+
+          # Extract digests (format: ["linux/amd64"]="sha256:...")
+          digests=$(grep -oE 'sha256:[a-f0-9]{64}' scripts/build-image.sh || true)
+
+          if [[ -z "$digests" ]]; then
+            echo "::error::No valid SHA256 digests found in build-image.sh"
+            exit 1
+          fi
+
+          # 3. Validate format and verify digests exist in Docker registry
+          echo ""
+          echo "Verifying digests..."
+
+          for digest in $digests; do
+            echo -n "  $digest "
+
+            # Verify digest format (sha256: + 64 hex chars)
+            if ! echo "$digest" | grep -qE '^sha256:[a-f0-9]{64}$'; then
+              echo ""
+              echo "::error::Invalid digest format: $digest"
+              exit 1
+            fi
+
+            # Query Docker Registry V2 API to verify digest exists
+            # Get auth token first (required even for public images)
+            token=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/ubuntu:pull" \
+              --max-time 10 | jq -r '.token' 2>/dev/null || echo "")
+
+            if [[ -z "$token" || "$token" == "null" ]]; then
+              echo "⚠ skipped (auth unavailable)"
+              continue
+            fi
+
+            # Check if digest exists by requesting manifest
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $token" \
+              -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+              "https://registry-1.docker.io/v2/library/ubuntu/manifests/$digest" \
+              --max-time 10 || echo "000")
+
+            case "$http_code" in
+              200) echo "✓ exists in registry" ;;
+              404)
+                echo ""
+                echo "::error::Digest not found in Docker Hub: $digest"
+                echo "This digest does not exist or may have been tampered with."
+                exit 1
+                ;;
+              000) echo "⚠ skipped (network timeout)" ;;
+              *)   echo "⚠ skipped (http $http_code)" ;;
+            esac
+          done
+
+          echo ""
+          echo "✓ All base image digests verified"
+
+      - name: Check GitHub Actions pinned
+        run: |
+          echo "Checking workflow files for unpinned actions..."
+          unpinned=$(grep -rE "uses:.*@v[0-9]+$" .github/workflows/ 2>/dev/null || true)
+          if [[ -n "$unpinned" ]]; then
+            echo "::error::Found unpinned GitHub Actions (using floating version tags)"
+            echo "$unpinned"
+            echo ""
+            echo "Actions must be pinned to commit SHAs for security."
+            echo "Example: uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6"
+            exit 1
+          fi
+          echo "✓ All GitHub Actions are pinned to commit SHAs"
+
   config-validation:
     name: Config Validation
     runs-on: ubuntu-latest
@@ -97,7 +197,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Install dependencies
         run: |
@@ -123,7 +223,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Install test dependencies
         run: |
@@ -166,7 +266,7 @@ jobs:
     if: needs.changes.outputs.container == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Configure git for tests
         run: |
@@ -200,12 +300,12 @@ jobs:
       - name: Generate cache key
         id: cache-key
         run: |
-          # Cache key based on Containerfile and base image references
-          echo "key=kapsis-image-${{ hashFiles('Containerfile', 'scripts/build-image.sh') }}" >> $GITHUB_OUTPUT
+          # Cache key based on Containerfile, build script, and runner architecture
+          echo "key=kapsis-image-${{ runner.arch }}-${{ hashFiles('Containerfile', 'scripts/build-image.sh') }}" >> $GITHUB_OUTPUT
 
       - name: Restore cached container image
         id: cache-restore
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@9255dc7a253b0ccc959486e2bca901246202afeb  # v5
         with:
           path: /tmp/kapsis-image.tar
           key: ${{ steps.cache-key.outputs.key }}
@@ -231,7 +331,7 @@ jobs:
 
       - name: Upload image cache
         if: steps.cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@9255dc7a253b0ccc959486e2bca901246202afeb  # v5
         with:
           path: /tmp/kapsis-image.tar
           key: ${{ steps.cache-key.outputs.key }}
@@ -255,7 +355,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [changes, lint, config-validation, quick-tests, container-tests]
+    needs: [changes, lint, verify-pinning, config-validation, quick-tests, container-tests]
     if: always()
     steps:
       - name: Check all jobs passed
@@ -267,9 +367,13 @@ jobs:
             exit 0
           fi
 
-          # Script changes detected - lint, config-validation, and quick-tests must pass
+          # Script changes detected - lint, verify-pinning, config-validation, and quick-tests must pass
           if [[ "${{ needs.lint.result }}" != "success" ]]; then
             echo "Lint job failed"
+            exit 1
+          fi
+          if [[ "${{ needs.verify-pinning.result }}" != "success" ]]; then
+            echo "Supply chain pinning verification job failed"
             exit 1
           fi
           if [[ "${{ needs.config-validation.result }}" != "success" ]]; then

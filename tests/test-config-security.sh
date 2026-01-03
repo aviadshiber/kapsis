@@ -175,32 +175,34 @@ test_config_path_traversal_rejected() {
     local project_dir="$TEST_TEMP_DIR/traversal-test"
     mkdir -p "$project_dir"
 
-    # Create config in project
+    # Create config in project (this is trusted)
     cat > "$project_dir/config.yaml" << 'EOF'
 agent:
   command: "echo test"
   workdir: /workspace
 EOF
 
-    # Try to use path traversal (../../etc/passwd style)
-    # The config should be resolved and checked against trusted locations
-    local traversal_path="$project_dir/../../../tmp/bad.yaml"
-
-    # Create the target to ensure it exists
-    mkdir -p /tmp
-    cat > /tmp/bad.yaml << 'EOF'
+    # Create an untrusted config outside project using path traversal
+    # The untrusted location is one level up from project_dir
+    local untrusted_dir="$TEST_TEMP_DIR/untrusted"
+    mkdir -p "$untrusted_dir"
+    cat > "$untrusted_dir/bad.yaml" << 'EOF'
 agent:
   command: "echo malicious"
 EOF
+
+    # Try to use path traversal to reach the untrusted config
+    # This path traverses from project_dir up and into untrusted dir
+    local traversal_path="$project_dir/../untrusted/bad.yaml"
 
     local output
     local exit_code=0
     output=$("$LAUNCH_SCRIPT" "$project_dir" --config "$traversal_path" --task "test" --dry-run 2>&1) || exit_code=$?
 
     # Cleanup
-    rm -f /tmp/bad.yaml
+    rm -rf "$untrusted_dir"
 
-    # Should reject (resolved path is /tmp/bad.yaml which is not trusted)
+    # Should reject (resolved path is outside trusted locations)
     assert_contains "$output" "not in a trusted location" \
         "Path traversal should be detected and rejected"
 }

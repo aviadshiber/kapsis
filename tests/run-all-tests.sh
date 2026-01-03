@@ -45,7 +45,7 @@ get_tests_for_category() {
             echo "test-maven-snapshot-block.sh test-maven-auth.sh test-gradle-cache-isolation.sh"
             ;;
         security)
-            echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh test-ssh-keychain.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-config-security.sh"
+            echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh test-ssh-keychain.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-config-security.sh test-network-isolation.sh test-scope-validation.sh"
             ;;
         git)
             echo "test-git-new-branch.sh test-git-auto-commit-push.sh test-worktree-isolation.sh test-push-verification.sh test-git-excludes.sh test-validate-staged-files.sh test-coauthor-fork.sh"
@@ -69,7 +69,7 @@ ALL_CATEGORIES="libs agent validation status filesystem maven security git clean
 
 # Quick tests (no container required)
 # These tests either don't need a container or gracefully skip container-dependent tests
-QUICK_TESTS="test-compat.sh test-logging.sh test-json-utils.sh test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-status-reporting.sh test-status-hooks.sh test-preflight-check.sh test-push-verification.sh test-ssh-keychain.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-agent-config-mounts.sh test-gradle-cache-isolation.sh test-agent-image-build.sh test-version-fetch.sh test-version-management.sh test-git-excludes.sh test-validate-staged-files.sh test-coauthor-fork.sh test-config-security.sh test-post-container-exit-code.sh"
+QUICK_TESTS="test-compat.sh test-logging.sh test-json-utils.sh test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-status-reporting.sh test-status-hooks.sh test-preflight-check.sh test-push-verification.sh test-ssh-keychain.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-agent-config-mounts.sh test-gradle-cache-isolation.sh test-agent-image-build.sh test-version-fetch.sh test-version-management.sh test-git-excludes.sh test-validate-staged-files.sh test-coauthor-fork.sh test-config-security.sh test-post-container-exit-code.sh test-network-isolation.sh test-scope-validation.sh"
 
 #===============================================================================
 # ARGUMENT PARSING
@@ -137,6 +137,8 @@ main() {
             exit 3
         fi
     else
+        # Export KAPSIS_QUICK_TESTS for individual tests to detect quick mode
+        export KAPSIS_QUICK_TESTS=1
         if [[ "$QUIET_MODE_FLAG" != "true" ]]; then
             log_info "Quick mode - skipping container prerequisites"
         fi

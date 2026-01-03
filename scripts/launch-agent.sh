@@ -21,6 +21,7 @@
 #   --dry-run             Show what would be executed without running
 #   --worktree-mode       Force worktree mode (git worktrees, simpler cleanup)
 #   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
+#   --network-mode <mode> Network isolation: none (isolated), open (default)
 #
 # Examples:
 #   ./launch-agent.sh ~/project --agent claude --task "fix failing tests"
@@ -78,6 +79,8 @@ SANDBOX_MODE=""  # auto-detect, worktree, or overlay
 WORKTREE_PATH=""
 SANITIZED_GIT_PATH=""
 AGENT_ID_AUTO_GENERATED=false  # Track if ID was auto-generated
+# Network isolation mode: none (isolated), open (unrestricted - default for backward compatibility)
+NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}"
 
 # Source shared constants
 source "$SCRIPT_DIR/lib/constants.sh"
@@ -238,6 +241,7 @@ Options:
   --image <name>        Container image to use (e.g., kapsis-claude-cli:latest)
   --worktree-mode       Force worktree mode (requires git repo + branch)
   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
+  --network-mode <mode> Network isolation: none (isolated), open (default, unrestricted)
   -h, --help            Show this help message
 
 Available Agents:
@@ -402,6 +406,10 @@ parse_args() {
                 SANDBOX_MODE="overlay"
                 shift
                 ;;
+            --network-mode)
+                NETWORK_MODE="$2"
+                shift 2
+                ;;
             -h|--help)
                 usage
                 ;;
@@ -439,6 +447,12 @@ validate_inputs() {
     # Validate agent ID format
     if [[ ! "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
         log_error "Invalid agent ID format: $AGENT_ID (must match [a-zA-Z0-9_-]+)"
+        exit 1
+    fi
+
+    # Validate network mode
+    if [[ ! "$NETWORK_MODE" =~ ^(none|open)$ ]]; then
+        log_error "Invalid network mode: $NETWORK_MODE (must be: none, open)"
         exit 1
     fi
 
@@ -705,6 +719,15 @@ parse_config() {
 
         # Parse SSH host verification list
         SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+        # Parse network mode from config (CLI flag takes precedence)
+        if [[ "$NETWORK_MODE" == "open" ]]; then
+            local config_network_mode
+            config_network_mode=$(yq -r '.network.mode // "open"' "$CONFIG_FILE")
+            if [[ "$config_network_mode" =~ ^(none|open)$ ]]; then
+                NETWORK_MODE="$config_network_mode"
+            fi
+        fi
     else
         log_error "yq is required but not installed."
         log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
@@ -1236,6 +1259,17 @@ build_container_command() {
         "--cap-drop=ALL"
     )
 
+    # Network isolation mode
+    case "$NETWORK_MODE" in
+        none)
+            log_info "Network: isolated (no network access)"
+            CONTAINER_CMD+=("--network=none")
+            ;;
+        open)
+            log_warn "Network: unrestricted (consider --network-mode=none for security)"
+            ;;
+    esac
+
     # Add volume mounts
     CONTAINER_CMD+=("${VOLUME_MOUNTS[@]}")
 
@@ -1334,6 +1368,7 @@ main() {
     echo "  Image:         $IMAGE_NAME"
     echo "  Resources:     ${RESOURCE_MEMORY} RAM, ${RESOURCE_CPUS} CPUs"
     echo "  Sandbox Mode:  $SANDBOX_MODE"
+    echo "  Network Mode:  $NETWORK_MODE"
     [[ -n "$BRANCH" ]] && echo "  Branch:        $BRANCH"
     [[ "$SANDBOX_MODE" == "worktree" ]] && echo "  Worktree:      $WORKTREE_PATH"
     [[ -n "$SPEC_FILE" ]] && echo "  Spec File:     $SPEC_FILE"
@@ -1438,6 +1473,14 @@ post_container_worktree() {
         echo "$changes" | head -20 | sed 's/^/  /'
         echo ""
 
+        # Security: Validate filesystem scope before proceeding
+        source "$SCRIPT_DIR/lib/validate-scope.sh"
+        if ! validate_scope_worktree "$WORKTREE_PATH"; then
+            log_error "Aborting due to scope violation"
+            status_complete 1 "Scope violation detected"
+            return 1
+        fi
+
         # Run post-container git operations on HOST
         source "$SCRIPT_DIR/post-container-git.sh"
         # post_container_git sets PR_URL global variable
@@ -1487,6 +1530,16 @@ post_container_overlay() {
                 echo "  ${file#"${UPPER_DIR}"/}"
             done | head -20
             echo ""
+
+            # Security: Validate filesystem scope before proceeding
+            source "$SCRIPT_DIR/lib/validate-scope.sh"
+            if ! validate_scope_overlay "$UPPER_DIR"; then
+                log_error "Aborting due to scope violation"
+                status_complete 1 "Scope violation detected"
+                echo "Upper directory preserved: $UPPER_DIR"
+                return 1
+            fi
+
             echo "Upper directory: $UPPER_DIR"
             echo ""
 

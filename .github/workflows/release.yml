@@ -41,7 +41,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Determine version
         id: version
@@ -60,7 +60,7 @@ jobs:
     needs: validate
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y shellcheck jq
@@ -81,7 +81,7 @@ jobs:
     needs: validate  # Run in parallel with test job
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Install Podman
         run: |
@@ -96,7 +96,7 @@ jobs:
 
       - name: Restore cached container image
         id: cache-restore
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@9255dc7a253b0ccc959486e2bca901246202afeb  # v5
         with:
           path: /tmp/kapsis-base-image.tar
           key: ${{ steps.cache-key.outputs.key }}
@@ -129,7 +129,7 @@ jobs:
 
       - name: Upload image cache
         if: steps.cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@9255dc7a253b0ccc959486e2bca901246202afeb  # v5
         with:
           path: /tmp/kapsis-base-image.tar
           key: ${{ steps.cache-key.outputs.key }}
@@ -142,7 +142,7 @@ jobs:
           podman save "kapsis:${VERSION}" | gzip > "kapsis-image-${VERSION}.tar.gz"
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6
         with:
           name: container-image
           path: kapsis-image-*.tar.gz
@@ -154,10 +154,10 @@ jobs:
     needs: [validate, test, build]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Download container image
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7
         with:
           name: container-image
 
@@ -275,7 +275,7 @@ jobs:
           cat release_notes.md
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2
         with:
           tag_name: v${{ needs.validate.outputs.version }}
           name: Kapsis v${{ needs.validate.outputs.version }}
@@ -312,14 +312,14 @@ jobs:
       - name: Generate GitHub App token
         id: app-token
         if: steps.check-app.outputs.configured == 'true'
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf  # v2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - name: Checkout code
         if: steps.check-app.outputs.configured == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
         with:
           ref: main
           # Use GitHub App token to bypass branch protection when pushing
@@ -605,7 +605,7 @@ jobs:
     if: needs.update-packages.result == 'success'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
         with:
           ref: main
           # Need to fetch the updated formula from main
