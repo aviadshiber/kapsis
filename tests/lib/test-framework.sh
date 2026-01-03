@@ -1043,6 +1043,8 @@ run_podman_isolated() {
             -v "${container_id}-m2:/home/developer/.m2/repository" \
             -e KAPSIS_AGENT_ID="$container_id" \
             -e KAPSIS_USE_FUSE_OVERLAY=true \
+            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+            -e CI="${CI:-}" \
             "$@" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "$command" 2>&1
@@ -1057,6 +1059,8 @@ run_podman_isolated() {
             -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
             -v "${container_id}-m2:/home/developer/.m2/repository" \
             -e KAPSIS_AGENT_ID="$container_id" \
+            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+            -e CI="${CI:-}" \
             "$@" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "$command" 2>&1
@@ -1142,6 +1146,8 @@ run_in_worktree_container() {
         -e KAPSIS_AGENT_ID="$WORKTREE_TEST_ID" \
         -e KAPSIS_SANDBOX_MODE="worktree" \
         -e KAPSIS_WORKTREE_MODE="true" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+        -e CI="${CI:-}" \
         "$@" \
         "$KAPSIS_TEST_IMAGE" \
         bash -c "$command" 2>&1
