@@ -27,6 +27,7 @@ test_branch_flag_creates_branch() {
     # The init_git_branch function in entrypoint creates/checks out the branch
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --hostname "$CONTAINER_TEST_ID" \
         --userns=keep-id \
@@ -176,6 +177,7 @@ test_branch_env_var_passed() {
     # Check env var is set
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e KAPSIS_BRANCH="$branch_name" \

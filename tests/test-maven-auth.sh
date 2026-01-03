@@ -31,6 +31,7 @@ test_token_decoding() {
     # Run container with token and check decoded values
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token" \
@@ -56,6 +57,7 @@ test_token_decoding_with_special_chars() {
 
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token" \
@@ -79,6 +81,7 @@ test_token_not_decoded_if_credentials_set() {
 
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token" \
@@ -101,6 +104,7 @@ test_invalid_token_handled_gracefully() {
     local output
     local exit_code=0
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e DOCKER_ARTIFACTORY_TOKEN="not-valid-base64!!!" \
@@ -122,6 +126,7 @@ test_ge_extension_prepopulated() {
     # Check that GE extension jar exists in user's .m2/repository
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -v "kapsis-test-m2:/home/developer/.m2/repository" \
@@ -141,6 +146,7 @@ test_ge_extension_entrypoint_log() {
 
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -v "kapsis-test-m2-log:/home/developer/.m2/repository" \
@@ -165,6 +171,7 @@ test_maven_mirror_url_substitution() {
     # which can have connection timeouts in CI environments
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e KAPSIS_MAVEN_MIRROR_URL="$test_mirror_url" \
@@ -186,6 +193,7 @@ test_maven_credentials_in_settings() {
 
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         "$KAPSIS_TEST_IMAGE" \
@@ -208,6 +216,7 @@ test_entrypoint_logs_token_decoding() {
 
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token" \
@@ -276,6 +285,7 @@ run_in_container_with_env() {
     local command="$1"
 
     podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         "${env_args[@]}" \

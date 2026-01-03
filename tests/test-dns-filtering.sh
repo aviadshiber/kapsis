@@ -306,6 +306,7 @@ test_dns_filter_start_inside_container() {
 
     # Run container and try to start DNS filtering
     output=$(timeout 30 podman run --rm \
+        -e CI="${CI:-true}" \
         -e KAPSIS_NETWORK_MODE=filtered \
         -e KAPSIS_DNS_ALLOWLIST="github.com,gitlab.com" \
         -e KAPSIS_DNS_SERVERS="8.8.8.8" \
@@ -340,6 +341,7 @@ test_filtered_mode_allows_allowlisted_domain() {
     # Run container with filtered mode and test DNS resolution
     # Note: This test requires network access to actually resolve domains
     output=$(timeout 60 podman run --rm \
+        -e CI="${CI:-true}" \
         -e KAPSIS_NETWORK_MODE=filtered \
         -e KAPSIS_DNS_ALLOWLIST="github.com,*.github.com" \
         -e KAPSIS_DNS_SERVERS="8.8.8.8" \
@@ -380,6 +382,7 @@ test_filtered_mode_blocks_non_allowlisted_domain() {
 
     # Run container with filtered mode and test DNS resolution for blocked domain
     output=$(timeout 60 podman run --rm \
+        -e CI="${CI:-true}" \
         -e KAPSIS_NETWORK_MODE=filtered \
         -e KAPSIS_DNS_ALLOWLIST="github.com" \
         -e KAPSIS_DNS_SERVERS="8.8.8.8" \
@@ -420,6 +423,7 @@ test_entrypoint_starts_dns_filter() {
 
     # Run container through entrypoint with filtered mode
     output=$(timeout 60 podman run --rm \
+        -e CI="${CI:-true}" \
         -e KAPSIS_NETWORK_MODE=filtered \
         -e KAPSIS_DNS_ALLOWLIST="github.com,gitlab.com" \
         -e KAPSIS_DNS_SERVERS="8.8.8.8" \

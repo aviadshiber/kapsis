@@ -150,6 +150,7 @@ test_gradle_home_in_container() {
 
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e GRADLE_USER_HOME="/home/developer/.gradle" \
@@ -182,6 +183,7 @@ test_agents_use_isolated_gradle_volumes() {
 
     # Agent 1 writes a marker file
     podman run --rm \
+        -e CI="${CI:-true}" \
         --userns=keep-id \
         -v "$agent1_vol:/home/developer/.gradle" \
         "$KAPSIS_TEST_IMAGE" \
@@ -189,6 +191,7 @@ test_agents_use_isolated_gradle_volumes() {
 
     # Agent 2 writes a different marker file
     podman run --rm \
+        -e CI="${CI:-true}" \
         --userns=keep-id \
         -v "$agent2_vol:/home/developer/.gradle" \
         "$KAPSIS_TEST_IMAGE" \
@@ -197,6 +200,7 @@ test_agents_use_isolated_gradle_volumes() {
     # Check Agent 1's marker
     local agent1_marker
     agent1_marker=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --userns=keep-id \
         -v "$agent1_vol:/home/developer/.gradle" \
         "$KAPSIS_TEST_IMAGE" \
@@ -205,6 +209,7 @@ test_agents_use_isolated_gradle_volumes() {
     # Check Agent 2's marker
     local agent2_marker
     agent2_marker=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --userns=keep-id \
         -v "$agent2_vol:/home/developer/.gradle" \
         "$KAPSIS_TEST_IMAGE" \
@@ -234,6 +239,7 @@ test_gradle_cache_persistence() {
 
     # First run: write data
     podman run --rm \
+        -e CI="${CI:-true}" \
         --userns=keep-id \
         -v "$vol_name:/home/developer/.gradle" \
         "$KAPSIS_TEST_IMAGE" \
@@ -242,6 +248,7 @@ test_gradle_cache_persistence() {
     # Second run: read data
     local cached_content
     cached_content=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --userns=keep-id \
         -v "$vol_name:/home/developer/.gradle" \
         "$KAPSIS_TEST_IMAGE" \

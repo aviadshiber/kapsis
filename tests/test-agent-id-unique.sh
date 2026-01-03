@@ -27,6 +27,7 @@ test_same_id_blocked() {
 
     # Start first container in background (sleeps for a bit)
     podman run -d \
+        -e CI="${CI:-true}" \
         --name "$agent_id" \
         --hostname "$agent_id" \
         --userns=keep-id \
@@ -43,6 +44,7 @@ test_same_id_blocked() {
     local output
     local exit_code=0
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$agent_id" \
         --hostname "$agent_id" \
         "$KAPSIS_TEST_IMAGE" \
@@ -76,6 +78,7 @@ test_different_ids_allowed() {
 
     # Start first container
     podman run -d \
+        -e CI="${CI:-true}" \
         --name "$agent_id1" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -89,6 +92,7 @@ test_different_ids_allowed() {
     # Start second container with different ID
     local exit_code=0
     podman run -d \
+        -e CI="${CI:-true}" \
         --name "$agent_id2" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -123,6 +127,7 @@ test_volumes_isolated() {
 
     # Create files in container 1's volume
     podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$agent_id1" \
         --userns=keep-id \
         -v "${agent_id1}-m2:/home/developer/.m2/repository" \
@@ -134,6 +139,7 @@ test_volumes_isolated() {
     # Check container 2 doesn't see the file
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$agent_id2" \
         --userns=keep-id \
         -v "${agent_id2}-m2:/home/developer/.m2/repository" \
@@ -160,6 +166,7 @@ test_sandbox_dirs_isolated() {
 
     # Create file in container 1
     podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$agent_id1" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -173,6 +180,7 @@ test_sandbox_dirs_isolated() {
     # Run container 2 and check for file
     local output
     output=$(podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$agent_id2" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -215,6 +223,7 @@ test_reuse_after_cleanup() {
     # First run
     mkdir -p "$sandbox/upper" "$sandbox/work"
     podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$agent_id" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -232,6 +241,7 @@ test_reuse_after_cleanup() {
     # Second run with same ID should work
     local exit_code=0
     podman run --rm \
+        -e CI="${CI:-true}" \
         --name "$agent_id" \
         --userns=keep-id \
         --security-opt label=disable \

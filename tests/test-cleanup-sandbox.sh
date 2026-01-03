@@ -53,6 +53,7 @@ test_named_volumes_removable() {
 
     # Use volume in container
     podman run --rm \
+        -e CI="${CI:-true}" \
         --name "vol-test-$$" \
         --userns=keep-id \
         -v "${volume_name}:/data" \
@@ -111,6 +112,7 @@ test_force_remove_running() {
 
         # Start long-running container with fuse-overlayfs
         podman run -d \
+        -e CI="${CI:-true}" \
             --name "$container_name" \
             --userns=keep-id \
             --device /dev/fuse \
@@ -136,6 +138,7 @@ test_force_remove_running() {
 
         # Start long-running container
         podman run -d \
+        -e CI="${CI:-true}" \
             --name "$container_name" \
             --userns=keep-id \
             --security-opt label=disable \
