@@ -61,6 +61,7 @@ git worktree remove ~/.kapsis/worktrees/kapsis-feature
 - Use `shellcheck` for linting and prefer the shared logger in `scripts/lib/logging.sh`.
 - Test files live in `tests/` and follow `test-<feature>.sh` naming.
 - **Cross-platform compatibility**: All commands must work on both macOS and Linux. Use `scripts/lib/compat.sh` for OS-specific operations (e.g., `sed -i`, `date`, `stat`). Avoid GNU-only flags.
+- **Arithmetic with `set -e`**: Bash arithmetic `(( ))` returns exit code 1 when the result is 0, which causes script exit under `set -e`. For counters and accumulators, use `((count++)) || true` or `((total += n)) || true`. Only omit `|| true` for arithmetic that should fail the script when the result is zero.
 
 ## Pre-Push Checklist
 Before pushing changes, run these checks locally to avoid CI feedback delays:
