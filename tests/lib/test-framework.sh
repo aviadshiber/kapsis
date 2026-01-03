@@ -46,6 +46,12 @@ source "$KAPSIS_ROOT/scripts/lib/constants.sh"
 # CI sets KAPSIS_IMAGE="kapsis-test:ci", local dev uses kapsis-sandbox:latest
 KAPSIS_TEST_IMAGE="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 
+# Standard environment variables to pass to containers
+# These should be used by all podman run calls in tests
+# Usage: podman run ... $KAPSIS_TEST_CONTAINER_ENV ...
+# Or:    podman run ... -e CI="${CI:-}" -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" ...
+export CI="${CI:-}"  # Pass CI env to detect CI environments in containers
+
 #===============================================================================
 # CROSS-PLATFORM HELPERS
 #===============================================================================
@@ -740,6 +746,7 @@ run_in_container() {
             -e KAPSIS_PROJECT="test" \
             -e KAPSIS_USE_FUSE_OVERLAY=true \
             -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+            -e CI="${CI:-}" \
             --timeout "$timeout" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "$command" 2>&1
@@ -758,6 +765,7 @@ run_in_container() {
             -e KAPSIS_AGENT_ID="$CONTAINER_TEST_ID" \
             -e KAPSIS_PROJECT="test" \
             -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+            -e CI="${CI:-}" \
             --timeout "$timeout" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "$command" 2>&1
@@ -782,6 +790,7 @@ run_in_container_detached() {
         -e KAPSIS_AGENT_ID="$container_name" \
         -e KAPSIS_PROJECT="test" \
         -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+        -e CI="${CI:-}" \
         "$KAPSIS_TEST_IMAGE" \
         bash -c "$command" 2>&1
 }
