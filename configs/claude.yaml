@@ -49,6 +49,12 @@ git:
   co_authors:
     - "Aviad Shiber <aviadshiber@gmail.com>"
 
+  # Files to exclude from commits (prevents accidental commits)
+  # Default: .gitignore, .gitattributes (and nested variants)
+  commit_exclude:
+    - ".gitignore"
+    - "**/.gitignore"
+
   # Fork-first workflow for contributing to external repos
   # When enabled, will fork the repo and push to fork if direct push fails
   fork_workflow:

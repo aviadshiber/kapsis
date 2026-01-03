@@ -38,3 +38,21 @@ readonly CONTAINER_WORKSPACE_PATH="/workspace"
 
 # Status directory mount point inside container
 readonly CONTAINER_STATUS_PATH="/kapsis-status"
+
+#===============================================================================
+# COMMIT EXCLUDE PATTERNS (Issue #89)
+#
+# Files matching these patterns are automatically unstaged before commit.
+# This provides a safety net for files that should never be committed,
+# even if they somehow bypass info/exclude.
+#
+# Users can override with KAPSIS_COMMIT_EXCLUDE environment variable.
+# Format: newline-separated list of gitignore-style patterns.
+#===============================================================================
+
+# Default patterns for files that should never be committed by Kapsis
+# These are typically config files that the sandbox may modify but shouldn't commit
+readonly KAPSIS_DEFAULT_COMMIT_EXCLUDE=".gitignore
+**/.gitignore
+.gitattributes
+**/.gitattributes"

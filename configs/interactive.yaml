@@ -36,3 +36,8 @@ maven:
 git:
   auto_push:
     enabled: false  # Manual control in interactive mode
+
+  # Files to exclude from commits (if you commit manually)
+  commit_exclude:
+    - ".gitignore"
+    - "**/.gitignore"

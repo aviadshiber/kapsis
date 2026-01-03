@@ -29,8 +29,12 @@ if [[ -z "${_KAPSIS_STATUS_LOADED:-}" ]]; then
     source "$POST_GIT_SCRIPT_DIR/lib/status.sh"
 fi
 
+# Source shared constants (provides KAPSIS_DEFAULT_COMMIT_EXCLUDE)
+source "$POST_GIT_SCRIPT_DIR/lib/constants.sh"
+
 # Note: logging functions are provided by lib/logging.sh
 # Note: status functions are provided by lib/status.sh
+# Note: constants are provided by lib/constants.sh
 
 #===============================================================================
 # VALIDATE AND CLEAN STAGED FILES
@@ -40,6 +44,10 @@ fi
 # - Literal ~ paths (tilde not expanded, creates directory named "~")
 # - .kapsis/ internal files
 # - Submodule references (mode 160000) that weren't intentional
+# - Files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
+#
+# The KAPSIS_COMMIT_EXCLUDE patterns provide user-configurable exclusions
+# for files that should never be committed, such as .gitignore modifications.
 #
 # Returns: 0 if validation passed (or issues were auto-fixed), 1 if blocking issues
 #===============================================================================
@@ -93,9 +101,50 @@ validate_staged_files() {
         has_issues=1
     fi
 
+    # Check for files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
+    # This prevents committing files like .gitignore that were modified by Kapsis
+    local exclude_patterns="${KAPSIS_COMMIT_EXCLUDE:-$KAPSIS_DEFAULT_COMMIT_EXCLUDE}"
+    if [[ -n "$exclude_patterns" ]]; then
+        local staged_files
+        staged_files=$(git diff --cached --name-only 2>/dev/null || true)
+
+        if [[ -n "$staged_files" ]]; then
+            while IFS= read -r pattern; do
+                [[ -z "$pattern" ]] && continue
+                # Match staged files against pattern
+                # Handle ** glob patterns by converting to regex-compatible form
+                local regex_pattern
+                # Convert gitignore pattern to grep pattern:
+                # - ** matches any path segment(s)
+                # - * matches any characters except /
+                # - Anchor to line start/end for exact matches
+                if [[ "$pattern" == "**/"* ]]; then
+                    # Pattern like **/.gitignore matches at any depth
+                    local base_pattern="${pattern#\*\*/}"
+                    regex_pattern="(^|/)${base_pattern}$"
+                else
+                    # Exact match at root
+                    regex_pattern="^${pattern}$"
+                fi
+
+                local matched_files
+                matched_files=$(echo "$staged_files" | grep -E "$regex_pattern" 2>/dev/null || true)
+                if [[ -n "$matched_files" ]]; then
+                    log_info "Found staged files matching exclude pattern '$pattern':"
+                    while IFS= read -r f; do
+                        [[ -z "$f" ]] && continue
+                        log_info "  - $f (excluded by KAPSIS_COMMIT_EXCLUDE)"
+                        suspicious_files+=("$f")
+                    done <<< "$matched_files"
+                    has_issues=1
+                fi
+            done <<< "$exclude_patterns"
+        fi
+    fi
+
     # If issues found, unstage the suspicious files
     if [[ $has_issues -eq 1 ]]; then
-        log_warn "Removing suspicious files from staging..."
+        log_warn "Removing excluded files from staging..."
         for file in "${suspicious_files[@]}"; do
             if [[ -n "$file" ]]; then
                 git reset HEAD -- "$file" 2>/dev/null || true
@@ -109,7 +158,7 @@ validate_staged_files() {
             rm -rf "~" 2>/dev/null || true
         fi
 
-        log_info "Suspicious files removed from staging. Continuing with clean files."
+        log_info "Excluded files removed from staging. Continuing with clean files."
     fi
 
     return 0

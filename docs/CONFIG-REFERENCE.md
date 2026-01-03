@@ -251,6 +251,16 @@ git:
     - "Aviad Shiber <aviadshiber@gmail.com>"
     # - "Another Author <another@example.com>"
 
+  # Commit exclude patterns (issue #89)
+  # Files matching these patterns are automatically unstaged before commit
+  # This prevents accidental commits of files that should stay local
+  # Default: ".gitignore\n**/.gitignore\n.gitattributes\n**/.gitattributes"
+  commit_exclude:
+    - ".gitignore"
+    - "**/.gitignore"
+    - ".gitattributes"
+    - "**/.gitattributes"
+
   # Fork-first workflow for contributing to external repos
   # When enabled, provides fork fallback command when push fails
   fork_workflow:
@@ -655,6 +665,60 @@ environment:
   set:
     CUSTOM_VAR: "${HOST_VAR:-default_value}"
 ```
+
+## Commit Exclude Patterns
+
+Kapsis automatically prevents certain files from being committed. This addresses issue #89 where `.gitignore` modifications were appearing in user PRs.
+
+### How It Works
+
+1. **Internal patterns** use `$GIT_DIR/info/exclude` (never committed, fully transparent)
+2. **Commit-time filtering** unstages files matching `KAPSIS_COMMIT_EXCLUDE` patterns before commit
+
+### Default Excluded Patterns
+
+These files are automatically unstaged before commit:
+- `.gitignore` / `**/.gitignore` - Git ignore files
+- `.gitattributes` / `**/.gitattributes` - Git attributes files
+
+### Configuration
+
+**Via environment variable:**
+
+```bash
+# Custom patterns (newline-separated)
+export KAPSIS_COMMIT_EXCLUDE=".gitignore
+**/.gitignore
+.env.local"
+
+./scripts/launch-agent.sh ~/project --task "implement feature"
+```
+
+**Via config file:**
+
+```yaml
+git:
+  commit_exclude:
+    - ".gitignore"
+    - "**/.gitignore"
+    - ".env.local"
+    - "**/*.bak"
+```
+
+### Pattern Syntax
+
+Patterns follow gitignore syntax:
+- `file.txt` - Matches `file.txt` at root only
+- `**/file.txt` - Matches `file.txt` at any depth
+- `*.log` - Matches any `.log` file at root
+- `**/*.log` - Matches any `.log` file at any depth
+
+### Internal Excludes
+
+These patterns are always excluded via `$GIT_DIR/info/exclude` (transparent to user):
+- `.kapsis/` - Internal Kapsis files
+- `.claude/`, `.codex/`, `.aider/` - AI tool configs
+- `~`, `~/` - Literal tilde paths (failed expansion)
 
 ## Command Line Overrides
 
