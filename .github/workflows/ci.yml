@@ -105,11 +105,13 @@ jobs:
           echo "Checking Containerfile for pinned base image..."
           if grep -qE "^FROM ubuntu:24\.04$" Containerfile; then
             echo "::error::Base image not pinned to digest in Containerfile"
-            echo "Expected: FROM ubuntu@sha256:..."
+            echo "Expected: FROM ubuntu@sha256:... or ARG with digest"
             echo "Found: FROM ubuntu:24.04 (unpinned tag)"
             exit 1
           fi
-          if grep -q "FROM ubuntu@sha256:" Containerfile; then
+          # Check for direct digest or ARG-based digest pattern
+          if grep -q "FROM ubuntu@sha256:" Containerfile || \
+             (grep -q "ARG BASE_IMAGE_DIGEST=sha256:" Containerfile && grep -q 'FROM ubuntu@\${BASE_IMAGE_DIGEST}' Containerfile); then
             echo "✓ Base image is pinned to digest"
           else
             echo "::error::Could not find pinned base image in Containerfile"

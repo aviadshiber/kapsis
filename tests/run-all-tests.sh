@@ -137,6 +137,8 @@ main() {
             exit 3
         fi
     else
+        # Export KAPSIS_QUICK_TESTS for individual tests to detect quick mode
+        export KAPSIS_QUICK_TESTS=1
         if [[ "$QUIET_MODE_FLAG" != "true" ]]; then
             log_info "Quick mode - skipping container prerequisites"
         fi
