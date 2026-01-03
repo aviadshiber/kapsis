@@ -121,14 +121,22 @@ test_network_none_blocks_network() {
     local output
     local exit_code=0
 
+    # Check if required image exists
+    local image_name="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
+    if ! podman image exists "$image_name" 2>/dev/null; then
+        log_test "Skipping - container image '$image_name' not found"
+        return 0
+    fi
+
     # Try to ping in isolated mode - should fail
-    output=$(timeout 30 "$LAUNCH_SCRIPT" "$TEST_PROJECT" \
+    # Use --agent interactive which runs bash with the task
+    output=$(timeout 60 "$LAUNCH_SCRIPT" "$TEST_PROJECT" \
         --network-mode none \
-        --task "ping -c 1 -W 5 8.8.8.8 || echo 'NETWORK_BLOCKED'" \
-        --agent bash \
+        --task "ping -c 1 -W 5 8.8.8.8 && echo 'NETWORK_WORKS' || echo 'NETWORK_BLOCKED'" \
+        --agent interactive \
         2>&1) || exit_code=$?
 
-    # The agent should exit 0 because echo succeeds, but output should show NETWORK_BLOCKED
+    # The container should run and output NETWORK_BLOCKED since ping should fail
     assert_contains "$output" "NETWORK_BLOCKED" "Network should be blocked in isolated mode"
 }
 
@@ -150,15 +158,23 @@ test_network_open_allows_network() {
     local output
     local exit_code=0
 
+    # Check if required image exists
+    local image_name="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
+    if ! podman image exists "$image_name" 2>/dev/null; then
+        log_test "Skipping - container image '$image_name' not found"
+        return 0
+    fi
+
     # Try to access network in open mode - should succeed
-    output=$(timeout 30 "$LAUNCH_SCRIPT" "$TEST_PROJECT" \
+    # Use --agent interactive which runs bash with the task
+    output=$(timeout 60 "$LAUNCH_SCRIPT" "$TEST_PROJECT" \
         --network-mode open \
-        --task "curl -s -o /dev/null -w '%{http_code}' https://github.com --connect-timeout 10 || echo 'NETWORK_FAILED'" \
-        --agent bash \
+        --task "curl -s -o /dev/null -w '%{http_code}' https://github.com --connect-timeout 10 && echo 'NETWORK_WORKS' || echo 'NETWORK_FAILED'" \
+        --agent interactive \
         2>&1) || exit_code=$?
 
-    # Should get HTTP 200 or similar, not NETWORK_FAILED
-    assert_not_contains "$output" "NETWORK_FAILED" "Network should work in open mode"
+    # Should get NETWORK_WORKS, not NETWORK_FAILED
+    assert_contains "$output" "NETWORK_WORKS" "Network should work in open mode"
 }
 
 #===============================================================================
