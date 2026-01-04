@@ -176,6 +176,8 @@ test_entrypoint_with_status_env() {
         --userns=keep-id \
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:ro" \
+        -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         -e KAPSIS_STATUS_PROJECT="test-project" \
         -e KAPSIS_STATUS_AGENT_ID="99" \
         -e KAPSIS_STATUS_BRANCH="feature/entrypoint-test" \
@@ -208,6 +210,8 @@ test_entrypoint_status_file_created() {
         --security-opt label=disable \
         -v "$TEST_PROJECT:/workspace:ro" \
         -v "${CONTAINER_TEST_ID}-status:/kapsis-status" \
+        -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         -e KAPSIS_STATUS_PROJECT="filetest" \
         -e KAPSIS_STATUS_AGENT_ID="7" \
         -e KAPSIS_STATUS_BRANCH="feature/status-test" \

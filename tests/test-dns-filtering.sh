@@ -283,7 +283,7 @@ test_container_has_dnsmasq() {
     fi
 
     local output
-    output=$(podman run --rm "$KAPSIS_TEST_IMAGE" which dnsmasq 2>&1) || true
+    output=$(run_simple_container "which dnsmasq") || true
 
     assert_contains "$output" "/usr/sbin/dnsmasq" "dnsmasq should be installed in container"
 }
@@ -305,7 +305,9 @@ test_dns_filter_start_inside_container() {
     local exit_code=0
 
     # Run container and try to start DNS filtering
+    # shellcheck disable=SC2046  # Word splitting intentional for env args
     output=$(timeout 30 podman run --rm \
+        $(get_test_container_env_args) \
         -e KAPSIS_NETWORK_MODE=filtered \
         -e KAPSIS_DNS_ALLOWLIST="github.com,gitlab.com" \
         -e KAPSIS_DNS_SERVERS="8.8.8.8" \
@@ -339,7 +341,9 @@ test_filtered_mode_allows_allowlisted_domain() {
 
     # Run container with filtered mode and test DNS resolution
     # Note: This test requires network access to actually resolve domains
+    # shellcheck disable=SC2046  # Word splitting intentional for env args
     output=$(timeout 60 podman run --rm \
+        $(get_test_container_env_args) \
         -e KAPSIS_NETWORK_MODE=filtered \
         -e KAPSIS_DNS_ALLOWLIST="github.com,*.github.com" \
         -e KAPSIS_DNS_SERVERS="8.8.8.8" \
@@ -379,7 +383,9 @@ test_filtered_mode_blocks_non_allowlisted_domain() {
     local exit_code=0
 
     # Run container with filtered mode and test DNS resolution for blocked domain
+    # shellcheck disable=SC2046  # Word splitting intentional for env args
     output=$(timeout 60 podman run --rm \
+        $(get_test_container_env_args) \
         -e KAPSIS_NETWORK_MODE=filtered \
         -e KAPSIS_DNS_ALLOWLIST="github.com" \
         -e KAPSIS_DNS_SERVERS="8.8.8.8" \
@@ -419,7 +425,9 @@ test_entrypoint_starts_dns_filter() {
     local exit_code=0
 
     # Run container through entrypoint with filtered mode
+    # shellcheck disable=SC2046  # Word splitting intentional for env args
     output=$(timeout 60 podman run --rm \
+        $(get_test_container_env_args) \
         -e KAPSIS_NETWORK_MODE=filtered \
         -e KAPSIS_DNS_ALLOWLIST="github.com,gitlab.com" \
         -e KAPSIS_DNS_SERVERS="8.8.8.8" \

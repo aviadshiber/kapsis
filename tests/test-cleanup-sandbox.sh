@@ -53,6 +53,8 @@ test_named_volumes_removable() {
 
     # Use volume in container
     podman run --rm \
+        -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "vol-test-$$" \
         --userns=keep-id \
         -v "${volume_name}:/data" \
@@ -81,6 +83,8 @@ test_stopped_container_removable() {
 
     # Run and exit container
     podman run \
+        -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$container_name" \
         --userns=keep-id \
         "$KAPSIS_TEST_IMAGE" \
@@ -111,6 +115,8 @@ test_force_remove_running() {
 
         # Start long-running container with fuse-overlayfs
         podman run -d \
+        -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
             --name "$container_name" \
             --userns=keep-id \
             --device /dev/fuse \
@@ -136,6 +142,8 @@ test_force_remove_running() {
 
         # Start long-running container
         podman run -d \
+        -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
             --name "$container_name" \
             --userns=keep-id \
             --security-opt label=disable \

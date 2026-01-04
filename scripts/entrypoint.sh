@@ -839,9 +839,34 @@ setup_dns_filtering() {
 #===============================================================================
 # DNS FILTERING WITH FAIL-SAFE
 # Abort container if DNS filtering is required but fails to initialize
+#
+# Security model:
+# - If KAPSIS_NETWORK_MODE is explicitly set → enforce that mode
+# - If using default (filtered) and can't filter → abort (fail-safe)
+# - Exception: CI environments (CI=true) auto-fallback to open
 #===============================================================================
+
+# Check if DNS filtering can run in this environment
+# Returns: 0 if environment supports DNS filtering, 1 otherwise
+can_run_dns_filtering() {
+    # Check if dnsmasq is available
+    if ! command -v dnsmasq &>/dev/null; then
+        log_debug "dnsmasq not installed - DNS filtering unavailable"
+        return 1
+    fi
+
+    # Check if we can write to resolv.conf (or if it's managed externally)
+    if [[ ! -w /etc/resolv.conf ]] && [[ ! -w /etc ]]; then
+        log_debug "Cannot modify /etc/resolv.conf - DNS filtering unavailable"
+        return 1
+    fi
+
+    return 0
+}
+
 init_dns_filtering_or_fail() {
     local network_mode="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
+    local explicitly_set="${KAPSIS_NETWORK_MODE:-}"
 
     # Only enforce fail-safe for filtered mode
     if [[ "$network_mode" != "filtered" ]]; then
@@ -849,8 +874,42 @@ init_dns_filtering_or_fail() {
         return 0
     fi
 
-    # In filtered mode, DNS filtering MUST succeed
+    # Check if environment supports DNS filtering before attempting
+    if ! can_run_dns_filtering; then
+        # CI environments auto-fallback to open (avoid breaking CI pipelines)
+        if [[ "${CI:-}" == "true" ]] && [[ -z "$explicitly_set" ]]; then
+            log_warn "CI environment detected - DNS filtering unavailable"
+            log_warn "Falling back to unrestricted network access"
+            export KAPSIS_NETWORK_MODE="open"
+            return 0
+        fi
+
+        # Non-CI or explicit mode: fail-safe
+        log_error "=========================================="
+        log_error "SECURITY: DNS filtering not supported in this environment"
+        log_error "=========================================="
+        log_error "Filtered network mode requires working DNS filtering, but:"
+        log_error "  - dnsmasq may not be installed"
+        log_error "  - resolv.conf may not be writable"
+        log_error "  - Container may lack required capabilities"
+        log_error ""
+        log_error "Options:"
+        log_error "  --network-mode=none   (complete network isolation)"
+        log_error "  --network-mode=open   (unrestricted access)"
+        log_error "=========================================="
+        exit 1
+    fi
+
+    # Environment supports filtering, attempt to set it up
     if ! setup_dns_filtering; then
+        # CI environments auto-fallback to open
+        if [[ "${CI:-}" == "true" ]] && [[ -z "$explicitly_set" ]]; then
+            log_warn "CI environment detected - DNS filtering failed"
+            log_warn "Falling back to unrestricted network access"
+            export KAPSIS_NETWORK_MODE="open"
+            return 0
+        fi
+
         log_error "=========================================="
         log_error "SECURITY: DNS filtering failed to initialize"
         log_error "=========================================="

@@ -63,7 +63,8 @@ test_network_mode_default_is_filtered() {
     local output
     local exit_code=0
 
-    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --task "test" --dry-run 2>&1) || exit_code=$?
+    # Unset KAPSIS_NETWORK_MODE to test actual default (CI may set it to 'open')
+    output=$(unset KAPSIS_NETWORK_MODE; "$LAUNCH_SCRIPT" "$TEST_PROJECT" --task "test" --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should succeed with default network mode"
     assert_not_contains "$output" "--network=none" "Should NOT include --network=none by default"
@@ -129,7 +130,9 @@ test_network_none_blocks_network() {
     local exit_code=0
 
     # Run container with --network=none and try to ping
+    # Use --entrypoint="" to skip the Kapsis entrypoint and test raw network isolation
     output=$(timeout 30 podman run --rm \
+        --entrypoint="" \
         --network=none \
         "$image_name" \
         bash -c "ping -c 1 -W 5 8.8.8.8 2>&1 && echo 'NETWORK_WORKS' || echo 'NETWORK_BLOCKED'" \
@@ -165,7 +168,9 @@ test_network_open_allows_network() {
     # Run container with default network and try to access network
     # Test TCP connection to a reliable endpoint (DNS resolution + connection establishment)
     # Using multiple fallback endpoints for reliability
+    # Use --entrypoint="" to skip the Kapsis entrypoint and test raw network connectivity
     output=$(timeout 30 podman run --rm \
+        --entrypoint="" \
         "$image_name" \
         bash -c '
             # Try multiple endpoints for reliability (any success = network works)

@@ -104,11 +104,7 @@ test_image_has_bash() {
 
     local output
     local exit_code=0
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        "$KAPSIS_TEST_IMAGE" \
-        which bash 2>&1) || exit_code=$?
+    output=$(run_named_container "$CONTAINER_TEST_ID" "which bash") || exit_code=$?
 
     cleanup_container_test
 
@@ -127,11 +123,7 @@ test_image_has_git() {
 
     local output
     local exit_code=0
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        "$KAPSIS_TEST_IMAGE" \
-        git --version 2>&1) || exit_code=$?
+    output=$(run_named_container "$CONTAINER_TEST_ID" "git --version") || exit_code=$?
 
     cleanup_container_test
 
@@ -150,11 +142,7 @@ test_image_has_curl() {
 
     local output
     local exit_code=0
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        "$KAPSIS_TEST_IMAGE" \
-        curl --version 2>&1) || exit_code=$?
+    output=$(run_named_container "$CONTAINER_TEST_ID" "curl --version") || exit_code=$?
 
     cleanup_container_test
 
@@ -172,11 +160,7 @@ test_image_has_jq() {
 
     local output
     local exit_code=0
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        "$KAPSIS_TEST_IMAGE" \
-        jq --version 2>&1) || exit_code=$?
+    output=$(run_named_container "$CONTAINER_TEST_ID" "jq --version") || exit_code=$?
 
     cleanup_container_test
 
@@ -193,11 +177,7 @@ test_image_developer_user() {
     setup_container_test "developer-user"
 
     local output
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        "$KAPSIS_TEST_IMAGE" \
-        id 2>&1) || true
+    output=$(run_named_container "$CONTAINER_TEST_ID" "id") || true
 
     cleanup_container_test
 
@@ -220,11 +200,7 @@ test_image_home_directory() {
     setup_container_test "home-dir"
 
     local output
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo $HOME' 2>&1) || true
+    output=$(run_named_container "$CONTAINER_TEST_ID" 'echo $HOME') || true
 
     cleanup_container_test
 

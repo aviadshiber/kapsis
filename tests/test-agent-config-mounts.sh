@@ -133,9 +133,11 @@ test_config_mount_accessible_in_container() {
 
     # Run container with mount
     local output
+    # shellcheck disable=SC2046 # Word splitting intentional for multiple -e args
     output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
+        $(get_test_container_env_args) \
         -v "$test_file:/kapsis-staging/.kapsis-container-test-config:ro" \
         "$KAPSIS_TEST_IMAGE" \
         bash -c 'cat /kapsis-staging/.kapsis-container-test-config' 2>&1) || true
