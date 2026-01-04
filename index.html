@@ -1142,6 +1142,114 @@ filesystem:
                 </div>
 
             </div>
+
+            <!-- Section 3: Security Profiles Spectrum -->
+            <div class="mt-12">
+                <h3 class="text-xl font-bold text-white mb-4 flex items-center justify-center">
+                    <span class="bg-red-500/20 text-red-400 w-8 h-8 rounded flex items-center justify-center mr-3 text-sm">3</span>
+                    Security Profiles
+                </h3>
+                <p class="text-slate-400 text-sm mb-6 text-center max-w-2xl mx-auto">
+                    Choose a security profile based on your threat model. Each level adds protections on top of the previous one.
+                </p>
+
+                <!-- Spectrum Visualization -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <!-- Spectrum Bar -->
+                    <div class="relative mb-8">
+                        <div class="flex items-center justify-between text-xs text-slate-500 mb-2">
+                            <span>Less Secure</span>
+                            <span>More Secure</span>
+                        </div>
+                        <div class="h-3 rounded-full bg-gradient-to-r from-yellow-500 via-green-500 via-blue-500 to-purple-500 relative">
+                            <!-- Profile markers -->
+                            <div class="absolute -top-1 left-[12.5%] transform -translate-x-1/2">
+                                <div class="w-5 h-5 rounded-full bg-yellow-500 border-2 border-slate-900"></div>
+                            </div>
+                            <div class="absolute -top-1 left-[37.5%] transform -translate-x-1/2">
+                                <div class="w-6 h-6 rounded-full bg-green-500 border-2 border-kapsis-neon ring-2 ring-kapsis-neon ring-offset-2 ring-offset-slate-900"></div>
+                            </div>
+                            <div class="absolute -top-1 left-[62.5%] transform -translate-x-1/2">
+                                <div class="w-5 h-5 rounded-full bg-blue-500 border-2 border-slate-900"></div>
+                            </div>
+                            <div class="absolute -top-1 left-[87.5%] transform -translate-x-1/2">
+                                <div class="w-5 h-5 rounded-full bg-purple-500 border-2 border-slate-900"></div>
+                            </div>
+                        </div>
+                        <!-- Labels below -->
+                        <div class="flex justify-between mt-3">
+                            <div class="w-1/4 text-center">
+                                <span class="text-yellow-400 font-mono text-sm">minimal</span>
+                            </div>
+                            <div class="w-1/4 text-center">
+                                <span class="text-green-400 font-mono text-sm font-bold">standard</span>
+                                <span class="block text-kapsis-neon text-xs mt-1">← DEFAULT</span>
+                            </div>
+                            <div class="w-1/4 text-center">
+                                <span class="text-blue-400 font-mono text-sm">strict</span>
+                            </div>
+                            <div class="w-1/4 text-center">
+                                <span class="text-purple-400 font-mono text-sm">paranoid</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Profile Details Grid -->
+                    <div class="grid grid-cols-4 gap-3 text-xs">
+                        <!-- minimal -->
+                        <div class="bg-slate-800/50 rounded-lg p-3 border border-yellow-500/30">
+                            <div class="text-yellow-400 font-bold mb-2">Debugging</div>
+                            <ul class="text-slate-400 space-y-1">
+                                <li>• No restrictions</li>
+                                <li>• Full capabilities</li>
+                                <li class="text-yellow-500/70">⚠ Dev only</li>
+                            </ul>
+                        </div>
+                        <!-- standard -->
+                        <div class="bg-slate-800/50 rounded-lg p-3 border border-green-500/50 ring-1 ring-green-500/30">
+                            <div class="text-green-400 font-bold mb-2">Development</div>
+                            <ul class="text-slate-400 space-y-1">
+                                <li>• Caps dropped</li>
+                                <li>• no-new-privileges</li>
+                                <li>• PID limit: 1000</li>
+                                <li>• Seccomp filtering</li>
+                            </ul>
+                        </div>
+                        <!-- strict -->
+                        <div class="bg-slate-800/50 rounded-lg p-3 border border-blue-500/30">
+                            <div class="text-blue-400 font-bold mb-2">Untrusted PRs</div>
+                            <ul class="text-slate-400 space-y-1">
+                                <li>• + noexec /tmp</li>
+                                <li>• + PID limit: 500</li>
+                                <li>• Blocks ptrace</li>
+                                <li>• Blocks mount/bpf</li>
+                            </ul>
+                        </div>
+                        <!-- paranoid -->
+                        <div class="bg-slate-800/50 rounded-lg p-3 border border-purple-500/30">
+                            <div class="text-purple-400 font-bold mb-2">Max Security</div>
+                            <ul class="text-slate-400 space-y-1">
+                                <li>• + Read-only root</li>
+                                <li>• + LSM required</li>
+                                <li>• AppArmor/SELinux</li>
+                                <li class="text-purple-500/70">⚠ May break agents</li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- Usage Example -->
+                    <div class="mt-6 bg-[#0d1117] rounded-lg p-4">
+                        <pre class="text-xs font-mono"><span class="text-slate-500"># Default (standard with seccomp)</span>
+<span class="text-emerald-400">kapsis</span> ~/project --task "implement feature"
+
+<span class="text-slate-500"># High security for untrusted code</span>
+<span class="text-emerald-400">kapsis</span> ~/project <span class="text-blue-400">--security-profile strict</span> --task "review PR"
+
+<span class="text-slate-500"># Debugging (minimal + no network)</span>
+<span class="text-emerald-400">kapsis</span> ~/project <span class="text-yellow-400">--security-profile minimal</span> <span class="text-orange-400">--network-mode none</span> --task "debug"</pre>
+                    </div>
+                </div>
+            </div>
         </div>
     </section>
 
