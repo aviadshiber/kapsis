@@ -100,6 +100,45 @@
             transform: translateY(0);
             opacity: 1;
         }
+        /* Terminal typing animation */
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+        @keyframes typeIn {
+            from { width: 0; }
+            to { width: 100%; }
+        }
+        @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .terminal-cursor {
+            display: inline-block;
+            width: 8px;
+            height: 16px;
+            background: #10b981;
+            animation: blink 1s infinite;
+            vertical-align: middle;
+            margin-left: 2px;
+        }
+        .terminal-line {
+            opacity: 0;
+        }
+        .terminal-line.visible {
+            animation: fadeSlideIn 0.3s ease-out forwards;
+        }
+        .terminal-typed {
+            overflow: hidden;
+            white-space: nowrap;
+            border-right: none;
+        }
+        .terminal-progress {
+            background: linear-gradient(90deg, #10b981 0%, #10b981 var(--progress), #334155 var(--progress), #334155 100%);
+            height: 4px;
+            border-radius: 2px;
+            transition: --progress 0.5s ease-out;
+        }
     </style>
 </head>
 <body class="bg-kapsis-dark text-slate-300 font-sans antialiased selection:bg-kapsis-neon selection:text-white">
@@ -125,11 +164,10 @@
                 </div>
                 <div class="hidden md:block">
                     <div class="ml-10 flex items-baseline space-x-6" role="menubar">
+                        <a href="#compare" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Why Kapsis?</a>
                         <a href="#install" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Install</a>
-                        <a href="#workflow" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium"><i class="fa-solid fa-diagram-project mr-1" aria-hidden="true"></i> Workflow</a>
-                        <a href="#yolo" role="menuitem" class="text-kapsis-danger hover:text-red-400 transition-colors px-3 py-2 rounded-md text-sm font-bold"><i class="fa-solid fa-biohazard mr-1" aria-hidden="true"></i> YOLO Mode</a>
-                        <a href="#security" role="menuitem" class="text-blue-400 hover:text-blue-300 transition-colors px-3 py-2 rounded-md text-sm font-medium"><i class="fa-solid fa-tower-broadcast mr-1" aria-hidden="true"></i> Network</a>
                         <a href="#docs" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Docs</a>
+                        <a href="#faq" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">FAQ</a>
                     </div>
                 </div>
                 <div class="flex items-center gap-3">
@@ -152,11 +190,10 @@
                 <i class="fa-solid fa-xmark text-xl"></i>
             </button>
             <nav class="mt-8 flex flex-col space-y-4" role="menu">
+                <a href="#compare" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Why Kapsis?</a>
                 <a href="#install" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Install</a>
-                <a href="#workflow" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium"><i class="fa-solid fa-diagram-project mr-2" aria-hidden="true"></i>Workflow</a>
-                <a href="#yolo" onclick="toggleMobileMenu()" role="menuitem" class="text-kapsis-danger hover:text-red-400 transition-colors py-2 text-lg font-bold"><i class="fa-solid fa-biohazard mr-2" aria-hidden="true"></i>YOLO Mode</a>
-                <a href="#security" onclick="toggleMobileMenu()" role="menuitem" class="text-blue-400 hover:text-blue-300 transition-colors py-2 text-lg font-medium"><i class="fa-solid fa-tower-broadcast mr-2" aria-hidden="true"></i>Network</a>
                 <a href="#docs" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Docs</a>
+                <a href="#faq" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">FAQ</a>
                 <hr class="border-slate-700 my-2">
                 <a href="https://github.com/aviadshiber/kapsis" target="_blank" class="text-slate-300 hover:text-white transition-colors py-2 text-lg font-medium"><i class="fa-brands fa-github mr-2" aria-hidden="true"></i>GitHub</a>
             </nav>
@@ -176,8 +213,8 @@
             </div>
 
             <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 leading-tight">
-                Hermetically Isolated <br>
-                <span class="text-transparent bg-clip-text bg-gradient-to-r from-kapsis-neon to-emerald-600 glow-text">AI Agent Sandbox</span>
+                Run AI Agents <br>
+                <span class="text-transparent bg-clip-text bg-gradient-to-r from-kapsis-neon to-emerald-600 glow-text">Without Fear</span>
             </h1>
 
             <p class="mt-4 max-w-2xl mx-auto text-xl text-slate-400">
@@ -194,8 +231,8 @@
                 </a>
             </div>
 
-            <!-- Terminal Visual -->
-            <div class="mt-16 mx-auto max-w-4xl bg-[#0d1117] rounded-xl border border-slate-700 shadow-2xl overflow-hidden text-left">
+            <!-- Animated Terminal Demo -->
+            <div id="terminal-demo" class="mt-16 mx-auto max-w-4xl bg-[#0d1117] rounded-xl border border-slate-700 shadow-2xl overflow-hidden text-left">
                 <div class="flex items-center px-4 py-2 bg-slate-800 border-b border-slate-700">
                     <div class="flex gap-2">
                         <div class="w-3 h-3 rounded-full bg-red-500"></div>
@@ -203,36 +240,230 @@
                         <div class="w-3 h-3 rounded-full bg-green-500"></div>
                     </div>
                     <div class="mx-auto text-xs text-slate-400 font-mono">kapsis — zsh</div>
+                    <button onclick="restartTerminalDemo()" class="text-slate-500 hover:text-white text-xs" title="Replay">
+                        <i class="fa-solid fa-rotate-right"></i>
+                    </button>
                 </div>
-                <div class="p-6 font-mono text-sm overflow-x-auto">
-                    <div class="text-slate-500 mb-2"># Launch 3 agents in parallel on different features</div>
-                    <div class="flex mb-2">
+                <div class="p-6 font-mono text-xs min-h-[340px] overflow-x-auto">
+                    <!-- Line 1: Command prompt -->
+                    <div id="term-line-1" class="terminal-line flex mb-2">
                         <span class="text-emerald-400 mr-2">➜</span>
-                        <span class="text-white">kapsis ~/ecommerce --spec specs/rate-limit.md --branch feature/rate-limiting &</span>
+                        <span id="term-cmd" class="text-white terminal-typed"></span>
+                        <span id="term-cursor" class="terminal-cursor"></span>
                     </div>
-                    <div class="text-slate-500 mb-1">Agent ID: <span class="text-cyan-400">a3f2b1</span> · Branch: <span class="text-purple-400">feature/rate-limiting</span></div>
-                    <div class="flex mb-2">
+                    <!-- Line 2: Banner -->
+                    <div id="term-line-2" class="terminal-line text-cyan-400 mb-1"></div>
+                    <!-- Line 3: Agent Config header -->
+                    <div id="term-line-3" class="terminal-line text-cyan-400 mb-1"></div>
+                    <!-- Line 4-8: Config details -->
+                    <div id="term-line-4" class="terminal-line text-slate-300 mb-0"></div>
+                    <div id="term-line-5" class="terminal-line text-slate-300 mb-0"></div>
+                    <div id="term-line-6" class="terminal-line text-slate-300 mb-0"></div>
+                    <div id="term-line-7" class="terminal-line text-slate-300 mb-0"></div>
+                    <div id="term-line-8" class="terminal-line text-slate-300 mb-2"></div>
+                    <!-- Line 9: Launch box -->
+                    <div id="term-line-9" class="terminal-line text-white mb-1"></div>
+                    <!-- Line 10: Starting container -->
+                    <div id="term-line-10" class="terminal-line text-cyan-400 mb-2"></div>
+                    <!-- Line 11: Agent output simulation -->
+                    <div id="term-line-11" class="terminal-line text-slate-500 mb-1"></div>
+                    <div id="term-line-12" class="terminal-line text-slate-400 mb-1"></div>
+                    <div id="term-line-13" class="terminal-line text-slate-400 mb-2"></div>
+                    <!-- Line 14: Container exited -->
+                    <div id="term-line-14" class="terminal-line text-cyan-400 mb-1"></div>
+                    <!-- Line 15: Exit box -->
+                    <div id="term-line-15" class="terminal-line text-white mb-2"></div>
+                    <!-- Line 16: Changes detected -->
+                    <div id="term-line-16" class="terminal-line mb-1"></div>
+                    <!-- Line 17: Commit info -->
+                    <div id="term-line-17" class="terminal-line text-slate-400 mb-1"></div>
+                    <!-- Line 18: Push info -->
+                    <div id="term-line-18" class="terminal-line mb-2"></div>
+                    <!-- Line 19: Next prompt -->
+                    <div id="term-line-19" class="terminal-line flex">
                         <span class="text-emerald-400 mr-2">➜</span>
-                        <span class="text-white">kapsis ~/ecommerce --spec specs/auth-refactor.md --branch feature/auth-v2 &</span>
+                        <span class="terminal-cursor"></span>
                     </div>
-                    <div class="text-slate-500 mb-1">Agent ID: <span class="text-cyan-400">e8b4c2</span> · Branch: <span class="text-purple-400">feature/auth-v2</span></div>
-                    <div class="flex mb-2">
-                        <span class="text-emerald-400 mr-2">➜</span>
-                        <span class="text-white">kapsis ~/ecommerce --spec specs/test-coverage.md --branch feature/tests &</span>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Why Kapsis? Section -->
+    <section id="compare" class="py-16 bg-slate-900/50 border-y border-slate-800">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-4 text-center">Why Kapsis?</h2>
+            <p class="text-slate-400 mb-10 text-center">The problem with running AI agents directly — and how Kapsis solves it</p>
+
+            <!-- Problem → Solution Cards -->
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-red-400">✗</span>
+                        <span class="text-slate-500">→</span>
+                        <span class="text-emerald-400">✓</span>
                     </div>
-                    <div class="text-slate-500 mb-3">Agent ID: <span class="text-cyan-400">7c9e4d</span> · Branch: <span class="text-purple-400">feature/tests</span></div>
-                    <div class="flex mb-2">
-                        <span class="text-emerald-400 mr-2">➜</span>
-                        <span class="text-white">kapsis-status --watch</span>
+                    <p class="text-white font-medium text-sm mb-1">"Approve?" ×100</p>
+                    <p class="text-emerald-400 text-sm font-medium">YOLO mode</p>
+                    <p class="text-slate-500 text-xs mt-2">Full autonomy in a safe sandbox</p>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-red-400">✗</span>
+                        <span class="text-slate-500">→</span>
+                        <span class="text-emerald-400">✓</span>
                     </div>
-                    <div class="text-slate-600 text-xs mb-1">┌─────────────┬──────────┬──────────────┬──────┬─────────────────────────────────┐</div>
-                    <div class="text-cyan-400 text-xs">│ PROJECT     │ AGENT    │ PHASE        │ PROG │ MESSAGE                         │</div>
-                    <div class="text-slate-600 text-xs">├─────────────┼──────────┼──────────────┼──────┼─────────────────────────────────┤</div>
-                    <div class="text-slate-300 text-xs">│ ecommerce   │ <span class="text-cyan-400">a3f2b1</span>   │ <span class="text-yellow-400">implementing</span> │  45% │ Adding RateLimiter middleware   │</div>
-                    <div class="text-slate-300 text-xs">│ ecommerce   │ <span class="text-cyan-400">e8b4c2</span>   │ <span class="text-blue-400">building</span>     │  60% │ Running mvn compile             │</div>
-                    <div class="text-slate-300 text-xs">│ ecommerce   │ <span class="text-cyan-400">7c9e4d</span>   │ <span class="text-purple-400">testing</span>      │  75% │ Running pytest test_auth.py     │</div>
-                    <div class="text-slate-600 text-xs mb-3">└─────────────┴──────────┴──────────────┴──────┴─────────────────────────────────┘</div>
-                    <div class="text-slate-500 text-xs italic"># Each agent works in complete isolation — zero conflicts, zero interference</div>
+                    <p class="text-white font-medium text-sm mb-1">Network anywhere</p>
+                    <p class="text-emerald-400 text-sm font-medium">DNS allowlist</p>
+                    <p class="text-slate-500 text-xs mt-2">Only approved domains reachable</p>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-red-400">✗</span>
+                        <span class="text-slate-500">→</span>
+                        <span class="text-emerald-400">✓</span>
+                    </div>
+                    <p class="text-white font-medium text-sm mb-1">Modifies your files</p>
+                    <p class="text-emerald-400 text-sm font-medium">Isolated sandbox</p>
+                    <p class="text-slate-500 text-xs mt-2">Host files stay untouched</p>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-red-400">✗</span>
+                        <span class="text-slate-500">→</span>
+                        <span class="text-emerald-400">✓</span>
+                    </div>
+                    <p class="text-white font-medium text-sm mb-1">Agent conflicts</p>
+                    <p class="text-emerald-400 text-sm font-medium">Parallel sandboxes</p>
+                    <p class="text-slate-500 text-xs mt-2">Each agent fully isolated</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Technology Deep Dive (Collapsible) -->
+    <section class="py-10 bg-slate-900/30">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <details class="group">
+                <summary class="flex items-center justify-center gap-2 cursor-pointer list-none text-slate-400 hover:text-white transition-colors">
+                    <i class="fa-solid fa-microscope text-sm"></i>
+                    <span class="text-sm font-medium">Technology Deep Dive: Why we chose Podman over 10+ alternatives</span>
+                    <i class="fa-solid fa-chevron-down text-xs transition-transform group-open:rotate-180"></i>
+                </summary>
+                <div class="mt-8">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="border-b border-slate-700 bg-slate-800/50">
+                                    <th class="py-3 px-3 text-slate-400 font-medium">Solution</th>
+                                    <th class="py-3 px-3 text-slate-400 font-medium">Type</th>
+                                    <th class="py-3 px-3 text-center text-slate-400 font-medium">Isolation</th>
+                                    <th class="py-3 px-3 text-center text-slate-400 font-medium">macOS</th>
+                                    <th class="py-3 px-3 text-center text-slate-400 font-medium">Rootless</th>
+                                    <th class="py-3 px-3 text-center text-slate-400 font-medium">Self-Host</th>
+                                    <th class="py-3 px-3 text-slate-400 font-medium">Trade-offs</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr class="border-b border-emerald-900/50 bg-emerald-900/20">
+                                    <td class="py-3 px-3 text-emerald-400 font-medium">Kapsis <span class="text-xs">(Podman)</span></td>
+                                    <td class="py-3 px-3 text-slate-300">Container</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400 font-medium">Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-400">Best balance for AI agent sandboxing</td>
+                                </tr>
+                                <tr class="border-b border-slate-800">
+                                    <td class="py-3 px-3 text-slate-300">Docker</td>
+                                    <td class="py-3 px-3 text-slate-400">Container</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-yellow-400">⚠</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-500">Root daemon by default</td>
+                                </tr>
+                                <tr class="border-b border-slate-800">
+                                    <td class="py-3 px-3 text-slate-300">Bubblewrap</td>
+                                    <td class="py-3 px-3 text-slate-400">Namespace</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-yellow-400">Medium</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-500">No network isolation</td>
+                                </tr>
+                                <tr class="border-b border-slate-800">
+                                    <td class="py-3 px-3 text-slate-300">Firecracker</td>
+                                    <td class="py-3 px-3 text-slate-400">MicroVM</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-blue-400 font-medium">Very Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-500">AWS infra, Linux only</td>
+                                </tr>
+                                <tr class="border-b border-slate-800">
+                                    <td class="py-3 px-3 text-slate-300">gVisor</td>
+                                    <td class="py-3 px-3 text-slate-400">User kernel</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-blue-400 font-medium">Very Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-500">Syscall overhead</td>
+                                </tr>
+                                <tr class="border-b border-slate-800">
+                                    <td class="py-3 px-3 text-slate-300">E2B</td>
+                                    <td class="py-3 px-3 text-slate-400">Cloud VM</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-slate-500">Cloud</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-slate-500">N/A</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-slate-500">Per-minute pricing</td>
+                                </tr>
+                                <tr>
+                                    <td class="py-3 px-3 text-slate-300">Modal</td>
+                                    <td class="py-3 px-3 text-slate-400">Cloud</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-slate-500">Cloud</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-slate-500">N/A</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-slate-500">ML-focused</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- Compact Why Podman -->
+                    <p class="mt-6 text-sm text-slate-500 text-center">
+                        <span class="text-emerald-400">Podman</span>: Rootless containers, macOS native, OCI compatible, copy-on-write filesystem. Runs anywhere — local dev, CI/CD, or servers.
+                    </p>
+                </div>
+            </details>
+        </div>
+    </section>
+
+    <!-- Performance Section -->
+    <section class="py-16">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-2xl font-bold text-white mb-3 text-center">
+                <i class="fa-solid fa-bolt text-yellow-400 mr-2"></i>Minimal Overhead
+            </h2>
+            <p class="text-slate-400 mb-10 text-center">Kapsis adds negligible overhead to your workflow</p>
+
+            <div class="grid md:grid-cols-4 gap-6 text-center">
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <div class="text-2xl font-bold text-kapsis-neon mb-2">Seconds</div>
+                    <div class="text-slate-400 text-sm">Not minutes to start</div>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <div class="text-2xl font-bold text-kapsis-neon mb-2">Lightweight</div>
+                    <div class="text-slate-400 text-sm">Minimal memory footprint</div>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <div class="text-2xl font-bold text-kapsis-neon mb-2">CoW</div>
+                    <div class="text-slate-400 text-sm">Only changes stored</div>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <div class="text-2xl font-bold text-kapsis-neon mb-2">Native</div>
+                    <div class="text-slate-400 text-sm">No CPU emulation</div>
                 </div>
             </div>
         </div>
@@ -1037,6 +1268,42 @@ logging in with email+password
             </div>
         </div>
     </section>
+
+    <!-- FAQ Section -->
+    <section id="faq" class="py-16 bg-slate-900/50 border-t border-slate-800">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-2xl font-bold text-white mb-10 text-center">
+                <i class="fa-solid fa-circle-question text-kapsis-neon mr-2"></i>Frequently Asked Questions
+            </h2>
+
+            <div class="space-y-4">
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">Does this work with my agent?</h4>
+                    <p class="text-slate-400 text-sm">Yes! Kapsis works with any CLI-based agent: Claude Code, Aider, Codex, or any custom agent that runs in a terminal.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">What about API keys and credentials?</h4>
+                    <p class="text-slate-400 text-sm">Credentials are securely injected from your macOS Keychain or SSH agent. They're never written to disk inside the container.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">Can I use my IDE while the agent works?</h4>
+                    <p class="text-slate-400 text-sm">Yes! Changes sync to a git worktree on your host. Open it in your favorite IDE and watch the agent's progress in real-time.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">Is Kapsis production ready?</h4>
+                    <p class="text-slate-400 text-sm">Yes! Version <span class="version-placeholder">...</span> is a stable release. We use it daily for production development at scale.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">What platforms are supported?</h4>
+                    <p class="text-slate-400 text-sm">macOS and Linux.</p>
+                </div>
+            </div>
+        </div>
+    </section>
     </main>
 
     <!-- Footer -->
@@ -1051,10 +1318,12 @@ logging in with email+password
                     </div>
                     <p class="text-slate-500 text-sm">The Secure Lab for AI Agents.</p>
                 </div>
-                <div class="flex space-x-6">
-                    <a href="https://github.com/aviadshiber/kapsis" class="text-slate-400 hover:text-white transition-colors">GitHub</a>
-                    <a href="https://github.com/aviadshiber/kapsis/issues" class="text-slate-400 hover:text-white transition-colors">Issues</a>
-                    <a href="#" class="text-slate-400 hover:text-white transition-colors">License</a>
+                <div class="flex flex-wrap gap-4 md:gap-6">
+                    <a href="https://github.com/aviadshiber/kapsis" class="text-slate-400 hover:text-white transition-colors"><i class="fa-brands fa-github mr-1"></i>GitHub</a>
+                    <a href="https://github.com/aviadshiber/kapsis/releases" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-tags mr-1"></i>Releases</a>
+                    <a href="https://github.com/aviadshiber/kapsis/issues" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-bug mr-1"></i>Issues</a>
+                    <a href="https://github.com/aviadshiber/kapsis/security/advisories/new" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-shield-halved mr-1"></i>Security</a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/LICENSE" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-scale-balanced mr-1"></i>License</a>
                 </div>
             </div>
             <div class="border-t border-slate-800 mt-8 pt-8 text-center text-slate-600 text-sm">
@@ -1251,10 +1520,104 @@ logging in with email+password
             }
         }
 
+        // Terminal Demo Animation - reflects actual Kapsis output
+        let terminalTimeouts = [];
+        const terminalSteps = [
+            { delay: 0, action: 'show', line: 1 },
+            { delay: 300, action: 'type', text: 'kapsis ~/myproject --agent claude --spec fix-auth.md --branch fix/auth-bug' },
+            { delay: 2200, action: 'hideCursor' },
+            // Banner
+            { delay: 2400, action: 'show', line: 2, html: '╔═══════════════════════════════════════════════════════════════════╗' },
+            { delay: 2500, action: 'show', line: 3, html: '[KAPSIS] Agent Configuration:' },
+            // Config details
+            { delay: 2700, action: 'show', line: 4, html: '  Agent:         CLAUDE (claude.yaml)' },
+            { delay: 2800, action: 'show', line: 5, html: '  Instance ID:   <span class="text-cyan-400">c7e3f9</span> (auto-generated)' },
+            { delay: 2900, action: 'show', line: 6, html: '  Project:       ~/myproject' },
+            { delay: 3000, action: 'show', line: 7, html: '  Network Mode:  <span class="text-emerald-400">filtered</span>' },
+            { delay: 3100, action: 'show', line: 8, html: '  Branch:        <span class="text-purple-400">fix/auth-bug</span>' },
+            // Launch box
+            { delay: 3400, action: 'show', line: 9, html: '┌────────────────────────────────────────────────────────────────────┐<br>│ LAUNCHING CLAUDE                                                   │<br>└────────────────────────────────────────────────────────────────────┘' },
+            { delay: 3700, action: 'show', line: 10, html: '[KAPSIS] Starting container...' },
+            // Simulated agent output
+            { delay: 4200, action: 'show', line: 11, html: '<span class="text-slate-600">... agent working ...</span>' },
+            { delay: 4800, action: 'show', line: 12, html: '  Reading src/auth/login.ts' },
+            { delay: 5400, action: 'update', line: 12, html: '  Editing src/auth/login.ts' },
+            { delay: 6000, action: 'show', line: 13, html: '  Running tests...' },
+            { delay: 6600, action: 'update', line: 13, html: '  <span class="text-emerald-400">✓</span> All tests passed' },
+            // Exit
+            { delay: 7200, action: 'show', line: 14, html: '[KAPSIS] Container exited with code: 0' },
+            { delay: 7500, action: 'show', line: 15, html: '┌────────────────────────────────────────────────────────────────────┐<br>│ AGENT EXITED                                                       │<br>└────────────────────────────────────────────────────────────────────┘' },
+            // Post-container
+            { delay: 8000, action: 'show', line: 16, html: '<span class="text-emerald-400">✓ Agent made 3 file change(s)</span>' },
+            { delay: 8400, action: 'show', line: 17, html: '  Committed: fix(auth): add token validation' },
+            { delay: 8800, action: 'show', line: 18, html: '<span class="text-emerald-400">✓ Pushed to origin/fix/auth-bug</span>' },
+            { delay: 9400, action: 'show', line: 19 },
+        ];
+
+        function runTerminalDemo() {
+            // Clear any existing timeouts
+            terminalTimeouts.forEach(t => clearTimeout(t));
+            terminalTimeouts = [];
+
+            // Reset all lines
+            for (let i = 1; i <= 19; i++) {
+                const line = document.getElementById('term-line-' + i);
+                if (line) {
+                    line.classList.remove('visible');
+                    if (i > 1) line.innerHTML = '';
+                }
+            }
+            document.getElementById('term-cmd').textContent = '';
+            document.getElementById('term-cursor').style.display = 'inline-block';
+
+            terminalSteps.forEach(step => {
+                const timeout = setTimeout(() => {
+                    if (step.action === 'show') {
+                        const line = document.getElementById('term-line-' + step.line);
+                        if (line) {
+                            if (step.html) line.innerHTML = step.html;
+                            line.classList.add('visible');
+                        }
+                    } else if (step.action === 'type') {
+                        typeText('term-cmd', step.text, 0);
+                    } else if (step.action === 'hideCursor') {
+                        document.getElementById('term-cursor').style.display = 'none';
+                    } else if (step.action === 'update') {
+                        const line = document.getElementById('term-line-' + step.line);
+                        if (line) line.innerHTML = step.html;
+                    }
+                }, step.delay);
+                terminalTimeouts.push(timeout);
+            });
+        }
+
+        function typeText(elementId, text, index) {
+            if (index < text.length) {
+                document.getElementById(elementId).textContent = text.substring(0, index + 1);
+                const timeout = setTimeout(() => typeText(elementId, text, index + 1), 25);
+                terminalTimeouts.push(timeout);
+            }
+        }
+
+        function restartTerminalDemo() {
+            runTerminalDemo();
+        }
+
         // Initialize on load
         window.addEventListener('load', () => {
             checkScrollOverflow();
             fetchLatestVersion();
+            // Start terminal demo when it's in view
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        runTerminalDemo();
+                        observer.disconnect();
+                    }
+                });
+            }, { threshold: 0.5 });
+            const terminalDemo = document.getElementById('terminal-demo');
+            if (terminalDemo) observer.observe(terminalDemo);
         });
         window.addEventListener('resize', checkScrollOverflow);
     </script>
