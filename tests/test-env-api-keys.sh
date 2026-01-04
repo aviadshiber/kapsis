@@ -28,6 +28,7 @@ test_anthropic_key_passed() {
     local output
     output=$(ANTHROPIC_API_KEY="$test_key" podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e ANTHROPIC_API_KEY \
@@ -50,6 +51,7 @@ test_openai_key_passed() {
     local output
     output=$(OPENAI_API_KEY="$test_key" podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e OPENAI_API_KEY \
@@ -70,6 +72,7 @@ test_kapsis_env_vars_set() {
     local output
     output=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e KAPSIS_AGENT_ID="test-agent" \
@@ -105,6 +108,7 @@ test_multiple_keys_passed() {
     local output
     output=$(ANTHROPIC_API_KEY="anthro-key" OPENAI_API_KEY="openai-key" podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e ANTHROPIC_API_KEY \
@@ -127,6 +131,7 @@ test_empty_key_not_error() {
     local output
     output=$(ANTHROPIC_API_KEY="" podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e ANTHROPIC_API_KEY \
@@ -146,6 +151,7 @@ test_custom_env_vars() {
     local output
     output=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e CUSTOM_VAR1="value1" \
@@ -199,6 +205,7 @@ test_env_isolation_between_agents() {
     local output1
     output1=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "env-agent1-$$" \
         --userns=keep-id \
         -e AGENT_SPECIFIC="agent1-data" \
@@ -209,6 +216,7 @@ test_env_isolation_between_agents() {
     local output2
     output2=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "env-agent2-$$" \
         --userns=keep-id \
         "$KAPSIS_TEST_IMAGE" \
@@ -743,6 +751,7 @@ test_inject_credential_files_entrypoint() {
     local output
     output=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e KAPSIS_CREDENTIAL_FILES="TEST_CRED|/tmp/test-cred.json|0600" \
@@ -779,6 +788,7 @@ test_inject_credential_files_multiple() {
     local output
     output=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e KAPSIS_CREDENTIAL_FILES="CRED1|/tmp/cred1.txt|0600,CRED2|/tmp/cred2.txt|0640" \
@@ -808,6 +818,7 @@ test_inject_credential_files_home_expansion() {
     local output
     output=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e KAPSIS_CREDENTIAL_FILES="HOME_CRED|~/.test-creds/secret.json|0600" \
@@ -840,6 +851,7 @@ test_inject_credential_files_creates_parent_dirs() {
     local output
     output=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e KAPSIS_CREDENTIAL_FILES="DEEP_CRED|/tmp/deep/nested/path/cred.json|0600" \

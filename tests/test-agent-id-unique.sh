@@ -28,6 +28,7 @@ test_same_id_blocked() {
     # Start first container in background (sleeps for a bit)
     podman run -d \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$agent_id" \
         --hostname "$agent_id" \
         --userns=keep-id \
@@ -45,6 +46,7 @@ test_same_id_blocked() {
     local exit_code=0
     output=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$agent_id" \
         --hostname "$agent_id" \
         "$KAPSIS_TEST_IMAGE" \
@@ -79,6 +81,7 @@ test_different_ids_allowed() {
     # Start first container
     podman run -d \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$agent_id1" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -93,6 +96,7 @@ test_different_ids_allowed() {
     local exit_code=0
     podman run -d \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$agent_id2" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -128,6 +132,7 @@ test_volumes_isolated() {
     # Create files in container 1's volume
     podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$agent_id1" \
         --userns=keep-id \
         -v "${agent_id1}-m2:/home/developer/.m2/repository" \
@@ -140,6 +145,7 @@ test_volumes_isolated() {
     local output
     output=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$agent_id2" \
         --userns=keep-id \
         -v "${agent_id2}-m2:/home/developer/.m2/repository" \
@@ -167,6 +173,7 @@ test_sandbox_dirs_isolated() {
     # Create file in container 1
     podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$agent_id1" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -181,6 +188,7 @@ test_sandbox_dirs_isolated() {
     local output
     output=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$agent_id2" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -224,6 +232,7 @@ test_reuse_after_cleanup() {
     mkdir -p "$sandbox/upper" "$sandbox/work"
     podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$agent_id" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -242,6 +251,7 @@ test_reuse_after_cleanup() {
     local exit_code=0
     podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$agent_id" \
         --userns=keep-id \
         --security-opt label=disable \

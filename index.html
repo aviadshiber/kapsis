@@ -128,7 +128,7 @@
                         <a href="#install" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Install</a>
                         <a href="#workflow" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium"><i class="fa-solid fa-diagram-project mr-1" aria-hidden="true"></i> Workflow</a>
                         <a href="#yolo" role="menuitem" class="text-kapsis-danger hover:text-red-400 transition-colors px-3 py-2 rounded-md text-sm font-bold"><i class="fa-solid fa-biohazard mr-1" aria-hidden="true"></i> YOLO Mode</a>
-                        <a href="#security" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium"><i class="fa-solid fa-shield-halved mr-1" aria-hidden="true"></i> Security</a>
+                        <a href="#security" role="menuitem" class="text-blue-400 hover:text-blue-300 transition-colors px-3 py-2 rounded-md text-sm font-medium"><i class="fa-solid fa-tower-broadcast mr-1" aria-hidden="true"></i> Network</a>
                         <a href="#docs" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Docs</a>
                     </div>
                 </div>
@@ -155,7 +155,7 @@
                 <a href="#install" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Install</a>
                 <a href="#workflow" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium"><i class="fa-solid fa-diagram-project mr-2" aria-hidden="true"></i>Workflow</a>
                 <a href="#yolo" onclick="toggleMobileMenu()" role="menuitem" class="text-kapsis-danger hover:text-red-400 transition-colors py-2 text-lg font-bold"><i class="fa-solid fa-biohazard mr-2" aria-hidden="true"></i>YOLO Mode</a>
-                <a href="#security" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium"><i class="fa-solid fa-shield-halved mr-2" aria-hidden="true"></i>Security</a>
+                <a href="#security" onclick="toggleMobileMenu()" role="menuitem" class="text-blue-400 hover:text-blue-300 transition-colors py-2 text-lg font-medium"><i class="fa-solid fa-tower-broadcast mr-2" aria-hidden="true"></i>Network</a>
                 <a href="#docs" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Docs</a>
                 <hr class="border-slate-700 my-2">
                 <a href="https://github.com/aviadshiber/kapsis" target="_blank" class="text-slate-300 hover:text-white transition-colors py-2 text-lg font-medium"><i class="fa-brands fa-github mr-2" aria-hidden="true"></i>GitHub</a>
@@ -644,22 +644,85 @@ Implement rate limiting for all public API endpoints to prevent abuse.
                 Multiple layers of isolation protect your host system from rogue AI agents.
             </p>
 
+            <!-- Network Modes Feature (NEW) -->
+            <div class="mb-12 bg-gradient-to-r from-blue-900/20 to-cyan-900/20 rounded-2xl border border-blue-500/30 p-6 md:p-8">
+                <div class="flex items-center gap-3 mb-6">
+                    <div class="bg-blue-500/20 p-3 rounded-lg">
+                        <i class="fa-solid fa-tower-broadcast text-blue-400 text-2xl"></i>
+                    </div>
+                    <div>
+                        <span class="text-xs font-bold text-blue-400 uppercase tracking-wider">New Feature</span>
+                        <h3 class="text-white font-bold text-xl">Three Network Isolation Modes</h3>
+                    </div>
+                </div>
+
+                <div class="grid md:grid-cols-3 gap-4 mb-6">
+                    <!-- None Mode -->
+                    <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700 hover:border-red-500/50 transition-colors">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-red-400 font-mono font-bold">none</span>
+                            <span class="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded">Air-Gapped</span>
+                        </div>
+                        <p class="text-slate-400 text-sm mb-3">Complete network isolation. No external connections allowed.</p>
+                        <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-slate-300">--network-mode=none</code>
+                    </div>
+
+                    <!-- Filtered Mode (Default) -->
+                    <div class="bg-slate-800/50 rounded-xl p-4 border-2 border-kapsis-neon/50 hover:border-kapsis-neon transition-colors relative">
+                        <div class="absolute -top-2 -right-2 bg-kapsis-neon text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded">DEFAULT</div>
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-kapsis-neon font-mono font-bold">filtered</span>
+                            <span class="text-xs bg-kapsis-neon/20 text-kapsis-neon px-2 py-0.5 rounded">DNS Allowlist</span>
+                        </div>
+                        <p class="text-slate-400 text-sm mb-3">Only approved domains resolve. Everything else returns NXDOMAIN.</p>
+                        <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-slate-300">--network-mode=filtered</code>
+                    </div>
+
+                    <!-- Open Mode -->
+                    <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700 hover:border-yellow-500/50 transition-colors">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-yellow-400 font-mono font-bold">open</span>
+                            <span class="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">Unrestricted</span>
+                        </div>
+                        <p class="text-slate-400 text-sm mb-3">Full network access. Use only when necessary.</p>
+                        <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-slate-300">--network-mode=open</code>
+                    </div>
+                </div>
+
+                <!-- Allowlist Categories -->
+                <div class="bg-slate-900/50 rounded-xl p-4">
+                    <h4 class="text-white font-bold text-sm mb-3 flex items-center">
+                        <i class="fa-solid fa-list-check text-blue-400 mr-2"></i>
+                        Pre-configured Allowlist Categories
+                    </h4>
+                    <div class="flex flex-wrap gap-2 text-xs">
+                        <span class="bg-purple-500/20 text-purple-300 px-3 py-1 rounded-full"><i class="fa-brands fa-github mr-1"></i>Git Hosts</span>
+                        <span class="bg-orange-500/20 text-orange-300 px-3 py-1 rounded-full"><i class="fa-solid fa-cube mr-1"></i>npm / PyPI / Maven</span>
+                        <span class="bg-cyan-500/20 text-cyan-300 px-3 py-1 rounded-full"><i class="fa-solid fa-robot mr-1"></i>AI APIs (Claude, GPT, Gemini)</span>
+                        <span class="bg-blue-500/20 text-blue-300 px-3 py-1 rounded-full"><i class="fa-brands fa-docker mr-1"></i>Container Registries</span>
+                        <span class="bg-slate-500/20 text-slate-300 px-3 py-1 rounded-full"><i class="fa-solid fa-gear mr-1"></i>Custom Domains</span>
+                    </div>
+                </div>
+            </div>
+
             <div class="grid md:grid-cols-3 gap-8">
-                <!-- Network Isolation -->
+                <!-- DNS Filtering (Enhanced) -->
                 <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6 hover:border-kapsis-neon/50 transition-colors">
                     <div class="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center mb-4">
                         <i class="fa-solid fa-network-wired text-blue-400 text-xl"></i>
                     </div>
-                    <h3 class="text-white font-bold text-lg mb-2">Network Filtering</h3>
+                    <h3 class="text-white font-bold text-lg mb-2">DNS-Based Filtering</h3>
                     <p class="text-slate-400 text-sm mb-4">
-                        DNS-based allowlist blocks unknown hosts. Agents can only reach approved destinations (GitHub, npm, PyPI).
+                        dnsmasq runs inside the container, blocking unknown hosts at the DNS layer. Includes rebinding attack protection.
                     </p>
                     <div class="code-block p-3 rounded text-xs font-mono">
-                        <span class="text-slate-500"># agent-sandbox.yaml</span><br>
+                        <span class="text-slate-500"># network-allowlist.yaml</span><br>
                         <span class="text-purple-400">network:</span><br>
                         <span class="text-slate-400">&nbsp;&nbsp;mode:</span> <span class="text-green-400">filtered</span><br>
                         <span class="text-slate-400">&nbsp;&nbsp;allowlist:</span><br>
-                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">github.com</span>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;hosts:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">github.com</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">"*.github.com"</span>
                     </div>
                 </div>
 
@@ -711,7 +774,15 @@ Implement rate limiting for all public API endpoints to prevent abuse.
                     </div>
                     <div class="flex items-start">
                         <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>DNS rebinding protection</strong> — Private IPs rejected in responses</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
                         <span class="text-slate-300"><strong>MITM prevention</strong> — SSH keys verified against official APIs</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Fail-safe defaults</strong> — Container aborts if filtering fails</span>
                     </div>
                     <div class="flex items-start">
                         <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
@@ -814,7 +885,7 @@ filesystem:
                             <li class="border-b border-slate-700 pb-3">
                                 <div class="text-white font-mono text-sm mb-1">network:</div>
                                 <div class="text-slate-500 text-xs">
-                                    <code>mode: filtered</code> enables DNS allowlist. <code>mode: none</code> for air-gapped operation.
+                                    <code>mode: filtered</code> (default) enables DNS allowlist via dnsmasq. <code>mode: none</code> for air-gapped. <code>mode: open</code> for unrestricted.
                                 </div>
                             </li>
                             <li class="border-b border-slate-700 pb-3">

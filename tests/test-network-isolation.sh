@@ -63,7 +63,8 @@ test_network_mode_default_is_filtered() {
     local output
     local exit_code=0
 
-    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --task "test" --dry-run 2>&1) || exit_code=$?
+    # Unset KAPSIS_NETWORK_MODE to test actual default (CI may set it to 'open')
+    output=$(unset KAPSIS_NETWORK_MODE; "$LAUNCH_SCRIPT" "$TEST_PROJECT" --task "test" --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should succeed with default network mode"
     assert_not_contains "$output" "--network=none" "Should NOT include --network=none by default"
