@@ -417,9 +417,9 @@ print(json.dumps(state))
             status_reinit_from_env
 
             # Read agent gist from signaling file (if present)
-            # Agent can update /workspace/.kapsis/gist.txt with activity summary
+            # Agent can update $KAPSIS_GIST_FILE with activity summary
             if type status_read_gist_file &>/dev/null; then
-                status_read_gist_file "/workspace/.kapsis/gist.txt"
+                status_read_gist_file
             fi
 
             status_phase "running" "$progress" "$message"

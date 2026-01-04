@@ -43,6 +43,7 @@ _KAPSIS_STATUS_LOADED=1
 : "${KAPSIS_STATUS_DIR:=${HOME}/.kapsis/status}"
 : "${KAPSIS_STATUS_ENABLED:=true}"
 : "${KAPSIS_STATUS_VERSION:=1.0}"
+: "${KAPSIS_GIST_FILE:=/workspace/.kapsis/gist.txt}"
 
 # Internal state
 _KAPSIS_STATUS_PROJECT=""
@@ -323,12 +324,12 @@ status_set_gist() {
 }
 
 # Read gist from the signaling file
-# The agent writes to /workspace/.kapsis/gist.txt
+# The agent writes to $KAPSIS_GIST_FILE (default: /workspace/.kapsis/gist.txt)
 # This function reads it and updates internal state
 # Arguments:
-#   $1 - Path to gist file (default: /workspace/.kapsis/gist.txt)
+#   $1 - Path to gist file (default: $KAPSIS_GIST_FILE)
 status_read_gist_file() {
-    local gist_file="${1:-/workspace/.kapsis/gist.txt}"
+    local gist_file="${1:-$KAPSIS_GIST_FILE}"
 
     if [[ -f "$gist_file" ]]; then
         local gist
