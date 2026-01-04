@@ -1,0 +1,19 @@
+[codespell]
+# Kapsis codespell configuration
+# See: https://github.com/codespell-project/codespell#using-a-config-file
+
+# Skip these paths
+skip = .git,*.log,vendor,node_modules,.secrets.baseline
+
+# Ignore these words (add project-specific terms here)
+ignore-words-list = crate,pullrequest,keypair
+
+# Only check these file types
+# (comment out to check all files)
+# include-regex = \.(sh|md|yaml|yml|txt)$
+
+# Use builtin dictionaries
+builtin = clear,rare
+
+# Quiet mode (less verbose)
+quiet-level = 2
