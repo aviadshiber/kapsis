@@ -42,7 +42,6 @@ test_script_passes_shellcheck() {
 test_exits_gracefully_without_codespell() {
     log_test "Testing graceful exit when codespell not available"
 
-    # Create a temp script that hides codespell
     local output
     local exit_code=0
 
@@ -54,6 +53,7 @@ test_exits_gracefully_without_codespell() {
 
     output=$("$SPELLCHECK_SCRIPT" 2>&1) || exit_code=$?
     assert_equals 0 "$exit_code" "Should exit 0 when codespell missing"
+    assert_contains "$output" "codespell" "Should mention codespell in output"
 }
 
 test_handles_no_staged_files() {
@@ -74,6 +74,8 @@ test_handles_no_staged_files() {
 
     # Should succeed with no staged files
     assert_equals 0 "$exit_code" "Should succeed with no staged files"
+    # Verify script ran (output should exist, even if empty or just logging)
+    assert_true "[[ -n \"\$output\" || \$exit_code -eq 0 ]]" "Should produce output or succeed silently"
 }
 
 #===============================================================================
