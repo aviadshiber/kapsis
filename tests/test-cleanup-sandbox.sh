@@ -83,6 +83,8 @@ test_stopped_container_removable() {
 
     # Run and exit container
     podman run \
+        -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$container_name" \
         --userns=keep-id \
         "$KAPSIS_TEST_IMAGE" \

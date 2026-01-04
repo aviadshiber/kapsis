@@ -130,8 +130,9 @@ test_network_none_blocks_network() {
     local exit_code=0
 
     # Run container with --network=none and try to ping
+    # Use --entrypoint="" to skip the Kapsis entrypoint and test raw network isolation
     output=$(timeout 30 podman run --rm \
-        -e CI="${CI:-true}" \
+        --entrypoint="" \
         --network=none \
         "$image_name" \
         bash -c "ping -c 1 -W 5 8.8.8.8 2>&1 && echo 'NETWORK_WORKS' || echo 'NETWORK_BLOCKED'" \
@@ -167,8 +168,9 @@ test_network_open_allows_network() {
     # Run container with default network and try to access network
     # Test TCP connection to a reliable endpoint (DNS resolution + connection establishment)
     # Using multiple fallback endpoints for reliability
+    # Use --entrypoint="" to skip the Kapsis entrypoint and test raw network connectivity
     output=$(timeout 30 podman run --rm \
-        -e CI="${CI:-true}" \
+        --entrypoint="" \
         "$image_name" \
         bash -c '
             # Try multiple endpoints for reliability (any success = network works)
