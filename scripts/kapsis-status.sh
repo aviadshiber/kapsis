@@ -39,8 +39,9 @@ NC='\033[0m'
 # HELP
 #===============================================================================
 usage() {
+    local cmd_name="${KAPSIS_CMD_NAME:-$(basename "$0")}"
     cat << EOF
-Usage: $(basename "$0") [options] [project] [agent-id]
+Usage: $cmd_name [options] [project] [agent-id]
 
 Query and monitor Kapsis agent status.
 
@@ -55,11 +56,11 @@ Arguments:
   agent-id        Agent ID (optional, requires project)
 
 Examples:
-  $(basename "$0")                    # List all agents
-  $(basename "$0") products 1         # Show specific agent
-  $(basename "$0") --watch            # Live monitoring
-  $(basename "$0") --json             # JSON output for scripting
-  $(basename "$0") --cleanup          # Remove old status files
+  $cmd_name                    # List all agents
+  $cmd_name products 1         # Show specific agent
+  $cmd_name --watch            # Live monitoring
+  $cmd_name --json             # JSON output for scripting
+  $cmd_name --cleanup          # Remove old status files
 
 Status Files Location: $KAPSIS_STATUS_DIR
 EOF

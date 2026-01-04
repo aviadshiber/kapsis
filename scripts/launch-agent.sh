@@ -210,12 +210,13 @@ query_secret_store_with_fallbacks() {
 # Displays help text and exits with the given code (default: 0 for help, 1 for errors)
 usage() {
     local exit_code="${1:-0}"
+    local cmd_name="${KAPSIS_CMD_NAME:-$(basename "$0")}"
     cat << EOF
-Usage: $(basename "$0") <project-path> [options]
-       $(basename "$0") --version
-       $(basename "$0") --check-upgrade
-       $(basename "$0") --upgrade [VERSION] [--dry-run]
-       $(basename "$0") --downgrade [VERSION] [--dry-run]
+Usage: $cmd_name <project-path> [options]
+       $cmd_name --version
+       $cmd_name --check-upgrade
+       $cmd_name --upgrade [VERSION] [--dry-run]
+       $cmd_name --downgrade [VERSION] [--dry-run]
 
 Launch an AI coding agent in an isolated Podman container.
 
@@ -260,24 +261,24 @@ Task Input (one required unless --interactive):
 
 Examples:
   # Simple task (agent ID auto-generated)
-  $(basename "$0") ~/project --task "fix failing tests in UserService"
+  $cmd_name ~/project --task "fix failing tests in UserService"
 
   # Complex task with spec file
-  $(basename "$0") ~/project --spec ./specs/user-preferences.md
+  $cmd_name ~/project --spec ./specs/user-preferences.md
 
   # With git branch workflow (creates or continues)
-  $(basename "$0") ~/project --branch feature/DEV-123 --spec ./task.md
+  $cmd_name ~/project --branch feature/DEV-123 --spec ./task.md
 
   # Continue a previous session (use same agent ID)
-  $(basename "$0") ~/project --agent-id a3f2b1 --branch feature/DEV-123 --task "continue"
+  $cmd_name ~/project --agent-id a3f2b1 --branch feature/DEV-123 --task "continue"
 
   # Multiple agents in parallel (each gets unique auto-ID)
-  $(basename "$0") ~/project --branch feature/DEV-123-api --spec ./api.md &
-  $(basename "$0") ~/project --branch feature/DEV-123-ui --spec ./ui.md &
+  $cmd_name ~/project --branch feature/DEV-123-api --spec ./api.md &
+  $cmd_name ~/project --branch feature/DEV-123-ui --spec ./ui.md &
   wait
 
   # Interactive exploration
-  $(basename "$0") ~/project --interactive --branch experiment/explore
+  $cmd_name ~/project --interactive --branch experiment/explore
 
 EOF
     exit "$exit_code"

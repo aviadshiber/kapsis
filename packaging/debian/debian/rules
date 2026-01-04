@@ -48,31 +48,37 @@ override_dh_auto_install:
 	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis
 	echo 'export KAPSIS_LIB="/usr/lib/kapsis/lib"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis
 	echo 'export KAPSIS_SCRIPTS="/usr/lib/kapsis/scripts"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis
+	echo 'export KAPSIS_CMD_NAME="kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis
 	echo 'exec /usr/lib/kapsis/scripts/launch-agent.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis
 	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis
 
 	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-build
 	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-build
+	echo 'export KAPSIS_CMD_NAME="kapsis-build"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-build
 	echo 'exec /usr/lib/kapsis/scripts/build-image.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-build
 	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-build
 
 	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-cleanup
 	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-cleanup
+	echo 'export KAPSIS_CMD_NAME="kapsis-cleanup"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-cleanup
 	echo 'exec /usr/lib/kapsis/scripts/kapsis-cleanup.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-cleanup
 	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-cleanup
 
 	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
 	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
+	echo 'export KAPSIS_CMD_NAME="kapsis-status"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
 	echo 'exec /usr/lib/kapsis/scripts/kapsis-status.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
 	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
 
 	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-setup
 	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-setup
+	echo 'export KAPSIS_CMD_NAME="kapsis-setup"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-setup
 	echo 'exec /usr/lib/kapsis/scripts/setup.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-setup
 	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-setup
 
 	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-quick
 	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-quick
+	echo 'export KAPSIS_CMD_NAME="kapsis-quick"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-quick
 	echo 'exec /usr/lib/kapsis/scripts/quick-start.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-quick
 	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-quick
 

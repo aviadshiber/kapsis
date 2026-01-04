@@ -49,6 +49,7 @@ class Kapsis < Formula
         export KAPSIS_HOME="#{libexec}"
         export KAPSIS_LIB="#{libexec}/scripts/lib"
         export KAPSIS_SCRIPTS="#{libexec}/scripts"
+        export KAPSIS_CMD_NAME="#{cmd}"
         exec "#{libexec}/#{script}" "$@"
       EOS
     end
@@ -81,7 +82,7 @@ class Kapsis < Formula
   end
 
   test do
-    # Test that kapsis command works
-    assert_match "Usage:", shell_output("#{bin}/kapsis --help 2>&1", 1)
+    # Test that kapsis command works (--help returns exit code 0 per Unix convention)
+    assert_match "Usage:", shell_output("#{bin}/kapsis --help 2>&1", 0)
   end
 end

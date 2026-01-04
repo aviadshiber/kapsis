@@ -60,8 +60,9 @@ TOTAL_SIZE_FREED=0
 ITEMS_CLEANED=0
 
 usage() {
+    local cmd_name="${KAPSIS_CMD_NAME:-$(basename "$0")}"
     cat <<EOF
-Usage: $(basename "$0") [OPTIONS]
+Usage: $cmd_name [OPTIONS]
 
 Reclaim disk space by cleaning up after Kapsis agent work.
 
@@ -89,19 +90,19 @@ WHAT GETS CLEANED:
 
 EXAMPLES:
     # See what would be cleaned
-    $(basename "$0") --dry-run
+    $cmd_name --dry-run
 
     # Clean everything for project 'products'
-    $(basename "$0") --project products --force
+    $cmd_name --project products --force
 
     # Full cleanup including volumes
-    $(basename "$0") --all --volumes
+    $cmd_name --all --volumes
 
     # Clean specific agent
-    $(basename "$0") --agent products 1
+    $cmd_name --agent products 1
 
     # Clear SSH host key cache (after key rotation)
-    $(basename "$0") --ssh-cache
+    $cmd_name --ssh-cache
 EOF
 }
 
