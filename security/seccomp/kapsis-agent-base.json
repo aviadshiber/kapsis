@@ -1,0 +1,284 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "defaultErrnoRet": 1,
+  "comment": "Kapsis AI Agent Sandbox - Base Seccomp Profile. Allows syscalls needed for Java/Node.js development, Git operations, and network access for AI APIs. Blocks dangerous syscalls that could enable container escape.",
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": [
+        "SCMP_ARCH_X86",
+        "SCMP_ARCH_X32"
+      ]
+    },
+    {
+      "architecture": "SCMP_ARCH_AARCH64",
+      "subArchitectures": [
+        "SCMP_ARCH_ARM"
+      ]
+    }
+  ],
+  "syscalls": [
+    {
+      "comment": "Core system calls - process lifecycle and memory management",
+      "names": [
+        "arch_prctl",
+        "brk",
+        "clone", "clone3",
+        "execve", "execveat",
+        "exit", "exit_group",
+        "fork", "vfork",
+        "getpid", "getppid", "gettid",
+        "kill", "tgkill", "tkill",
+        "madvise",
+        "memfd_create",
+        "mincore",
+        "mlock", "mlock2", "munlock", "mlockall", "munlockall",
+        "mmap", "mmap2",
+        "mprotect",
+        "mremap",
+        "msync",
+        "munmap",
+        "prctl",
+        "rseq",
+        "set_robust_list", "get_robust_list",
+        "set_tid_address",
+        "wait4", "waitid", "waitpid"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "File system operations - read, write, create, delete",
+      "names": [
+        "access", "faccessat", "faccessat2",
+        "chdir", "fchdir",
+        "chmod", "fchmod", "fchmodat",
+        "chown", "fchown", "fchownat", "lchown",
+        "close", "close_range",
+        "copy_file_range",
+        "creat",
+        "dup", "dup2", "dup3",
+        "fallocate",
+        "fadvise64",
+        "flock",
+        "fstat", "fstatat64", "fstatfs", "fstatfs64",
+        "fsync", "fdatasync",
+        "ftruncate",
+        "getcwd",
+        "getdents", "getdents64",
+        "getxattr", "fgetxattr", "lgetxattr",
+        "inotify_add_watch", "inotify_init", "inotify_init1", "inotify_rm_watch",
+        "link", "linkat",
+        "lseek", "llseek",
+        "lstat",
+        "mkdir", "mkdirat",
+        "mknod", "mknodat",
+        "name_to_handle_at",
+        "newfstatat",
+        "open", "openat", "openat2",
+        "pread64", "preadv", "preadv2",
+        "pwrite64", "pwritev", "pwritev2",
+        "read", "readv",
+        "readahead",
+        "readlink", "readlinkat",
+        "remap_file_pages",
+        "rename", "renameat", "renameat2",
+        "rmdir",
+        "sendfile", "sendfile64",
+        "splice",
+        "stat", "statfs", "statx",
+        "symlink", "symlinkat",
+        "sync", "syncfs",
+        "tee",
+        "truncate",
+        "umask",
+        "unlink", "unlinkat",
+        "utime", "utimes", "utimensat", "futimesat",
+        "write", "writev"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Network operations - TCP/UDP for AI API access",
+      "names": [
+        "accept", "accept4",
+        "bind",
+        "connect",
+        "getpeername",
+        "getsockname", "getsockopt",
+        "listen",
+        "recvfrom", "recvmsg", "recvmmsg",
+        "sendmsg", "sendmmsg", "sendto",
+        "setsockopt",
+        "shutdown",
+        "socket", "socketpair"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "User/group identity operations",
+      "names": [
+        "capget", "capset",
+        "getegid", "geteuid", "getgid", "getuid",
+        "getgroups",
+        "getresgid", "getresuid",
+        "setfsgid", "setfsuid",
+        "setgid", "setgroups",
+        "setresgid", "setresuid",
+        "setuid"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Process group and session operations",
+      "names": [
+        "getpgid", "getpgrp",
+        "getsid",
+        "setpgid", "setsid"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Resource limits and scheduling",
+      "names": [
+        "getitimer", "setitimer",
+        "getrlimit", "setrlimit", "prlimit64",
+        "sched_getaffinity", "sched_getattr", "sched_getparam", "sched_getscheduler",
+        "sched_setaffinity", "sched_setattr", "sched_setparam", "sched_setscheduler",
+        "sched_get_priority_max", "sched_get_priority_min",
+        "sched_yield"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Time and timing operations",
+      "names": [
+        "clock_getres", "clock_gettime", "clock_nanosleep",
+        "gettimeofday",
+        "nanosleep",
+        "time",
+        "timer_create", "timer_delete", "timer_getoverrun", "timer_gettime", "timer_settime",
+        "timerfd_create", "timerfd_gettime", "timerfd_settime",
+        "times"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Signal handling",
+      "names": [
+        "pause",
+        "restart_syscall",
+        "rt_sigaction", "rt_sigpending", "rt_sigprocmask", "rt_sigqueueinfo",
+        "rt_sigreturn", "rt_sigsuspend", "rt_sigtimedwait",
+        "sigaltstack",
+        "signalfd", "signalfd4"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Synchronization primitives - required for multi-threaded apps",
+      "names": [
+        "futex", "futex_waitv",
+        "semctl", "semget", "semop", "semtimedop"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Event polling - required for Node.js, Java NIO",
+      "names": [
+        "epoll_create", "epoll_create1", "epoll_ctl", "epoll_pwait", "epoll_wait",
+        "eventfd", "eventfd2",
+        "poll", "ppoll",
+        "select", "pselect6"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Async I/O - required for modern Java and high-performance I/O",
+      "names": [
+        "io_cancel", "io_destroy", "io_getevents", "io_setup", "io_submit",
+        "io_uring_enter", "io_uring_register", "io_uring_setup"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "IPC - shared memory for Maven/Gradle daemon",
+      "names": [
+        "shmat", "shmctl", "shmdt", "shmget"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Pipe operations",
+      "names": [
+        "pipe", "pipe2"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "ioctl - required for terminal, device operations",
+      "names": [
+        "ioctl"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "System information - required for JVM, build tools",
+      "names": [
+        "sysinfo",
+        "uname"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Random number generation - required for cryptography",
+      "names": [
+        "getrandom"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Namespace operations - limited to reading/joining",
+      "names": [
+        "setns",
+        "unshare"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Personality - allow specific safe values only",
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 0, "op": "SCMP_CMP_EQ"}
+      ]
+    },
+    {
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 8, "op": "SCMP_CMP_EQ"}
+      ]
+    },
+    {
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 131072, "op": "SCMP_CMP_EQ"}
+      ]
+    },
+    {
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 131080, "op": "SCMP_CMP_EQ"}
+      ]
+    },
+    {
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 4294967295, "op": "SCMP_CMP_EQ"}
+      ]
+    }
+  ]
+}

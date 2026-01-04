@@ -1,0 +1,200 @@
+{
+  "defaultAction": "SCMP_ACT_ERRNO",
+  "defaultErrnoRet": 1,
+  "comment": "Kapsis Interactive/Debug Profile - Extends base profile with limited ptrace for debugging. Use only for troubleshooting.",
+  "archMap": [
+    {
+      "architecture": "SCMP_ARCH_X86_64",
+      "subArchitectures": [
+        "SCMP_ARCH_X86",
+        "SCMP_ARCH_X32"
+      ]
+    },
+    {
+      "architecture": "SCMP_ARCH_AARCH64",
+      "subArchitectures": [
+        "SCMP_ARCH_ARM"
+      ]
+    }
+  ],
+  "syscalls": [
+    {
+      "comment": "All syscalls from base profile",
+      "names": [
+        "accept", "accept4",
+        "access", "faccessat", "faccessat2",
+        "arch_prctl",
+        "bind",
+        "brk",
+        "capget", "capset",
+        "chdir", "fchdir",
+        "chmod", "fchmod", "fchmodat",
+        "chown", "fchown", "fchownat", "lchown",
+        "clock_getres", "clock_gettime", "clock_nanosleep",
+        "clone", "clone3",
+        "close", "close_range",
+        "connect",
+        "copy_file_range",
+        "creat",
+        "dup", "dup2", "dup3",
+        "epoll_create", "epoll_create1", "epoll_ctl", "epoll_pwait", "epoll_wait",
+        "eventfd", "eventfd2",
+        "execve", "execveat",
+        "exit", "exit_group",
+        "fallocate",
+        "fadvise64",
+        "flock",
+        "fork",
+        "fstat", "fstatat64", "fstatfs", "fstatfs64",
+        "fsync", "fdatasync",
+        "ftruncate",
+        "futex", "futex_waitv",
+        "getcwd",
+        "getdents", "getdents64",
+        "getegid", "geteuid", "getgid", "getuid",
+        "getgroups",
+        "getitimer", "setitimer",
+        "getpeername",
+        "getpgid", "getpgrp", "getpid", "getppid",
+        "getrandom",
+        "getresgid", "getresuid",
+        "getrlimit", "setrlimit", "prlimit64",
+        "getsid",
+        "getsockname", "getsockopt",
+        "gettid",
+        "gettimeofday",
+        "getxattr", "fgetxattr", "lgetxattr",
+        "inotify_add_watch", "inotify_init", "inotify_init1", "inotify_rm_watch",
+        "io_cancel", "io_destroy", "io_getevents", "io_setup", "io_submit",
+        "io_uring_enter", "io_uring_register", "io_uring_setup",
+        "ioctl",
+        "kill",
+        "lchown",
+        "link", "linkat",
+        "listen",
+        "lseek", "llseek",
+        "lstat",
+        "madvise",
+        "memfd_create",
+        "mincore",
+        "mkdir", "mkdirat",
+        "mknod", "mknodat",
+        "mlock", "mlock2", "munlock", "mlockall", "munlockall",
+        "mmap", "mmap2",
+        "mprotect",
+        "mremap",
+        "msync",
+        "munmap",
+        "name_to_handle_at",
+        "nanosleep",
+        "newfstatat",
+        "open", "openat", "openat2",
+        "pause",
+        "pipe", "pipe2",
+        "poll", "ppoll",
+        "prctl",
+        "pread64", "preadv", "preadv2",
+        "pwrite64", "pwritev", "pwritev2",
+        "read", "readv",
+        "readahead",
+        "readlink", "readlinkat",
+        "recvfrom", "recvmsg", "recvmmsg",
+        "remap_file_pages",
+        "rename", "renameat", "renameat2",
+        "restart_syscall",
+        "rmdir",
+        "rseq",
+        "rt_sigaction", "rt_sigpending", "rt_sigprocmask", "rt_sigqueueinfo",
+        "rt_sigreturn", "rt_sigsuspend", "rt_sigtimedwait",
+        "sched_getaffinity", "sched_getattr", "sched_getparam", "sched_getscheduler",
+        "sched_setaffinity", "sched_setattr", "sched_setparam", "sched_setscheduler",
+        "sched_get_priority_max", "sched_get_priority_min",
+        "sched_yield",
+        "select", "pselect6",
+        "semctl", "semget", "semop", "semtimedop",
+        "sendfile", "sendfile64",
+        "sendmsg", "sendmmsg", "sendto",
+        "set_robust_list", "get_robust_list",
+        "set_tid_address",
+        "setfsgid", "setfsuid",
+        "setgid", "setgroups",
+        "setns",
+        "setpgid", "setsid",
+        "setresgid", "setresuid",
+        "setsockopt",
+        "setuid",
+        "shmat", "shmctl", "shmdt", "shmget",
+        "shutdown",
+        "sigaltstack",
+        "signalfd", "signalfd4",
+        "socket", "socketpair",
+        "splice",
+        "stat", "statfs", "statx",
+        "symlink", "symlinkat",
+        "sync", "syncfs",
+        "sysinfo",
+        "tee",
+        "tgkill",
+        "time",
+        "timer_create", "timer_delete", "timer_getoverrun", "timer_gettime", "timer_settime",
+        "timerfd_create", "timerfd_gettime", "timerfd_settime",
+        "times",
+        "tkill",
+        "truncate",
+        "umask",
+        "uname",
+        "unlink", "unlinkat",
+        "unshare",
+        "utime", "utimes", "utimensat", "futimesat",
+        "vfork",
+        "wait4", "waitid", "waitpid",
+        "write", "writev"
+      ],
+      "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "PTRACE_TRACEME only - allows strace on self for debugging",
+      "names": ["ptrace"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 0, "op": "SCMP_CMP_EQ"}
+      ]
+    },
+    {
+      "comment": "Personality - allow specific safe values only",
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 0, "op": "SCMP_CMP_EQ"}
+      ]
+    },
+    {
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 8, "op": "SCMP_CMP_EQ"}
+      ]
+    },
+    {
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 131072, "op": "SCMP_CMP_EQ"}
+      ]
+    },
+    {
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 131080, "op": "SCMP_CMP_EQ"}
+      ]
+    },
+    {
+      "names": ["personality"],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {"index": 0, "value": 4294967295, "op": "SCMP_CMP_EQ"}
+      ]
+    }
+  ]
+}
