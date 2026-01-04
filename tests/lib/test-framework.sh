@@ -53,16 +53,11 @@ KAPSIS_TEST_IMAGE="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 export CI="${CI:-true}"  # Pass CI=true to containers for DNS filtering fallback
 
 # Get standard environment arguments for podman run
-# Returns: -e CI=... (and KAPSIS_NETWORK_MODE only if explicitly set)
-# Note: We only pass CI to trigger auto-fallback in entrypoint
-# We don't pass KAPSIS_NETWORK_MODE unless explicitly set to avoid
-# triggering "explicitly_set" logic in entrypoint
+# Returns: -e CI=... -e KAPSIS_NETWORK_MODE=...
+# Note: CI triggers auto-fallback in entrypoint for DNS filtering
+# KAPSIS_NETWORK_MODE defaults to "open" for tests since dnsmasq may not work in CI
 get_test_container_env_args() {
-    local args="-e CI=${CI:-true}"
-    if [[ -n "${KAPSIS_NETWORK_MODE:-}" ]]; then
-        args="$args -e KAPSIS_NETWORK_MODE=$KAPSIS_NETWORK_MODE"
-    fi
-    echo "$args"
+    echo "-e CI=${CI:-true} -e KAPSIS_NETWORK_MODE=${KAPSIS_NETWORK_MODE:-open}"
 }
 
 #===============================================================================
@@ -855,6 +850,8 @@ assert_file_in_upper() {
         # Named volume must be checked from inside a container
         local result
         result=$(podman run --rm \
+            -e CI="${CI:-true}" \
+            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
             -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
@@ -889,6 +886,8 @@ assert_file_not_in_upper() {
         # Named volume must be checked from inside a container
         local result
         result=$(podman run --rm \
+            -e CI="${CI:-true}" \
+            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
             -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
@@ -992,6 +991,8 @@ check_overlay_rw_support() {
         --userns=keep-id \
         --security-opt label=disable \
         --entrypoint="" \
+        -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         -v "$test_dir/lower:/workspace:O,upperdir=$test_dir/upper,workdir=$test_dir/work" \
         "$KAPSIS_TEST_IMAGE" \
         bash -c "echo 'write test' > /workspace/write-test.txt 2>&1 && echo SUCCESS || echo FAILED" 2>&1) || true

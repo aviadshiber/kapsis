@@ -51,7 +51,7 @@ test_two_agents_run_simultaneously() {
 
     # Start both agents
     podman run -d \
-        -e CI="${CI:-true}" \
+        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "kapsis-parallel-1-$$" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -63,7 +63,7 @@ test_two_agents_run_simultaneously() {
         }
 
     podman run -d \
-        -e CI="${CI:-true}" \
+        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "kapsis-parallel-2-$$" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -95,7 +95,7 @@ test_agents_have_isolated_filesystems() {
 
     # Agent 1 creates a file
     podman run --rm \
-        -e CI="${CI:-true}" \
+        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "kapsis-parallel-1-$$" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -109,7 +109,7 @@ test_agents_have_isolated_filesystems() {
     # Agent 2 checks for Agent 1's file
     local output
     output=$(podman run --rm \
-        -e CI="${CI:-true}" \
+        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "kapsis-parallel-2-$$" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -130,7 +130,7 @@ test_agents_have_isolated_volumes() {
 
     # Agent 1 writes to its volume
     podman run --rm \
-        -e CI="${CI:-true}" \
+        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$name1" \
         --userns=keep-id \
         -v "${name1}-m2:/home/developer/.m2/repository" \
@@ -143,7 +143,7 @@ test_agents_have_isolated_volumes() {
     # Agent 2 checks its volume (should be empty)
     local output
     output=$(podman run --rm \
-        -e CI="${CI:-true}" \
+        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$name2" \
         --userns=keep-id \
         -v "${name2}-m2:/home/developer/.m2/repository" \
@@ -164,7 +164,7 @@ test_concurrent_file_operations() {
     for i in 1 2 3; do
         local sandbox="$HOME/.ai-sandboxes/kapsis-parallel-$i-$$"
         podman run -d \
-        -e CI="${CI:-true}" \
+        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
             --name "kapsis-parallel-$i-$$" \
             --userns=keep-id \
             --security-opt label=disable \
@@ -209,7 +209,7 @@ test_no_cross_contamination_on_git() {
 
     # Agent 1 makes git commit
     podman run --rm \
-        -e CI="${CI:-true}" \
+        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "kapsis-parallel-1-$$" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -230,7 +230,7 @@ test_no_cross_contamination_on_git() {
     # Agent 2 checks git log
     local output
     output=$(podman run --rm \
-        -e CI="${CI:-true}" \
+        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "kapsis-parallel-2-$$" \
         --userns=keep-id \
         --security-opt label=disable \
@@ -254,7 +254,7 @@ test_resource_limits_per_agent() {
 
     # Start with different resource limits
     podman run -d \
-        -e CI="${CI:-true}" \
+        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "kapsis-parallel-1-$$" \
         --memory=1g \
         --cpus=1 \
@@ -268,7 +268,7 @@ test_resource_limits_per_agent() {
         }
 
     podman run -d \
-        -e CI="${CI:-true}" \
+        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "kapsis-parallel-2-$$" \
         --memory=2g \
         --cpus=2 \

@@ -28,6 +28,7 @@ test_branch_flag_creates_branch() {
     local output
     output=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --hostname "$CONTAINER_TEST_ID" \
         --userns=keep-id \
@@ -137,8 +138,8 @@ test_multiple_branches_different_agents() {
         # Check files in upper volumes
         local agent1_has_file
         local agent2_has_file
-        agent1_has_file=$(podman run --rm -v "${agent1}-overlay:/overlay:ro" "$KAPSIS_TEST_IMAGE" bash -c "test -f /overlay/upper/agent1.txt && echo YES || echo NO" 2>&1)
-        agent2_has_file=$(podman run --rm -v "${agent2}-overlay:/overlay:ro" "$KAPSIS_TEST_IMAGE" bash -c "test -f /overlay/upper/agent2.txt && echo YES || echo NO" 2>&1)
+        agent1_has_file=$(podman run --rm $(get_test_container_env_args) -v "${agent1}-overlay:/overlay:ro" "$KAPSIS_TEST_IMAGE" bash -c "test -f /overlay/upper/agent1.txt && echo YES || echo NO" 2>&1)
+        agent2_has_file=$(podman run --rm $(get_test_container_env_args) -v "${agent2}-overlay:/overlay:ro" "$KAPSIS_TEST_IMAGE" bash -c "test -f /overlay/upper/agent2.txt && echo YES || echo NO" 2>&1)
 
         cleanup_isolated_container "$agent1"
         cleanup_isolated_container "$agent2"
@@ -178,6 +179,7 @@ test_branch_env_var_passed() {
     local output
     output=$(podman run --rm \
         -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         --name "$CONTAINER_TEST_ID" \
         --userns=keep-id \
         -e KAPSIS_BRANCH="$branch_name" \
