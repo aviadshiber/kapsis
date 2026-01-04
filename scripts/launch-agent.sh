@@ -22,6 +22,7 @@
 #   --worktree-mode       Force worktree mode (git worktrees, simpler cleanup)
 #   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
 #   --network-mode <mode> Network isolation: none, filtered (default), open
+#   --security-profile <profile> Security: minimal, standard (default), strict, paranoid
 #
 # Examples:
 #   ./launch-agent.sh ~/project --agent claude --task "fix failing tests"
@@ -81,6 +82,9 @@ SANITIZED_GIT_PATH=""
 AGENT_ID_AUTO_GENERATED=false  # Track if ID was auto-generated
 # Source shared constants (must come before using KAPSIS_DEFAULT_NETWORK_MODE)
 source "$SCRIPT_DIR/lib/constants.sh"
+
+# Source security library (provides generate_security_args, validate_security_config, etc.)
+source "$SCRIPT_DIR/lib/security.sh"
 
 # Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
 NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
@@ -247,6 +251,8 @@ Options:
   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
   --network-mode <mode> Network isolation: none (isolated),
                         filtered (default, DNS allowlist), open (unrestricted)
+  --security-profile <profile>
+                        Security hardening: minimal, standard (default), strict, paranoid
   -h, --help            Show this help message
 
 Available Agents:
@@ -418,6 +424,10 @@ parse_args() {
                 ;;
             --network-mode)
                 NETWORK_MODE="$2"
+                shift 2
+                ;;
+            --security-profile)
+                export KAPSIS_SECURITY_PROFILE="$2"
                 shift 2
                 ;;
             -h|--help)
@@ -765,6 +775,35 @@ parse_config() {
 
         # Parse DNS logging setting
         NETWORK_LOG_DNS=$(yq eval '.network.log_dns_queries // "false"' "$CONFIG_FILE" 2>/dev/null || echo "false")
+
+        # Parse security section (lower priority than env vars and CLI)
+        # Only set if not already set by env var or CLI flag
+        local cfg_security_profile
+        cfg_security_profile=$(yq -r '.security.profile // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        if [[ -n "$cfg_security_profile" ]] && [[ -z "${KAPSIS_SECURITY_PROFILE:-}" ]]; then
+            export KAPSIS_SECURITY_PROFILE="$cfg_security_profile"
+            log_debug "Security profile from config: $cfg_security_profile"
+        fi
+
+        # Parse individual security settings (can override profile defaults)
+        local cfg_val
+        cfg_val=$(yq -r '.security.process.pids_limit // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ -n "$cfg_val" ]] && [[ -z "${KAPSIS_PIDS_LIMIT:-}" ]] && export KAPSIS_PIDS_LIMIT="$cfg_val"
+
+        cfg_val=$(yq -r '.security.seccomp.enabled // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_SECCOMP_ENABLED:-}" ]] && export KAPSIS_SECCOMP_ENABLED="true"
+
+        cfg_val=$(yq -r '.security.filesystem.noexec_tmp // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_NOEXEC_TMP:-}" ]] && export KAPSIS_NOEXEC_TMP="true"
+
+        cfg_val=$(yq -r '.security.filesystem.readonly_root // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_READONLY_ROOT:-}" ]] && export KAPSIS_READONLY_ROOT="true"
+
+        cfg_val=$(yq -r '.security.lsm.required // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_REQUIRE_LSM:-}" ]] && export KAPSIS_REQUIRE_LSM="true"
+
+        cfg_val=$(yq -r '.security.process.no_new_privileges // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ "$cfg_val" == "false" ]] && [[ -z "${KAPSIS_NO_NEW_PRIVILEGES:-}" ]] && export KAPSIS_NO_NEW_PRIVILEGES="false"
     else
         log_error "yq is required but not installed."
         log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
@@ -1282,19 +1321,25 @@ generate_branch_name() {
 # BUILD CONTAINER COMMAND
 #===============================================================================
 build_container_command() {
+    # Validate security configuration before building command
+    if ! validate_security_config; then
+        log_error "Security configuration validation failed"
+        exit 1
+    fi
+
     CONTAINER_CMD=(
         "podman" "run"
         "--rm"
         "-it"
         "--name" "kapsis-${AGENT_ID}"
         "--hostname" "kapsis-${AGENT_ID}"
-        "--userns=keep-id"
-        "--memory=${RESOURCE_MEMORY}"
-        "--cpus=${RESOURCE_CPUS}"
-        "--security-opt" "label=disable"
-        # Security: drop all capabilities (userns=keep-id runs as regular user)
-        "--cap-drop=ALL"
     )
+
+    # Generate security arguments from security.sh library
+    # This includes: capabilities, seccomp, process isolation, LSM, resource limits
+    local security_args
+    mapfile -t security_args < <(generate_security_args "$AGENT_NAME" "$RESOURCE_MEMORY" "$RESOURCE_CPUS")
+    CONTAINER_CMD+=("${security_args[@]}")
 
     # Network isolation mode
     case "$NETWORK_MODE" in
