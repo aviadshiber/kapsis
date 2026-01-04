@@ -14,6 +14,9 @@ This guide covers the logging system and test framework for developers contribut
   - [Test Framework API](#test-framework-api)
   - [Test Categories](#test-categories)
 - [Code Style](#code-style)
+- [Getting Started](#getting-started)
+  - [Developer Setup](#developer-setup)
+  - [Running Hooks Manually](#running-hooks-manually)
 - [Submitting Changes](#submitting-changes)
 - [Release Process](#release-process)
   - [Automatic Version Bumping](#automatic-version-bumping)
@@ -60,6 +63,7 @@ log_success "Operation completed"
 For log environment variables, file locations, and rotation settings, see [docs/CONFIG-REFERENCE.md](docs/CONFIG-REFERENCE.md#logging-configuration).
 
 Quick reference:
+
 ```bash
 # Enable debug logging
 KAPSIS_DEBUG=1 ./scripts/launch-agent.sh ~/project --task "test"
@@ -291,6 +295,7 @@ Tests are categorized for selective execution:
 2. Add test category tag in file header comment
 3. Add to appropriate section in `tests/run-all-tests.sh` if needed
 4. Run and verify:
+
    ```bash
    ./tests/test-my-feature.sh         # Verbose
    KAPSIS_TEST_QUIET=1 ./tests/test-my-feature.sh  # Quiet
@@ -315,12 +320,44 @@ Tests are categorized for selective execution:
 - Quote variables: `"$var"` not `$var`
 - Use `[[ ]]` for conditionals, not `[ ]`
 
+## Getting Started
+
+### Developer Setup
+
+After cloning the repository, set up your development environment:
+
+```bash
+# Install pre-commit hooks (required for contributing)
+./setup.sh --dev
+```
+
+This installs:
+
+- **pre-commit hook**: Runs shellcheck, shfmt, yamllint, markdownlint, and detect-secrets on staged files
+- **pre-push hook**: Runs security scan before pushing
+
+### Running Hooks Manually
+
+```bash
+# Run all hooks on all files
+pre-commit run --all-files
+
+# Run specific hook
+pre-commit run shellcheck --all-files
+
+# Skip hooks temporarily (not recommended)
+git commit --no-verify
+```
+
+---
+
 ## Submitting Changes
 
-1. Create a feature branch
-2. Make changes
-3. Run tests: `./tests/run-all-tests.sh -q`
-4. Submit PR with description of changes
+1. Set up development environment: `./setup.sh --dev`
+2. Create a feature branch
+3. Make changes
+4. Run tests: `./tests/run-all-tests.sh -q`
+5. Submit PR with description of changes
 
 ---
 
@@ -341,7 +378,7 @@ When a PR is merged to `main`, the auto-release workflow analyzes commit message
 
 ### Commit Message Format
 
-```
+```text
 <type>(<optional scope>): <description>
 
 [optional body]

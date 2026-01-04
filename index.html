@@ -4,6 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kapsis | Isolated AI Agent Sandbox</title>
+    <meta name="description" content="Run AI coding agents (Claude, Aider, Codex) in isolated Podman sandboxes. Full autonomy for the agent. Total safety for your files.">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://aviadshiber.github.io/kapsis/">
+    <meta property="og:title" content="Kapsis - Run AI Agents Without Fear">
+    <meta property="og:description" content="Run AI coding agents in isolated sandboxes. Full autonomy for the agent. Total safety for your files.">
+    <meta property="og:image" content="https://aviadshiber.github.io/kapsis/assets/kapsis-og.png">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="https://aviadshiber.github.io/kapsis/">
+    <meta name="twitter:title" content="Kapsis - Run AI Agents Without Fear">
+    <meta name="twitter:description" content="Run AI coding agents in isolated sandboxes. Full autonomy for the agent. Total safety for your files.">
+    <meta name="twitter:image" content="https://aviadshiber.github.io/kapsis/assets/kapsis-og.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script>
@@ -1142,6 +1157,170 @@ filesystem:
                 </div>
 
             </div>
+
+            <!-- Section 3: Security Profiles Spectrum -->
+            <div class="mt-12">
+                <h3 class="text-xl font-bold text-white mb-4 flex items-center justify-center">
+                    <span class="bg-red-500/20 text-red-400 w-8 h-8 rounded flex items-center justify-center mr-3 text-sm">3</span>
+                    Security Profiles
+                </h3>
+                <p class="text-slate-400 text-sm mb-6 text-center max-w-2xl mx-auto">
+                    Choose a security profile based on your threat model. <span class="text-slate-500">Hover or tap a profile to see details.</span>
+                </p>
+
+                <!-- Spectrum Visualization -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <!-- Spectrum Bar with Interactive Markers -->
+                    <div class="relative mb-4">
+                        <div class="flex items-center justify-between text-xs text-slate-500 mb-2">
+                            <span>Less Secure</span>
+                            <span>More Secure</span>
+                        </div>
+                        <div class="h-3 rounded-full bg-gradient-to-r from-yellow-500 via-green-500 via-blue-500 to-purple-500 relative">
+                            <!-- Profile markers - clickable -->
+                            <button onclick="selectSecurityProfile('minimal')" onmouseenter="selectSecurityProfile('minimal')" class="security-marker absolute -top-1.5 left-[12.5%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-yellow-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="minimal" aria-label="Select minimal profile"></button>
+                            <button onclick="selectSecurityProfile('standard')" onmouseenter="selectSecurityProfile('standard')" class="security-marker absolute -top-1.5 left-[35%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-green-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="standard" aria-label="Select standard profile"></button>
+                            <!-- DEFAULT marker - between standard and strict -->
+                            <button onclick="selectSecurityProfile('default')" onmouseenter="selectSecurityProfile('default')" class="security-marker absolute -top-2 left-[50%] transform -translate-x-1/2 w-7 h-7 rounded-full bg-gradient-to-r from-green-500 to-blue-500 border-2 border-kapsis-neon ring-2 ring-kapsis-neon ring-offset-1 ring-offset-slate-900 hover:scale-125 transition-transform cursor-pointer shadow-[0_0_10px_rgba(16,185,129,0.5)]" data-profile="default" aria-label="Select default configuration"></button>
+                            <button onclick="selectSecurityProfile('strict')" onmouseenter="selectSecurityProfile('strict')" class="security-marker absolute -top-1.5 left-[65%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-blue-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="strict" aria-label="Select strict profile"></button>
+                            <button onclick="selectSecurityProfile('paranoid')" onmouseenter="selectSecurityProfile('paranoid')" class="security-marker absolute -top-1.5 left-[87.5%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-purple-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="paranoid" aria-label="Select paranoid profile"></button>
+                        </div>
+                        <!-- Labels below -->
+                        <div class="flex justify-between mt-4 text-center">
+                            <button onclick="selectSecurityProfile('minimal')" class="w-[15%] cursor-pointer group">
+                                <span class="text-yellow-400 font-mono text-sm group-hover:underline">minimal</span>
+                            </button>
+                            <button onclick="selectSecurityProfile('standard')" class="w-[20%] cursor-pointer group">
+                                <span class="text-green-400 font-mono text-sm group-hover:underline">standard</span>
+                            </button>
+                            <button onclick="selectSecurityProfile('default')" class="w-[15%] cursor-pointer group">
+                                <span class="text-kapsis-neon font-mono text-sm font-bold group-hover:underline">DEFAULT</span>
+                                <span class="block text-slate-500 text-xs mt-0.5">standard+seccomp</span>
+                            </button>
+                            <button onclick="selectSecurityProfile('strict')" class="w-[20%] cursor-pointer group">
+                                <span class="text-blue-400 font-mono text-sm group-hover:underline">strict</span>
+                            </button>
+                            <button onclick="selectSecurityProfile('paranoid')" class="w-[15%] cursor-pointer group">
+                                <span class="text-purple-400 font-mono text-sm group-hover:underline">paranoid</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Dynamic Profile Detail Box -->
+                    <div id="security-profile-detail" class="bg-slate-800/50 rounded-lg p-4 border border-kapsis-neon/50 transition-all duration-200">
+                        <!-- minimal -->
+                        <div id="profile-minimal" class="profile-content hidden">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-yellow-400 font-bold text-lg">minimal</span>
+                                <span class="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">Trusted Execution</span>
+                            </div>
+                            <p class="text-slate-400 text-sm mb-3">No security restrictions. Full container capabilities retained. Use for fully trusted execution that requires unrestricted access.</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">All capabilities</span>
+                                <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">No PID limit</span>
+                                <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">No seccomp</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-yellow-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Running fully trusted internal tools that need unrestricted access
+                            </div>
+                            <div class="mt-2 text-yellow-500/80 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Only use for fully trusted execution</div>
+                        </div>
+                        <!-- standard -->
+                        <div id="profile-standard" class="profile-content hidden">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-green-400 font-bold text-lg">standard</span>
+                                <span class="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded">Base Profile</span>
+                            </div>
+                            <p class="text-slate-400 text-sm mb-3">Drops dangerous capabilities and prevents privilege escalation. Good foundation but consider enabling seccomp for additional syscall filtering.</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">Capabilities dropped</span>
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">no-new-privileges</span>
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">PID limit: 1000</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-green-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Base profile for daily development work
+                            </div>
+                        </div>
+                        <!-- default (shown by default) - standard + seccomp -->
+                        <div id="profile-default" class="profile-content">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-kapsis-neon font-bold text-lg">DEFAULT CONFIG</span>
+                                <span class="text-xs bg-kapsis-neon/20 text-kapsis-neon px-2 py-1 rounded">standard + seccomp</span>
+                            </div>
+                            <p class="text-slate-400 text-sm mb-3">The out-of-box configuration. Uses <code class="text-green-400">standard</code> profile with <code class="text-blue-400">seccomp.enabled: true</code>. Balances security and compatibility for typical development.</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">Capabilities dropped</span>
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">no-new-privileges</span>
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">PID limit: 1000</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Seccomp filtering</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Blocks ptrace/mount/bpf</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-kapsis-neon mr-1"></i>
+                                <span class="font-medium">When to use:</span> Recommended starting point for most projects
+                            </div>
+                        </div>
+                        <!-- strict -->
+                        <div id="profile-strict" class="profile-content hidden">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-blue-400 font-bold text-lg">strict</span>
+                                <span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded">Untrusted Execution</span>
+                            </div>
+                            <p class="text-slate-400 text-sm mb-3">Enhanced protection for running untrusted code or reviewing external PRs. Adds filesystem hardening and tighter resource limits on top of seccomp.</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">All standard protections</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Seccomp required</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">noexec /tmp</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">PID limit: 500</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-blue-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Reviewing untrusted PRs or running external code
+                            </div>
+                        </div>
+                        <!-- paranoid -->
+                        <div id="profile-paranoid" class="profile-content hidden">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-purple-400 font-bold text-lg">paranoid</span>
+                                <span class="text-xs bg-purple-500/20 text-purple-400 px-2 py-1 rounded">Maximum Security</span>
+                            </div>
+                            <p class="text-slate-400 text-sm mb-3">Air-gapped style security with immutable system directories and mandatory access control. Requires AppArmor or SELinux on host.</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">All strict protections</span>
+                                <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">Read-only /usr /bin</span>
+                                <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">LSM required</span>
+                                <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">AppArmor/SELinux</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-purple-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Air-gapped or highly sensitive security requirements
+                            </div>
+                            <div class="mt-2 text-purple-500/80 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i> May break some agents - test before using</div>
+                        </div>
+                    </div>
+
+                    <!-- Collapsible Usage Examples -->
+                    <details class="mt-4 group">
+                        <summary class="flex items-center gap-2 cursor-pointer list-none text-slate-400 hover:text-white transition-colors text-sm">
+                            <i class="fa-solid fa-terminal text-xs"></i>
+                            <span>Usage examples</span>
+                            <i class="fa-solid fa-chevron-down text-xs transition-transform group-open:rotate-180"></i>
+                        </summary>
+                        <div class="mt-3 bg-[#0d1117] rounded-lg p-4">
+                            <pre class="text-xs font-mono"><span class="text-slate-500"># Default (standard)</span>
+<span class="text-emerald-400">kapsis</span> ~/project --task "implement feature"
+
+<span class="text-slate-500"># Untrusted code</span>
+<span class="text-emerald-400">kapsis</span> ~/project <span class="text-blue-400">--security-profile strict</span> --task "review PR"
+
+<span class="text-slate-500"># Debug (minimal + isolated network)</span>
+<span class="text-emerald-400">kapsis</span> ~/project <span class="text-yellow-400">--security-profile minimal</span> <span class="text-orange-400">--network-mode none</span> --task "debug"</pre>
+                        </div>
+                    </details>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -1322,7 +1501,7 @@ logging in with email+password
                     <a href="https://github.com/aviadshiber/kapsis" class="text-slate-400 hover:text-white transition-colors"><i class="fa-brands fa-github mr-1"></i>GitHub</a>
                     <a href="https://github.com/aviadshiber/kapsis/releases" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-tags mr-1"></i>Releases</a>
                     <a href="https://github.com/aviadshiber/kapsis/issues" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-bug mr-1"></i>Issues</a>
-                    <a href="https://github.com/aviadshiber/kapsis/security/advisories/new" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-shield-halved mr-1"></i>Security</a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/SECURITY.md" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-shield-halved mr-1"></i>Security Policy</a>
                     <a href="https://github.com/aviadshiber/kapsis/blob/main/LICENSE" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-scale-balanced mr-1"></i>License</a>
                 </div>
             </div>
@@ -1439,6 +1618,25 @@ logging in with email+password
             document.getElementById('doc-content-' + tabName).classList.remove('hidden');
             const activeBtn = document.getElementById('doc-tab-' + tabName);
             activeBtn.className = "flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white " + (tabName === 'claude' ? "border-r border-slate-700" : "");
+        }
+
+        // Security profile selection
+        const securityProfileColors = {
+            minimal: 'border-yellow-500/50',
+            standard: 'border-green-500/50',
+            default: 'border-kapsis-neon/50',
+            strict: 'border-blue-500/50',
+            paranoid: 'border-purple-500/50'
+        };
+        function selectSecurityProfile(profile) {
+            // Hide all profile contents
+            document.querySelectorAll('.profile-content').forEach(el => el.classList.add('hidden'));
+            // Show selected profile
+            document.getElementById('profile-' + profile).classList.remove('hidden');
+            // Update border color of detail box
+            const detailBox = document.getElementById('security-profile-detail');
+            Object.values(securityProfileColors).forEach(c => detailBox.classList.remove(c));
+            detailBox.classList.add(securityProfileColors[profile]);
         }
 
         // Check for horizontal scroll overflow and add indicator

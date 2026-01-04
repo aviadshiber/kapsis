@@ -12,6 +12,7 @@
 #   ./setup.sh --build      # Build container image only
 #   ./setup.sh --validate   # Run validation tests
 #   ./setup.sh --all        # Full setup: check, install, build, validate
+#   ./setup.sh --dev        # Developer setup: install pre-commit hooks for contributing
 #
 # Requirements:
 #   - macOS (Apple Silicon or Intel) or Linux
@@ -125,17 +126,17 @@ check_result() {
     case "$status" in
         pass)
             log_success "$name: $message"
-            ((CHECKS_PASSED++))
+            ((CHECKS_PASSED++)) || true
             ;;
         warn)
             log_warn "$name: $message"
             [[ -n "$fix" ]] && echo "        → $fix"
-            ((CHECKS_WARNED++))
+            ((CHECKS_WARNED++)) || true
             ;;
         fail)
             log_error "$name: $message"
             [[ -n "$fix" ]] && echo "        → $fix"
-            ((CHECKS_FAILED++))
+            ((CHECKS_FAILED++)) || true
             ;;
     esac
 }
@@ -254,6 +255,53 @@ check_yq() {
     else
         check_result fail "yq" "Not installed (required)" \
             "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
+    fi
+}
+
+check_pre_commit() {
+    if command_exists pre-commit; then
+        local version
+        version=$(pre-commit --version 2>/dev/null | awk '{print $2}')
+        check_result pass "pre-commit" "Version $version"
+    else
+        check_result warn "pre-commit" "Not installed" \
+            "Install: brew install pre-commit (macOS) or pip install pre-commit"
+    fi
+}
+
+check_pre_commit_hooks() {
+    local hooks_dir
+
+    # Handle both regular repos and worktrees
+    if [[ -d "$SCRIPT_DIR/.git/hooks" ]]; then
+        hooks_dir="$SCRIPT_DIR/.git/hooks"
+    elif [[ -f "$SCRIPT_DIR/.git" ]]; then
+        # Worktree: .git is a file pointing to the main repo
+        local git_dir
+        git_dir=$(cd "$SCRIPT_DIR" && git rev-parse --git-common-dir 2>/dev/null)
+        if [[ -n "$git_dir" ]] && [[ -d "$git_dir/hooks" ]]; then
+            hooks_dir="$git_dir/hooks"
+        fi
+    fi
+
+    if [[ -z "$hooks_dir" ]] || [[ ! -d "$hooks_dir" ]]; then
+        check_result warn "Git Hooks" "Not in a git repository"
+        return
+    fi
+
+    local pre_commit_hook="$hooks_dir/pre-commit"
+    local pre_push_hook="$hooks_dir/pre-push"
+
+    if [[ -f "$pre_commit_hook" ]] && grep -q "pre-commit" "$pre_commit_hook" 2>/dev/null; then
+        if [[ -f "$pre_push_hook" ]] && grep -q "pre-commit" "$pre_push_hook" 2>/dev/null; then
+            check_result pass "Git Hooks" "pre-commit and pre-push installed"
+        else
+            check_result warn "Git Hooks" "pre-commit installed, pre-push missing" \
+                "Run: pre-commit install --hook-type pre-push"
+        fi
+    else
+        check_result warn "Git Hooks" "Not installed" \
+            "Run: pre-commit install && pre-commit install --hook-type pre-push"
     fi
 }
 
@@ -561,6 +609,40 @@ install_yq() {
     esac
 }
 
+install_pre_commit() {
+    if command_exists pre-commit; then
+        log_info "pre-commit already installed"
+    else
+        local os
+        os=$(detect_os)
+
+        case "$os" in
+            macos)
+                log_info "Installing pre-commit via Homebrew..."
+                brew install pre-commit
+                ;;
+            linux)
+                log_info "Installing pre-commit via pip..."
+                if command_exists pip3; then
+                    pip3 install --user pre-commit
+                elif command_exists pip; then
+                    pip install --user pre-commit
+                else
+                    log_error "pip not found, cannot install pre-commit"
+                    return 1
+                fi
+                ;;
+        esac
+    fi
+
+    # Install git hooks if .pre-commit-config.yaml exists
+    if [[ -f "$SCRIPT_DIR/.pre-commit-config.yaml" ]]; then
+        log_info "Installing git hooks..."
+        (cd "$SCRIPT_DIR" && pre-commit install && pre-commit install --hook-type pre-push)
+        log_success "Git hooks installed (pre-commit + pre-push)"
+    fi
+}
+
 run_install() {
     local os
     os=$(detect_os)
@@ -740,12 +822,14 @@ show_usage() {
     echo "  --config     Create configuration file"
     echo "  --validate   Run validation tests"
     echo "  --all        Full setup (check, install, build, config, validate)"
+    echo "  --dev        Developer setup (pre-commit hooks for contributing)"
     echo "  --help       Show this help message"
     echo ""
     echo "Examples:"
     echo "  $cmd_name --check              # Just check what's needed"
     echo "  $cmd_name --all                # Full automated setup"
     echo "  $cmd_name --install --build    # Install deps and build image"
+    echo "  $cmd_name --dev                # Set up pre-commit hooks for development"
 }
 
 main() {
@@ -754,6 +838,7 @@ main() {
     local do_build=false
     local do_config=false
     local do_validate=false
+    local do_dev=false
 
     # Parse arguments
     if [[ $# -eq 0 ]]; then
@@ -785,6 +870,9 @@ main() {
                 do_build=true
                 do_config=true
                 do_validate=true
+                ;;
+            --dev)
+                do_dev=true
                 ;;
             --help|-h)
                 show_usage
@@ -830,6 +918,30 @@ main() {
 
     if [[ "$do_validate" == "true" ]]; then
         run_validation
+    fi
+
+    if [[ "$do_dev" == "true" ]]; then
+        log_step "Developer Setup"
+
+        # Install pre-commit if needed (includes hook installation)
+        install_pre_commit
+
+        # Verify hooks are installed
+        check_pre_commit_hooks
+
+        echo ""
+        echo "═══════════════════════════════════════════════════════════════════"
+        echo -e "${GREEN}${BOLD}  Developer Setup Complete!${NC}"
+        echo "═══════════════════════════════════════════════════════════════════"
+        echo ""
+        echo "  Git hooks installed:"
+        echo "    • pre-commit: Runs shellcheck, shfmt, yamllint, etc."
+        echo "    • pre-push: Runs security scan before pushing"
+        echo ""
+        echo "  To run hooks manually:"
+        echo "    pre-commit run --all-files"
+        echo ""
+        exit 0
     fi
 
     # Final summary

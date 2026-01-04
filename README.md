@@ -317,6 +317,30 @@ kapsis ~/project --network-mode open --task "test"
 
 See [docs/NETWORK-ISOLATION.md](docs/NETWORK-ISOLATION.md) for customizing the allowlist.
 
+### Security Hardening
+
+Kapsis provides security profiles with increasing levels of container hardening:
+
+```bash
+# Default: standard profile + seccomp (capability dropping, syscall filtering)
+kapsis ~/project --task "implement feature"
+
+# Strict mode for untrusted execution (adds noexec /tmp, lower PID limit)
+kapsis ~/project --security-profile strict --task "review external PR"
+
+# Trusted execution (no restrictions, isolated network)
+kapsis ~/project --security-profile minimal --network-mode none --task "run trusted task"
+```
+
+| Profile | Protection Level | Use Case |
+|---------|-----------------|----------|
+| `minimal` | None | Trusted execution |
+| `standard` | Capabilities, privilege escalation | Base profile |
+| `strict` | + Seccomp filtering, noexec /tmp | Untrusted execution |
+| `paranoid` | + Read-only root, LSM required | Maximum security |
+
+See [docs/SECURITY-HARDENING.md](docs/SECURITY-HARDENING.md) for detailed configuration.
+
 ## Cleanup
 
 Reclaim disk space after agent work:

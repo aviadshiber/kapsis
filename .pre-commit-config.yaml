@@ -3,11 +3,15 @@
 #
 # Install: pip install pre-commit && pre-commit install
 # Run manually: pre-commit run --all-files
+#
+# SECURITY: All hooks are pinned to immutable commit SHAs (not version tags)
+# to prevent supply chain attacks via tag poisoning. When updating, verify
+# the commit SHA corresponds to a signed release tag.
 
 repos:
   # General file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.5.0
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # v6.0.0
     hooks:
       - id: trailing-whitespace
         exclude: \.md$
@@ -25,7 +29,7 @@ repos:
 
   # Shell script linting
   - repo: https://github.com/shellcheck-py/shellcheck-py
-    rev: v0.9.0.6
+    rev: 745eface02aef23e168a8afb6b5737818efbea95  # v0.11.0.1
     hooks:
       - id: shellcheck
         args: [-x, -S, warning]
@@ -33,7 +37,7 @@ repos:
 
   # Shell script formatting
   - repo: https://github.com/scop/pre-commit-shfmt
-    rev: v3.8.0-1
+    rev: 2a30809d16bc7a60d9b97353c797f42b510d3368  # v3.12.0-2
     hooks:
       - id: shfmt
         args: [-i, "4", -ci, -bn]
@@ -41,7 +45,7 @@ repos:
 
   # YAML linting
   - repo: https://github.com/adrienverge/yamllint
-    rev: v1.33.0
+    rev: 79a6b2b1392eaf49cdd32ac4f14be1a809bbd8f7  # v1.37.1
     hooks:
       - id: yamllint
         args: [-c, .yamllint.yml]
@@ -49,14 +53,14 @@ repos:
 
   # Markdown linting
   - repo: https://github.com/igorshubovych/markdownlint-cli
-    rev: v0.38.0
+    rev: 76b3d32d3f4b965e1d6425253c59407420ae2c43  # v0.47.0
     hooks:
       - id: markdownlint
         args: [--fix, --disable, MD013, MD033, MD041, --]
 
   # Security - detect secrets
   - repo: https://github.com/Yelp/detect-secrets
-    rev: v1.4.0
+    rev: 01886c8a910c64595c47f186ca1ffc0b77fa5458  # v1.5.0
     hooks:
       - id: detect-secrets
         args: [--baseline, .secrets.baseline]
@@ -70,7 +74,7 @@ repos:
         entry: scripts/hooks/precommit/spellcheck.sh
         language: script
         pass_filenames: false
-        stages: [commit]
+        stages: [pre-commit]
 
       - id: kapsis-check-tests
         name: Check test coverage
@@ -78,14 +82,14 @@ repos:
         language: script
         pass_filenames: false
         files: ^scripts/.*\.sh$
-        stages: [commit]
+        stages: [pre-commit]
 
       - id: kapsis-run-tests
         name: Run quick tests
         entry: scripts/hooks/precommit/run-tests.sh
         language: script
         pass_filenames: false
-        stages: [commit]
+        stages: [pre-commit]
 
 # CI configuration
 ci:
