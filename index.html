@@ -16,7 +16,7 @@
                             card: '#1e293b',
                             neon: '#10b981', // Emerald 500
                             danger: '#ef4444', // Red 500
-                            beta: '#f59e0b',   // Amber 500
+                            stable: '#10b981', // Emerald 500 (stable release)
                             accent: '#6366f1' // Indigo 500
                         }
                     },
@@ -121,7 +121,7 @@
             <div class="flex items-center justify-between h-16">
                 <div class="flex items-center gap-3">
                     <i class="fa-solid fa-box-open text-kapsis-neon text-2xl" aria-hidden="true"></i>
-                    <span class="text-white text-xl font-bold tracking-wider">KAPSIS <span class="text-xs text-kapsis-beta ml-1 border border-kapsis-beta px-1 rounded uppercase">Beta</span></span>
+                    <span class="text-white text-xl font-bold tracking-wider">KAPSIS <span class="text-xs text-kapsis-stable ml-1 border border-kapsis-stable px-1 rounded uppercase">v<span class="version-placeholder">...</span></span></span>
                 </div>
                 <div class="hidden md:block">
                     <div class="ml-10 flex items-baseline space-x-6" role="menubar">
@@ -171,8 +171,8 @@
         <div class="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
         <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
 
-            <div class="inline-flex items-center px-4 py-1 rounded-full border border-kapsis-beta/30 bg-kapsis-beta/10 text-kapsis-beta text-sm mb-8">
-                <span class="animate-pulse mr-2">●</span> Public Beta Release
+            <div class="inline-flex items-center px-4 py-1 rounded-full border border-kapsis-stable/30 bg-kapsis-stable/10 text-kapsis-stable text-sm mb-8">
+                <i class="fa-solid fa-rocket mr-2"></i> v<span class="version-placeholder">...</span> — Production Ready
             </div>
 
             <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 leading-tight">
@@ -1047,7 +1047,7 @@ logging in with email+password
                     <div class="flex items-center gap-2 mb-2">
                         <i class="fa-solid fa-box-open text-slate-600"></i>
                         <span class="text-slate-300 font-bold">KAPSIS</span>
-                        <span class="text-xs text-kapsis-beta border border-kapsis-beta px-1 rounded uppercase">Beta</span>
+                        <span class="text-xs text-kapsis-stable border border-kapsis-stable px-1 rounded uppercase">v<span class="version-placeholder">...</span></span>
                     </div>
                     <p class="text-slate-500 text-sm">The Secure Lab for AI Agents.</p>
                 </div>
@@ -1058,7 +1058,7 @@ logging in with email+password
                 </div>
             </div>
             <div class="border-t border-slate-800 mt-8 pt-8 text-center text-slate-600 text-sm">
-                <p>&copy; 2025 Kapsis Project. All rights reserved.</p>
+                <p>&copy; 2026 Kapsis Project. All rights reserved.</p>
                 <p class="mt-2">
                     Website built by <a href="https://github.com/aviadshiber" target="_blank" class="text-kapsis-neon hover:underline">Aviad Shiber</a>
                 </p>
