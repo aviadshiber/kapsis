@@ -864,14 +864,9 @@ assert_file_in_upper() {
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: check file in overlay volume (upper subdir)
-        # Named volume must be checked from inside a container
         local result
-        result=$(podman run --rm \
-            -e CI="${CI:-true}" \
-            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-            -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro" \
-            "$KAPSIS_TEST_IMAGE" \
-            bash -c "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
+        result=$(run_simple_container "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" \
+            -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro")
 
         if [[ "$result" == *"EXISTS"* ]]; then
             return 0
@@ -900,14 +895,9 @@ assert_file_not_in_upper() {
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: check file NOT in overlay volume (upper subdir)
-        # Named volume must be checked from inside a container
         local result
-        result=$(podman run --rm \
-            -e CI="${CI:-true}" \
-            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-            -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro" \
-            "$KAPSIS_TEST_IMAGE" \
-            bash -c "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
+        result=$(run_simple_container "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" \
+            -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro")
 
         if [[ "$result" == *"NOTFOUND"* ]]; then
             return 0

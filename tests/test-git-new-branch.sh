@@ -138,8 +138,8 @@ test_multiple_branches_different_agents() {
         # Check files in upper volumes
         local agent1_has_file
         local agent2_has_file
-        agent1_has_file=$(podman run --rm $(get_test_container_env_args) -v "${agent1}-overlay:/overlay:ro" "$KAPSIS_TEST_IMAGE" bash -c "test -f /overlay/upper/agent1.txt && echo YES || echo NO" 2>&1)
-        agent2_has_file=$(podman run --rm $(get_test_container_env_args) -v "${agent2}-overlay:/overlay:ro" "$KAPSIS_TEST_IMAGE" bash -c "test -f /overlay/upper/agent2.txt && echo YES || echo NO" 2>&1)
+        agent1_has_file=$(run_simple_container "test -f /overlay/upper/agent1.txt && echo YES || echo NO" -v "${agent1}-overlay:/overlay:ro")
+        agent2_has_file=$(run_simple_container "test -f /overlay/upper/agent2.txt && echo YES || echo NO" -v "${agent2}-overlay:/overlay:ro")
 
         cleanup_isolated_container "$agent1"
         cleanup_isolated_container "$agent2"
