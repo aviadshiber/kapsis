@@ -4,6 +4,21 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kapsis | Isolated AI Agent Sandbox</title>
+    <meta name="description" content="Run AI coding agents (Claude, Aider, Codex) in isolated Podman sandboxes. Full autonomy for the agent. Total safety for your files.">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://aviadshiber.github.io/kapsis/">
+    <meta property="og:title" content="Kapsis - Run AI Agents Without Fear">
+    <meta property="og:description" content="Run AI coding agents in isolated sandboxes. Full autonomy for the agent. Total safety for your files.">
+    <meta property="og:image" content="https://aviadshiber.github.io/kapsis/assets/kapsis-og.png">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="https://aviadshiber.github.io/kapsis/">
+    <meta name="twitter:title" content="Kapsis - Run AI Agents Without Fear">
+    <meta name="twitter:description" content="Run AI coding agents in isolated sandboxes. Full autonomy for the agent. Total safety for your files.">
+    <meta name="twitter:image" content="https://aviadshiber.github.io/kapsis/assets/kapsis-og.png">
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <script>
@@ -1205,7 +1220,11 @@ filesystem:
                                 <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">No PID limit</span>
                                 <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">No seccomp</span>
                             </div>
-                            <div class="mt-3 text-yellow-500/80 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Only use for fully trusted execution</div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-yellow-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Running fully trusted internal tools that need unrestricted access
+                            </div>
+                            <div class="mt-2 text-yellow-500/80 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Only use for fully trusted execution</div>
                         </div>
                         <!-- standard -->
                         <div id="profile-standard" class="profile-content hidden">
@@ -1218,6 +1237,10 @@ filesystem:
                                 <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">Capabilities dropped</span>
                                 <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">no-new-privileges</span>
                                 <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">PID limit: 1000</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-green-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Base profile for daily development work
                             </div>
                         </div>
                         <!-- default (shown by default) - standard + seccomp -->
@@ -1234,6 +1257,10 @@ filesystem:
                                 <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Seccomp filtering</span>
                                 <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Blocks ptrace/mount/bpf</span>
                             </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-kapsis-neon mr-1"></i>
+                                <span class="font-medium">When to use:</span> Recommended starting point for most projects
+                            </div>
                         </div>
                         <!-- strict -->
                         <div id="profile-strict" class="profile-content hidden">
@@ -1247,6 +1274,10 @@ filesystem:
                                 <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Seccomp required</span>
                                 <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">noexec /tmp</span>
                                 <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">PID limit: 500</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-blue-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Reviewing untrusted PRs or running external code
                             </div>
                         </div>
                         <!-- paranoid -->
@@ -1262,7 +1293,11 @@ filesystem:
                                 <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">LSM required</span>
                                 <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">AppArmor/SELinux</span>
                             </div>
-                            <div class="mt-3 text-purple-500/80 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i> May break some agents - test before using</div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-purple-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Air-gapped or highly sensitive security requirements
+                            </div>
+                            <div class="mt-2 text-purple-500/80 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i> May break some agents - test before using</div>
                         </div>
                     </div>
 
@@ -1466,7 +1501,7 @@ logging in with email+password
                     <a href="https://github.com/aviadshiber/kapsis" class="text-slate-400 hover:text-white transition-colors"><i class="fa-brands fa-github mr-1"></i>GitHub</a>
                     <a href="https://github.com/aviadshiber/kapsis/releases" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-tags mr-1"></i>Releases</a>
                     <a href="https://github.com/aviadshiber/kapsis/issues" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-bug mr-1"></i>Issues</a>
-                    <a href="https://github.com/aviadshiber/kapsis/security/advisories/new" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-shield-halved mr-1"></i>Security</a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/SECURITY.md" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-shield-halved mr-1"></i>Security Policy</a>
                     <a href="https://github.com/aviadshiber/kapsis/blob/main/LICENSE" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-scale-balanced mr-1"></i>License</a>
                 </div>
             </div>
