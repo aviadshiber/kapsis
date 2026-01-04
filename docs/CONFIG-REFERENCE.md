@@ -57,7 +57,9 @@ environment:
   #
   # Options:
   #   service: (required) Exact keychain service name
-  #   account: (optional) Keychain account (supports ${VAR} expansion)
+  #   account: (optional) Keychain account - can be string or array for fallback
+  #            Supports ${VAR} expansion (e.g., ${USER})
+  #            Array example: ["primary@example.com", "fallback@example.com"]
   #   inject_to_file: (optional) Also write credential to file path in container
   #   mode: (optional) File permissions for inject_to_file (default: 0600)
   keychain:
@@ -75,6 +77,11 @@ environment:
     BITBUCKET_TOKEN:
       service: "my-bitbucket-token"
       account: "${USER}"  # Supports variable expansion
+
+    # Example: Fallback accounts (tries each in order until one succeeds)
+    JIRA_TOKEN:
+      service: "my-jira-token"
+      account: ["primary@example.com", "fallback@example.com", "${USER}@example.com"]
 
   # Variables to pass from host to container
   # Values are taken from host environment
@@ -138,7 +145,7 @@ maven:
 #
 # Example setup:
 #   export DOCKER_ARTIFACTORY_TOKEN=$(echo -n "user:pass" | base64)
-#   ./scripts/launch-agent.sh 1 ~/project --task "build"
+#   ./scripts/launch-agent.sh ~/project --task "build"
 #
 # In your config:
 environment:
@@ -195,6 +202,64 @@ sandbox:
   interactive_merge: true
 
 #===============================================================================
+# NETWORK ISOLATION
+#===============================================================================
+network:
+  # Network isolation mode
+  # - none:     Complete network isolation (--network=none)
+  # - filtered: DNS-based allowlist filtering (default, recommended)
+  # - open:     Unrestricted network access
+  # Default: filtered
+  mode: filtered
+
+  # DNS allowlist - domains the agent can access in filtered mode
+  # Organized by category for maintainability
+  allowlist:
+    # Git hosting providers
+    hosts:
+      - github.com
+      - "*.github.com"
+      - gitlab.com
+      - "*.gitlab.com"
+      - bitbucket.org
+      - "*.bitbucket.org"
+
+    # Package registries
+    registries:
+      - registry.npmjs.org
+      - pypi.org
+      - "*.pypi.org"
+      - repo.maven.apache.org
+      - "*.maven.org"
+
+    # Container registries
+    containers:
+      - docker.io
+      - "*.docker.io"
+      - ghcr.io
+      - quay.io
+
+    # AI/LLM APIs (required for AI agents)
+    ai:
+      - api.anthropic.com
+      - api.openai.com
+
+    # Custom domains for your organization
+    custom:
+      - artifactory.company.com
+      - git.company.com
+
+  # DNS servers for domain resolution (filtered mode)
+  # Default: 8.8.8.8,8.8.4.4 (Google Public DNS)
+  dns_servers:
+    - 8.8.8.8
+    - 8.8.4.4
+
+  # Log DNS queries for debugging
+  # Default: false
+  log_dns_queries: false
+
+#===============================================================================
 # GIT HOOKS
 #===============================================================================
 # In a rootless isolated container, git hooks aren't a security concern -
@@ -236,6 +301,36 @@ git:
     # Additional git push flags
     push_flags:
       - "--set-upstream"
+
+  # Co-authors added to every commit (Git trailer format)
+  # These are appended as "Co-authored-by:" trailers
+  # Automatically deduplicated against git config user.email
+  co_authors:
+    - "Aviad Shiber <aviadshiber@gmail.com>"
+    # - "Another Author <another@example.com>"
+
+  # Commit exclude patterns (issue #89)
+  # Files matching these patterns are automatically unstaged before commit
+  # This prevents accidental commits of files that should stay local
+  # Default: ".gitignore\n**/.gitignore\n.gitattributes\n**/.gitattributes"
+  commit_exclude:
+    - ".gitignore"
+    - "**/.gitignore"
+    - ".gitattributes"
+    - "**/.gitattributes"
+
+  # Fork-first workflow for contributing to external repos
+  # When enabled, provides fork fallback command when push fails
+  fork_workflow:
+    # Enable fork workflow fallback
+    # Default: false
+    enabled: false
+
+    # Fallback behavior when push fails:
+    #   "fork" - Generate gh repo fork + push command
+    #   "manual" - Just show manual push command
+    # Default: fork
+    fallback: fork
 
   # Branch naming for auto-generated branches
   branch:
@@ -432,12 +527,35 @@ environment:
       service: "keychain-service-name"  # Required: exact service name
       account: "optional-account"        # Optional: keychain account (supports ${VAR} expansion)
 
+    # Fallback accounts - tries each in order until one succeeds
+    MY_TOKEN:
+      service: "my-service"
+      account: ["primary@example.com", "fallback@example.com", "${USER}@example.com"]
+
     # Environment variable + file injection (agent-agnostic)
     AGENT_CREDENTIALS:
       service: "my-agent-creds"          # Required: keychain service name
       inject_to_file: "~/.agent/creds"   # Optional: also write to this file in container
       mode: "0600"                        # Optional: file permissions (default: 0600)
 ```
+
+### Account Fallback
+
+When `account` is specified as an array, Kapsis tries each account in order until it finds a matching credential. This is useful when:
+
+- Tokens may be stored under different account names on different machines
+- You want to support multiple users with the same config file
+- You need backward compatibility with existing keychain entries
+
+```yaml
+environment:
+  keychain:
+    JIRA_TOKEN:
+      service: "my-jira"
+      account: ["team-lead@example.com", "developer@example.com", "${USER}@example.com"]
+```
+
+Debug logging shows which account succeeded (obfuscated for security).
 
 ### File Injection (Agent-Agnostic)
 
@@ -606,16 +724,141 @@ environment:
     CUSTOM_VAR: "${HOST_VAR:-default_value}"
 ```
 
+## Commit Exclude Patterns
+
+Kapsis automatically prevents certain files from being committed. This addresses issue #89 where `.gitignore` modifications were appearing in user PRs.
+
+### How It Works
+
+1. **Internal patterns** use `$GIT_DIR/info/exclude` (never committed, fully transparent)
+2. **Commit-time filtering** unstages files matching `KAPSIS_COMMIT_EXCLUDE` patterns before commit
+
+### Default Excluded Patterns
+
+These files are automatically unstaged before commit:
+- `.gitignore` / `**/.gitignore` - Git ignore files
+- `.gitattributes` / `**/.gitattributes` - Git attributes files
+
+### Configuration
+
+**Via environment variable:**
+
+```bash
+# Custom patterns (newline-separated)
+export KAPSIS_COMMIT_EXCLUDE=".gitignore
+**/.gitignore
+.env.local"
+
+./scripts/launch-agent.sh ~/project --task "implement feature"
+```
+
+**Via config file:**
+
+```yaml
+git:
+  commit_exclude:
+    - ".gitignore"
+    - "**/.gitignore"
+    - ".env.local"
+    - "**/*.bak"
+```
+
+### Pattern Syntax
+
+Patterns follow gitignore syntax:
+- `file.txt` - Matches `file.txt` at root only
+- `**/file.txt` - Matches `file.txt` at any depth
+- `*.log` - Matches any `.log` file at root
+- `**/*.log` - Matches any `.log` file at any depth
+
+### Internal Excludes
+
+These patterns are always excluded via `$GIT_DIR/info/exclude` (transparent to user):
+- `.kapsis/` - Internal Kapsis files
+- `.claude/`, `.codex/`, `.aider/` - AI tool configs
+- `~`, `~/` - Literal tilde paths (failed expansion)
+
 ## Command Line Overrides
 
 Some config values can be overridden via command line:
 
 | Config | CLI Override |
 |--------|--------------|
+| `network.mode` | `--network-mode <none\|filtered\|open>` |
 | `git.auto_push.enabled` | `--no-push` |
 | `agent.command` | `--interactive` |
 | `image.name:image.tag` | `--image <name:tag>` |
 | `sandbox.upper_dir_base` | Set via environment |
+
+## Network Isolation
+
+Kapsis provides DNS-based network filtering to control which external services the agent can access.
+
+### Network Modes
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `none` | Complete isolation (`--network=none`) | Maximum security, offline tasks |
+| `filtered` | DNS-based allowlist **(default)** | Standard development workflows |
+| `open` | Unrestricted network access | Special cases requiring full access |
+
+### Using Filtered Mode
+
+Filtered mode uses dnsmasq to implement DNS-based allowlisting. Only domains in the allowlist can be resolved; all other domains return NXDOMAIN.
+
+```bash
+# Default (filtered mode)
+kapsis ~/project --task "implement feature"
+
+# Explicit filtered mode
+kapsis ~/project --network-mode filtered --task "test"
+```
+
+### Configuration Priority
+
+Network mode can be set through multiple methods (highest to lowest priority):
+
+1. **CLI flag**: `--network-mode filtered`
+2. **Environment variable**: `KAPSIS_NETWORK_MODE=filtered`
+3. **Config file**: `network.mode: filtered`
+4. **Default**: `filtered`
+
+### Customizing Allowlist
+
+The default allowlist (`configs/network-allowlist.yaml`) includes common development domains. Override with your config:
+
+```yaml
+network:
+  mode: filtered
+  allowlist:
+    hosts:
+      - github.com
+      - git.company.com
+    registries:
+      - artifactory.company.com
+    ai:
+      - api.anthropic.com
+```
+
+### Security Features
+
+- **DNS rebinding protection**: Rejects DNS responses containing private IP ranges
+- **Fail-safe initialization**: Container aborts if DNS filtering fails to start
+- **Verification**: DNS filtering is verified before agent execution
+- **Query logging**: Enable `log_dns_queries: true` for debugging
+
+### Debugging Network Issues
+
+```bash
+# Enable DNS query logging
+export KAPSIS_DNS_LOG_QUERIES=true
+
+# Check if domain is blocked/allowed (inside container)
+nslookup github.com 127.0.0.1
+
+# View DNS logs (inside container)
+cat /tmp/kapsis-dns.log
+```
 
 ## Agent Profiles
 
@@ -705,7 +948,7 @@ Use `build-agent-image.sh` to create agent-specific container images:
 
 ```bash
 # Method 1: --image flag (highest priority)
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --image kapsis-claude-cli:latest \
     --task "implement feature"
 
@@ -785,14 +1028,14 @@ kapsis-launch-agent.log.5    # Oldest (will be deleted on next rotation)
 
 ```bash
 # Enable debug logging for troubleshooting
-KAPSIS_DEBUG=1 ./scripts/launch-agent.sh 1 ~/project --task "test"
+KAPSIS_DEBUG=1 ./scripts/launch-agent.sh ~/project --task "test"
 
 # Debug with custom log directory
 KAPSIS_LOG_LEVEL=DEBUG KAPSIS_LOG_DIR=/tmp/kapsis-debug \
-  ./scripts/launch-agent.sh 1 ~/project --task "test"
+  ./scripts/launch-agent.sh ~/project --task "test"
 
 # Console-only logging (no file)
-KAPSIS_LOG_TO_FILE=false ./scripts/launch-agent.sh 1 ~/project --task "test"
+KAPSIS_LOG_TO_FILE=false ./scripts/launch-agent.sh ~/project --task "test"
 
 # View logs in real-time
 tail -f ~/.kapsis/logs/kapsis-launch-agent.log
@@ -924,7 +1167,7 @@ for a in active:
 To disable status reporting entirely:
 
 ```bash
-KAPSIS_STATUS_ENABLED=false ./scripts/launch-agent.sh 1 ~/project --task "test"
+KAPSIS_STATUS_ENABLED=false ./scripts/launch-agent.sh ~/project --task "test"
 ```
 
 ---

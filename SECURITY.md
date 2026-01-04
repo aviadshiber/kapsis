@@ -18,6 +18,8 @@ Kapsis provides sandbox isolation for AI coding agents using:
 - **Network Isolation**: Configurable network policies per agent
 - **Credential Isolation**: Secrets accessed via OS keychain, never written to disk
 - **User Namespace Mapping**: Non-root execution with UID/GID remapping
+- **Filesystem Scope Enforcement**: Validates modifications stay within allowed paths
+- **Supply Chain Pinning**: Base images and dependencies pinned to specific digests
 
 ### Security Boundaries
 
@@ -102,10 +104,92 @@ We appreciate responsible disclosure and will:
 - Rotate API keys regularly
 - Use scoped tokens with minimum required permissions
 
-### Network
+### Network Isolation
 
-- Use `--network=none` for maximum isolation when network isn't needed
-- Configure network policies for agents requiring connectivity
+Kapsis supports two network modes for container isolation:
+
+```bash
+# Maximum security - no network access
+./scripts/launch-agent.sh ~/project --network-mode none --task "..."
+
+# Default (backward compatible) - full network access with warning
+./scripts/launch-agent.sh ~/project --network-mode open --task "..."
+```
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `none` | No network access (`--network=none`) | Maximum isolation, offline tasks |
+| `filtered` | DNS-based allowlist **(default)** | Standard development (git, package registries) |
+| `open` | Full network access | Special cases requiring unrestricted access |
+
+**Note**: The default is `filtered` which allows access to common development domains (GitHub, npm, PyPI, Maven) while blocking unknown hosts.
+
+#### Configuration Precedence
+
+Network mode can be set through multiple methods with the following precedence (highest to lowest):
+
+1. **CLI argument**: `--network-mode none`
+2. **Environment variable**: `KAPSIS_NETWORK_MODE=none`
+3. **Config file**: `~/.kapsis/config.yaml` with `network_mode: none`
+4. **Default**: `filtered`
+
+Example using environment variable:
+
+```bash
+export KAPSIS_NETWORK_MODE=none
+./scripts/launch-agent.sh ~/project --task "offline refactoring"
+```
+
+Example config file (`~/.kapsis/config.yaml`):
+
+```yaml
+# Default network isolation mode
+network_mode: none
+
+# Other configuration options...
+```
+
+### Filesystem Scope Enforcement
+
+Kapsis validates that container modifications stay within allowed boundaries:
+
+**Allowed Paths** (modifications permitted):
+- `/workspace/**` - Project files
+- `/tmp/**` - Temporary files
+- `/home/developer/.m2/repository/**` - Maven cache
+- `/home/developer/.gradle/**` - Gradle cache
+- `/kapsis-status/**` - Status files
+
+**Blocked Paths** (modifications blocked, container aborted):
+- `~/.ssh/*` - SSH keys
+- `~/.claude/*` - Agent configuration
+- `~/.bashrc`, `~/.zshrc`, `~/.profile` - Shell startup files
+- `~/.gitconfig` - Git credentials
+- `/etc/*` - System configuration
+- `~/.aws/*`, `~/.kube/*` - Cloud credentials
+
+**Warning Paths** (allowed but logged):
+- `.git/hooks/*` - Git hooks (potential for persistence)
+
+Scope violations are logged to `~/.kapsis/audit/scope-violations.jsonl` for forensic analysis.
+
+### Supply Chain Security
+
+Kapsis pins all dependencies to prevent supply chain attacks:
+
+1. **Base Image**: Pinned to specific SHA256 digest
+   ```dockerfile
+   FROM ubuntu@sha256:955364933d0d91afa6e10fb045948c16d2b191114aa54bed3ab5430d8bbc58cc
+   ```
+
+2. **GitHub Actions**: Pinned to commit SHAs
+   ```yaml
+   uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+   ```
+
+3. **Downloaded Tools**: Verified with SHA256 checksums (yq, SDKMAN, NVM)
+
+CI automatically verifies pinning via the `verify-pinning` job
 
 ## Security Updates
 

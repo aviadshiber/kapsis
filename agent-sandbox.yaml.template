@@ -4,7 +4,7 @@
 # Usage:
 #   cp agent-sandbox.yaml.template agent-sandbox.yaml
 #   # Edit agent-sandbox.yaml with your settings
-#   ./scripts/launch-agent.sh 1 ~/project --spec ./specs/task.md
+#   ./scripts/launch-agent.sh ~/project --spec ./specs/task.md
 
 #===============================================================================
 # AGENT CONFIGURATION
@@ -229,6 +229,21 @@ git:
     include_timestamp: true
 
     # Example auto-generated: ai-agent/fix-tests-20241209-143052
+
+  # Files to exclude from commits (issue #89)
+  # These patterns are automatically unstaged before commit
+  # Prevents accidental commits of files that should stay local
+  # Default patterns (applied if not specified):
+  #   - .gitignore, **/.gitignore
+  #   - .gitattributes, **/.gitattributes
+  commit_exclude:
+    - ".gitignore"
+    - "**/.gitignore"
+    - ".gitattributes"
+    - "**/.gitattributes"
+    # Add custom patterns as needed:
+    # - ".env.local"
+    # - "**/*.bak"
 
 #===============================================================================
 # SSH HOST KEY VERIFICATION

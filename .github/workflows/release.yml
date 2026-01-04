@@ -41,7 +41,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Determine version
         id: version
@@ -60,7 +60,7 @@ jobs:
     needs: validate
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y shellcheck jq
@@ -81,7 +81,7 @@ jobs:
     needs: validate  # Run in parallel with test job
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Install Podman
         run: |
@@ -96,7 +96,7 @@ jobs:
 
       - name: Restore cached container image
         id: cache-restore
-        uses: actions/cache/restore@v5
+        uses: actions/cache/restore@9255dc7a253b0ccc959486e2bca901246202afeb  # v5
         with:
           path: /tmp/kapsis-base-image.tar
           key: ${{ steps.cache-key.outputs.key }}
@@ -129,7 +129,7 @@ jobs:
 
       - name: Upload image cache
         if: steps.cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v5
+        uses: actions/cache/save@9255dc7a253b0ccc959486e2bca901246202afeb  # v5
         with:
           path: /tmp/kapsis-base-image.tar
           key: ${{ steps.cache-key.outputs.key }}
@@ -142,7 +142,7 @@ jobs:
           podman save "kapsis:${VERSION}" | gzip > "kapsis-image-${VERSION}.tar.gz"
 
       - name: Upload image artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6
         with:
           name: container-image
           path: kapsis-image-*.tar.gz
@@ -154,10 +154,10 @@ jobs:
     needs: [validate, test, build]
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
 
       - name: Download container image
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7
         with:
           name: container-image
 
@@ -275,7 +275,7 @@ jobs:
           cat release_notes.md
 
       - name: Create Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b  # v2
         with:
           tag_name: v${{ needs.validate.outputs.version }}
           name: Kapsis v${{ needs.validate.outputs.version }}
@@ -312,14 +312,14 @@ jobs:
       - name: Generate GitHub App token
         id: app-token
         if: steps.check-app.outputs.configured == 'true'
-        uses: actions/create-github-app-token@v2
+        uses: actions/create-github-app-token@29824e69f54612133e76f7eaac726eef6c875baf  # v2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - name: Checkout code
         if: steps.check-app.outputs.configured == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
         with:
           ref: main
           # Use GitHub App token to bypass branch protection when pushing
@@ -367,6 +367,58 @@ jobs:
 
           echo "Updating CHANGELOG.md for v${VERSION} (${DATE})"
 
+          # Find the previous tag to get commits for this release
+          PREV_TAG=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null || echo "")
+          echo "Previous tag: ${PREV_TAG:-none}"
+
+          # Get commits between tags (or all commits for first release)
+          if [[ -n "$PREV_TAG" ]]; then
+            COMMITS=$(git log "${PREV_TAG}..v${VERSION}" --pretty=format:"%s" --no-merges)
+          else
+            COMMITS=$(git log "v${VERSION}" --pretty=format:"%s" --no-merges -50)
+          fi
+
+          # Initialize category files for Keep a Changelog format
+          > /tmp/cl_breaking.txt
+          > /tmp/cl_added.txt
+          > /tmp/cl_changed.txt
+          > /tmp/cl_fixed.txt
+          > /tmp/cl_security.txt
+          > /tmp/cl_docs.txt
+
+          # Parse and categorize commits using conventional commit prefixes
+          while IFS= read -r msg; do
+            [[ -z "$msg" ]] && continue
+
+            # Skip auto-generated release commits
+            if [[ "$msg" == *"[skip ci]"* ]] || [[ "$msg" == "chore(release):"* ]]; then
+              continue
+            fi
+
+            # Clean up the commit message for changelog (remove scope parentheses, keep description)
+            # e.g., "feat(ci): add thing" -> "Add thing"
+            # Use awk for portable uppercase conversion (sed \U is GNU-only)
+            clean_msg=$(echo "$msg" | sed -E 's/^[a-z]+!?(\([^)]+\))?:[[:space:]]*//' | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+
+            # Check for breaking changes first (type!: or BREAKING CHANGE)
+            if [[ "$msg" =~ ^[a-z]+(\(.+\))?!: ]] || [[ "$msg" =~ BREAKING[\ -]CHANGE ]]; then
+              echo "- $clean_msg" >> /tmp/cl_breaking.txt
+            fi
+
+            # Categorize by conventional commit prefix into Keep a Changelog categories
+            if [[ "$msg" =~ ^feat(\(.+\))?!?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_added.txt
+            elif [[ "$msg" =~ ^fix(\(.+\))?!?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_fixed.txt
+            elif [[ "$msg" =~ ^security(\(.+\))?: ]] || [[ "$msg" =~ ^sec(\(.+\))?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_security.txt
+            elif [[ "$msg" =~ ^docs(\(.+\))?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_docs.txt
+            elif [[ "$msg" =~ ^(refactor|perf|style|build|ci|chore|test)(\(.+\))?!?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_changed.txt
+            fi
+          done <<< "$COMMITS"
+
           # Create a temporary file for the new changelog
           {
             # Keep header lines (title and format description)
@@ -377,14 +429,54 @@ jobs:
             echo "## [${VERSION}] - ${DATE}"
             echo ""
 
-            # Extract content from [Unreleased] section (between ## [Unreleased] and next ## [...])
-            # Skip empty unreleased section
-            UNRELEASED_CONTENT=$(sed -n '/^## \[Unreleased\]/,/^## \[/{ /^## \[/d; p; }' "$CHANGELOG_FILE" | sed '/^$/d')
+            # Check if we have any categorized content
+            HAS_CONTENT=false
+            for f in /tmp/cl_breaking.txt /tmp/cl_added.txt /tmp/cl_changed.txt /tmp/cl_fixed.txt /tmp/cl_security.txt /tmp/cl_docs.txt; do
+              if [[ -s "$f" ]]; then
+                HAS_CONTENT=true
+                break
+              fi
+            done
 
-            if [[ -n "$UNRELEASED_CONTENT" ]]; then
-              echo "$UNRELEASED_CONTENT"
-              echo ""
+            if [[ "$HAS_CONTENT" == "true" ]]; then
+              # Output categories in Keep a Changelog order
+              if [[ -s /tmp/cl_breaking.txt ]]; then
+                echo "### BREAKING CHANGES"
+                cat /tmp/cl_breaking.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_added.txt ]]; then
+                echo "### Added"
+                cat /tmp/cl_added.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_changed.txt ]]; then
+                echo "### Changed"
+                cat /tmp/cl_changed.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_fixed.txt ]]; then
+                echo "### Fixed"
+                cat /tmp/cl_fixed.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_security.txt ]]; then
+                echo "### Security"
+                cat /tmp/cl_security.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_docs.txt ]]; then
+                echo "### Documentation"
+                cat /tmp/cl_docs.txt
+                echo ""
+              fi
             else
+              # Fallback only if no conventional commits found at all
               echo "### Changed"
               echo "- Release v${VERSION}"
               echo ""
@@ -605,7 +697,7 @@ jobs:
     if: needs.update-packages.result == 'success'
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
         with:
           ref: main
           # Need to fetch the updated formula from main

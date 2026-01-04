@@ -303,7 +303,7 @@ Kapsis provides JSON-based status reporting for external monitoring with **agent
 
 ```bash
 # Launch with branch
-./launch-agent.sh 1 ~/project --branch feature/DEV-123 --spec task.md
+./launch-agent.sh ~/project --branch feature/DEV-123 --spec task.md
 
 # Agent commits and pushes automatically
 # Review PR → Request changes → Update spec → Re-run
@@ -319,7 +319,7 @@ Kapsis provides JSON-based status reporting for external monitoring with **agent
 
 ```bash
 # Launch without branch
-./launch-agent.sh 1 ~/project --spec task.md
+./launch-agent.sh ~/project --spec task.md
 
 # Review changes in upper directory
 tree ~/.ai-sandboxes/project-1/upper/

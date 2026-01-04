@@ -7,7 +7,7 @@
 # git branch workflow.
 #
 # Usage:
-#   ./launch-agent.sh <agent-id> <project-path> [options]
+#   ./launch-agent.sh <project-path> [options]
 #
 # Options:
 #   --agent <name>        Agent shortcut: claude, codex, aider, interactive
@@ -21,11 +21,12 @@
 #   --dry-run             Show what would be executed without running
 #   --worktree-mode       Force worktree mode (git worktrees, simpler cleanup)
 #   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
+#   --network-mode <mode> Network isolation: none, filtered (default), open
 #
 # Examples:
-#   ./launch-agent.sh 1 ~/project --agent claude --task "fix failing tests"
-#   ./launch-agent.sh 1 ~/project --agent codex --spec ./specs/feature.md
-#   ./launch-agent.sh 1 ~/project --agent aider --branch feature/DEV-123 --spec ./task.md
+#   ./launch-agent.sh ~/project --agent claude --task "fix failing tests"
+#   ./launch-agent.sh ~/project --agent codex --spec ./specs/feature.md
+#   ./launch-agent.sh ~/project --agent aider --branch feature/DEV-123 --spec ./task.md
 #===============================================================================
 
 set -euo pipefail
@@ -46,6 +47,20 @@ to_upper() {
     echo "$1" | tr '[:lower:]' '[:upper:]'
 }
 
+# Generate 6-character lowercase UUID for agent identification
+generate_agent_id() {
+    if command -v uuidgen &>/dev/null; then
+        uuidgen | tr '[:upper:]' '[:lower:]' | cut -c1-6
+    elif [[ -r /dev/urandom ]] && command -v xxd &>/dev/null; then
+        head -c 3 /dev/urandom | xxd -p
+    elif [[ -r /dev/urandom ]]; then
+        # Fallback: use od instead of xxd
+        head -c 3 /dev/urandom | od -An -tx1 | tr -d ' \n' | cut -c1-6
+    else
+        printf '%x' "$(( $(date +%s)$$ ))" | cut -c1-6
+    fi
+}
+
 #===============================================================================
 # DEFAULT VALUES
 #===============================================================================
@@ -63,9 +78,12 @@ IMAGE_NAME="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 SANDBOX_MODE=""  # auto-detect, worktree, or overlay
 WORKTREE_PATH=""
 SANITIZED_GIT_PATH=""
-
-# Source shared constants
+AGENT_ID_AUTO_GENERATED=false  # Track if ID was auto-generated
+# Source shared constants (must come before using KAPSIS_DEFAULT_NETWORK_MODE)
 source "$SCRIPT_DIR/lib/constants.sh"
+
+# Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
+NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
 
 #===============================================================================
 # COLORS AND OUTPUT (colors used for banner only)
@@ -149,22 +167,69 @@ query_secret_store() {
     esac
 }
 
+# Query secret store with fallback accounts
+# Usage: query_secret_store_with_fallbacks "service" "account1,account2,..." "var_name"
+# Returns: credential on stdout, exit 1 if none found
+# Logs which account succeeded (obfuscated for security)
+query_secret_store_with_fallbacks() {
+    local service="$1"
+    local accounts="$2"  # Comma-separated list or single account
+    local var_name="${3:-}"  # For logging context
+
+    # If no commas, treat as single account (backward compat)
+    if [[ "$accounts" != *,* ]]; then
+        if value=$(query_secret_store "$service" "$accounts"); then
+            echo "$value"
+            return 0
+        fi
+        return 1
+    fi
+
+    # Split accounts and try each in order
+    IFS=',' read -ra account_list <<< "$accounts"
+    for account in "${account_list[@]}"; do
+        account="${account## }"  # Trim leading space
+        account="${account%% }"  # Trim trailing space
+        [[ -z "$account" ]] && continue
+
+        if value=$(query_secret_store "$service" "$account"); then
+            # Log which account worked (obfuscate: show first 3 chars + ***)
+            local masked_account="${account:0:3}***"
+            log_debug "Found $var_name via account: $masked_account"
+            echo "$value"
+            return 0
+        fi
+    done
+    return 1
+}
+
 #===============================================================================
 # USAGE
 #===============================================================================
 usage() {
     cat << EOF
-Usage: $(basename "$0") <agent-id> <project-path> [options]
+Usage: $(basename "$0") <project-path> [options]
+       $(basename "$0") --version
+       $(basename "$0") --check-upgrade
+       $(basename "$0") --upgrade [VERSION] [--dry-run]
+       $(basename "$0") --downgrade [VERSION] [--dry-run]
 
 Launch an AI coding agent in an isolated Podman container.
 
+Global Options (no project path required):
+  --version, -V         Display current Kapsis version and installation info
+  --check-upgrade       Check if a newer version is available
+  --upgrade [VERSION]   Upgrade to latest or specified version
+  --downgrade [VERSION] Downgrade to previous or specified version
+  --dry-run             Preview upgrade/downgrade commands without executing
+
 Arguments:
-  agent-id        Unique identifier for this agent instance (e.g., 1, 2, agent-a)
   project-path    Path to the project directory to work on
 
 Options:
   --agent <name>        Agent to use: claude, codex, aider, interactive
                         (shortcut for --config configs/<name>.yaml)
+  --agent-id <id>       Specify agent ID (for continuing sessions); auto-generated if omitted
   --config <file>       Config file (overrides --agent)
   --task <description>  Inline task description (for simple tasks)
   --spec <file>         Task specification file (for complex tasks)
@@ -176,6 +241,8 @@ Options:
   --image <name>        Container image to use (e.g., kapsis-claude-cli:latest)
   --worktree-mode       Force worktree mode (requires git repo + branch)
   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
+  --network-mode <mode> Network isolation: none (isolated),
+                        filtered (default, DNS allowlist), open (unrestricted)
   -h, --help            Show this help message
 
 Available Agents:
@@ -189,22 +256,25 @@ Task Input (one required unless --interactive):
   --spec ./spec.md      File with detailed specification
 
 Examples:
-  # Simple task
-  $(basename "$0") 1 ~/project --task "fix failing tests in UserService"
+  # Simple task (agent ID auto-generated)
+  $(basename "$0") ~/project --task "fix failing tests in UserService"
 
   # Complex task with spec file
-  $(basename "$0") 1 ~/project --spec ./specs/user-preferences.md
+  $(basename "$0") ~/project --spec ./specs/user-preferences.md
 
   # With git branch workflow (creates or continues)
-  $(basename "$0") 1 ~/project --branch feature/DEV-123 --spec ./task.md
+  $(basename "$0") ~/project --branch feature/DEV-123 --spec ./task.md
 
-  # Multiple agents in parallel
-  $(basename "$0") 1 ~/project --branch feature/DEV-123-api --spec ./api.md &
-  $(basename "$0") 2 ~/project --branch feature/DEV-123-ui --spec ./ui.md &
+  # Continue a previous session (use same agent ID)
+  $(basename "$0") ~/project --agent-id a3f2b1 --branch feature/DEV-123 --task "continue"
+
+  # Multiple agents in parallel (each gets unique auto-ID)
+  $(basename "$0") ~/project --branch feature/DEV-123-api --spec ./api.md &
+  $(basename "$0") ~/project --branch feature/DEV-123-ui --spec ./ui.md &
   wait
 
   # Interactive exploration
-  $(basename "$0") 1 ~/project --interactive --branch experiment/explore
+  $(basename "$0") ~/project --interactive --branch experiment/explore
 
 EOF
     exit 1
@@ -213,19 +283,84 @@ EOF
 #===============================================================================
 # ARGUMENT PARSING
 #===============================================================================
+
+# Parse version arguments for upgrade/downgrade commands
+# Sets: VERSION_ARG, DRY_RUN_ARG
+# Arguments: remaining args after the main flag
+parse_version_args() {
+    VERSION_ARG=""
+    DRY_RUN_ARG=false
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --dry-run)
+                DRY_RUN_ARG=true
+                shift
+                ;;
+            v*|[0-9]*)
+                VERSION_ARG="$1"
+                shift
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+}
+
+# Handle global version management flags
+# These flags don't require a project path and exit immediately
+handle_global_flags() {
+    case "${1:-}" in
+        --version|-V)
+            source "$SCRIPT_DIR/lib/version.sh"
+            print_version
+            exit 0
+            ;;
+        --check-upgrade)
+            source "$SCRIPT_DIR/lib/version.sh"
+            check_upgrade_available
+            exit $?
+            ;;
+        --upgrade)
+            source "$SCRIPT_DIR/lib/version.sh"
+            shift
+            parse_version_args "$@"
+            perform_upgrade "$VERSION_ARG" "$DRY_RUN_ARG"
+            exit $?
+            ;;
+        --downgrade)
+            source "$SCRIPT_DIR/lib/version.sh"
+            shift
+            parse_version_args "$@"
+            perform_downgrade "$VERSION_ARG" "$DRY_RUN_ARG"
+            exit $?
+            ;;
+    esac
+}
+
 parse_args() {
-    if [[ $# -lt 2 ]]; then
+    # Handle global flags first (version management - no project path required)
+    handle_global_flags "$@"
+
+    # Handle help flags (before any argument requirement check)
+    if [[ $# -eq 0 ]] || [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
         usage
     fi
 
-    AGENT_ID="$1"
-    PROJECT_PATH="$2"
-    shift 2
+    # First argument is always the project path
+    PROJECT_PATH="$1"
+    AGENT_ID=""  # Will be auto-generated if not specified via --agent-id
+    shift 1
 
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --agent)
                 AGENT_NAME="$2"
+                shift 2
+                ;;
+            --agent-id)
+                AGENT_ID="$2"
                 shift 2
                 ;;
             --config)
@@ -272,6 +407,10 @@ parse_args() {
                 SANDBOX_MODE="overlay"
                 shift
                 ;;
+            --network-mode)
+                NETWORK_MODE="$2"
+                shift 2
+                ;;
             -h|--help)
                 usage
                 ;;
@@ -281,6 +420,12 @@ parse_args() {
                 ;;
         esac
     done
+
+    # Auto-generate agent ID if not provided
+    if [[ -z "$AGENT_ID" ]]; then
+        AGENT_ID=$(generate_agent_id)
+        AGENT_ID_AUTO_GENERATED=true
+    fi
 }
 
 #===============================================================================
@@ -299,6 +444,18 @@ validate_inputs() {
         exit 1
     }
     log_debug "Resolved PROJECT_PATH=$PROJECT_PATH"
+
+    # Validate agent ID format
+    if [[ ! "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log_error "Invalid agent ID format: $AGENT_ID (must match [a-zA-Z0-9_-]+)"
+        exit 1
+    fi
+
+    # Validate network mode
+    if [[ ! "$NETWORK_MODE" =~ ^(none|filtered|open)$ ]]; then
+        log_error "Invalid network mode: $NETWORK_MODE (must be: none, filtered, open)"
+        exit 1
+    fi
 
     # Validate task input
     if [[ -z "$TASK_INLINE" && -z "$SPEC_FILE" && "$INTERACTIVE" != "true" ]]; then
@@ -353,6 +510,116 @@ validate_inputs() {
 #===============================================================================
 # CONFIG RESOLUTION
 #===============================================================================
+
+# Validate config file is from a trusted location
+# Security: Config files can contain commands (agent.command) that will be executed
+# Only allow configs from:
+#   - Kapsis installation: $KAPSIS_ROOT/configs/
+#   - User config: $HOME/.config/kapsis/ or $HOME/.kapsis/
+#   - Project-local: $PROJECT_PATH/.kapsis/ or $PROJECT_PATH/agent-sandbox.yaml
+#   - Current directory: ./agent-sandbox.yaml or ./.kapsis/
+#
+# Set KAPSIS_TRUST_ALL_CONFIGS=1 to bypass this check (for testing only)
+validate_config_security() {
+    local config_path="$1"
+
+    # Allow bypass for testing scenarios
+    if [[ "${KAPSIS_TRUST_ALL_CONFIGS:-}" == "1" ]]; then
+        log_warn "Security: Config trust validation bypassed (KAPSIS_TRUST_ALL_CONFIGS=1)"
+        return 0
+    fi
+
+    # Resolve to absolute path
+    local abs_path
+    abs_path=$(cd "$(dirname "$config_path")" 2>/dev/null && pwd)/$(basename "$config_path")
+
+    log_debug "Validating config security: $abs_path"
+
+    # Define trusted directories (resolved to absolute paths)
+    local trusted_dirs=()
+
+    # Kapsis installation configs
+    trusted_dirs+=("$KAPSIS_ROOT/configs")
+
+    # User config directories
+    trusted_dirs+=("$HOME/.config/kapsis")
+    trusted_dirs+=("$HOME/.kapsis")
+
+    # Project-local configs (if PROJECT_PATH is set)
+    if [[ -n "${PROJECT_PATH:-}" ]]; then
+        local abs_project
+        abs_project=$(cd "$PROJECT_PATH" 2>/dev/null && pwd) || true
+        if [[ -n "$abs_project" ]]; then
+            trusted_dirs+=("$abs_project/.kapsis")
+            trusted_dirs+=("$abs_project")  # For agent-sandbox.yaml in project root
+        fi
+    fi
+
+    # Current directory configs
+    local abs_cwd
+    abs_cwd=$(pwd)
+    trusted_dirs+=("$abs_cwd/.kapsis")
+    trusted_dirs+=("$abs_cwd")  # For ./agent-sandbox.yaml
+
+    # Check if config is in a trusted directory
+    local config_dir
+    config_dir=$(dirname "$abs_path")
+    local is_trusted=false
+
+    for trusted in "${trusted_dirs[@]}"; do
+        # Normalize trusted path
+        local abs_trusted
+        abs_trusted=$(cd "$trusted" 2>/dev/null && pwd) || continue
+
+        # Check if config_dir starts with trusted directory
+        if [[ "$config_dir" == "$abs_trusted" || "$config_dir" == "$abs_trusted"/* ]]; then
+            is_trusted=true
+            break
+        fi
+    done
+
+    if [[ "$is_trusted" != "true" ]]; then
+        log_error "Security: Config file is not in a trusted location"
+        log_error "  Config path: $abs_path"
+        log_error "  Trusted locations:"
+        log_error "    - \$KAPSIS_ROOT/configs/ ($KAPSIS_ROOT/configs)"
+        log_error "    - \$HOME/.config/kapsis/"
+        log_error "    - \$HOME/.kapsis/"
+        log_error "    - \$PROJECT_PATH/.kapsis/"
+        log_error "    - Current directory (./.kapsis/ or ./agent-sandbox.yaml)"
+        exit 1
+    fi
+
+    # Security: Warn about world-writable config files
+    # World-writable config = potential privilege escalation via command injection
+    if [[ -f "$abs_path" ]]; then
+        local perms
+        if [[ "$(uname)" == "Darwin" ]]; then
+            perms=$(stat -f "%Lp" "$abs_path" 2>/dev/null) || perms=""
+        else
+            perms=$(stat -c "%a" "$abs_path" 2>/dev/null) || perms=""
+        fi
+
+        # Check if world-writable (last digit includes 2 or greater for write)
+        if [[ -n "$perms" && "${perms: -1}" =~ [2367] ]]; then
+            log_warn "Security: Config file is world-writable: $abs_path"
+            log_warn "  This is a security risk. Run: chmod o-w '$abs_path'"
+        fi
+    fi
+
+    # Validate filename doesn't contain suspicious characters
+    local filename
+    filename=$(basename "$abs_path")
+    if [[ ! "$filename" =~ ^[a-zA-Z0-9._-]+\.yaml$ ]]; then
+        log_error "Security: Config filename contains suspicious characters: $filename"
+        log_error "  Only alphanumeric, dots, dashes, and underscores allowed"
+        exit 1
+    fi
+
+    log_debug "Config security validation passed: $abs_path"
+    return 0
+}
+
 resolve_config() {
     log_debug "Resolving configuration..."
 
@@ -415,7 +682,7 @@ resolve_config() {
 }
 
 #===============================================================================
-# CONFIG PARSING (Simple YAML parsing with yq or fallback)
+# CONFIG PARSING (YAML parsing with yq - required dependency)
 #===============================================================================
 parse_config() {
     log_debug "Parsing config file: $CONFIG_FILE"
@@ -436,6 +703,13 @@ parse_config() {
         GIT_REMOTE=$(yq -r '.git.auto_push.remote // "origin"' "$CONFIG_FILE")
         GIT_COMMIT_MSG=$(yq -r '.git.auto_push.commit_message // "feat: AI agent changes"' "$CONFIG_FILE")
 
+        # Parse co-authors (newline-separated list)
+        GIT_CO_AUTHORS=$(yq -r '.git.co_authors[]' "$CONFIG_FILE" 2>/dev/null | tr '\n' '|' | sed 's/|$//' || echo "")
+
+        # Parse fork workflow settings
+        GIT_FORK_ENABLED=$(yq -r '.git.fork_workflow.enabled // "false"' "$CONFIG_FILE")
+        GIT_FORK_FALLBACK=$(yq -r '.git.fork_workflow.fallback // "fork"' "$CONFIG_FILE")
+
         # Parse filesystem includes
         FILESYSTEM_INCLUDES=$(yq -r '.filesystem.include[]' "$CONFIG_FILE" 2>/dev/null || echo "")
 
@@ -449,24 +723,44 @@ parse_config() {
         # Output format: VAR_NAME|service|account|inject_to_file|mode per line
         # inject_to_file: optional file path to write the secret to (agent-agnostic)
         # mode: optional file permissions (default 0600)
-        ENV_KEYCHAIN=$(yq '.environment.keychain // {} | to_entries | .[] | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600")' "$CONFIG_FILE" 2>/dev/null || echo "")
+        # account: can be string or array (array joined with comma for fallback support)
+        ENV_KEYCHAIN=$(yq '.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600")' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse SSH host verification list
         SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+        # Parse network mode from config (CLI flag takes precedence)
+        if [[ "$NETWORK_MODE" == "open" ]]; then
+            local config_network_mode
+            config_network_mode=$(yq -r '.network.mode // "open"' "$CONFIG_FILE")
+            if [[ "$config_network_mode" =~ ^(none|filtered|open)$ ]]; then
+                NETWORK_MODE="$config_network_mode"
+            fi
+        fi
+
+        # Parse DNS allowlist from config (for filtered mode)
+        # Extract all domains into a comma-separated list for passing to container
+        # Uses yq v4 (mikefarah/yq) syntax
+        NETWORK_ALLOWLIST_DOMAINS=$(yq eval '
+            [
+                ((.network.allowlist.hosts // [])[] // ""),
+                ((.network.allowlist.registries // [])[] // ""),
+                ((.network.allowlist.containers // [])[] // ""),
+                ((.network.allowlist.ai // [])[] // ""),
+                ((.network.allowlist.custom // [])[] // "")
+            ] | map(select(. != "")) | unique | join(",")
+        ' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+        # Parse DNS servers from config
+        NETWORK_DNS_SERVERS=$(yq eval '.network.dns_servers // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+        # Parse DNS logging setting
+        NETWORK_LOG_DNS=$(yq eval '.network.log_dns_queries // "false"' "$CONFIG_FILE" 2>/dev/null || echo "false")
     else
-        log_warn "yq not found. Using default config values."
-        AGENT_COMMAND="bash"
-        export AGENT_WORKDIR="/workspace"
-        RESOURCE_MEMORY="8g"
-        RESOURCE_CPUS="4"
-        SANDBOX_UPPER_BASE="$HOME/.ai-sandboxes"
-        GIT_REMOTE="origin"
-        GIT_COMMIT_MSG="feat: AI agent changes"
-        FILESYSTEM_INCLUDES=""
-        ENV_PASSTHROUGH="ANTHROPIC_API_KEY"
-        ENV_SET="{}"
-        ENV_KEYCHAIN=""
-        SSH_VERIFY_HOSTS=""
+        log_error "yq is required but not installed."
+        log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
+        log_error "Or run: ./setup.sh --install"
+        exit 1
     fi
 
     # Expand ~ in paths
@@ -846,9 +1140,9 @@ generate_env_vars() {
                 continue
             fi
 
-            # Query secret store (keychain/secret-tool)
+            # Query secret store (keychain/secret-tool) with fallback account support
             local value
-            if value=$(query_secret_store "$service" "$account"); then
+            if value=$(query_secret_store_with_fallbacks "$service" "$account" "$var_name"); then
                 ENV_VARS+=("-e" "${var_name}=${value}")
                 log_success "Loaded $var_name from secret store (service: $service)"
 
@@ -989,7 +1283,34 @@ build_container_command() {
         "--memory=${RESOURCE_MEMORY}"
         "--cpus=${RESOURCE_CPUS}"
         "--security-opt" "label=disable"
+        # Security: drop all capabilities (userns=keep-id runs as regular user)
+        "--cap-drop=ALL"
     )
+
+    # Network isolation mode
+    case "$NETWORK_MODE" in
+        none)
+            log_info "Network: isolated (no network access)"
+            CONTAINER_CMD+=("--network=none")
+            ;;
+        filtered)
+            log_info "Network: filtered (DNS-based allowlist)"
+            # Pass environment variables to container for DNS filtering
+            CONTAINER_CMD+=("-e" "KAPSIS_NETWORK_MODE=filtered")
+            if [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
+                CONTAINER_CMD+=("-e" "KAPSIS_DNS_ALLOWLIST=${NETWORK_ALLOWLIST_DOMAINS}")
+            fi
+            if [[ -n "${NETWORK_DNS_SERVERS:-}" ]]; then
+                CONTAINER_CMD+=("-e" "KAPSIS_DNS_SERVERS=${NETWORK_DNS_SERVERS}")
+            fi
+            if [[ "${NETWORK_LOG_DNS:-false}" == "true" ]]; then
+                CONTAINER_CMD+=("-e" "KAPSIS_DNS_LOG_QUERIES=true")
+            fi
+            ;;
+        open)
+            log_warn "Network: unrestricted (consider --network-mode=none for security)"
+            ;;
+    esac
 
     # Add volume mounts
     CONTAINER_CMD+=("${VOLUME_MOUNTS[@]}")
@@ -1045,6 +1366,7 @@ main() {
 
     log_timer_start "config"
     resolve_config
+    validate_config_security "$CONFIG_FILE"
     parse_config
     log_timer_end "config"
     status_phase "initializing" 10 "Configuration loaded"
@@ -1079,15 +1401,24 @@ main() {
     echo ""
     log_info "Agent Configuration:"
     echo "  Agent:         $(to_upper "$AGENT_NAME") (${CONFIG_FILE})"
-    echo "  Instance ID:   $AGENT_ID"
+    if [[ "${AGENT_ID_AUTO_GENERATED:-false}" == "true" ]]; then
+        echo -e "  Instance ID:   ${CYAN}$AGENT_ID${NC} (auto-generated)"
+    else
+        echo "  Instance ID:   $AGENT_ID"
+    fi
     echo "  Project:       $PROJECT_PATH"
     echo "  Image:         $IMAGE_NAME"
     echo "  Resources:     ${RESOURCE_MEMORY} RAM, ${RESOURCE_CPUS} CPUs"
     echo "  Sandbox Mode:  $SANDBOX_MODE"
+    echo "  Network Mode:  $NETWORK_MODE"
     [[ -n "$BRANCH" ]] && echo "  Branch:        $BRANCH"
     [[ "$SANDBOX_MODE" == "worktree" ]] && echo "  Worktree:      $WORKTREE_PATH"
     [[ -n "$SPEC_FILE" ]] && echo "  Spec File:     $SPEC_FILE"
     [[ -n "$TASK_INLINE" ]] && echo "  Task:          ${TASK_INLINE:0:50}..."
+    if [[ "${AGENT_ID_AUTO_GENERATED:-false}" == "true" ]]; then
+        echo ""
+        echo -e "  ${CYAN}To continue this session:${NC} --agent-id $AGENT_ID"
+    fi
     echo ""
 
     if [[ "$DRY_RUN" == "true" ]]; then
@@ -1132,22 +1463,31 @@ main() {
     log_timer_start "post_container"
     if [[ "$SANDBOX_MODE" == "worktree" ]]; then
         post_container_worktree
+        POST_EXIT_CODE=$?
     else
         post_container_overlay
+        POST_EXIT_CODE=$?
     fi
     log_timer_end "post_container"
 
     log_timer_end "total"
-    log_finalize $EXIT_CODE
 
-    # Final status update
-    if [[ "$EXIT_CODE" -eq 0 ]]; then
-        status_complete 0 "" "${PR_URL:-}"
-    else
+    # Combine exit codes - fail if either container or post-container operations failed
+    if [[ "$EXIT_CODE" -ne 0 ]]; then
+        FINAL_EXIT_CODE=$EXIT_CODE
+        log_finalize $EXIT_CODE
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
+    elif [[ "$POST_EXIT_CODE" -ne 0 ]]; then
+        FINAL_EXIT_CODE=$POST_EXIT_CODE
+        log_finalize $POST_EXIT_CODE
+        status_complete "$POST_EXIT_CODE" "Post-container operations failed (push)"
+    else
+        FINAL_EXIT_CODE=0
+        log_finalize 0
+        status_complete 0 "" "${PR_URL:-}"
     fi
 
-    exit $EXIT_CODE
+    exit $FINAL_EXIT_CODE
 }
 
 #===============================================================================
@@ -1175,6 +1515,14 @@ post_container_worktree() {
         echo "$changes" | head -20 | sed 's/^/  /'
         echo ""
 
+        # Security: Validate filesystem scope before proceeding
+        source "$SCRIPT_DIR/lib/validate-scope.sh"
+        if ! validate_scope_worktree "$WORKTREE_PATH"; then
+            log_error "Aborting due to scope violation"
+            status_complete 1 "Scope violation detected"
+            return 1
+        fi
+
         # Run post-container git operations on HOST
         source "$SCRIPT_DIR/post-container-git.sh"
         # post_container_git sets PR_URL global variable
@@ -1185,7 +1533,10 @@ post_container_worktree() {
             "$GIT_REMOTE" \
             "$NO_PUSH" \
             "$AGENT_ID" \
-            "$SANITIZED_GIT_PATH"
+            "$SANITIZED_GIT_PATH" \
+            "$GIT_CO_AUTHORS" \
+            "$GIT_FORK_ENABLED" \
+            "$GIT_FORK_FALLBACK"
     else
         log_info "No file changes detected"
     fi
@@ -1221,6 +1572,16 @@ post_container_overlay() {
                 echo "  ${file#"${UPPER_DIR}"/}"
             done | head -20
             echo ""
+
+            # Security: Validate filesystem scope before proceeding
+            source "$SCRIPT_DIR/lib/validate-scope.sh"
+            if ! validate_scope_overlay "$UPPER_DIR"; then
+                log_error "Aborting due to scope violation"
+                status_complete 1 "Scope violation detected"
+                echo "Upper directory preserved: $UPPER_DIR"
+                return 1
+            fi
+
             echo "Upper directory: $UPPER_DIR"
             echo ""
 

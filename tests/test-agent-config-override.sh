@@ -50,7 +50,7 @@ test_config_overrides_agent() {
 
     # Provide both --agent and --config
     # --config should win
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" \
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" \
         --agent claude \
         --config "$TEST_PROJECT/my-custom-agent.yaml" \
         --task "test" \
@@ -67,7 +67,7 @@ test_agent_name_from_custom_config() {
     setup_custom_config
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" \
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" \
         --config "$TEST_PROJECT/my-custom-agent.yaml" \
         --task "test" \
         --dry-run 2>&1) || true
@@ -82,7 +82,7 @@ test_config_not_found_error() {
     local output
     local exit_code=0
 
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" \
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" \
         --config "/nonexistent/path/config.yaml" \
         --task "test" --dry-run 2>&1) || exit_code=$?
 
@@ -96,7 +96,7 @@ test_config_with_path() {
     setup_custom_config
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" \
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" \
         --config "$TEST_PROJECT/my-custom-agent.yaml" \
         --task "test" \
         --dry-run 2>&1) || true
@@ -111,7 +111,7 @@ test_config_resources_applied() {
     setup_custom_config
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" \
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" \
         --config "$TEST_PROJECT/my-custom-agent.yaml" \
         --task "test" \
         --dry-run 2>&1) || true

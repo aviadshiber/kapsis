@@ -22,6 +22,7 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 - **Agent Profiles** - Pre-built agent configurations with automatic container installation
 - **Config-Driven** - Single YAML file defines agent command and filesystem whitelist
 - **Copy-on-Write Filesystem** - Project files use overlay mounts (reads from host, writes isolated)
+- **Network Isolation** - DNS-based allowlist filtering (default), blocks unauthorized network access
 - **Maven Isolation** - Per-agent `.m2/repository`, blocked remote SNAPSHOTs, blocked deploy
 - **Build Cache Isolation** - Gradle Enterprise remote cache disabled, per-agent local cache
 - **Git Workflow** - Optional branch-based workflow with PR review feedback loop
@@ -43,6 +44,32 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 
 See [docs/INSTALL.md](docs/INSTALL.md) for detailed instructions.
 
+### Version Management
+
+```bash
+# Check current version
+kapsis --version
+
+# Check if upgrade is available
+kapsis --check-upgrade
+
+# Upgrade to latest version
+kapsis --upgrade
+
+# Upgrade to specific version
+kapsis --upgrade 0.15.0
+
+# Downgrade to previous version
+kapsis --downgrade
+
+# Downgrade to specific version
+kapsis --downgrade 0.14.0
+
+# Preview upgrade/downgrade without executing
+kapsis --upgrade --dry-run
+kapsis --downgrade --dry-run
+```
+
 ## Quick Start
 
 ```bash
@@ -62,7 +89,7 @@ cp agent-sandbox.yaml.template agent-sandbox.yaml
 
 # 5. Run an agent
 kapsis 1 ~/project --task "fix failing tests"
-# or: ./scripts/launch-agent.sh 1 ~/project --task "fix failing tests"
+# or: ./scripts/launch-agent.sh ~/project --task "fix failing tests"
 ```
 
 ## Agent Profiles
@@ -86,7 +113,7 @@ Kapsis includes pre-built agent profiles that install the agent directly into th
 
 ```bash
 # Use the pre-built agent image
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --image kapsis-claude-cli:latest \
     --task "implement rate limiting"
 
@@ -112,20 +139,20 @@ Profiles are defined in `configs/agents/`. Create custom profiles by copying an 
 
 ```bash
 # Simple inline task
-./scripts/launch-agent.sh 1 ~/project --task "fix failing tests in UserService"
+./scripts/launch-agent.sh ~/project --task "fix failing tests in UserService"
 
 # Complex task with spec file
-./scripts/launch-agent.sh 1 ~/project --spec ./specs/feature.md
+./scripts/launch-agent.sh ~/project --spec ./specs/feature.md
 
 # Interactive mode (manual exploration)
-./scripts/launch-agent.sh 1 ~/project --interactive
+./scripts/launch-agent.sh ~/project --interactive
 ```
 
 ### Git Branch Workflow
 
 ```bash
 # Create new branch and work on task
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --branch feature/DEV-123 \
     --spec ./specs/task.md
 
@@ -133,7 +160,7 @@ Profiles are defined in `configs/agents/`. Create custom profiles by copying an 
 # Review PR, request changes
 # Update spec with feedback, re-run:
 
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --branch feature/DEV-123 \
     --spec ./specs/task-v2.md
 
@@ -144,23 +171,48 @@ Profiles are defined in `configs/agents/`. Create custom profiles by copying an 
 
 ```bash
 # Run multiple agents on same project, different branches
-./scripts/launch-agent.sh 1 ~/project \
+./scripts/launch-agent.sh ~/project \
     --config configs/claude.yaml \
     --branch feature/DEV-123-api \
     --spec ./specs/api.md &
 
-./scripts/launch-agent.sh 2 ~/project \
+./scripts/launch-agent.sh ~/project \
     --config configs/codex.yaml \
     --branch feature/DEV-123-ui \
     --spec ./specs/ui.md &
 
-./scripts/launch-agent.sh 3 ~/project \
+./scripts/launch-agent.sh ~/project \
     --config configs/aider.yaml \
     --branch feature/DEV-123-tests \
     --spec ./specs/tests.md &
 
 wait
 ```
+
+### Isolation Modes
+
+Kapsis supports two isolation modes for the project filesystem:
+
+| Mode | Flag | When Used | Best For |
+|------|------|-----------|----------|
+| **Worktree** | `--worktree-mode` | Auto when `--branch` + git repo | Git-based projects, PR workflows |
+| **Overlay** | `--overlay-mode` | Auto when no branch specified | Non-git projects, quick tasks |
+
+```bash
+# Worktree mode (recommended for git projects)
+# Creates isolated git worktree, real commits, pushable branches
+./scripts/launch-agent.sh ~/project --branch feature/task --task "..."
+
+# Overlay mode (legacy)
+# Uses fuse-overlayfs, writes go to ephemeral upper layer
+./scripts/launch-agent.sh ~/project --task "quick exploration"
+
+# Force specific mode
+./scripts/launch-agent.sh ~/project --worktree-mode --branch feature/x --task "..."
+./scripts/launch-agent.sh ~/project --overlay-mode --task "..."
+```
+
+See [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md) for detailed comparison.
 
 ### Monitor Agent Progress
 
@@ -246,6 +298,24 @@ Pre-built configs available in `configs/` directory.
 | Deploy operations | Blocked in isolated-settings.xml |
 | GE/Develocity cache | Remote cache disabled |
 | Host system | Podman rootless container |
+| Network access | DNS-based allowlist filtering (default) |
+
+### Network Isolation
+
+Kapsis provides DNS-based network filtering by default, allowing agents to access only whitelisted domains:
+
+```bash
+# Default: filtered mode (DNS allowlist)
+kapsis ~/project --task "implement feature"
+
+# Maximum isolation (no network)
+kapsis ~/project --network-mode none --task "refactor code"
+
+# Unrestricted network (use sparingly)
+kapsis ~/project --network-mode open --task "test"
+```
+
+See [docs/NETWORK-ISOLATION.md](docs/NETWORK-ISOLATION.md) for customizing the allowlist.
 
 ## Cleanup
 
@@ -264,7 +334,7 @@ See [docs/CLEANUP.md](docs/CLEANUP.md) for full options and troubleshooting.
 
 ```bash
 # Enable debug output
-KAPSIS_DEBUG=1 ./scripts/launch-agent.sh 1 ~/project --task "test"
+KAPSIS_DEBUG=1 ./scripts/launch-agent.sh ~/project --task "test"
 
 # View logs
 tail -f ~/.kapsis/logs/kapsis-launch-agent.log
@@ -278,6 +348,22 @@ tail -f ~/.kapsis/logs/kapsis-launch-agent.log
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full logging configuration and test framework documentation.
+
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flows, and component interactions |
+| [CONFIG-REFERENCE.md](docs/CONFIG-REFERENCE.md) | Complete configuration options for agent-sandbox.yaml |
+| [GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md) | Branch-based workflow, worktree vs overlay modes |
+| [STATUS-TRACKING.md](docs/STATUS-TRACKING.md) | Real-time progress monitoring and hook system |
+| [INSTALL.md](docs/INSTALL.md) | Detailed installation instructions |
+| [SETUP.md](docs/SETUP.md) | Initial setup and dependency configuration |
+| [CLEANUP.md](docs/CLEANUP.md) | Disk space management and cleanup operations |
+| [SECURITY-HARDENING.md](docs/SECURITY-HARDENING.md) | Container security design and hardening options |
+| [NETWORK-ISOLATION.md](docs/NETWORK-ISOLATION.md) | Network security and isolation configuration |
+| [GITHUB-SETUP.md](docs/GITHUB-SETUP.md) | GitHub integration and authentication |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Development guide, testing, and logging |
 
 ## Project Structure
 
@@ -330,7 +416,7 @@ kapsis/
 - **Podman** 4.0+ (5.0+ recommended) — automatically installed by `./setup.sh --install`
 - **macOS** with Apple Silicon (tested) or Linux
 - **Git** 2.0+
-- **yq** (optional, for config parsing)
+- **yq** 4.0+ — required for YAML config parsing, agent image builds, and status hooks
 
 ## License
 

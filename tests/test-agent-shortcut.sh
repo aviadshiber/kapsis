@@ -21,7 +21,7 @@ test_agent_claude() {
     log_test "Testing --agent claude"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "CLAUDE" "Agent name should be displayed in uppercase"
     assert_contains "$output" "configs/claude.yaml" "Should use claude.yaml config"
@@ -32,7 +32,7 @@ test_agent_codex() {
     log_test "Testing --agent codex"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent codex --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent codex --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "CODEX" "Agent name should be displayed in uppercase"
     assert_contains "$output" "configs/codex.yaml" "Should use codex.yaml config"
@@ -42,7 +42,7 @@ test_agent_aider() {
     log_test "Testing --agent aider"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent aider --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent aider --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "AIDER" "Agent name should be displayed in uppercase"
     assert_contains "$output" "configs/aider.yaml" "Should use aider.yaml config"
@@ -52,7 +52,7 @@ test_agent_interactive() {
     log_test "Testing --agent interactive"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent interactive --interactive --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent interactive --interactive --dry-run 2>&1) || true
 
     assert_contains "$output" "INTERACTIVE" "Agent name should be displayed in uppercase"
     assert_contains "$output" "configs/interactive.yaml" "Should use interactive.yaml config"
@@ -62,7 +62,7 @@ test_agent_display_in_banner() {
     log_test "Testing agent name in configuration summary"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     # In dry-run mode, check config summary shows agent (banner only shows during actual launch)
     assert_contains "$output" "Agent:         CLAUDE" "Config summary should show agent name"
@@ -72,7 +72,7 @@ test_agent_in_config_summary() {
     log_test "Testing agent in configuration summary"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent codex --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent codex --task "test" --dry-run 2>&1) || true
 
     # Check configuration summary shows agent
     assert_contains "$output" "Agent:" "Configuration should show Agent line"

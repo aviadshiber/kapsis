@@ -67,6 +67,109 @@ run_git() {
 }
 
 #===============================================================================
+# ENSURE GIT EXCLUDES
+#
+# Adds protective patterns to $GIT_DIR/info/exclude to prevent accidental
+# commits of Kapsis internal files and paths with literal ~ characters.
+#
+# IMPORTANT: This uses Git's info/exclude mechanism instead of .gitignore.
+# The info/exclude file is local-only and NEVER committed, making Kapsis's
+# protective patterns completely transparent to the user's repository.
+#
+# This addresses issue #89 where .gitignore modifications were appearing
+# in user PRs, violating the principle of transparent sandbox operations.
+#
+# Patterns added:
+# - .kapsis/           : Internal Kapsis spec/task files
+# - ~                  : Literal tilde directory (failed expansion)
+# - ~/                 : Literal tilde directory with trailing slash
+# - .claude/           : Claude Code config files
+# - .codex/            : Codex CLI config files
+# - .aider/            : Aider config files
+#===============================================================================
+ensure_git_excludes() {
+    local worktree_path="$1"
+
+    # Determine the git directory for this worktree
+    local git_dir=""
+    if [[ -f "$worktree_path/.git" ]]; then
+        # Worktree mode: .git is a file pointing to the actual git dir
+        local gitdir_content
+        gitdir_content=$(cat "$worktree_path/.git")
+        git_dir="${gitdir_content#gitdir: }"
+    elif [[ -d "$worktree_path/.git" ]]; then
+        # Regular repo or overlay mode
+        git_dir="$worktree_path/.git"
+    else
+        log_warn "Cannot determine git directory for: $worktree_path"
+        return 1
+    fi
+
+    local exclude_path="$git_dir/info/exclude"
+
+    # Ensure info directory exists
+    mkdir -p "$git_dir/info"
+
+    # Marker comment to identify Kapsis-added patterns
+    local marker="# Kapsis protective patterns"
+
+    # Check if patterns are already present (idempotency check)
+    if [[ -f "$exclude_path" ]] && grep -qF "$marker" "$exclude_path" 2>/dev/null; then
+        log_debug "Protective exclude patterns already present in info/exclude"
+        return 0
+    fi
+
+    # Patterns to add - these prevent accidental commits of:
+    # 1. Internal Kapsis directories
+    # 2. Literal ~ paths (when tilde expansion fails)
+    # 3. AI tool config directories
+    local patterns
+    patterns=$(cat << 'EOF'
+
+# Kapsis protective patterns
+# These patterns prevent accidental commits of internal files
+# This file is local-only and never committed (transparent to user)
+
+# Kapsis internal files
+.kapsis/
+
+# Literal tilde paths (failed tilde expansion creates directory named "~")
+# This is NOT the same as *~ which matches backup files ending in ~
+~
+~/
+
+# AI tool configuration directories (should stay local)
+.claude/
+.codex/
+.aider/
+EOF
+)
+
+    # Append to existing info/exclude or create new
+    if [[ -f "$exclude_path" ]]; then
+        log_debug "Appending protective patterns to existing info/exclude"
+        printf '%s\n' "$patterns" >> "$exclude_path"
+    else
+        log_debug "Creating info/exclude with protective patterns"
+        printf '%s\n' "$patterns" > "$exclude_path"
+    fi
+
+    log_debug "Protective patterns written to $exclude_path"
+}
+
+#===============================================================================
+# ENSURE PROTECTIVE GITIGNORE (DEPRECATED - kept for backward compatibility)
+#
+# This function is deprecated. Use ensure_git_excludes() instead.
+# Kept temporarily for any external scripts that may call it.
+#===============================================================================
+ensure_protective_gitignore() {
+    local worktree_path="$1"
+    log_warn "ensure_protective_gitignore is deprecated, using ensure_git_excludes instead"
+    ensure_git_excludes "$worktree_path"
+}
+
+#===============================================================================
 # CREATE WORKTREE
 #
 # Creates a git worktree for an agent on the host filesystem.
@@ -186,6 +289,15 @@ create_worktree() {
     # With --userns=keep-id, the container user maps to the host user
     chmod -R u+rwX,g+rX "$worktree_path" 2>/dev/null || true
 
+    # Add protective exclude patterns to $GIT_DIR/info/exclude to prevent
+    # accidental commits of:
+    # - .kapsis/ directory (internal spec/task files)
+    # - Literal ~ paths (tilde not expanded, creates directory named "~")
+    # - Claude/Codex/Aider config files that shouldn't be committed
+    # Using info/exclude instead of .gitignore keeps these patterns local-only
+    # and completely transparent to the user (never committed) - fixes issue #89
+    ensure_git_excludes "$worktree_path"
+
     log_success "Worktree ready: $worktree_path"
     echo "$worktree_path"
 }
@@ -240,7 +352,8 @@ prepare_sanitized_git() {
     mkdir -p "$sanitized_dir/refs/heads"
     mkdir -p "$sanitized_dir/refs/remotes/origin"
     mkdir -p "$sanitized_dir/hooks"  # Empty! Critical for security
-    log_debug "Created refs/heads, refs/remotes/origin, and empty hooks directories"
+    mkdir -p "$sanitized_dir/info"   # For exclude patterns (issue #89)
+    log_debug "Created refs/heads, refs/remotes/origin, hooks, and info directories"
 
     # Copy HEAD (current branch pointer)
     if [[ -f "$worktree_gitdir/HEAD" ]]; then
@@ -283,6 +396,28 @@ prepare_sanitized_git() {
     ln -sf "$CONTAINER_OBJECTS_PATH" "$sanitized_dir/objects"
     log_debug "Created objects symlink -> $CONTAINER_OBJECTS_PATH"
 
+    # Create info/exclude with protective patterns (issue #89)
+    # This ensures the container's git operations respect our exclude patterns
+    # even though we're using a sanitized git directory
+    cat > "$sanitized_dir/info/exclude" << 'EXCLUDE_EOF'
+# Kapsis protective patterns
+# These patterns prevent accidental commits of internal files
+# This file is local-only and never committed (transparent to user)
+
+# Kapsis internal files
+.kapsis/
+
+# Literal tilde paths (failed tilde expansion creates directory named "~")
+~
+~/
+
+# AI tool configuration directories (should stay local)
+.claude/
+.codex/
+.aider/
+EXCLUDE_EOF
+    log_debug "Created info/exclude with protective patterns"
+
     # Create a marker file with paths for container setup
     cat > "$sanitized_dir/kapsis-meta" << EOF
 # Kapsis Sanitized Git Metadata
@@ -296,6 +431,7 @@ EOF
     log_success "Sanitized git ready: $sanitized_dir"
     log_info "  Hooks directory: EMPTY (security)"
     log_info "  Config: minimal (no credentials)"
+    log_info "  Excludes: info/exclude with protective patterns"
     log_info "  Branch: $current_branch"
 
     echo "$sanitized_dir"

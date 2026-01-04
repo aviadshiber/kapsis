@@ -55,7 +55,8 @@ _KAPSIS_STATUS_STARTED=""
 _KAPSIS_STATUS_INITIALIZED=false
 
 # Push verification state
-_KAPSIS_PUSH_STATUS=""      # "success", "failed", "skipped", "unverified"
+_KAPSIS_PUSH_STATUS=""           # "success", "failed", "skipped", "unverified"
+_KAPSIS_PUSH_FALLBACK_CMD=""     # Fallback command for agent recovery when push fails
 _KAPSIS_LOCAL_COMMIT=""     # Local HEAD commit SHA
 _KAPSIS_REMOTE_COMMIT=""    # Remote HEAD commit SHA after push
 
@@ -223,6 +224,36 @@ status_set_push_info() {
     _KAPSIS_REMOTE_COMMIT="${3:-}"
 }
 
+# Set push fallback command for agent recovery
+# When push fails, this provides a command the orchestrating agent can run
+# Arguments:
+#   $1 - Worktree path
+#   $2 - Remote name
+#   $3 - Branch name
+status_set_push_fallback() {
+    local worktree_path="$1"
+    local remote="${2:-origin}"
+    local branch="$3"
+
+    if [[ -z "$worktree_path" || -z "$branch" ]]; then
+        _KAPSIS_PUSH_FALLBACK_CMD=""
+        return
+    fi
+
+    _KAPSIS_PUSH_FALLBACK_CMD="cd ${worktree_path} && git push -u ${remote} ${branch}"
+
+    # Output machine-parseable marker for agent grep
+    echo ""
+    echo "┌────────────────────────────────────────────────────────────────────┐"
+    echo "│ PUSH FALLBACK (for agent recovery)                                 │"
+    echo "└────────────────────────────────────────────────────────────────────┘"
+    echo "KAPSIS_PUSH_FALLBACK: $_KAPSIS_PUSH_FALLBACK_CMD"
+    echo ""
+    echo "The orchestrating agent can run this command from the host where"
+    echo "git credentials are available."
+    echo ""
+}
+
 # Verify push succeeded by comparing local and remote HEAD
 # Arguments:
 #   $1 - Worktree/repo path
@@ -331,6 +362,14 @@ _status_write() {
     local remote_commit_json="null"
     [[ -n "$_KAPSIS_REMOTE_COMMIT" ]] && remote_commit_json="\"$_KAPSIS_REMOTE_COMMIT\""
 
+    # Push fallback command for agent recovery
+    local push_fallback_json="null"
+    if [[ -n "$_KAPSIS_PUSH_FALLBACK_CMD" ]]; then
+        local escaped_fallback
+        escaped_fallback=$(_status_json_escape "$_KAPSIS_PUSH_FALLBACK_CMD")
+        push_fallback_json="\"$escaped_fallback\""
+    fi
+
     # Build JSON (using heredoc for readability)
     local json
     json=$(cat << EOF
@@ -351,7 +390,8 @@ _status_write() {
   "pr_url": ${pr_url_json},
   "push_status": ${push_status_json},
   "local_commit": ${local_commit_json},
-  "remote_commit": ${remote_commit_json}
+  "remote_commit": ${remote_commit_json},
+  "push_fallback_command": ${push_fallback_json}
 }
 EOF
 )
@@ -382,9 +422,12 @@ status_get_file() {
 # Get current phase
 status_get_phase() {
     if [[ -f "$_KAPSIS_STATUS_FILE" ]]; then
-        # Simple grep-based extraction (no jq dependency)
-        grep -o '"phase": *"[^"]*"' "$_KAPSIS_STATUS_FILE" 2>/dev/null | \
-            sed 's/"phase": *"\([^"]*\)"/\1/'
+        # Native bash regex extraction (no subprocess overhead)
+        local content
+        content=$(<"$_KAPSIS_STATUS_FILE") 2>/dev/null || return
+        if [[ "$content" =~ \"phase\":\ *\"([^\"]*)\" ]]; then
+            echo "${BASH_REMATCH[1]}"
+        fi
     fi
 }
 

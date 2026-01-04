@@ -252,8 +252,8 @@ check_yq() {
         version=$(yq --version 2>/dev/null | head -1)
         check_result pass "yq" "Installed ($version)"
     else
-        check_result warn "yq" "Not installed (optional)" \
-            "Install for better config parsing: brew install yq (macOS) or snap install yq (Linux)"
+        check_result fail "yq" "Not installed (required)" \
+            "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
     fi
 }
 
@@ -846,7 +846,7 @@ main() {
     echo "     export ANTHROPIC_API_KEY='your-key'"
     echo ""
     echo "  3. Launch an agent:"
-    echo "     ./scripts/launch-agent.sh 1 ~/your-project --branch feature/test"
+    echo "     ./scripts/launch-agent.sh ~/your-project --branch feature/test"
     echo ""
     echo "  Or use the quick-start script:"
     echo "     ./quick-start.sh 1 project-name feature/branch"

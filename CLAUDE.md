@@ -25,7 +25,7 @@ Kapsis is a **hermetically isolated AI agent sandbox** for running multiple AI c
 ```bash
 # Build & run
 ./scripts/build-image.sh                    # Build container image
-./scripts/launch-agent.sh 1 ~/project --agent claude --task "..."
+./scripts/launch-agent.sh ~/project --agent claude --task "..."
 
 # Test
 ./tests/run-all-tests.sh --quick            # Fast tests (~10s)
@@ -68,6 +68,18 @@ See `CONTRIBUTING.md` for full release process.
 3. `[ ]` conditionals - always use `[[ ]]`
 4. Skipping shellcheck
 5. Committing secrets - use keychain integration
+
+## Push Fallback (Agent Recovery)
+
+When push fails (common in containers without credentials), Kapsis outputs a structured fallback:
+
+```
+KAPSIS_PUSH_FALLBACK: cd /path/to/worktree && git push -u origin branch-name
+```
+
+**For orchestrating agents:** Grep output for `KAPSIS_PUSH_FALLBACK:` and execute the command from the host where git credentials are available.
+
+**In status.json:** The `push_fallback_command` field contains the same command when `push_status` is `"failed"`.
 
 ## Cross-Platform
 

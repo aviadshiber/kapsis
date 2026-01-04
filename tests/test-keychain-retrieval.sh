@@ -36,7 +36,7 @@ EOF
     export MY_API_KEY="$secret_key"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset MY_API_KEY
     rm -f "$test_config"
@@ -79,7 +79,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     rm -f "$test_config"
 
@@ -134,7 +134,7 @@ EOF
     export SHARED_API_KEY="passthrough-value"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset SHARED_API_KEY
     rm -f "$test_config"
@@ -194,7 +194,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     rm -f "$test_config"
 
@@ -219,7 +219,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || exit_code=$?
 
     unset MY_VAR
     rm -f "$test_config"
@@ -296,6 +296,137 @@ EOF
     assert_equals "3" "$count" "Should have 3 keychain entries"
 }
 
+test_keychain_array_account_parsing() {
+    log_test "Testing array account parsing in keychain config"
+
+    local test_config="$TEST_PROJECT/.kapsis-array-account-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    MY_TOKEN:
+      service: "my-service"
+      account: ["user1@example.com", "user2@example.com", "${USER}@example.com"]
+EOF
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        rm -f "$test_config"
+        return 0
+    fi
+
+    # Parse account field with array support (same yq expression as launch-agent.sh)
+    local parsed
+    parsed=$(yq '.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "")' "$test_config" 2>&1)
+    local exit_code=$?
+
+    rm -f "$test_config"
+
+    assert_equals 0 "$exit_code" "Should parse array account successfully"
+    assert_contains "$parsed" "MY_TOKEN|my-service|user1@example.com,user2@example.com" "Should join array accounts with comma"
+}
+
+test_keychain_string_account_backward_compat() {
+    log_test "Testing string account backward compatibility"
+
+    local test_config="$TEST_PROJECT/.kapsis-string-account-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    MY_TOKEN:
+      service: "my-service"
+      account: "single-user@example.com"
+EOF
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        rm -f "$test_config"
+        return 0
+    fi
+
+    # Parse account field with array support (same yq expression as launch-agent.sh)
+    local parsed
+    parsed=$(yq '.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "")' "$test_config" 2>&1)
+    local exit_code=$?
+
+    rm -f "$test_config"
+
+    assert_equals 0 "$exit_code" "Should parse string account successfully"
+    assert_contains "$parsed" "MY_TOKEN|my-service|single-user@example.com" "Should preserve string account as-is"
+}
+
+test_keychain_mixed_account_types() {
+    log_test "Testing mixed string and array account types"
+
+    local test_config="$TEST_PROJECT/.kapsis-mixed-account-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    TOKEN_WITH_ARRAY:
+      service: "service-a"
+      account: ["primary@example.com", "fallback@example.com"]
+    TOKEN_WITH_STRING:
+      service: "service-b"
+      account: "only-one@example.com"
+    TOKEN_NO_ACCOUNT:
+      service: "service-c"
+EOF
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        rm -f "$test_config"
+        return 0
+    fi
+
+    # Parse all entries
+    local parsed
+    parsed=$(yq '.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "")' "$test_config" 2>&1)
+    local exit_code=$?
+
+    rm -f "$test_config"
+
+    assert_equals 0 "$exit_code" "Should parse mixed account types"
+    assert_contains "$parsed" "TOKEN_WITH_ARRAY|service-a|primary@example.com,fallback@example.com" "Should join array"
+    assert_contains "$parsed" "TOKEN_WITH_STRING|service-b|only-one@example.com" "Should preserve string"
+    assert_contains "$parsed" "TOKEN_NO_ACCOUNT|service-c|" "Should handle missing account"
+}
+
+test_keychain_empty_array_account() {
+    log_test "Testing empty array account handling"
+
+    local test_config="$TEST_PROJECT/.kapsis-empty-array-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    MY_TOKEN:
+      service: "my-service"
+      account: []
+EOF
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        rm -f "$test_config"
+        return 0
+    fi
+
+    # Parse account field
+    local parsed
+    parsed=$(yq '.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "")' "$test_config" 2>&1)
+    local exit_code=$?
+
+    rm -f "$test_config"
+
+    assert_equals 0 "$exit_code" "Should parse empty array account"
+    assert_contains "$parsed" "MY_TOKEN|my-service|" "Should result in empty account string"
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -317,6 +448,12 @@ main() {
     run_test test_no_keychain_section
     run_test test_special_characters_in_secret_name
     run_test test_keychain_multiple_entries
+
+    # Array account fallback tests
+    run_test test_keychain_array_account_parsing
+    run_test test_keychain_string_account_backward_compat
+    run_test test_keychain_mixed_account_types
+    run_test test_keychain_empty_array_account
 
     # Cleanup
     cleanup_test_project

@@ -310,6 +310,96 @@ validate_launch_config() {
     return 0
 }
 
+# Validate network allowlist config YAML (configs/network-*.yaml or files with network.mode)
+validate_network_config() {
+    local config_file="$1"
+
+    log_info "Validating network config: $config_file"
+
+    if [[ ! -f "$config_file" ]]; then
+        log_error "Network config not found: $config_file"
+        return 1
+    fi
+
+    # YAML syntax
+    if command -v yamllint &>/dev/null; then
+        if ! yamllint -d "{extends: relaxed, rules: {line-length: disable}}" "$config_file" 2>/dev/null; then
+            log_error "YAML syntax error in $config_file"
+            return 1
+        fi
+        log_pass "YAML syntax valid"
+    fi
+
+    # Required: network.mode
+    local network_mode
+    network_mode=$(yq -r '.network.mode // "null"' "$config_file" 2>/dev/null)
+    if [[ "$network_mode" != "null" && -n "$network_mode" ]]; then
+        if [[ "$network_mode" =~ ^(none|filtered|open)$ ]]; then
+            log_pass "Valid network.mode: $network_mode"
+        else
+            log_error "Invalid network.mode: $network_mode (must be: none, filtered, open)"
+        fi
+    else
+        log_error "Missing required field: network.mode"
+    fi
+
+    # Validate allowlist if mode is filtered
+    if [[ "$network_mode" == "filtered" ]]; then
+        local has_allowlist
+        has_allowlist=$(yq -r '.network.allowlist // "null"' "$config_file" 2>/dev/null)
+        if [[ "$has_allowlist" != "null" ]]; then
+            log_pass "Has network.allowlist section"
+
+            # Count domains in each category
+            local categories=("hosts" "registries" "containers" "ai" "custom")
+            for category in "${categories[@]}"; do
+                local count
+                count=$(yq -r ".network.allowlist.$category | length // 0" "$config_file" 2>/dev/null)
+                if [[ "$count" -gt 0 ]]; then
+                    log_pass "Allowlist.$category: $count domains"
+                fi
+            done
+        else
+            log_warn "Mode is 'filtered' but no allowlist defined"
+        fi
+    fi
+
+    # Validate DNS servers if present
+    local dns_count
+    dns_count=$(yq -r '.network.dns_servers | length // 0' "$config_file" 2>/dev/null)
+    if [[ "$dns_count" -gt 0 ]]; then
+        log_pass "Has $dns_count DNS server(s)"
+    fi
+
+    return 0
+}
+
+# Detect config type based on content
+detect_config_type() {
+    local config_file="$1"
+
+    # Check for network.mode (network config)
+    if yq -r '.network.mode // "null"' "$config_file" 2>/dev/null | grep -qv '^null$'; then
+        echo "network"
+        return
+    fi
+
+    # Check for agent.command (launch config)
+    if yq -r '.agent.command // "null"' "$config_file" 2>/dev/null | grep -qv '^null$'; then
+        echo "launch"
+        return
+    fi
+
+    # Check for name + version (agent profile)
+    if yq -r '.name // "null"' "$config_file" 2>/dev/null | grep -qv '^null$' && \
+       yq -r '.version // "null"' "$config_file" 2>/dev/null | grep -qv '^null$'; then
+        echo "agent"
+        return
+    fi
+
+    echo "unknown"
+}
+
 #===============================================================================
 # Test Pattern Matching
 #===============================================================================
@@ -436,13 +526,25 @@ main() {
         validate_tool_phase_mapping "$KAPSIS_ROOT/configs/tool-phase-mapping.yaml"
         echo ""
 
-        # Validate launch configs (top-level configs/*.yaml)
-        for launch_config in "$KAPSIS_ROOT"/configs/*.yaml; do
+        # Validate top-level configs (configs/*.yaml) - auto-detect type
+        for config in "$KAPSIS_ROOT"/configs/*.yaml; do
             local basename
-            basename=$(basename "$launch_config")
-            # Skip tool-phase-mapping (already validated) and specs directory
-            if [[ "$basename" != "tool-phase-mapping.yaml" && -f "$launch_config" ]]; then
-                validate_launch_config "$launch_config"
+            basename=$(basename "$config")
+            # Skip tool-phase-mapping (already validated above)
+            if [[ "$basename" != "tool-phase-mapping.yaml" && -f "$config" ]]; then
+                local config_type
+                config_type=$(detect_config_type "$config")
+                case "$config_type" in
+                    network)
+                        validate_network_config "$config"
+                        ;;
+                    launch)
+                        validate_launch_config "$config"
+                        ;;
+                    *)
+                        log_warn "Unknown config type for: $config"
+                        ;;
+                esac
                 echo ""
             fi
         done

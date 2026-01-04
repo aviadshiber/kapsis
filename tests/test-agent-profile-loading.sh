@@ -25,7 +25,7 @@ test_valid_profile_loads() {
     local exit_code=0
 
     # Use claude profile which should exist
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test task" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test task" --dry-run 2>&1) || exit_code=$?
 
     # Should succeed
     assert_equals 0 "$exit_code" "Should exit with zero for valid profile"
@@ -38,7 +38,7 @@ test_profile_name_displayed() {
     log_test "Testing profile name is displayed in output"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1)
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1)
 
     # Agent name should appear in output (case-insensitive match)
     if echo "$output" | grep -qi "claude"; then
@@ -55,7 +55,7 @@ test_unknown_profile_errors() {
     local output
     local exit_code=0
 
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent nonexistent --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent nonexistent --task "test" --dry-run 2>&1) || exit_code=$?
 
     # Should fail
     assert_not_equals 0 "$exit_code" "Should exit with non-zero for unknown profile"
@@ -68,7 +68,7 @@ test_unknown_profile_shows_available() {
     log_test "Testing unknown profile lists available agents"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent foobar --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent foobar --task "test" --dry-run 2>&1) || true
 
     # Should list available agents
     assert_contains "$output" "claude" "Should list claude as available"
@@ -123,7 +123,7 @@ test_profile_shortcut_works() {
     local exit_code=0
 
     # Shortcut should work same as --agent
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should succeed with --agent shortcut"
     assert_contains "$output" "DRY RUN" "Should complete dry-run"
@@ -158,7 +158,7 @@ EOF
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_profile" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_profile" --task "test" --dry-run 2>&1) || exit_code=$?
 
     unset MY_TEST_VAR
     rm -f "$test_profile"
@@ -177,7 +177,7 @@ test_profile_default_resolution() {
     local exit_code=0
 
     # Empty agent should fall through to default
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent "" --task "test" --dry-run 2>&1) || exit_code=$?
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent "" --task "test" --dry-run 2>&1) || exit_code=$?
 
     # Should succeed with default config
     assert_equals 0 "$exit_code" "Should succeed with empty agent name"
@@ -193,7 +193,7 @@ agent:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 

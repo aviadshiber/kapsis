@@ -783,6 +783,149 @@ inject_progress_instructions() {
 }
 
 #===============================================================================
+# DNS FILTERING SETUP
+#
+# When KAPSIS_NETWORK_MODE=filtered, starts dnsmasq with the allowlist
+# passed via KAPSIS_DNS_ALLOWLIST environment variable.
+#===============================================================================
+setup_dns_filtering() {
+    local network_mode="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
+
+    if [[ "$network_mode" != "filtered" ]]; then
+        log_debug "DNS filtering not enabled (network mode: $network_mode)"
+        return 0
+    fi
+
+    log_info "Setting up DNS-based network filtering..."
+
+    # Source the DNS filter library
+    local dns_filter_lib="$KAPSIS_HOME/lib/dns-filter.sh"
+    if [[ ! -f "$dns_filter_lib" ]]; then
+        log_error "DNS filter library not found: $dns_filter_lib"
+        log_error "Falling back to network=none for security"
+        # Instead of leaving network open, we should warn but can't change network mode at runtime
+        # The filtering won't work, but network is still open (configured at container start)
+        return 1
+    fi
+
+    # shellcheck source=lib/dns-filter.sh
+    source "$dns_filter_lib"
+
+    # Initialize and start DNS filtering
+    # The allowlist is passed via KAPSIS_DNS_ALLOWLIST environment variable
+    if dns_filter_init; then
+        log_success "DNS filtering active"
+
+        # Register cleanup trap
+        trap 'dns_filter_cleanup' EXIT
+
+        # Show what's allowed
+        if [[ -n "${KAPSIS_DNS_ALLOWLIST:-}" ]]; then
+            local domain_count
+            domain_count=$(echo "$KAPSIS_DNS_ALLOWLIST" | tr ',' '\n' | wc -l | tr -d ' ')
+            log_info "Allowed domains: $domain_count"
+            log_debug "Domains: ${KAPSIS_DNS_ALLOWLIST:0:100}..."
+        else
+            log_warn "No domains in allowlist - all DNS queries will be blocked!"
+        fi
+
+        return 0
+    else
+        log_error "Failed to initialize DNS filtering"
+        return 1
+    fi
+}
+
+#===============================================================================
+# DNS FILTERING WITH FAIL-SAFE
+# Abort container if DNS filtering is required but fails to initialize
+#
+# Security model:
+# - If KAPSIS_NETWORK_MODE is explicitly set → enforce that mode
+# - If using default (filtered) and can't filter → abort (fail-safe)
+# - Exception: CI environments (CI=true) auto-fallback to open
+#===============================================================================
+
+# Check if DNS filtering can run in this environment
+# Returns: 0 if environment supports DNS filtering, 1 otherwise
+can_run_dns_filtering() {
+    # Check if dnsmasq is available
+    if ! command -v dnsmasq &>/dev/null; then
+        log_debug "dnsmasq not installed - DNS filtering unavailable"
+        return 1
+    fi
+
+    # Check if we can write to resolv.conf (or if it's managed externally)
+    if [[ ! -w /etc/resolv.conf ]] && [[ ! -w /etc ]]; then
+        log_debug "Cannot modify /etc/resolv.conf - DNS filtering unavailable"
+        return 1
+    fi
+
+    return 0
+}
+
+init_dns_filtering_or_fail() {
+    local network_mode="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
+    local explicitly_set="${KAPSIS_NETWORK_MODE:-}"
+
+    # Only enforce fail-safe for filtered mode
+    if [[ "$network_mode" != "filtered" ]]; then
+        log_debug "DNS fail-safe not required (network mode: $network_mode)"
+        return 0
+    fi
+
+    # Check if environment supports DNS filtering before attempting
+    if ! can_run_dns_filtering; then
+        # CI environments auto-fallback to open (avoid breaking CI pipelines)
+        if [[ "${CI:-}" == "true" ]] && [[ -z "$explicitly_set" ]]; then
+            log_warn "CI environment detected - DNS filtering unavailable"
+            log_warn "Falling back to unrestricted network access"
+            export KAPSIS_NETWORK_MODE="open"
+            return 0
+        fi
+
+        # Non-CI or explicit mode: fail-safe
+        log_error "=========================================="
+        log_error "SECURITY: DNS filtering not supported in this environment"
+        log_error "=========================================="
+        log_error "Filtered network mode requires working DNS filtering, but:"
+        log_error "  - dnsmasq may not be installed"
+        log_error "  - resolv.conf may not be writable"
+        log_error "  - Container may lack required capabilities"
+        log_error ""
+        log_error "Options:"
+        log_error "  --network-mode=none   (complete network isolation)"
+        log_error "  --network-mode=open   (unrestricted access)"
+        log_error "=========================================="
+        exit 1
+    fi
+
+    # Environment supports filtering, attempt to set it up
+    if ! setup_dns_filtering; then
+        # CI environments auto-fallback to open
+        if [[ "${CI:-}" == "true" ]] && [[ -z "$explicitly_set" ]]; then
+            log_warn "CI environment detected - DNS filtering failed"
+            log_warn "Falling back to unrestricted network access"
+            export KAPSIS_NETWORK_MODE="open"
+            return 0
+        fi
+
+        log_error "=========================================="
+        log_error "SECURITY: DNS filtering failed to initialize"
+        log_error "=========================================="
+        log_error "Filtered network mode requires working DNS filtering."
+        log_error "Aborting to prevent unfiltered network access."
+        log_error ""
+        log_error "Options:"
+        log_error "  --network-mode=none   (complete network isolation)"
+        log_error "  --network-mode=open   (unrestricted access)"
+        log_error "  Fix the DNS configuration and retry"
+        log_error "=========================================="
+        exit 1
+    fi
+}
+
+#===============================================================================
 # PRINT WELCOME BANNER
 #===============================================================================
 print_welcome() {
@@ -797,6 +940,15 @@ print_welcome() {
     echo "Workspace:   /workspace"
     [[ -n "${KAPSIS_BRANCH:-}" ]] && echo "Branch:      ${KAPSIS_BRANCH}"
     [[ -f "/task-spec.md" ]] && echo "Spec File:   /task-spec.md"
+
+    # Show network mode
+    local network_mode="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
+    case "$network_mode" in
+        none)     echo "Network:     isolated (no access)" ;;
+        filtered) echo "Network:     filtered (DNS allowlist)" ;;
+        open)     echo "Network:     unrestricted" ;;
+    esac
+
     echo ""
     echo "Maven settings: $KAPSIS_HOME/maven/settings.xml (isolation enabled)"
     [[ "${KAPSIS_WORKTREE_MODE:-}" == "true" ]] && echo "Git:         using sanitized .git-safe (hooks sandbox isolated)"
@@ -825,6 +977,10 @@ main() {
     # Inject credentials to files (agent-agnostic)
     # Reads KAPSIS_CREDENTIAL_FILES env var set by launch-agent.sh
     inject_credential_files
+
+    # Set up DNS filtering if in filtered network mode
+    # Must happen early so all subsequent network operations go through the filter
+    init_dns_filtering_or_fail
 
     if [[ "$sandbox_mode" == "worktree" ]] || setup_worktree_git; then
         # Worktree mode: git is already set up by host

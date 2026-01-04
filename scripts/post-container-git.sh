@@ -29,8 +29,140 @@ if [[ -z "${_KAPSIS_STATUS_LOADED:-}" ]]; then
     source "$POST_GIT_SCRIPT_DIR/lib/status.sh"
 fi
 
+# Source shared constants (provides KAPSIS_DEFAULT_COMMIT_EXCLUDE)
+source "$POST_GIT_SCRIPT_DIR/lib/constants.sh"
+
 # Note: logging functions are provided by lib/logging.sh
 # Note: status functions are provided by lib/status.sh
+# Note: constants are provided by lib/constants.sh
+
+#===============================================================================
+# VALIDATE AND CLEAN STAGED FILES
+#
+# Checks for suspicious files that should never be committed and removes them
+# from staging. This is a safety net to prevent accidental commits of:
+# - Literal ~ paths (tilde not expanded, creates directory named "~")
+# - .kapsis/ internal files
+# - Submodule references (mode 160000) that weren't intentional
+# - Files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
+#
+# The KAPSIS_COMMIT_EXCLUDE patterns provide user-configurable exclusions
+# for files that should never be committed, such as .gitignore modifications.
+#
+# Returns: 0 if validation passed (or issues were auto-fixed), 1 if blocking issues
+#===============================================================================
+validate_staged_files() {
+    local worktree_path="$1"
+
+    cd "$worktree_path"
+
+    local has_issues=0
+    local suspicious_files=()
+
+    # Check for literal ~ paths in staged files
+    # These occur when tilde expansion fails inside container
+    local tilde_files
+    tilde_files=$(git diff --cached --name-only 2>/dev/null | grep "^~" || true)
+    if [[ -n "$tilde_files" ]]; then
+        log_warn "Found staged files with literal ~ path (should be ignored):"
+        # Use process substitution to avoid subshell (array would be lost in pipe)
+        while IFS= read -r f; do
+            log_warn "  - $f"
+            suspicious_files+=("$f")
+        done <<< "$tilde_files"
+        has_issues=1
+    fi
+
+    # Check for .kapsis/ internal files
+    local kapsis_files
+    kapsis_files=$(git diff --cached --name-only 2>/dev/null | grep "^\.kapsis/" || true)
+    if [[ -n "$kapsis_files" ]]; then
+        log_warn "Found staged .kapsis/ internal files (should be ignored):"
+        while IFS= read -r f; do
+            log_warn "  - $f"
+            suspicious_files+=("$f")
+        done <<< "$kapsis_files"
+        has_issues=1
+    fi
+
+    # Check for submodule references (mode 160000)
+    # These can happen when a directory with .git is accidentally staged
+    # Pattern :000000 160000 catches NEW submodules being added
+    local submodule_refs
+    submodule_refs=$(git diff --cached --raw 2>/dev/null | grep "160000" || true)
+    if [[ -n "$submodule_refs" ]]; then
+        log_warn "Found new submodule references being added (potential accident):"
+        while IFS= read -r line; do
+            local path
+            path=$(echo "$line" | awk '{print $NF}')
+            log_warn "  - $path (submodule)"
+            suspicious_files+=("$path")
+        done <<< "$submodule_refs"
+        has_issues=1
+    fi
+
+    # Check for files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
+    # This prevents committing files like .gitignore that were modified by Kapsis
+    local exclude_patterns="${KAPSIS_COMMIT_EXCLUDE:-$KAPSIS_DEFAULT_COMMIT_EXCLUDE}"
+    if [[ -n "$exclude_patterns" ]]; then
+        local staged_files
+        staged_files=$(git diff --cached --name-only 2>/dev/null || true)
+
+        if [[ -n "$staged_files" ]]; then
+            while IFS= read -r pattern; do
+                [[ -z "$pattern" ]] && continue
+                # Match staged files against pattern
+                # Handle ** glob patterns by converting to regex-compatible form
+                local regex_pattern
+                # Convert gitignore pattern to grep pattern:
+                # - ** matches any path segment(s)
+                # - * matches any characters except /
+                # - Anchor to line start/end for exact matches
+                if [[ "$pattern" == "**/"* ]]; then
+                    # Pattern like **/.gitignore matches at any depth
+                    local base_pattern="${pattern#\*\*/}"
+                    regex_pattern="(^|/)${base_pattern}$"
+                else
+                    # Exact match at root
+                    regex_pattern="^${pattern}$"
+                fi
+
+                local matched_files
+                matched_files=$(echo "$staged_files" | grep -E "$regex_pattern" 2>/dev/null || true)
+                if [[ -n "$matched_files" ]]; then
+                    log_info "Found staged files matching exclude pattern '$pattern':"
+                    while IFS= read -r f; do
+                        [[ -z "$f" ]] && continue
+                        log_info "  - $f (excluded by KAPSIS_COMMIT_EXCLUDE)"
+                        suspicious_files+=("$f")
+                    done <<< "$matched_files"
+                    has_issues=1
+                fi
+            done <<< "$exclude_patterns"
+        fi
+    fi
+
+    # If issues found, unstage the suspicious files
+    if [[ $has_issues -eq 1 ]]; then
+        log_warn "Removing excluded files from staging..."
+        for file in "${suspicious_files[@]}"; do
+            if [[ -n "$file" ]]; then
+                git reset HEAD -- "$file" 2>/dev/null || true
+                log_info "  Unstaged: $file"
+            fi
+        done
+
+        # Also try to remove literal ~ directory if it exists
+        if [[ -d "~" ]]; then
+            log_warn "Removing literal ~ directory from worktree..."
+            rm -rf "~" 2>/dev/null || true
+        fi
+
+        log_info "Excluded files removed from staging. Continuing with clean files."
+    fi
+
+    return 0
+}
 
 #===============================================================================
 # CHECK FOR CHANGES
@@ -50,6 +182,96 @@ has_changes() {
 }
 
 #===============================================================================
+# GET KAPSIS VERSION
+#
+# Returns the Kapsis version from the version library or package.json
+#===============================================================================
+get_kapsis_version() {
+    local version=""
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    # Try to get version from package.json
+    if [[ -f "$script_dir/../package.json" ]]; then
+        version=$(grep -o '"version": *"[^"]*"' "$script_dir/../package.json" 2>/dev/null | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+    fi
+
+    # Fallback: try git tag
+    if [[ -z "$version" ]] && command -v git &>/dev/null; then
+        version=$(git -C "$script_dir/.." describe --tags --abbrev=0 2>/dev/null || echo "")
+    fi
+
+    echo "${version:-dev}"
+}
+
+#===============================================================================
+# BUILD CO-AUTHOR TRAILERS
+#
+# Generates Co-authored-by trailers with full deduplication:
+#   - Against git config user.email (avoid listing yourself as co-author)
+#   - Against duplicate entries in the co_authors list
+#   - Against co-authors already present in the commit message
+# Arguments:
+#   $1 - Pipe-separated list of co-authors (e.g., "Name1 <email1>|Name2 <email2>")
+#   $2 - Worktree path (for git config lookup)
+#   $3 - Commit message (optional, to check for existing co-authors)
+# Returns: Newline-separated Co-authored-by trailers
+#===============================================================================
+build_coauthor_trailers() {
+    local co_authors_list="$1"
+    local worktree_path="$2"
+    local commit_message="${3:-}"
+
+    [[ -z "$co_authors_list" ]] && return 0
+
+    cd "$worktree_path" || return 1
+
+    # Get current git user email for deduplication
+    local git_user_email
+    git_user_email=$(git config user.email 2>/dev/null || echo "")
+
+    local trailers=""
+    local seen_emails=""  # Track emails we've already processed
+    local IFS='|'
+    for co_author in $co_authors_list; do
+        [[ -z "$co_author" ]] && continue
+
+        # Extract email from co-author string (format: "Name <email>")
+        local email
+        email=$(echo "$co_author" | grep -oE '<[^>]+>' | tr -d '<>')
+
+        # Skip if no email found
+        [[ -z "$email" ]] && continue
+
+        # Skip if this is the same as the git config user (avoid listing yourself as co-author)
+        if [[ "$email" == "$git_user_email" ]]; then
+            log_debug "Skipping co-author (same as git user): $co_author"
+            continue
+        fi
+
+        # Skip if we've already seen this email (duplicate in config)
+        if [[ "$seen_emails" == *"|$email|"* ]]; then
+            log_debug "Skipping duplicate co-author: $co_author"
+            continue
+        fi
+
+        # Skip if this email is already in the commit message (user added manually in template)
+        if [[ -n "$commit_message" && "$commit_message" == *"$email"* ]]; then
+            log_debug "Skipping co-author (already in commit message): $co_author"
+            continue
+        fi
+
+        # Track this email as seen
+        seen_emails+="|$email|"
+
+        trailers+="Co-authored-by: ${co_author}"$'\n'
+    done
+
+    # Remove trailing newline
+    echo -n "${trailers%$'\n'}"
+}
+
+#===============================================================================
 # COMMIT CHANGES
 #
 # Stages and commits all changes in the worktree.
@@ -58,11 +280,16 @@ commit_changes() {
     local worktree_path="$1"
     local commit_message="$2"
     local agent_id="${3:-unknown}"
+    local co_authors="${4:-}"
 
     cd "$worktree_path"
 
     log_info "Staging changes..."
     git add -A
+
+    # Validate staged files and remove suspicious ones
+    # This catches literal ~ paths, .kapsis/ files, and accidental submodules
+    validate_staged_files "$worktree_path"
 
     # Show what's being committed
     echo ""
@@ -72,16 +299,32 @@ commit_changes() {
     git status --short
     echo ""
 
-    # Generate full commit message with metadata
+    # Build co-author trailers (with full deduplication against git user, duplicates, and commit message)
+    local coauthor_trailers=""
+    if [[ -n "$co_authors" ]]; then
+        coauthor_trailers=$(build_coauthor_trailers "$co_authors" "$worktree_path" "$commit_message")
+    fi
+
+    # Get Kapsis version
+    local kapsis_version
+    kapsis_version=$(get_kapsis_version)
+
+    # Generate full commit message with metadata and co-authors
     local full_message
     full_message=$(cat << EOF
 ${commit_message}
 
-Generated by Kapsis AI Agent Sandbox
+Generated by Kapsis AI Agent Sandbox v${kapsis_version}
+https://github.com/aviadshiber/kapsis
 Agent ID: ${agent_id}
 Worktree: $(basename "$worktree_path")
 EOF
 )
+
+    # Append co-author trailers if present
+    if [[ -n "$coauthor_trailers" ]]; then
+        full_message+=$'\n\n'"${coauthor_trailers}"
+    fi
 
     # Commit
     if git commit -m "$full_message"; then
@@ -196,11 +439,15 @@ push_changes() {
         else
             log_error "Push reported success but verification failed!"
             log_error "Commits may not have been pushed to remote."
+            # Set fallback command for agent recovery
+            status_set_push_fallback "$worktree_path" "$remote" "$branch"
             return 2  # Distinct exit code for verification failure
         fi
     else
         log_error "Push failed"
         status_set_push_info "failed" "$local_commit" ""
+        # Set fallback command for agent recovery
+        status_set_push_fallback "$worktree_path" "$remote" "$branch"
         return 1
     fi
 }
@@ -298,12 +545,131 @@ sync_index_from_container() {
 }
 
 #===============================================================================
+# DETECT GITHUB REPO
+#
+# Checks if remote URL is a GitHub repository
+# Returns: 0 if GitHub, 1 otherwise
+#===============================================================================
+is_github_repo() {
+    local worktree_path="$1"
+    local remote="${2:-origin}"
+
+    cd "$worktree_path" || return 1
+
+    local remote_url
+    remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
+
+    [[ "$remote_url" == *"github.com"* ]]
+}
+
+#===============================================================================
+# CHECK IF USER HAS PUSH ACCESS
+#
+# Attempts a dry-run push to check access. Returns 0 if access, 1 otherwise.
+#===============================================================================
+has_push_access() {
+    local worktree_path="$1"
+    local remote="${2:-origin}"
+    local branch="$3"
+
+    cd "$worktree_path" || return 1
+
+    # Try a dry-run push to check access
+    if git push --dry-run "$remote" "$branch" 2>/dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+#===============================================================================
+# GENERATE FORK-BASED FALLBACK COMMAND
+#
+# Creates a fallback command that forks the repo and pushes to the fork.
+# Uses GitHub CLI (gh) for forking.
+#===============================================================================
+generate_fork_fallback() {
+    local worktree_path="$1"
+    local branch="$2"
+    local remote="${3:-origin}"
+
+    cd "$worktree_path" || return 1
+
+    local remote_url
+    remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
+
+    # Only for GitHub repos
+    if [[ "$remote_url" != *"github.com"* ]]; then
+        return 1
+    fi
+
+    # Extract repo info (owner/repo) - validate format
+    local repo_path
+    repo_path=$(echo "$remote_url" | sed -E 's|.*github\.com[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
+
+    # Validate repo_path format (should be owner/repo with safe characters)
+    if [[ ! "$repo_path" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]]; then
+        log_warn "Invalid repository path format: $repo_path"
+        return 1
+    fi
+
+    # Validate branch name (safe characters only)
+    if [[ ! "$branch" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+        log_warn "Invalid branch name format: $branch"
+        return 1
+    fi
+
+    # Use single quotes to prevent shell injection when command is eval'd
+    printf "cd '%s' && gh repo fork '%s' --remote --remote-name fork 2>/dev/null || true && git push -u fork '%s'" \
+        "$worktree_path" "$repo_path" "$branch"
+}
+
+#===============================================================================
+# GENERATE FORK PR URL
+#
+# Creates a PR URL for a fork-based contribution
+#===============================================================================
+generate_fork_pr_url() {
+    local worktree_path="$1"
+    local branch="$2"
+    local remote="${3:-origin}"
+
+    cd "$worktree_path" || return 1
+
+    local remote_url
+    remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
+
+    # Only for GitHub repos
+    if [[ "$remote_url" != *"github.com"* ]]; then
+        return 1
+    fi
+
+    # Extract upstream repo info
+    local upstream_repo
+    upstream_repo=$(echo "$remote_url" | sed -E 's|.*github\.com[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
+
+    # Get current user (from gh or git config)
+    local github_user=""
+    if command -v gh &>/dev/null; then
+        github_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+    fi
+
+    if [[ -z "$github_user" ]]; then
+        # Try to infer from fork remote if it exists
+        github_user=$(git remote get-url fork 2>/dev/null | sed -E 's|.*github\.com[:/]([^/]+)/.*|\1|' || echo "YOUR_USERNAME")
+    fi
+
+    # Generate cross-fork PR URL
+    echo "https://github.com/${upstream_repo}/compare/main...${github_user}:${branch}?expand=1"
+}
+
+#===============================================================================
 # MAIN POST-CONTAINER WORKFLOW
 #
 # Orchestrates the full post-container git workflow:
 # 1. Check for changes
 # 2. Commit if changes exist
-# 3. Push if requested
+# 3. Push if requested (with fork fallback support)
 #===============================================================================
 post_container_git() {
     local worktree_path="$1"
@@ -313,6 +679,9 @@ post_container_git() {
     local no_push="${5:-false}"
     local agent_id="${6:-unknown}"
     local sanitized_git="${7:-}"
+    local co_authors="${8:-}"
+    local fork_enabled="${9:-false}"
+    local fork_fallback="${10:-fork}"
 
     log_debug "post_container_git called with:"
     log_debug "  worktree_path=$worktree_path"
@@ -322,6 +691,9 @@ post_container_git() {
     log_debug "  no_push=$no_push"
     log_debug "  agent_id=$agent_id"
     log_debug "  sanitized_git=$sanitized_git"
+    log_debug "  co_authors=$co_authors"
+    log_debug "  fork_enabled=$fork_enabled"
+    log_debug "  fork_fallback=$fork_fallback"
 
     echo ""
     echo "┌────────────────────────────────────────────────────────────────────┐"
@@ -350,7 +722,7 @@ post_container_git() {
 
     # Commit changes
     log_debug "Committing changes..."
-    if ! commit_changes "$worktree_path" "$commit_message" "$agent_id"; then
+    if ! commit_changes "$worktree_path" "$commit_message" "$agent_id" "$co_authors"; then
         log_warn "Commit failed"
         return 1
     fi
@@ -375,7 +747,39 @@ post_container_git() {
             return 2
         else
             log_warn "Push failed. Changes are committed locally."
-            log_info "To push manually: cd $worktree_path && git push -u $remote $branch"
+
+            # Check if fork workflow is enabled and this is a GitHub repo
+            if [[ "$fork_fallback" == "fork" ]] && is_github_repo "$worktree_path" "$remote"; then
+                log_info ""
+                log_info "Fork workflow available for GitHub contribution:"
+
+                local fork_cmd
+                fork_cmd=$(generate_fork_fallback "$worktree_path" "$branch" "$remote")
+                if [[ -n "$fork_cmd" ]]; then
+                    echo ""
+                    echo "┌────────────────────────────────────────────────────────────────────┐"
+                    echo "│ FORK WORKFLOW FALLBACK                                             │"
+                    echo "└────────────────────────────────────────────────────────────────────┘"
+                    echo "KAPSIS_FORK_FALLBACK: $fork_cmd"
+                    echo ""
+                    echo "This command will:"
+                    echo "  1. Fork the repository to your GitHub account"
+                    echo "  2. Add the fork as a remote named 'fork'"
+                    echo "  3. Push your branch to the fork"
+                    echo ""
+
+                    # Generate fork PR URL
+                    local fork_pr_url
+                    fork_pr_url=$(generate_fork_pr_url "$worktree_path" "$branch" "$remote")
+                    if [[ -n "$fork_pr_url" ]]; then
+                        echo "Then create a PR at:"
+                        echo "  $fork_pr_url"
+                        echo ""
+                    fi
+                fi
+            else
+                log_info "To push manually: cd $worktree_path && git push -u $remote $branch"
+            fi
             return 1
         fi
     else

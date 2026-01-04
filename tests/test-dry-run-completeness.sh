@@ -20,7 +20,7 @@ test_dry_run_shows_agent() {
     log_test "Testing dry-run shows agent name"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "Agent:" "Should show Agent line"
     assert_contains "$output" "CLAUDE" "Should show agent name"
@@ -30,7 +30,7 @@ test_dry_run_shows_instance_id() {
     log_test "Testing dry-run shows instance ID"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 42 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent-id 42 --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "Instance ID:" "Should show Instance ID line"
     assert_contains "$output" "42" "Should show correct instance ID"
@@ -40,7 +40,7 @@ test_dry_run_shows_project_path() {
     log_test "Testing dry-run shows project path"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "Project:" "Should show Project line"
     assert_contains "$output" "$TEST_PROJECT" "Should show project path"
@@ -50,7 +50,7 @@ test_dry_run_shows_image() {
     log_test "Testing dry-run shows container image"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "Image:" "Should show Image line"
     # Check for the actual image name (respects KAPSIS_IMAGE env var)
@@ -62,7 +62,7 @@ test_dry_run_shows_resources() {
     log_test "Testing dry-run shows resource limits"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "Resources:" "Should show Resources line"
     assert_contains "$output" "RAM" "Should show memory"
@@ -73,7 +73,7 @@ test_dry_run_shows_task() {
     log_test "Testing dry-run shows task description"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "fix the failing tests" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "fix the failing tests" --dry-run 2>&1) || true
 
     assert_contains "$output" "Task:" "Should show Task line"
     assert_contains "$output" "fix the failing" "Should show task text"
@@ -93,7 +93,7 @@ test_dry_run_shows_branch() {
     cd - > /dev/null
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --branch "feature/test-123" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --branch "feature/test-123" --dry-run 2>&1) || true
 
     assert_contains "$output" "Branch:" "Should show Branch line"
     assert_contains "$output" "feature/test-123" "Should show branch name"
@@ -103,7 +103,7 @@ test_dry_run_shows_podman_command() {
     log_test "Testing dry-run shows podman command"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "DRY RUN" "Should indicate dry run"
     assert_contains "$output" "podman run" "Should show podman command"
@@ -113,7 +113,7 @@ test_dry_run_shows_volume_mounts() {
     log_test "Testing dry-run shows volume mounts"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "-v" "Should show volume mount flags"
     assert_contains "$output" "/workspace" "Should show workspace mount"
@@ -123,7 +123,7 @@ test_dry_run_shows_env_vars() {
     log_test "Testing dry-run shows environment variables"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "KAPSIS_AGENT_ID" "Should show agent ID env var"
     assert_contains "$output" "KAPSIS_PROJECT" "Should show project env var"
@@ -133,7 +133,7 @@ test_dry_run_shows_memory_limit() {
     log_test "Testing dry-run shows memory limit in command"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "--memory=" "Should show memory limit flag"
 }
@@ -142,7 +142,7 @@ test_dry_run_shows_cpu_limit() {
     log_test "Testing dry-run shows CPU limit in command"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
 
     assert_contains "$output" "--cpus=" "Should show CPU limit flag"
 }
@@ -223,7 +223,7 @@ test_dry_run_no_branch_created() {
     local branch_name="feature/dry-run-no-create-$$"
 
     # Run dry-run
-    "$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude \
+    "$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude \
         --task "test" --branch "$branch_name" --dry-run 2>&1 || true
 
     # Verify no branch was created
@@ -253,7 +253,7 @@ test_dry_run_shows_would_create_messages() {
     cd - > /dev/null
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude \
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude \
         --task "test" --branch "feature/dry-run-msg-$$" --dry-run 2>&1) || true
 
     assert_contains "$output" "[DRY-RUN]" "Should show DRY-RUN prefix"

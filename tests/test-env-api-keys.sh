@@ -26,12 +26,8 @@ test_anthropic_key_passed() {
 
     # Run container with key
     local output
-    output=$(ANTHROPIC_API_KEY="$test_key" podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e ANTHROPIC_API_KEY \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo $ANTHROPIC_API_KEY' 2>&1) || true
+    output=$(ANTHROPIC_API_KEY="$test_key" run_named_container "$CONTAINER_TEST_ID" \
+        'echo $ANTHROPIC_API_KEY' -e ANTHROPIC_API_KEY) || true
 
     cleanup_container_test
 
@@ -47,12 +43,8 @@ test_openai_key_passed() {
     local test_key="test-openai-key-67890"
 
     local output
-    output=$(OPENAI_API_KEY="$test_key" podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e OPENAI_API_KEY \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo $OPENAI_API_KEY' 2>&1) || true
+    output=$(OPENAI_API_KEY="$test_key" run_named_container "$CONTAINER_TEST_ID" \
+        'echo $OPENAI_API_KEY' -e OPENAI_API_KEY) || true
 
     cleanup_container_test
 
@@ -66,13 +58,9 @@ test_kapsis_env_vars_set() {
     setup_container_test "env-kapsis"
 
     local output
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e KAPSIS_AGENT_ID="test-agent" \
-        -e KAPSIS_PROJECT="test-project" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo "AGENT_ID=$KAPSIS_AGENT_ID PROJECT=$KAPSIS_PROJECT"' 2>&1) || true
+    output=$(run_named_container "$CONTAINER_TEST_ID" \
+        'echo "AGENT_ID=$KAPSIS_AGENT_ID PROJECT=$KAPSIS_PROJECT"' \
+        -e KAPSIS_AGENT_ID="test-agent" -e KAPSIS_PROJECT="test-project") || true
 
     cleanup_container_test
 
@@ -87,7 +75,7 @@ test_keys_not_in_dry_run() {
 
     export ANTHROPIC_API_KEY="$secret_key"
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
     unset ANTHROPIC_API_KEY
 
     # The actual key value should not appear in output
@@ -100,13 +88,9 @@ test_multiple_keys_passed() {
     setup_container_test "env-multi"
 
     local output
-    output=$(ANTHROPIC_API_KEY="anthro-key" OPENAI_API_KEY="openai-key" podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e ANTHROPIC_API_KEY \
-        -e OPENAI_API_KEY \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo "ANTHRO=$ANTHROPIC_API_KEY OPENAI=$OPENAI_API_KEY"' 2>&1) || true
+    output=$(ANTHROPIC_API_KEY="anthro-key" OPENAI_API_KEY="openai-key" run_named_container "$CONTAINER_TEST_ID" \
+        'echo "ANTHRO=$ANTHROPIC_API_KEY OPENAI=$OPENAI_API_KEY"' \
+        -e ANTHROPIC_API_KEY -e OPENAI_API_KEY) || true
 
     cleanup_container_test
 
@@ -121,12 +105,8 @@ test_empty_key_not_error() {
 
     local exit_code=0
     local output
-    output=$(ANTHROPIC_API_KEY="" podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e ANTHROPIC_API_KEY \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo "KEY_LENGTH=${#ANTHROPIC_API_KEY}"' 2>&1) || exit_code=$?
+    output=$(ANTHROPIC_API_KEY="" run_named_container "$CONTAINER_TEST_ID" \
+        'echo "KEY_LENGTH=${#ANTHROPIC_API_KEY}"' -e ANTHROPIC_API_KEY) || exit_code=$?
 
     cleanup_container_test
 
@@ -139,13 +119,9 @@ test_custom_env_vars() {
     setup_container_test "env-custom"
 
     local output
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e CUSTOM_VAR1="value1" \
-        -e CUSTOM_VAR2="value2" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo "$CUSTOM_VAR1 $CUSTOM_VAR2"' 2>&1) || true
+    output=$(run_named_container "$CONTAINER_TEST_ID" \
+        'echo "$CUSTOM_VAR1 $CUSTOM_VAR2"' \
+        -e CUSTOM_VAR1="value1" -e CUSTOM_VAR2="value2") || true
 
     cleanup_container_test
 
@@ -191,20 +167,13 @@ test_env_isolation_between_agents() {
 
     # Agent 1 with specific env
     local output1
-    output1=$(podman run --rm \
-        --name "env-agent1-$$" \
-        --userns=keep-id \
-        -e AGENT_SPECIFIC="agent1-data" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo $AGENT_SPECIFIC' 2>&1) || true
+    output1=$(run_named_container "env-agent1-$$" \
+        'echo $AGENT_SPECIFIC' -e AGENT_SPECIFIC="agent1-data") || true
 
     # Agent 2 should not see Agent 1's env
     local output2
-    output2=$(podman run --rm \
-        --name "env-agent2-$$" \
-        --userns=keep-id \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo "${AGENT_SPECIFIC:-not_set}"' 2>&1) || true
+    output2=$(run_named_container "env-agent2-$$" \
+        'echo "${AGENT_SPECIFIC:-not_set}"') || true
 
     # Use assert_contains since entrypoint outputs logging before the command
     assert_contains "$output1" "agent1-data" "Agent 1 should see its env"
@@ -276,7 +245,7 @@ environment:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -309,7 +278,7 @@ EOF
     export ANTHROPIC_API_KEY="passthrough-value"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset ANTHROPIC_API_KEY
     rm -f "$test_config"
@@ -355,7 +324,7 @@ agent:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test task" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test task" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -403,7 +372,7 @@ agent:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test task" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test task" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -428,7 +397,7 @@ agent:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --interactive --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --interactive --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -467,7 +436,7 @@ environment:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -494,7 +463,7 @@ EOF
     export GRAFANA_READONLY_TOKEN="graf-secret-value"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset CONTEXT7_API_KEY GRAFANA_READONLY_TOKEN
     rm -f "$test_config"
@@ -522,7 +491,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -551,7 +520,7 @@ image:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --image "my-custom-image:latest" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --image "my-custom-image:latest" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -584,7 +553,7 @@ environment:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config" "$test_file1" "$test_file2"
 
@@ -618,7 +587,7 @@ EOF
     export TEST_VAR3="value3"
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset TEST_VAR1 TEST_VAR2 TEST_VAR3
     rm -f "$test_config"
@@ -651,7 +620,7 @@ EOF
     # We can't actually query keychain in tests, but we can verify the config parsing
     # by checking the dry-run output shows the variable would be processed
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 
@@ -733,26 +702,18 @@ test_inject_credential_files_entrypoint() {
     # Test the inject_credential_files function by passing env vars and checking file creation
     local test_secret="test-secret-value-12345"
     local output
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e KAPSIS_CREDENTIAL_FILES="TEST_CRED|/tmp/test-cred.json|0600" \
-        -e TEST_CRED="$test_secret" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c '
-            # The entrypoint should have run inject_credential_files
-            # Check if file was created
+    output=$(run_named_container "$CONTAINER_TEST_ID" '
             if [[ -f /tmp/test-cred.json ]]; then
                 echo "FILE_EXISTS"
                 cat /tmp/test-cred.json
-                # Check permissions
                 stat -c "%a" /tmp/test-cred.json
             else
                 echo "FILE_NOT_FOUND"
             fi
-            # Check env var was unset
             echo "ENV_VAR=${TEST_CRED:-UNSET}"
-        ' 2>&1) || true
+        ' \
+        -e KAPSIS_CREDENTIAL_FILES="TEST_CRED|/tmp/test-cred.json|0600" \
+        -e TEST_CRED="$test_secret") || true
 
     cleanup_container_test
 
@@ -768,19 +729,14 @@ test_inject_credential_files_multiple() {
     setup_container_test "inject-multi-creds"
 
     local output
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e KAPSIS_CREDENTIAL_FILES="CRED1|/tmp/cred1.txt|0600,CRED2|/tmp/cred2.txt|0640" \
-        -e CRED1="secret1" \
-        -e CRED2="secret2" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c '
+    output=$(run_named_container "$CONTAINER_TEST_ID" '
             echo "CRED1_EXISTS=$(test -f /tmp/cred1.txt && echo YES || echo NO)"
             echo "CRED2_EXISTS=$(test -f /tmp/cred2.txt && echo YES || echo NO)"
             echo "CRED1_CONTENT=$(cat /tmp/cred1.txt 2>/dev/null || echo EMPTY)"
             echo "CRED2_CONTENT=$(cat /tmp/cred2.txt 2>/dev/null || echo EMPTY)"
-        ' 2>&1) || true
+        ' \
+        -e KAPSIS_CREDENTIAL_FILES="CRED1|/tmp/cred1.txt|0600,CRED2|/tmp/cred2.txt|0640" \
+        -e CRED1="secret1" -e CRED2="secret2") || true
 
     cleanup_container_test
 
@@ -796,24 +752,18 @@ test_inject_credential_files_home_expansion() {
     setup_container_test "inject-home-expand"
 
     local output
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e KAPSIS_CREDENTIAL_FILES="HOME_CRED|~/.test-creds/secret.json|0600" \
-        -e HOME_CRED="home-secret-value" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c '
-            # Check if file was created in home directory
+    output=$(run_named_container "$CONTAINER_TEST_ID" '
             if [[ -f ~/.test-creds/secret.json ]]; then
                 echo "FILE_IN_HOME=YES"
                 cat ~/.test-creds/secret.json
             else
                 echo "FILE_IN_HOME=NO"
-                # Debug: show what HOME is
                 echo "HOME=$HOME"
                 ls -la ~ 2>/dev/null | head -5
             fi
-        ' 2>&1) || true
+        ' \
+        -e KAPSIS_CREDENTIAL_FILES="HOME_CRED|~/.test-creds/secret.json|0600" \
+        -e HOME_CRED="home-secret-value") || true
 
     cleanup_container_test
 
@@ -827,19 +777,15 @@ test_inject_credential_files_creates_parent_dirs() {
     setup_container_test "inject-mkdir"
 
     local output
-    output=$(podman run --rm \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e KAPSIS_CREDENTIAL_FILES="DEEP_CRED|/tmp/deep/nested/path/cred.json|0600" \
-        -e DEEP_CRED="deep-secret" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c '
+    output=$(run_named_container "$CONTAINER_TEST_ID" '
             if [[ -f /tmp/deep/nested/path/cred.json ]]; then
                 echo "NESTED_FILE_EXISTS=YES"
             else
                 echo "NESTED_FILE_EXISTS=NO"
             fi
-        ' 2>&1) || true
+        ' \
+        -e KAPSIS_CREDENTIAL_FILES="DEEP_CRED|/tmp/deep/nested/path/cred.json|0600" \
+        -e DEEP_CRED="deep-secret") || true
 
     cleanup_container_test
 
@@ -870,7 +816,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config" "$test_file1" "$test_file2"
 
@@ -895,7 +841,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config" "$test_file"
 
@@ -916,7 +862,7 @@ filesystem:
 EOF
 
     local output
-    output=$("$LAUNCH_SCRIPT" 1 "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     rm -f "$test_config"
 

@@ -23,11 +23,45 @@
 - `./tests/run-all-tests.sh` runs the full test suite (requires Podman).
 - `./tests/run-all-tests.sh --quick` runs fast, non-container tests.
 
+## Branch Workflow (IMPORTANT)
+
+**NEVER work directly on `main` branch.** All development must happen on feature branches.
+
+### When to Use Each Approach
+
+| Scenario | Approach | Isolation Level |
+|----------|----------|-----------------|
+| Feature development with full isolation | Kapsis container | Full (filesystem + process) |
+| Quick fixes, docs, or Kapsis development itself | Git worktree | Branch isolation only |
+
+### Creating a Feature Branch (Non-Kapsis)
+
+When not using Kapsis (e.g., working on Kapsis itself), always create a worktree:
+
+```bash
+# Create worktree with feature branch
+git worktree add -b feature/my-feature ~/.kapsis/worktrees/kapsis-feature main
+
+# Work in the worktree
+cd ~/.kapsis/worktrees/kapsis-feature
+
+# When done, clean up
+git worktree remove ~/.kapsis/worktrees/kapsis-feature
+```
+
+### Why This Matters
+- Protects `main` from accidental commits or broken states
+- Enables parallel work on multiple features
+- Keeps your primary checkout clean for reviews and quick switches
+- Matches the isolation model Kapsis provides for other projects
+
 ## Coding Style & Naming Conventions
 - Bash scripts should use `set -euo pipefail` and `[[ ... ]]` for conditionals.
 - Indent with 4 spaces and always quote variables (`"$var"`).
 - Use `shellcheck` for linting and prefer the shared logger in `scripts/lib/logging.sh`.
 - Test files live in `tests/` and follow `test-<feature>.sh` naming.
+- **Cross-platform compatibility**: All commands must work on both macOS and Linux. Use `scripts/lib/compat.sh` for OS-specific operations (e.g., `sed -i`, `date`, `stat`). Avoid GNU-only flags.
+- **Arithmetic with `set -e`**: Bash arithmetic `(( ))` returns exit code 1 when the result is 0, which causes script exit under `set -e`. For counters and accumulators, use `((count++)) || true` or `((total += n)) || true`. Only omit `|| true` for arithmetic that should fail the script when the result is zero.
 
 ## Pre-Push Checklist
 Before pushing changes, run these checks locally to avoid CI feedback delays:
@@ -82,6 +116,45 @@ test_feature_behavior_description() {
     assert_equals "$exit_code" "0" "Exits successfully"
     assert_equals "$result" "expected" "Returns expected value"
 }
+```
+
+## CI Integration Checklist
+
+When adding new functionality, verify CI integration is complete:
+
+### Adding New Tests
+1. **Register in `run-all-tests.sh`** - Add to the appropriate category in `get_tests_for_category()`:
+   - `agent` - Agent config, profiles, auth requirements
+   - `validation` - Input validation, preflight checks
+   - `status` - Status reporting and hooks
+   - `filesystem` - COW isolation, host unchanged
+   - `maven` - Maven/Gradle build isolation
+   - `security` - Security tests (root, keys, keychain)
+   - `git` - Git operations, worktrees, push verification
+   - `cleanup` - Sandbox cleanup
+   - `integration` - Full workflow tests
+
+2. **Add to QUICK_TESTS** if the test doesn't require containers (most unit tests)
+
+3. **Verify test runs**:
+   ```bash
+   ./tests/run-all-tests.sh --category <category>  # Category tests
+   ./tests/run-all-tests.sh --quick                # Quick tests
+   ```
+
+### Adding New Scripts
+1. **Check if Containerfile needs updates** - Scripts that run inside containers need to be copied
+2. **Verify script is accessible** - Scripts in `scripts/lib/` are sourced, not executed directly
+3. **Run shellcheck** on new scripts
+
+### Pre-Merge Verification
+```bash
+# Run full test suite
+./tests/run-all-tests.sh
+
+# Or at minimum, quick tests + relevant category
+./tests/run-all-tests.sh --quick
+./tests/run-all-tests.sh --category <affected-category>
 ```
 
 ## Commit & Pull Request Guidelines

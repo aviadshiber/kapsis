@@ -334,15 +334,18 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     IMAGE_NAME="${4:-}"
     AGENT_ID="${5:-1}"
 
-    # Extract image from config file (same logic as launch-agent.sh lines 418-419)
+    # Extract image from config file (same logic as launch-agent.sh)
     if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
-        if command -v yq &>/dev/null; then
-            CONFIG_IMAGE=$(yq -r '.image.name // "kapsis-sandbox"' "$CONFIG_FILE"):$(yq -r '.image.tag // "latest"' "$CONFIG_FILE")
-            IMAGE_NAME="${CONFIG_IMAGE}"
+        if ! command -v yq &>/dev/null; then
+            echo "ERROR: yq is required but not installed." >&2
+            echo "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)" >&2
+            exit 1
         fi
+        CONFIG_IMAGE=$(yq -r '.image.name // "kapsis-sandbox"' "$CONFIG_FILE"):$(yq -r '.image.tag // "latest"' "$CONFIG_FILE")
+        IMAGE_NAME="${CONFIG_IMAGE}"
     fi
 
-    # Default if still not set
+    # Default if no config file provided
     [[ -z "$IMAGE_NAME" ]] && IMAGE_NAME="kapsis-sandbox:latest"
 
     preflight_check "$PROJECT_PATH" "$TARGET_BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"
