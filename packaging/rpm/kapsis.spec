@@ -1,5 +1,5 @@
 Name:           kapsis
-Version:        1.2.0  # RELEASE_VERSION_MARKER - Do not remove, used by CI
+Version:        1.3.2  # RELEASE_VERSION_MARKER - Do not remove, used by CI
 Release:        1%{?dist}
 Summary:        Hermetically isolated AI agent sandbox
 
@@ -81,6 +81,7 @@ cat > %{buildroot}%{_bindir}/kapsis << 'EOF'
 export KAPSIS_HOME="%{_datadir}/kapsis"
 export KAPSIS_LIB="%{_libexecdir}/kapsis/lib"
 export KAPSIS_SCRIPTS="%{_libexecdir}/kapsis/scripts"
+export KAPSIS_CMD_NAME="kapsis"
 exec %{_libexecdir}/kapsis/scripts/launch-agent.sh "$@"
 EOF
 chmod 755 %{buildroot}%{_bindir}/kapsis
@@ -88,6 +89,7 @@ chmod 755 %{buildroot}%{_bindir}/kapsis
 cat > %{buildroot}%{_bindir}/kapsis-build << 'EOF'
 #!/bin/bash
 export KAPSIS_HOME="%{_datadir}/kapsis"
+export KAPSIS_CMD_NAME="kapsis-build"
 exec %{_libexecdir}/kapsis/scripts/build-image.sh "$@"
 EOF
 chmod 755 %{buildroot}%{_bindir}/kapsis-build
@@ -95,6 +97,7 @@ chmod 755 %{buildroot}%{_bindir}/kapsis-build
 cat > %{buildroot}%{_bindir}/kapsis-cleanup << 'EOF'
 #!/bin/bash
 export KAPSIS_HOME="%{_datadir}/kapsis"
+export KAPSIS_CMD_NAME="kapsis-cleanup"
 exec %{_libexecdir}/kapsis/scripts/kapsis-cleanup.sh "$@"
 EOF
 chmod 755 %{buildroot}%{_bindir}/kapsis-cleanup
@@ -102,6 +105,7 @@ chmod 755 %{buildroot}%{_bindir}/kapsis-cleanup
 cat > %{buildroot}%{_bindir}/kapsis-status << 'EOF'
 #!/bin/bash
 export KAPSIS_HOME="%{_datadir}/kapsis"
+export KAPSIS_CMD_NAME="kapsis-status"
 exec %{_libexecdir}/kapsis/scripts/kapsis-status.sh "$@"
 EOF
 chmod 755 %{buildroot}%{_bindir}/kapsis-status
@@ -109,6 +113,7 @@ chmod 755 %{buildroot}%{_bindir}/kapsis-status
 cat > %{buildroot}%{_bindir}/kapsis-setup << 'EOF'
 #!/bin/bash
 export KAPSIS_HOME="%{_datadir}/kapsis"
+export KAPSIS_CMD_NAME="kapsis-setup"
 exec %{_libexecdir}/kapsis/scripts/setup.sh "$@"
 EOF
 chmod 755 %{buildroot}%{_bindir}/kapsis-setup
@@ -116,6 +121,7 @@ chmod 755 %{buildroot}%{_bindir}/kapsis-setup
 cat > %{buildroot}%{_bindir}/kapsis-quick << 'EOF'
 #!/bin/bash
 export KAPSIS_HOME="%{_datadir}/kapsis"
+export KAPSIS_CMD_NAME="kapsis-quick"
 exec %{_libexecdir}/kapsis/scripts/quick-start.sh "$@"
 EOF
 chmod 755 %{buildroot}%{_bindir}/kapsis-quick

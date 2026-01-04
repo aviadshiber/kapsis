@@ -11,9 +11,9 @@ class Kapsis < Formula
 
   # Stable release - automatically updated by CI on each release
   # RELEASE_VERSION_MARKER_START - Do not remove, used by CI
-  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v1.2.0.tar.gz"
-  sha256 "b95d19786e3e431fb149a2f0f5bb8b0831942abc9d4b2ee9698028745766fe78"
-  version "1.2.0"
+  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v1.3.2.tar.gz"
+  sha256 "6832c413e2369eb8957e576701f220897024703006c1fe079f5e825ad3fb6838"
+  version "1.3.2"
   # RELEASE_VERSION_MARKER_END
 
   # Homebrew livecheck - detects new releases automatically
@@ -49,6 +49,7 @@ class Kapsis < Formula
         export KAPSIS_HOME="#{libexec}"
         export KAPSIS_LIB="#{libexec}/scripts/lib"
         export KAPSIS_SCRIPTS="#{libexec}/scripts"
+        export KAPSIS_CMD_NAME="#{cmd}"
         exec "#{libexec}/#{script}" "$@"
       EOS
     end
@@ -81,7 +82,7 @@ class Kapsis < Formula
   end
 
   test do
-    # Test that kapsis command works
-    assert_match "Usage:", shell_output("#{bin}/kapsis --help 2>&1", 1)
+    # Test that kapsis command works (--help returns exit code 0 per Unix convention)
+    assert_match "Usage:", shell_output("#{bin}/kapsis --help 2>&1", 0)
   end
 end
