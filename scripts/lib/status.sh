@@ -60,6 +60,10 @@ _KAPSIS_PUSH_FALLBACK_CMD=""     # Fallback command for agent recovery when push
 _KAPSIS_LOCAL_COMMIT=""     # Local HEAD commit SHA
 _KAPSIS_REMOTE_COMMIT=""    # Remote HEAD commit SHA after push
 
+# Agent gist state (agent-provided summary of current activity)
+_KAPSIS_GIST=""                  # Current gist message from agent
+_KAPSIS_GIST_UPDATED_AT=""       # When gist was last updated
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -304,6 +308,39 @@ status_push_skipped() {
 }
 
 # =============================================================================
+# Agent Gist (Activity Summary)
+# =============================================================================
+
+# Set agent gist from a message
+# Called by hooks when they read the gist file
+# Arguments:
+#   $1 - Gist message (truncated to 500 chars for safety)
+status_set_gist() {
+    local gist="${1:-}"
+    # Truncate to 500 chars for safety
+    _KAPSIS_GIST="${gist:0:500}"
+    _KAPSIS_GIST_UPDATED_AT=$(_status_timestamp)
+}
+
+# Read gist from the signaling file
+# The agent writes to /workspace/.kapsis/gist.txt
+# This function reads it and updates internal state
+# Arguments:
+#   $1 - Path to gist file (default: /workspace/.kapsis/gist.txt)
+status_read_gist_file() {
+    local gist_file="${1:-/workspace/.kapsis/gist.txt}"
+
+    if [[ -f "$gist_file" ]]; then
+        local gist
+        # Read first 500 chars, strip newlines
+        gist=$(head -c 500 "$gist_file" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+        if [[ -n "$gist" ]]; then
+            status_set_gist "$gist"
+        fi
+    fi
+}
+
+# =============================================================================
 # Internal Write Function
 # =============================================================================
 
@@ -370,6 +407,16 @@ _status_write() {
         push_fallback_json="\"$escaped_fallback\""
     fi
 
+    # Agent gist fields
+    local gist_json="null"
+    local gist_updated_at_json="null"
+    if [[ -n "$_KAPSIS_GIST" ]]; then
+        local escaped_gist
+        escaped_gist=$(_status_json_escape "$_KAPSIS_GIST")
+        gist_json="\"$escaped_gist\""
+        [[ -n "$_KAPSIS_GIST_UPDATED_AT" ]] && gist_updated_at_json="\"$_KAPSIS_GIST_UPDATED_AT\""
+    fi
+
     # Build JSON (using heredoc for readability)
     local json
     json=$(cat << EOF
@@ -382,6 +429,8 @@ _status_write() {
   "phase": "${phase}",
   "progress": ${progress},
   "message": "${escaped_message}",
+  "gist": ${gist_json},
+  "gist_updated_at": ${gist_updated_at_json},
   "started_at": "${_KAPSIS_STATUS_STARTED}",
   "updated_at": "${updated_at}",
   "exit_code": ${exit_code_json},

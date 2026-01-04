@@ -415,6 +415,13 @@ print(json.dumps(state))
     if [[ -n "${KAPSIS_STATUS_PROJECT:-}" && -n "${KAPSIS_STATUS_AGENT_ID:-}" ]]; then
         if type status_reinit_from_env &>/dev/null; then
             status_reinit_from_env
+
+            # Read agent gist from signaling file (if present)
+            # Agent can update /workspace/.kapsis/gist.txt with activity summary
+            if type status_read_gist_file &>/dev/null; then
+                status_read_gist_file "/workspace/.kapsis/gist.txt"
+            fi
+
             status_phase "running" "$progress" "$message"
             log_debug "Updated status: running $progress% - $message"
         fi
