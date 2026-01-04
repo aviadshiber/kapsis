@@ -206,7 +206,10 @@ query_secret_store_with_fallbacks() {
 #===============================================================================
 # USAGE
 #===============================================================================
+# Usage: usage [exit_code]
+# Displays help text and exits with the given code (default: 0 for help, 1 for errors)
 usage() {
+    local exit_code="${1:-0}"
     cat << EOF
 Usage: $(basename "$0") <project-path> [options]
        $(basename "$0") --version
@@ -276,7 +279,7 @@ Examples:
   $(basename "$0") ~/project --interactive --branch experiment/explore
 
 EOF
-    exit 1
+    exit "$exit_code"
 }
 
 #===============================================================================
@@ -342,9 +345,14 @@ parse_args() {
     # Handle global flags first (version management - no project path required)
     handle_global_flags "$@"
 
-    # Handle help flags (before any argument requirement check)
-    if [[ $# -eq 0 ]] || [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
-        usage
+    # No arguments is an error (exit 1 with usage)
+    if [[ $# -eq 0 ]]; then
+        usage 1
+    fi
+
+    # Handle help flags (exit 0 for explicit help request)
+    if [[ "$1" == "-h" ]] || [[ "$1" == "--help" ]]; then
+        usage 0
     fi
 
     # First argument is always the project path
@@ -415,7 +423,7 @@ parse_args() {
                 ;;
             *)
                 log_error "Unknown option: $1"
-                usage
+                usage 1
                 ;;
         esac
     done
@@ -459,7 +467,7 @@ validate_inputs() {
     # Validate task input
     if [[ -z "$TASK_INLINE" && -z "$SPEC_FILE" && "$INTERACTIVE" != "true" ]]; then
         log_error "Task input required: use --task, --spec, or --interactive"
-        usage
+        usage 1
     fi
 
     # Validate spec file exists
