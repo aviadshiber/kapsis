@@ -28,7 +28,7 @@ test_network_mode_flag_validation() {
 
     assert_not_equals 0 "$exit_code" "Should fail with invalid network mode"
     assert_contains "$output" "Invalid network mode" "Should mention invalid network mode"
-    assert_contains "$output" "must be: none, open" "Should show valid options"
+    assert_contains "$output" "must be: none, filtered, open" "Should show valid options"
 }
 
 test_network_mode_none_accepted() {
@@ -57,8 +57,8 @@ test_network_mode_open_accepted() {
     assert_contains "$output" "Network: unrestricted" "Should warn about unrestricted network"
 }
 
-test_network_mode_default_is_open() {
-    log_test "Testing default network mode is 'open' with warning"
+test_network_mode_default_is_filtered() {
+    log_test "Testing default network mode is 'filtered'"
 
     local output
     local exit_code=0
@@ -67,7 +67,8 @@ test_network_mode_default_is_open() {
 
     assert_equals 0 "$exit_code" "Should succeed with default network mode"
     assert_not_contains "$output" "--network=none" "Should NOT include --network=none by default"
-    assert_contains "$output" "consider --network-mode=none" "Should suggest using isolated mode"
+    assert_contains "$output" "Network: filtered" "Should show filtered network mode"
+    assert_contains "$output" "DNS-based allowlist" "Should mention DNS-based allowlist"
 }
 
 test_network_mode_env_override() {
@@ -192,7 +193,7 @@ main() {
     run_test test_network_mode_flag_validation
     run_test test_network_mode_none_accepted
     run_test test_network_mode_open_accepted
-    run_test test_network_mode_default_is_open
+    run_test test_network_mode_default_is_filtered
     run_test test_network_mode_env_override
     run_test test_network_mode_flag_overrides_env
 
