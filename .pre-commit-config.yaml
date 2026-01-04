@@ -62,6 +62,31 @@ repos:
         args: [--baseline, .secrets.baseline]
         exclude: package.lock.json
 
+  # Kapsis custom pre-commit hooks
+  - repo: local
+    hooks:
+      - id: kapsis-spellcheck
+        name: Spellcheck
+        entry: scripts/hooks/precommit/spellcheck.sh
+        language: script
+        pass_filenames: false
+        stages: [commit]
+
+      - id: kapsis-check-tests
+        name: Check test coverage
+        entry: scripts/hooks/precommit/check-tests.sh
+        language: script
+        pass_filenames: false
+        files: ^scripts/.*\.sh$
+        stages: [commit]
+
+      - id: kapsis-run-tests
+        name: Run quick tests
+        entry: scripts/hooks/precommit/run-tests.sh
+        language: script
+        pass_filenames: false
+        stages: [commit]
+
 # CI configuration
 ci:
   autofix_commit_msg: "style: auto-fix from pre-commit hooks"
