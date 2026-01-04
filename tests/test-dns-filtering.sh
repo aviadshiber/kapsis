@@ -283,7 +283,7 @@ test_container_has_dnsmasq() {
     fi
 
     local output
-    output=$(podman run --rm $(get_test_container_env_args) "$KAPSIS_TEST_IMAGE" which dnsmasq 2>&1) || true
+    output=$(run_simple_container "which dnsmasq") || true
 
     assert_contains "$output" "/usr/sbin/dnsmasq" "dnsmasq should be installed in container"
 }

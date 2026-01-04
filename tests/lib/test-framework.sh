@@ -60,6 +60,23 @@ get_test_container_env_args() {
     echo "-e CI=${CI:-true} -e KAPSIS_NETWORK_MODE=${KAPSIS_NETWORK_MODE:-open}"
 }
 
+# run_simple_container <command> [extra_env_args...]
+# Runs a simple command in the test container with standard env vars.
+# Use this for quick checks that don't need overlay mounts or volumes.
+# Example: run_simple_container "which dnsmasq"
+# Example: run_simple_container "echo \$MY_VAR" "-e MY_VAR=test"
+run_simple_container() {
+    local command="$1"
+    shift
+    # shellcheck disable=SC2046 # Word splitting intentional for extra args
+    podman run --rm \
+        $(get_test_container_env_args) \
+        --userns=keep-id \
+        "$@" \
+        "$KAPSIS_TEST_IMAGE" \
+        bash -c "$command" 2>&1
+}
+
 #===============================================================================
 # CROSS-PLATFORM HELPERS
 #===============================================================================
