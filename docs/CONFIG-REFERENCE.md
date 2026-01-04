@@ -118,9 +118,9 @@ resources:
 # See docs/SECURITY-HARDENING.md for detailed documentation.
 #
 # Profiles:
-#   minimal   - No restrictions (debugging only)
+#   minimal   - No restrictions (trusted execution only)
 #   standard  - Drops capabilities, prevents privilege escalation
-#   strict    - Adds syscall filtering (seccomp), noexec /tmp
+#   strict    - Adds syscall filtering (seccomp), noexec /tmp (untrusted execution)
 #   paranoid  - Adds read-only root, requires AppArmor/SELinux
 #
 security:

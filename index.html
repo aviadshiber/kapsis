@@ -1164,56 +1164,75 @@ filesystem:
                         <div class="h-3 rounded-full bg-gradient-to-r from-yellow-500 via-green-500 via-blue-500 to-purple-500 relative">
                             <!-- Profile markers - clickable -->
                             <button onclick="selectSecurityProfile('minimal')" onmouseenter="selectSecurityProfile('minimal')" class="security-marker absolute -top-1.5 left-[12.5%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-yellow-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="minimal" aria-label="Select minimal profile"></button>
-                            <button onclick="selectSecurityProfile('standard')" onmouseenter="selectSecurityProfile('standard')" class="security-marker absolute -top-1.5 left-[37.5%] transform -translate-x-1/2 w-7 h-7 rounded-full bg-green-500 border-2 border-slate-900 ring-2 ring-kapsis-neon ring-offset-1 ring-offset-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="standard" aria-label="Select standard profile (default)"></button>
-                            <button onclick="selectSecurityProfile('strict')" onmouseenter="selectSecurityProfile('strict')" class="security-marker absolute -top-1.5 left-[62.5%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-blue-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="strict" aria-label="Select strict profile"></button>
+                            <button onclick="selectSecurityProfile('standard')" onmouseenter="selectSecurityProfile('standard')" class="security-marker absolute -top-1.5 left-[35%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-green-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="standard" aria-label="Select standard profile"></button>
+                            <!-- DEFAULT marker - between standard and strict -->
+                            <button onclick="selectSecurityProfile('default')" onmouseenter="selectSecurityProfile('default')" class="security-marker absolute -top-2 left-[50%] transform -translate-x-1/2 w-7 h-7 rounded-full bg-gradient-to-r from-green-500 to-blue-500 border-2 border-kapsis-neon ring-2 ring-kapsis-neon ring-offset-1 ring-offset-slate-900 hover:scale-125 transition-transform cursor-pointer shadow-[0_0_10px_rgba(16,185,129,0.5)]" data-profile="default" aria-label="Select default configuration"></button>
+                            <button onclick="selectSecurityProfile('strict')" onmouseenter="selectSecurityProfile('strict')" class="security-marker absolute -top-1.5 left-[65%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-blue-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="strict" aria-label="Select strict profile"></button>
                             <button onclick="selectSecurityProfile('paranoid')" onmouseenter="selectSecurityProfile('paranoid')" class="security-marker absolute -top-1.5 left-[87.5%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-purple-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="paranoid" aria-label="Select paranoid profile"></button>
                         </div>
                         <!-- Labels below -->
-                        <div class="flex justify-between mt-4">
-                            <button onclick="selectSecurityProfile('minimal')" class="w-1/4 text-center cursor-pointer group">
+                        <div class="flex justify-between mt-4 text-center">
+                            <button onclick="selectSecurityProfile('minimal')" class="w-[15%] cursor-pointer group">
                                 <span class="text-yellow-400 font-mono text-sm group-hover:underline">minimal</span>
                             </button>
-                            <button onclick="selectSecurityProfile('standard')" class="w-1/4 text-center cursor-pointer group">
-                                <span class="text-green-400 font-mono text-sm font-bold group-hover:underline">standard</span>
-                                <span class="block text-kapsis-neon text-xs mt-0.5">DEFAULT</span>
+                            <button onclick="selectSecurityProfile('standard')" class="w-[20%] cursor-pointer group">
+                                <span class="text-green-400 font-mono text-sm group-hover:underline">standard</span>
                             </button>
-                            <button onclick="selectSecurityProfile('strict')" class="w-1/4 text-center cursor-pointer group">
+                            <button onclick="selectSecurityProfile('default')" class="w-[15%] cursor-pointer group">
+                                <span class="text-kapsis-neon font-mono text-sm font-bold group-hover:underline">DEFAULT</span>
+                                <span class="block text-slate-500 text-xs mt-0.5">standard+seccomp</span>
+                            </button>
+                            <button onclick="selectSecurityProfile('strict')" class="w-[20%] cursor-pointer group">
                                 <span class="text-blue-400 font-mono text-sm group-hover:underline">strict</span>
                             </button>
-                            <button onclick="selectSecurityProfile('paranoid')" class="w-1/4 text-center cursor-pointer group">
+                            <button onclick="selectSecurityProfile('paranoid')" class="w-[15%] cursor-pointer group">
                                 <span class="text-purple-400 font-mono text-sm group-hover:underline">paranoid</span>
                             </button>
                         </div>
                     </div>
 
                     <!-- Dynamic Profile Detail Box -->
-                    <div id="security-profile-detail" class="bg-slate-800/50 rounded-lg p-4 border border-green-500/50 transition-all duration-200">
+                    <div id="security-profile-detail" class="bg-slate-800/50 rounded-lg p-4 border border-kapsis-neon/50 transition-all duration-200">
                         <!-- minimal -->
                         <div id="profile-minimal" class="profile-content hidden">
                             <div class="flex items-center justify-between mb-3">
                                 <span class="text-yellow-400 font-bold text-lg">minimal</span>
-                                <span class="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">Debugging Only</span>
+                                <span class="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">Trusted Execution</span>
                             </div>
-                            <p class="text-slate-400 text-sm mb-3">No security restrictions. Full container capabilities retained. Use only when debugging agent issues that require elevated access.</p>
+                            <p class="text-slate-400 text-sm mb-3">No security restrictions. Full container capabilities retained. Use for fully trusted execution that requires unrestricted access.</p>
                             <div class="flex flex-wrap gap-2 text-xs">
                                 <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">All capabilities</span>
                                 <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">No PID limit</span>
                                 <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">No seccomp</span>
                             </div>
-                            <div class="mt-3 text-yellow-500/80 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Not recommended for production use</div>
+                            <div class="mt-3 text-yellow-500/80 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Only use for fully trusted execution</div>
                         </div>
-                        <!-- standard (shown by default) -->
-                        <div id="profile-standard" class="profile-content">
+                        <!-- standard -->
+                        <div id="profile-standard" class="profile-content hidden">
                             <div class="flex items-center justify-between mb-3">
                                 <span class="text-green-400 font-bold text-lg">standard</span>
-                                <span class="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded">Recommended Default</span>
+                                <span class="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded">Base Profile</span>
                             </div>
-                            <p class="text-slate-400 text-sm mb-3">Balanced security for typical development. Drops dangerous capabilities, prevents privilege escalation, and filters syscalls that could enable container escape.</p>
+                            <p class="text-slate-400 text-sm mb-3">Drops dangerous capabilities and prevents privilege escalation. Good foundation but consider enabling seccomp for additional syscall filtering.</p>
                             <div class="flex flex-wrap gap-2 text-xs">
                                 <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">Capabilities dropped</span>
                                 <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">no-new-privileges</span>
                                 <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">PID limit: 1000</span>
-                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">Seccomp enabled</span>
+                            </div>
+                        </div>
+                        <!-- default (shown by default) - standard + seccomp -->
+                        <div id="profile-default" class="profile-content">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-kapsis-neon font-bold text-lg">DEFAULT CONFIG</span>
+                                <span class="text-xs bg-kapsis-neon/20 text-kapsis-neon px-2 py-1 rounded">standard + seccomp</span>
+                            </div>
+                            <p class="text-slate-400 text-sm mb-3">The out-of-box configuration. Uses <code class="text-green-400">standard</code> profile with <code class="text-blue-400">seccomp.enabled: true</code>. Balances security and compatibility for typical development.</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">Capabilities dropped</span>
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">no-new-privileges</span>
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">PID limit: 1000</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Seccomp filtering</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Blocks ptrace/mount/bpf</span>
                             </div>
                         </div>
                         <!-- strict -->
@@ -1222,12 +1241,12 @@ filesystem:
                                 <span class="text-blue-400 font-bold text-lg">strict</span>
                                 <span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded">Untrusted Execution</span>
                             </div>
-                            <p class="text-slate-400 text-sm mb-3">Enhanced protection for running untrusted code or reviewing external PRs. Adds filesystem hardening and tighter resource limits.</p>
+                            <p class="text-slate-400 text-sm mb-3">Enhanced protection for running untrusted code or reviewing external PRs. Adds filesystem hardening and tighter resource limits on top of seccomp.</p>
                             <div class="flex flex-wrap gap-2 text-xs">
-                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">+ noexec /tmp</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">All standard protections</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Seccomp required</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">noexec /tmp</span>
                                 <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">PID limit: 500</span>
-                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Blocks ptrace</span>
-                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Blocks mount/bpf</span>
                             </div>
                         </div>
                         <!-- paranoid -->
@@ -1238,7 +1257,8 @@ filesystem:
                             </div>
                             <p class="text-slate-400 text-sm mb-3">Air-gapped style security with immutable system directories and mandatory access control. Requires AppArmor or SELinux on host.</p>
                             <div class="flex flex-wrap gap-2 text-xs">
-                                <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">+ Read-only /usr /bin</span>
+                                <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">All strict protections</span>
+                                <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">Read-only /usr /bin</span>
                                 <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">LSM required</span>
                                 <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">AppArmor/SELinux</span>
                             </div>
@@ -1569,6 +1589,7 @@ logging in with email+password
         const securityProfileColors = {
             minimal: 'border-yellow-500/50',
             standard: 'border-green-500/50',
+            default: 'border-kapsis-neon/50',
             strict: 'border-blue-500/50',
             paranoid: 'border-purple-500/50'
         };

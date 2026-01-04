@@ -34,7 +34,7 @@ resources:
 #
 # Profile Comparison:
 # ┌─────────────┬──────────────────────────────────────────────────────────────┐
-# │ minimal     │ No security restrictions. Use only for debugging.            │
+# │ minimal     │ No security restrictions. Use only for trusted execution.    │
 # │ standard    │ Drops dangerous capabilities, prevents privilege escalation. │
 # │ strict      │ Adds syscall filtering, noexec /tmp, lower process limit.   │
 # │ paranoid    │ Adds immutable /usr /bin, requires AppArmor/SELinux.        │
@@ -64,14 +64,14 @@ security:
   # Configuration Examples:
   # ─────────────────────────────────────────────────────────────────────────
   #
-  # Example 1: Maximum security for untrusted code/PRs
+  # Example 1: Maximum security for untrusted execution
   # security:
   #   profile: strict
   #   filesystem:
   #     noexec_tmp: true
   #     readonly_root: true
   #
-  # Example 2: Debugging mode (no restrictions)
+  # Example 2: Trusted execution (no restrictions)
   # security:
   #   profile: minimal
   #

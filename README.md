@@ -322,21 +322,21 @@ See [docs/NETWORK-ISOLATION.md](docs/NETWORK-ISOLATION.md) for customizing the a
 Kapsis provides security profiles with increasing levels of container hardening:
 
 ```bash
-# Default: standard profile (capability dropping, privilege escalation protection)
+# Default: standard profile + seccomp (capability dropping, syscall filtering)
 kapsis ~/project --task "implement feature"
 
-# With seccomp syscall filtering (blocks ptrace, mount, bpf)
-kapsis ~/project --security-profile strict --task "process untrusted PR"
+# Strict mode for untrusted execution (adds noexec /tmp, lower PID limit)
+kapsis ~/project --security-profile strict --task "review external PR"
 
-# Debugging mode (no restrictions, isolated network for local-only debugging)
-kapsis ~/project --security-profile minimal --network-mode none --task "debug issue"
+# Trusted execution (no restrictions, isolated network)
+kapsis ~/project --security-profile minimal --network-mode none --task "run trusted task"
 ```
 
 | Profile | Protection Level | Use Case |
 |---------|-----------------|----------|
-| `minimal` | None | Debugging only |
-| `standard` | Capabilities, privilege escalation | Default development |
-| `strict` | + Seccomp filtering, noexec /tmp | Untrusted code/PRs |
+| `minimal` | None | Trusted execution |
+| `standard` | Capabilities, privilege escalation | Base profile |
+| `strict` | + Seccomp filtering, noexec /tmp | Untrusted execution |
 | `paranoid` | + Read-only root, LSM required | Maximum security |
 
 See [docs/SECURITY-HARDENING.md](docs/SECURITY-HARDENING.md) for detailed configuration.
