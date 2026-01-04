@@ -167,25 +167,30 @@ test_unknown_option_error() {
 }
 
 test_help_flag() {
-    log_test "Testing --help shows usage"
+    log_test "Testing --help shows usage and exits 0"
 
     local output
     local exit_code=0
 
     output=$("$LAUNCH_SCRIPT" --help 2>&1) || exit_code=$?
 
-    # Help exits with 1 but shows usage
+    # Help should exit with 0 (success) per Unix convention
+    assert_equals 0 "$exit_code" "Should exit 0 for --help (Unix convention)"
     assert_contains "$output" "Usage" "Should show usage"
     assert_contains "$output" "Options" "Should show options section"
     assert_contains "$output" "Examples" "Should show examples"
 }
 
 test_short_help_flag() {
-    log_test "Testing -h shows usage"
+    log_test "Testing -h shows usage and exits 0"
 
     local output
-    output=$("$LAUNCH_SCRIPT" -h 2>&1) || true
+    local exit_code=0
 
+    output=$("$LAUNCH_SCRIPT" -h 2>&1) || exit_code=$?
+
+    # -h should also exit with 0 (success) per Unix convention
+    assert_equals 0 "$exit_code" "Should exit 0 for -h (Unix convention)"
     assert_contains "$output" "Usage" "Should show usage with -h"
 }
 
