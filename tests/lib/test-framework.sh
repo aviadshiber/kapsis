@@ -46,6 +46,116 @@ source "$KAPSIS_ROOT/scripts/lib/constants.sh"
 # CI sets KAPSIS_IMAGE="kapsis-test:ci", local dev uses kapsis-sandbox:latest
 KAPSIS_TEST_IMAGE="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 
+# Standard environment variables to pass to containers
+# These should be used by all podman run calls in tests
+# Usage: podman run ... $(get_test_container_env_args) ...
+# Note: CI defaults to "true" during tests to enable entrypoint's CI fallback mode
+export CI="${CI:-true}"  # Pass CI=true to containers for DNS filtering fallback
+
+# Get standard environment arguments for podman run
+# Returns: -e CI=... -e KAPSIS_NETWORK_MODE=...
+# Note: CI triggers auto-fallback in entrypoint for DNS filtering
+# KAPSIS_NETWORK_MODE defaults to "open" for tests since dnsmasq may not work in CI
+get_test_container_env_args() {
+    echo "-e CI=${CI:-true} -e KAPSIS_NETWORK_MODE=${KAPSIS_NETWORK_MODE:-open}"
+}
+
+# run_simple_container <command> [extra_podman_args...]
+# Runs a simple command in the test container with standard env vars.
+# Use this for quick checks that don't need overlay mounts or special setup.
+# Example: run_simple_container "which dnsmasq"
+# Example: run_simple_container "echo \$MY_VAR" "-e MY_VAR=test"
+# Example: run_simple_container "test -f /file" "-v /host/path:/container/path"
+run_simple_container() {
+    local command="$1"
+    shift
+    # shellcheck disable=SC2046 # Word splitting intentional for env args
+    podman run --rm \
+        $(get_test_container_env_args) \
+        --userns=keep-id \
+        "$@" \
+        "$KAPSIS_TEST_IMAGE" \
+        bash -c "$command" 2>&1
+}
+
+# run_named_container <name> <command> [extra_podman_args...]
+# Runs a named container with standard env vars.
+# Use this for tests that need a specific container name (e.g., for cleanup tracking).
+# Example: run_named_container "mytest-$$" "echo test"
+# Example: run_named_container "mytest-$$" "echo \$MY_VAR" "-e MY_VAR=test"
+run_named_container() {
+    local name="$1"
+    local command="$2"
+    shift 2
+    # shellcheck disable=SC2046 # Word splitting intentional for env args
+    podman run --rm \
+        $(get_test_container_env_args) \
+        --name "$name" \
+        --userns=keep-id \
+        "$@" \
+        "$KAPSIS_TEST_IMAGE" \
+        bash -c "$command" 2>&1
+}
+
+# run_detached_named_container <name> <command> [extra_podman_args...]
+# Runs a named container in detached mode with standard env vars.
+# Returns immediately - use podman rm -f to cleanup.
+run_detached_named_container() {
+    local name="$1"
+    local command="$2"
+    shift 2
+    # shellcheck disable=SC2046 # Word splitting intentional for env args
+    podman run -d \
+        $(get_test_container_env_args) \
+        --name "$name" \
+        --userns=keep-id \
+        "$@" \
+        "$KAPSIS_TEST_IMAGE" \
+        bash -c "$command" 2>&1
+}
+
+# run_overlay_container <name> <command> <upper_dir> <work_dir> [extra_podman_args...]
+# Runs a container with overlay mount for CoW isolation.
+# Use this for tests that need to write to the workspace without affecting the host.
+run_overlay_container() {
+    local name="$1"
+    local command="$2"
+    local upper="$3"
+    local work="$4"
+    shift 4
+    # shellcheck disable=SC2046 # Word splitting intentional for env args
+    podman run --rm \
+        $(get_test_container_env_args) \
+        --name "$name" \
+        --userns=keep-id \
+        --security-opt label=disable \
+        -v "$TEST_PROJECT:/workspace:O,upperdir=$upper,workdir=$work" \
+        "$@" \
+        "$KAPSIS_TEST_IMAGE" \
+        bash -c "$command" 2>&1
+}
+
+# run_detached_overlay_container <name> <command> <upper_dir> <work_dir> [extra_podman_args...]
+# Runs a container in detached mode with overlay mount.
+# Returns immediately - use podman rm -f to cleanup.
+run_detached_overlay_container() {
+    local name="$1"
+    local command="$2"
+    local upper="$3"
+    local work="$4"
+    shift 4
+    # shellcheck disable=SC2046 # Word splitting intentional for env args
+    podman run -d \
+        $(get_test_container_env_args) \
+        --name "$name" \
+        --userns=keep-id \
+        --security-opt label=disable \
+        -v "$TEST_PROJECT:/workspace:O,upperdir=$upper,workdir=$work" \
+        "$@" \
+        "$KAPSIS_TEST_IMAGE" \
+        bash -c "$command" 2>&1
+}
+
 #===============================================================================
 # CROSS-PLATFORM HELPERS
 #===============================================================================
@@ -739,6 +849,8 @@ run_in_container() {
             -e KAPSIS_AGENT_ID="$CONTAINER_TEST_ID" \
             -e KAPSIS_PROJECT="test" \
             -e KAPSIS_USE_FUSE_OVERLAY=true \
+            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+            -e CI="${CI:-}" \
             --timeout "$timeout" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "$command" 2>&1
@@ -756,6 +868,8 @@ run_in_container() {
             -v "${CONTAINER_TEST_ID}-m2:/home/developer/.m2/repository" \
             -e KAPSIS_AGENT_ID="$CONTAINER_TEST_ID" \
             -e KAPSIS_PROJECT="test" \
+            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+            -e CI="${CI:-}" \
             --timeout "$timeout" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "$command" 2>&1
@@ -779,6 +893,8 @@ run_in_container_detached() {
         -v "${container_name}-m2:/home/developer/.m2/repository" \
         -e KAPSIS_AGENT_ID="$container_name" \
         -e KAPSIS_PROJECT="test" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+        -e CI="${CI:-}" \
         "$KAPSIS_TEST_IMAGE" \
         bash -c "$command" 2>&1
 }
@@ -827,12 +943,9 @@ assert_file_in_upper() {
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: check file in overlay volume (upper subdir)
-        # Named volume must be checked from inside a container
         local result
-        result=$(podman run --rm \
-            -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro" \
-            "$KAPSIS_TEST_IMAGE" \
-            bash -c "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
+        result=$(run_simple_container "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" \
+            -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro")
 
         if [[ "$result" == *"EXISTS"* ]]; then
             return 0
@@ -861,12 +974,9 @@ assert_file_not_in_upper() {
 
     if [[ "${KAPSIS_USE_FUSE_OVERLAY:-}" == "true" ]]; then
         # fuse-overlayfs: check file NOT in overlay volume (upper subdir)
-        # Named volume must be checked from inside a container
         local result
-        result=$(podman run --rm \
-            -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro" \
-            "$KAPSIS_TEST_IMAGE" \
-            bash -c "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" 2>&1)
+        result=$(run_simple_container "test -f '/overlay/upper/$relative_path' && echo EXISTS || echo NOTFOUND" \
+            -v "${CONTAINER_TEST_ID}-overlay:/overlay:ro")
 
         if [[ "$result" == *"NOTFOUND"* ]]; then
             return 0
@@ -967,6 +1077,8 @@ check_overlay_rw_support() {
         --userns=keep-id \
         --security-opt label=disable \
         --entrypoint="" \
+        -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
         -v "$test_dir/lower:/workspace:O,upperdir=$test_dir/upper,workdir=$test_dir/work" \
         "$KAPSIS_TEST_IMAGE" \
         bash -c "echo 'write test' > /workspace/write-test.txt 2>&1 && echo SUCCESS || echo FAILED" 2>&1) || true
@@ -1031,6 +1143,8 @@ run_podman_isolated() {
             -v "${container_id}-m2:/home/developer/.m2/repository" \
             -e KAPSIS_AGENT_ID="$container_id" \
             -e KAPSIS_USE_FUSE_OVERLAY=true \
+            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+            -e CI="${CI:-}" \
             "$@" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "$command" 2>&1
@@ -1045,6 +1159,8 @@ run_podman_isolated() {
             -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
             -v "${container_id}-m2:/home/developer/.m2/repository" \
             -e KAPSIS_AGENT_ID="$container_id" \
+            -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+            -e CI="${CI:-}" \
             "$@" \
             "$KAPSIS_TEST_IMAGE" \
             bash -c "$command" 2>&1
@@ -1130,6 +1246,8 @@ run_in_worktree_container() {
         -e KAPSIS_AGENT_ID="$WORKTREE_TEST_ID" \
         -e KAPSIS_SANDBOX_MODE="worktree" \
         -e KAPSIS_WORKTREE_MODE="true" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+        -e CI="${CI:-}" \
         "$@" \
         "$KAPSIS_TEST_IMAGE" \
         bash -c "$command" 2>&1
