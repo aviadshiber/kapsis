@@ -730,7 +730,8 @@ run_validation() {
 #===============================================================================
 
 show_usage() {
-    echo "Usage: $0 [OPTIONS]"
+    local cmd_name="${KAPSIS_CMD_NAME:-$0}"
+    echo "Usage: $cmd_name [OPTIONS]"
     echo ""
     echo "Options:"
     echo "  --check      Check dependencies only (no changes)"
@@ -742,9 +743,9 @@ show_usage() {
     echo "  --help       Show this help message"
     echo ""
     echo "Examples:"
-    echo "  $0 --check              # Just check what's needed"
-    echo "  $0 --all                # Full automated setup"
-    echo "  $0 --install --build    # Install deps and build image"
+    echo "  $cmd_name --check              # Just check what's needed"
+    echo "  $cmd_name --all                # Full automated setup"
+    echo "  $cmd_name --install --build    # Install deps and build image"
 }
 
 main() {

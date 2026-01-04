@@ -34,8 +34,9 @@ CYAN='\033[0;36m'
 NC='\033[0m'
 
 usage() {
+    local cmd_name="${KAPSIS_CMD_NAME:-$0}"
     echo ""
-    echo "Usage: $0 <agent-id> <project> <branch> [spec-file]"
+    echo "Usage: $cmd_name <agent-id> <project> <branch> [spec-file]"
     echo ""
     echo "Arguments:"
     echo "  agent-id   Unique identifier (1, 2, 3, etc.)"
@@ -44,9 +45,9 @@ usage() {
     echo "  spec-file  Optional: Task specification file (default: prompt)"
     echo ""
     echo "Examples:"
-    echo "  $0 1 my-project feature/ABC-123"
-    echo "  $0 1 ~/git/my-project feature/ABC-123 task.md"
-    echo "  $0 2 /path/to/repo feature/DEV-456"
+    echo "  $cmd_name 1 my-project feature/ABC-123"
+    echo "  $cmd_name 1 ~/git/my-project feature/ABC-123 task.md"
+    echo "  $cmd_name 2 /path/to/repo feature/DEV-456"
     echo ""
     echo "Project resolution:"
     echo "  my-app     -> ~/git/my-app (simple names resolve to ~/git/)"
