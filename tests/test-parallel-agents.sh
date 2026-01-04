@@ -50,26 +50,12 @@ test_two_agents_run_simultaneously() {
     local sandbox2="$HOME/.ai-sandboxes/kapsis-parallel-2-$$"
 
     # Start both agents
-    podman run -d \
-        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "kapsis-parallel-1-$$" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        sleep 10 2>/dev/null || {
-            cleanup_parallel_sandboxes 2
-            return 0  # Skip if image missing
-        }
+    run_detached_overlay_container "kapsis-parallel-1-$$" "sleep 10" "$sandbox1/upper" "$sandbox1/work" || {
+        cleanup_parallel_sandboxes 2
+        return 0  # Skip if image missing
+    }
 
-    podman run -d \
-        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "kapsis-parallel-2-$$" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        sleep 10 2>/dev/null
+    run_detached_overlay_container "kapsis-parallel-2-$$" "sleep 10" "$sandbox2/upper" "$sandbox2/work"
 
     # Both should be running
     local running
@@ -94,28 +80,17 @@ test_agents_have_isolated_filesystems() {
     local sandbox2="$HOME/.ai-sandboxes/kapsis-parallel-2-$$"
 
     # Agent 1 creates a file
-    podman run --rm \
-        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "kapsis-parallel-1-$$" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c "echo 'agent1' > /workspace/agent1-file.txt" 2>/dev/null || {
+    run_overlay_container "kapsis-parallel-1-$$" "echo 'agent1' > /workspace/agent1-file.txt" \
+        "$sandbox1/upper" "$sandbox1/work" || {
             cleanup_parallel_sandboxes 2
             return 0
         }
 
     # Agent 2 checks for Agent 1's file
     local output
-    output=$(podman run --rm \
-        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "kapsis-parallel-2-$$" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c "cat /workspace/agent1-file.txt 2>/dev/null || echo 'not found'" 2>&1)
+    output=$(run_overlay_container "kapsis-parallel-2-$$" \
+        "cat /workspace/agent1-file.txt 2>/dev/null || echo 'not found'" \
+        "$sandbox2/upper" "$sandbox2/work")
 
     cleanup_parallel_sandboxes 2
 
@@ -129,26 +104,16 @@ test_agents_have_isolated_volumes() {
     local name2="kapsis-vol-iso-2-$$"
 
     # Agent 1 writes to its volume
-    podman run --rm \
-        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$name1" \
-        --userns=keep-id \
-        -v "${name1}-m2:/home/developer/.m2/repository" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c "mkdir -p /home/developer/.m2/repository/test && echo 'agent1' > /home/developer/.m2/repository/test/marker.txt" 2>/dev/null || {
+    run_simple_container "mkdir -p /home/developer/.m2/repository/test && echo 'agent1' > /home/developer/.m2/repository/test/marker.txt" \
+        --name "$name1" -v "${name1}-m2:/home/developer/.m2/repository" || {
             podman volume rm "${name1}-m2" "${name2}-m2" 2>/dev/null || true
             return 0
         }
 
     # Agent 2 checks its volume (should be empty)
     local output
-    output=$(podman run --rm \
-        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$name2" \
-        --userns=keep-id \
-        -v "${name2}-m2:/home/developer/.m2/repository" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c "cat /home/developer/.m2/repository/test/marker.txt 2>/dev/null || echo 'not found'" 2>&1)
+    output=$(run_simple_container "cat /home/developer/.m2/repository/test/marker.txt 2>/dev/null || echo 'not found'" \
+        --name "$name2" -v "${name2}-m2:/home/developer/.m2/repository")
 
     podman volume rm "${name1}-m2" "${name2}-m2" 2>/dev/null || true
 
@@ -163,14 +128,9 @@ test_concurrent_file_operations() {
     # Start 3 agents that all write to same filename
     for i in 1 2 3; do
         local sandbox="$HOME/.ai-sandboxes/kapsis-parallel-$i-$$"
-        podman run -d \
-        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-            --name "kapsis-parallel-$i-$$" \
-            --userns=keep-id \
-            --security-opt label=disable \
-            -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-            "$KAPSIS_TEST_IMAGE" \
-            bash -c "echo 'agent$i' > /workspace/shared-name.txt && sleep 5" 2>/dev/null || true
+        run_detached_overlay_container "kapsis-parallel-$i-$$" \
+            "echo 'agent$i' > /workspace/shared-name.txt && sleep 5" \
+            "$sandbox/upper" "$sandbox/work" 2>/dev/null || true
     done
 
     # Wait for completion
@@ -208,35 +168,23 @@ test_no_cross_contamination_on_git() {
     local sandbox2="$HOME/.ai-sandboxes/kapsis-parallel-2-$$"
 
     # Agent 1 makes git commit
-    podman run --rm \
-        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "kapsis-parallel-1-$$" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c "
-            cd /workspace
-            git config user.email 'agent1@test.com'
-            git config user.name 'Agent 1'
-            echo 'agent1 change' > agent1.txt
-            git add agent1.txt
-            git commit -m 'Agent 1 commit'
-        " 2>/dev/null || {
-            cleanup_parallel_sandboxes 2
-            return 0
-        }
+    run_overlay_container "kapsis-parallel-1-$$" "
+        cd /workspace
+        git config user.email 'agent1@test.com'
+        git config user.name 'Agent 1'
+        echo 'agent1 change' > agent1.txt
+        git add agent1.txt
+        git commit -m 'Agent 1 commit'
+    " "$sandbox1/upper" "$sandbox1/work" || {
+        cleanup_parallel_sandboxes 2
+        return 0
+    }
 
     # Agent 2 checks git log
     local output
-    output=$(podman run --rm \
-        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "kapsis-parallel-2-$$" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c "cd /workspace && git log --oneline -1" 2>&1)
+    output=$(run_overlay_container "kapsis-parallel-2-$$" \
+        "cd /workspace && git log --oneline -1" \
+        "$sandbox2/upper" "$sandbox2/work")
 
     cleanup_parallel_sandboxes 2
 
@@ -253,30 +201,14 @@ test_resource_limits_per_agent() {
     local sandbox2="$HOME/.ai-sandboxes/kapsis-parallel-2-$$"
 
     # Start with different resource limits
-    podman run -d \
-        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "kapsis-parallel-1-$$" \
-        --memory=1g \
-        --cpus=1 \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        sleep 10 2>/dev/null || {
+    run_detached_overlay_container "kapsis-parallel-1-$$" "sleep 10" \
+        "$sandbox1/upper" "$sandbox1/work" --memory=1g --cpus=1 || {
             cleanup_parallel_sandboxes 2
             return 0
         }
 
-    podman run -d \
-        $(get_test_container_env_args) -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "kapsis-parallel-2-$$" \
-        --memory=2g \
-        --cpus=2 \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        sleep 10 2>/dev/null
+    run_detached_overlay_container "kapsis-parallel-2-$$" "sleep 10" \
+        "$sandbox2/upper" "$sandbox2/work" --memory=2g --cpus=2
 
     # Both should be running with different limits
     local count

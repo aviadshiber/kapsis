@@ -60,18 +60,61 @@ get_test_container_env_args() {
     echo "-e CI=${CI:-true} -e KAPSIS_NETWORK_MODE=${KAPSIS_NETWORK_MODE:-open}"
 }
 
-# run_simple_container <command> [extra_env_args...]
+# run_simple_container <command> [extra_podman_args...]
 # Runs a simple command in the test container with standard env vars.
-# Use this for quick checks that don't need overlay mounts or volumes.
+# Use this for quick checks that don't need overlay mounts or special setup.
 # Example: run_simple_container "which dnsmasq"
 # Example: run_simple_container "echo \$MY_VAR" "-e MY_VAR=test"
+# Example: run_simple_container "test -f /file" "-v /host/path:/container/path"
 run_simple_container() {
     local command="$1"
     shift
-    # shellcheck disable=SC2046 # Word splitting intentional for extra args
+    # shellcheck disable=SC2046 # Word splitting intentional for env args
     podman run --rm \
         $(get_test_container_env_args) \
         --userns=keep-id \
+        "$@" \
+        "$KAPSIS_TEST_IMAGE" \
+        bash -c "$command" 2>&1
+}
+
+# run_overlay_container <name> <command> <upper_dir> <work_dir> [extra_podman_args...]
+# Runs a container with overlay mount for CoW isolation.
+# Use this for tests that need to write to the workspace without affecting the host.
+run_overlay_container() {
+    local name="$1"
+    local command="$2"
+    local upper="$3"
+    local work="$4"
+    shift 4
+    # shellcheck disable=SC2046 # Word splitting intentional for env args
+    podman run --rm \
+        $(get_test_container_env_args) \
+        --name "$name" \
+        --userns=keep-id \
+        --security-opt label=disable \
+        -v "$TEST_PROJECT:/workspace:O,upperdir=$upper,workdir=$work" \
+        "$@" \
+        "$KAPSIS_TEST_IMAGE" \
+        bash -c "$command" 2>&1
+}
+
+# run_detached_overlay_container <name> <command> <upper_dir> <work_dir> [extra_podman_args...]
+# Runs a container in detached mode with overlay mount.
+# Returns immediately - use podman rm -f to cleanup.
+run_detached_overlay_container() {
+    local name="$1"
+    local command="$2"
+    local upper="$3"
+    local work="$4"
+    shift 4
+    # shellcheck disable=SC2046 # Word splitting intentional for env args
+    podman run -d \
+        $(get_test_container_env_args) \
+        --name "$name" \
+        --userns=keep-id \
+        --security-opt label=disable \
+        -v "$TEST_PROJECT:/workspace:O,upperdir=$upper,workdir=$work" \
         "$@" \
         "$KAPSIS_TEST_IMAGE" \
         bash -c "$command" 2>&1
