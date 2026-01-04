@@ -367,6 +367,58 @@ jobs:
 
           echo "Updating CHANGELOG.md for v${VERSION} (${DATE})"
 
+          # Find the previous tag to get commits for this release
+          PREV_TAG=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null || echo "")
+          echo "Previous tag: ${PREV_TAG:-none}"
+
+          # Get commits between tags (or all commits for first release)
+          if [[ -n "$PREV_TAG" ]]; then
+            COMMITS=$(git log "${PREV_TAG}..v${VERSION}" --pretty=format:"%s" --no-merges)
+          else
+            COMMITS=$(git log "v${VERSION}" --pretty=format:"%s" --no-merges -50)
+          fi
+
+          # Initialize category files for Keep a Changelog format
+          > /tmp/cl_breaking.txt
+          > /tmp/cl_added.txt
+          > /tmp/cl_changed.txt
+          > /tmp/cl_fixed.txt
+          > /tmp/cl_security.txt
+          > /tmp/cl_docs.txt
+
+          # Parse and categorize commits using conventional commit prefixes
+          while IFS= read -r msg; do
+            [[ -z "$msg" ]] && continue
+
+            # Skip auto-generated release commits
+            if [[ "$msg" == *"[skip ci]"* ]] || [[ "$msg" == "chore(release):"* ]]; then
+              continue
+            fi
+
+            # Clean up the commit message for changelog (remove scope parentheses, keep description)
+            # e.g., "feat(ci): add thing" -> "Add thing"
+            # Use awk for portable uppercase conversion (sed \U is GNU-only)
+            clean_msg=$(echo "$msg" | sed -E 's/^[a-z]+!?(\([^)]+\))?:[[:space:]]*//' | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+
+            # Check for breaking changes first (type!: or BREAKING CHANGE)
+            if [[ "$msg" =~ ^[a-z]+(\(.+\))?!: ]] || [[ "$msg" =~ BREAKING[\ -]CHANGE ]]; then
+              echo "- $clean_msg" >> /tmp/cl_breaking.txt
+            fi
+
+            # Categorize by conventional commit prefix into Keep a Changelog categories
+            if [[ "$msg" =~ ^feat(\(.+\))?!?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_added.txt
+            elif [[ "$msg" =~ ^fix(\(.+\))?!?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_fixed.txt
+            elif [[ "$msg" =~ ^security(\(.+\))?: ]] || [[ "$msg" =~ ^sec(\(.+\))?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_security.txt
+            elif [[ "$msg" =~ ^docs(\(.+\))?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_docs.txt
+            elif [[ "$msg" =~ ^(refactor|perf|style|build|ci|chore|test)(\(.+\))?!?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_changed.txt
+            fi
+          done <<< "$COMMITS"
+
           # Create a temporary file for the new changelog
           {
             # Keep header lines (title and format description)
@@ -377,14 +429,54 @@ jobs:
             echo "## [${VERSION}] - ${DATE}"
             echo ""
 
-            # Extract content from [Unreleased] section (between ## [Unreleased] and next ## [...])
-            # Skip empty unreleased section
-            UNRELEASED_CONTENT=$(sed -n '/^## \[Unreleased\]/,/^## \[/{ /^## \[/d; p; }' "$CHANGELOG_FILE" | sed '/^$/d')
+            # Check if we have any categorized content
+            HAS_CONTENT=false
+            for f in /tmp/cl_breaking.txt /tmp/cl_added.txt /tmp/cl_changed.txt /tmp/cl_fixed.txt /tmp/cl_security.txt /tmp/cl_docs.txt; do
+              if [[ -s "$f" ]]; then
+                HAS_CONTENT=true
+                break
+              fi
+            done
 
-            if [[ -n "$UNRELEASED_CONTENT" ]]; then
-              echo "$UNRELEASED_CONTENT"
-              echo ""
+            if [[ "$HAS_CONTENT" == "true" ]]; then
+              # Output categories in Keep a Changelog order
+              if [[ -s /tmp/cl_breaking.txt ]]; then
+                echo "### BREAKING CHANGES"
+                cat /tmp/cl_breaking.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_added.txt ]]; then
+                echo "### Added"
+                cat /tmp/cl_added.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_changed.txt ]]; then
+                echo "### Changed"
+                cat /tmp/cl_changed.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_fixed.txt ]]; then
+                echo "### Fixed"
+                cat /tmp/cl_fixed.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_security.txt ]]; then
+                echo "### Security"
+                cat /tmp/cl_security.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_docs.txt ]]; then
+                echo "### Documentation"
+                cat /tmp/cl_docs.txt
+                echo ""
+              fi
             else
+              # Fallback only if no conventional commits found at all
               echo "### Changed"
               echo "- Release v${VERSION}"
               echo ""
