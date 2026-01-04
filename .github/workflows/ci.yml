@@ -350,6 +350,8 @@ jobs:
         env:
           KAPSIS_TEST_QUIET: "0"
           KAPSIS_IMAGE: "kapsis-test:ci"
+          # Use 'open' network mode in CI - 'filtered' requires dnsmasq which can't run in CI containers
+          KAPSIS_NETWORK_MODE: "open"
 
   # Summary job that all required checks depend on
   ci-success:

@@ -28,7 +28,7 @@ test_network_mode_flag_validation() {
 
     assert_not_equals 0 "$exit_code" "Should fail with invalid network mode"
     assert_contains "$output" "Invalid network mode" "Should mention invalid network mode"
-    assert_contains "$output" "must be: none, open" "Should show valid options"
+    assert_contains "$output" "must be: none, filtered, open" "Should show valid options"
 }
 
 test_network_mode_none_accepted() {
@@ -57,17 +57,19 @@ test_network_mode_open_accepted() {
     assert_contains "$output" "Network: unrestricted" "Should warn about unrestricted network"
 }
 
-test_network_mode_default_is_open() {
-    log_test "Testing default network mode is 'open' with warning"
+test_network_mode_default_is_filtered() {
+    log_test "Testing default network mode is 'filtered'"
 
     local output
     local exit_code=0
 
-    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --task "test" --dry-run 2>&1) || exit_code=$?
+    # Unset KAPSIS_NETWORK_MODE to test actual default (CI may set it to 'open')
+    output=$(unset KAPSIS_NETWORK_MODE; "$LAUNCH_SCRIPT" "$TEST_PROJECT" --task "test" --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should succeed with default network mode"
     assert_not_contains "$output" "--network=none" "Should NOT include --network=none by default"
-    assert_contains "$output" "consider --network-mode=none" "Should suggest using isolated mode"
+    assert_contains "$output" "Network: filtered" "Should show filtered network mode"
+    assert_contains "$output" "DNS-based allowlist" "Should mention DNS-based allowlist"
 }
 
 test_network_mode_env_override() {
@@ -128,7 +130,9 @@ test_network_none_blocks_network() {
     local exit_code=0
 
     # Run container with --network=none and try to ping
+    # Use --entrypoint="" to skip the Kapsis entrypoint and test raw network isolation
     output=$(timeout 30 podman run --rm \
+        --entrypoint="" \
         --network=none \
         "$image_name" \
         bash -c "ping -c 1 -W 5 8.8.8.8 2>&1 && echo 'NETWORK_WORKS' || echo 'NETWORK_BLOCKED'" \
@@ -164,7 +168,9 @@ test_network_open_allows_network() {
     # Run container with default network and try to access network
     # Test TCP connection to a reliable endpoint (DNS resolution + connection establishment)
     # Using multiple fallback endpoints for reliability
+    # Use --entrypoint="" to skip the Kapsis entrypoint and test raw network connectivity
     output=$(timeout 30 podman run --rm \
+        --entrypoint="" \
         "$image_name" \
         bash -c '
             # Try multiple endpoints for reliability (any success = network works)
@@ -192,7 +198,7 @@ main() {
     run_test test_network_mode_flag_validation
     run_test test_network_mode_none_accepted
     run_test test_network_mode_open_accepted
-    run_test test_network_mode_default_is_open
+    run_test test_network_mode_default_is_filtered
     run_test test_network_mode_env_override
     run_test test_network_mode_flag_overrides_env
 

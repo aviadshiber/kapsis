@@ -605,19 +605,41 @@ CONTAINER_CMD+=(
 )
 ```
 
-### 4.5 Network Namespace Options
+### 4.5 Network Isolation
+
+Kapsis provides three network isolation modes with DNS-based filtering as the secure default:
+
+| Mode | Description | Use Case |
+|------|-------------|----------|
+| `none` | Complete isolation (`--network=none`) | Maximum security, offline tasks |
+| `filtered` | DNS-based allowlist **(default)** | Standard development workflows |
+| `open` | Unrestricted network access | Special cases requiring full access |
 
 ```bash
-# Default: connected to podman network (needed for AI APIs)
-# Option to restrict to localhost only
-if [[ "${KAPSIS_NETWORK_MODE:-bridge}" == "none" ]]; then
+# Default: filtered mode with DNS-based allowlist
+if [[ "${KAPSIS_NETWORK_MODE}" == "none" ]]; then
     CONTAINER_CMD+=("--network=none")
-elif [[ "${KAPSIS_NETWORK_MODE:-bridge}" == "host" ]]; then
-    # NOT RECOMMENDED - only for debugging
-    log_warn "Using host network mode - reduced isolation"
-    CONTAINER_CMD+=("--network=host")
+elif [[ "${KAPSIS_NETWORK_MODE}" == "filtered" ]]; then
+    # Default - uses dnsmasq to filter DNS queries
+    # Only domains in allowlist can be resolved
+    CONTAINER_CMD+=("-e" "KAPSIS_NETWORK_MODE=filtered")
+    # dnsmasq started by entrypoint.sh
+elif [[ "${KAPSIS_NETWORK_MODE}" == "open" ]]; then
+    log_warn "Using open network mode - reduced isolation"
+    # Full network access, no filtering
 fi
 ```
+
+#### DNS-Based Filtering Security Features
+
+The `filtered` mode provides defense-in-depth for network access:
+
+1. **DNS Rebinding Protection**: dnsmasq rejects responses containing private IP ranges
+2. **Fail-Safe Initialization**: Container aborts if DNS filtering fails to start
+3. **Verification Before Agent**: DNS filtering is verified before agent execution
+4. **Query Logging**: Optional logging for debugging blocked domains
+
+See [NETWORK-ISOLATION.md](NETWORK-ISOLATION.md) for detailed configuration.
 
 ### 4.6 Configuration Options
 
@@ -632,9 +654,20 @@ security:
     # Default: true (recommended)
     no_new_privileges: true
 
-    # Network isolation mode
-    # Options: bridge (default), none, host
-    network_mode: bridge
+network:
+  # Network isolation mode
+  # Options: none, filtered (default), open
+  mode: filtered
+
+  # DNS allowlist for filtered mode
+  allowlist:
+    hosts:
+      - github.com
+      - "*.github.com"
+    registries:
+      - registry.npmjs.org
+    ai:
+      - api.anthropic.com
 ```
 
 ---
@@ -1119,13 +1152,28 @@ security:
 
   # Network isolation
   network:
-    # Network mode: bridge, none, host
-    # Default: bridge
-    mode: bridge
+    # Network mode: none, filtered, open
+    # Default: filtered (DNS-based allowlist)
+    mode: filtered
 
-    # Allow external DNS
-    # Default: true
-    allow_dns: true
+    # DNS allowlist for filtered mode
+    allowlist:
+      hosts:
+        - github.com
+        - "*.github.com"
+      registries:
+        - registry.npmjs.org
+      ai:
+        - api.anthropic.com
+        - api.openai.com
+
+    # DNS servers for resolution
+    dns_servers:
+      - 8.8.8.8
+      - 8.8.4.4
+
+    # Enable DNS query logging for debugging
+    log_dns_queries: false
 ```
 
 ### 8.2 Security Profiles
