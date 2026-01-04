@@ -70,14 +70,9 @@ test_token_not_decoded_if_credentials_set() {
     local preset_username="preset-user"
 
     local output
-    output=$(podman run --rm \
-        $(get_test_container_env_args) \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token" \
-        -e KAPSIS_MAVEN_USERNAME="$preset_username" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo "USER=$KAPSIS_MAVEN_USERNAME"' 2>&1) || true
+    output=$(run_simple_container 'echo "USER=$KAPSIS_MAVEN_USERNAME"' \
+        --name "$CONTAINER_TEST_ID" -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token" \
+        -e KAPSIS_MAVEN_USERNAME="$preset_username") || true
 
     cleanup_container_test
 
@@ -93,13 +88,8 @@ test_invalid_token_handled_gracefully() {
 
     local output
     local exit_code=0
-    output=$(podman run --rm \
-        $(get_test_container_env_args) \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e DOCKER_ARTIFACTORY_TOKEN="not-valid-base64!!!" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo "USER=${KAPSIS_MAVEN_USERNAME:-unset} PASS=${KAPSIS_MAVEN_PASSWORD:-unset}"' 2>&1) || exit_code=$?
+    output=$(run_simple_container 'echo "USER=${KAPSIS_MAVEN_USERNAME:-unset} PASS=${KAPSIS_MAVEN_PASSWORD:-unset}"' \
+        --name "$CONTAINER_TEST_ID" -e DOCKER_ARTIFACTORY_TOKEN="not-valid-base64!!!") || exit_code=$?
 
     cleanup_container_test
 
@@ -115,13 +105,8 @@ test_ge_extension_prepopulated() {
 
     # Check that GE extension jar exists in user's .m2/repository
     local output
-    output=$(podman run --rm \
-        $(get_test_container_env_args) \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -v "kapsis-test-m2:/home/developer/.m2/repository" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'ls -la ~/.m2/repository/com/gradle/gradle-enterprise-maven-extension/1.20/*.jar 2>/dev/null && echo "GE_FOUND=yes" || echo "GE_FOUND=no"' 2>&1) || true
+    output=$(run_simple_container 'ls -la ~/.m2/repository/com/gradle/gradle-enterprise-maven-extension/1.20/*.jar 2>/dev/null && echo "GE_FOUND=yes" || echo "GE_FOUND=no"' \
+        --name "$CONTAINER_TEST_ID" -v "kapsis-test-m2:/home/developer/.m2/repository") || true
 
     cleanup_container_test
     podman volume rm kapsis-test-m2 2>/dev/null || true
@@ -135,13 +120,8 @@ test_ge_extension_entrypoint_log() {
     setup_container_test "maven-auth-ge-log"
 
     local output
-    output=$(podman run --rm \
-        $(get_test_container_env_args) \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -v "kapsis-test-m2-log:/home/developer/.m2/repository" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo done' 2>&1) || true
+    output=$(run_simple_container 'echo done' \
+        --name "$CONTAINER_TEST_ID" -v "kapsis-test-m2-log:/home/developer/.m2/repository") || true
 
     cleanup_container_test
     podman volume rm kapsis-test-m2-log 2>/dev/null || true
@@ -160,13 +140,8 @@ test_maven_mirror_url_substitution() {
     # Note: We verify the env var is set correctly rather than checking effective-settings
     # which can have connection timeouts in CI environments
     local output
-    output=$(podman run --rm \
-        $(get_test_container_env_args) \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e KAPSIS_MAVEN_MIRROR_URL="$test_mirror_url" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo "ENV_VALUE=$KAPSIS_MAVEN_MIRROR_URL"; grep -o "env.KAPSIS_MAVEN_MIRROR_URL" /opt/kapsis/maven/settings.xml | head -1' 2>&1) || true
+    output=$(run_simple_container 'echo "ENV_VALUE=$KAPSIS_MAVEN_MIRROR_URL"; grep -o "env.KAPSIS_MAVEN_MIRROR_URL" /opt/kapsis/maven/settings.xml | head -1' \
+        --name "$CONTAINER_TEST_ID" -e KAPSIS_MAVEN_MIRROR_URL="$test_mirror_url") || true
 
     cleanup_container_test
 
@@ -182,12 +157,8 @@ test_maven_credentials_in_settings() {
     setup_container_test "maven-auth-creds"
 
     local output
-    output=$(podman run --rm \
-        $(get_test_container_env_args) \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'cat /opt/kapsis/maven/settings.xml | grep -A3 "<server>"' 2>&1) || true
+    output=$(run_simple_container 'cat /opt/kapsis/maven/settings.xml | grep -A3 "<server>"' \
+        --name "$CONTAINER_TEST_ID") || true
 
     cleanup_container_test
 
@@ -205,13 +176,8 @@ test_entrypoint_logs_token_decoding() {
     encoded_token=$(echo -n "user:pass" | base64)
 
     local output
-    output=$(podman run --rm \
-        $(get_test_container_env_args) \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo done' 2>&1) || true
+    output=$(run_simple_container 'echo done' \
+        --name "$CONTAINER_TEST_ID" -e DOCKER_ARTIFACTORY_TOKEN="$encoded_token") || true
 
     cleanup_container_test
 
@@ -274,6 +240,7 @@ run_in_container_with_env() {
     done
     local command="$1"
 
+    # shellcheck disable=SC2046  # Word splitting intentional for env args
     podman run --rm \
         $(get_test_container_env_args) \
         --name "$CONTAINER_TEST_ID" \

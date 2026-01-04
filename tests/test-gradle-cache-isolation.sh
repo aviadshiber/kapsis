@@ -149,14 +149,9 @@ test_gradle_home_in_container() {
     setup_container_test "gradle-home"
 
     local output
-    output=$(podman run --rm \
-        $(get_test_container_env_args) \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e GRADLE_USER_HOME="/home/developer/.gradle" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo "GRADLE_HOME=$GRADLE_USER_HOME"' 2>&1) || true
+    output=$(run_named_container "$CONTAINER_TEST_ID" \
+        'echo "GRADLE_HOME=$GRADLE_USER_HOME"' \
+        -e GRADLE_USER_HOME="/home/developer/.gradle") || true
 
     cleanup_container_test
 
@@ -183,38 +178,22 @@ test_agents_use_isolated_gradle_volumes() {
     podman volume create "$agent2_vol" >/dev/null 2>&1 || true
 
     # Agent 1 writes a marker file
-    podman run --rm \
-        $(get_test_container_env_args) \
-        --userns=keep-id \
-        -v "$agent1_vol:/home/developer/.gradle" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo "agent1" > /home/developer/.gradle/marker.txt' 2>/dev/null || true
+    run_simple_container 'echo "agent1" > /home/developer/.gradle/marker.txt' \
+        -v "$agent1_vol:/home/developer/.gradle" 2>/dev/null || true
 
     # Agent 2 writes a different marker file
-    podman run --rm \
-        $(get_test_container_env_args) \
-        --userns=keep-id \
-        -v "$agent2_vol:/home/developer/.gradle" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo "agent2" > /home/developer/.gradle/marker.txt' 2>/dev/null || true
+    run_simple_container 'echo "agent2" > /home/developer/.gradle/marker.txt' \
+        -v "$agent2_vol:/home/developer/.gradle" 2>/dev/null || true
 
     # Check Agent 1's marker
     local agent1_marker
-    agent1_marker=$(podman run --rm \
-        $(get_test_container_env_args) \
-        --userns=keep-id \
-        -v "$agent1_vol:/home/developer/.gradle" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'cat /home/developer/.gradle/marker.txt 2>/dev/null || echo ""' 2>/dev/null) || true
+    agent1_marker=$(run_simple_container 'cat /home/developer/.gradle/marker.txt 2>/dev/null || echo ""' \
+        -v "$agent1_vol:/home/developer/.gradle" 2>/dev/null) || true
 
     # Check Agent 2's marker
     local agent2_marker
-    agent2_marker=$(podman run --rm \
-        $(get_test_container_env_args) \
-        --userns=keep-id \
-        -v "$agent2_vol:/home/developer/.gradle" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'cat /home/developer/.gradle/marker.txt 2>/dev/null || echo ""' 2>/dev/null) || true
+    agent2_marker=$(run_simple_container 'cat /home/developer/.gradle/marker.txt 2>/dev/null || echo ""' \
+        -v "$agent2_vol:/home/developer/.gradle" 2>/dev/null) || true
 
     # Cleanup
     podman volume rm "$agent1_vol" >/dev/null 2>&1 || true
@@ -239,21 +218,13 @@ test_gradle_cache_persistence() {
     podman volume create "$vol_name" >/dev/null 2>&1 || true
 
     # First run: write data
-    podman run --rm \
-        $(get_test_container_env_args) \
-        --userns=keep-id \
-        -v "$vol_name:/home/developer/.gradle" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'mkdir -p /home/developer/.gradle/caches && echo "cached" > /home/developer/.gradle/caches/test.txt' 2>/dev/null || true
+    run_simple_container 'mkdir -p /home/developer/.gradle/caches && echo "cached" > /home/developer/.gradle/caches/test.txt' \
+        -v "$vol_name:/home/developer/.gradle" 2>/dev/null || true
 
     # Second run: read data
     local cached_content
-    cached_content=$(podman run --rm \
-        $(get_test_container_env_args) \
-        --userns=keep-id \
-        -v "$vol_name:/home/developer/.gradle" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'cat /home/developer/.gradle/caches/test.txt 2>/dev/null || echo "missing"' 2>/dev/null) || true
+    cached_content=$(run_simple_container 'cat /home/developer/.gradle/caches/test.txt 2>/dev/null || echo "missing"' \
+        -v "$vol_name:/home/developer/.gradle" 2>/dev/null) || true
 
     # Cleanup
     podman volume rm "$vol_name" >/dev/null 2>&1 || true

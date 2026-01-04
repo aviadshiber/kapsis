@@ -26,16 +26,8 @@ test_same_id_blocked() {
     mkdir -p "$sandbox_dir/upper" "$sandbox_dir/work"
 
     # Start first container in background (sleeps for a bit)
-    podman run -d \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$agent_id" \
-        --hostname "$agent_id" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox_dir/upper,workdir=$sandbox_dir/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        sleep 30 2>/dev/null || {
+    run_detached_overlay_container "$agent_id" "sleep 30" \
+        "$sandbox_dir/upper" "$sandbox_dir/work" --hostname "$agent_id" 2>/dev/null || {
             log_info "First container failed to start (may be image missing)"
             rm -rf "$sandbox_dir"
             return 0
@@ -44,13 +36,8 @@ test_same_id_blocked() {
     # Try to start second container with same name
     local output
     local exit_code=0
-    output=$(podman run --rm \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$agent_id" \
-        --hostname "$agent_id" \
-        "$KAPSIS_TEST_IMAGE" \
-        echo "should not run" 2>&1) || exit_code=$?
+    output=$(run_named_container "$agent_id" "echo 'should not run'" \
+        --hostname "$agent_id") || exit_code=$?
 
     # Cleanup
     podman rm -f "$agent_id" 2>/dev/null || true
@@ -79,30 +66,16 @@ test_different_ids_allowed() {
     mkdir -p "$sandbox2/upper" "$sandbox2/work"
 
     # Start first container
-    podman run -d \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$agent_id1" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        sleep 30 2>/dev/null || {
+    run_detached_overlay_container "$agent_id1" "sleep 30" \
+        "$sandbox1/upper" "$sandbox1/work" 2>/dev/null || {
             rm -rf "$sandbox1" "$sandbox2"
             return 0  # Skip if image missing
         }
 
     # Start second container with different ID
     local exit_code=0
-    podman run -d \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$agent_id2" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        sleep 30 2>/dev/null || exit_code=$?
+    run_detached_overlay_container "$agent_id2" "sleep 30" \
+        "$sandbox2/upper" "$sandbox2/work" 2>/dev/null || exit_code=$?
 
     # Check both are running
     local running1
@@ -130,27 +103,17 @@ test_volumes_isolated() {
     local agent_id2="kapsis-vol-2-$$"
 
     # Create files in container 1's volume
-    podman run --rm \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$agent_id1" \
-        --userns=keep-id \
-        -v "${agent_id1}-m2:/home/developer/.m2/repository" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c "mkdir -p /home/developer/.m2/repository/test && echo 'agent1' > /home/developer/.m2/repository/test/marker.txt" 2>/dev/null || {
+    run_named_container "$agent_id1" \
+        "mkdir -p /home/developer/.m2/repository/test && echo 'agent1' > /home/developer/.m2/repository/test/marker.txt" \
+        -v "${agent_id1}-m2:/home/developer/.m2/repository" 2>/dev/null || {
             return 0  # Skip if image missing
         }
 
     # Check container 2 doesn't see the file
     local output
-    output=$(podman run --rm \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$agent_id2" \
-        --userns=keep-id \
-        -v "${agent_id2}-m2:/home/developer/.m2/repository" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c "cat /home/developer/.m2/repository/test/marker.txt 2>/dev/null || echo 'not found'" 2>&1)
+    output=$(run_named_container "$agent_id2" \
+        "cat /home/developer/.m2/repository/test/marker.txt 2>/dev/null || echo 'not found'" \
+        -v "${agent_id2}-m2:/home/developer/.m2/repository")
 
     # Cleanup volumes
     podman volume rm "${agent_id1}-m2" "${agent_id2}-m2" 2>/dev/null || true
@@ -171,30 +134,18 @@ test_sandbox_dirs_isolated() {
     mkdir -p "$sandbox2/upper" "$sandbox2/work"
 
     # Create file in container 1
-    podman run --rm \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$agent_id1" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox1/upper,workdir=$sandbox1/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c "echo 'from agent 1' > /workspace/agent1-file.txt" 2>/dev/null || {
+    run_overlay_container "$agent_id1" \
+        "echo 'from agent 1' > /workspace/agent1-file.txt" \
+        "$sandbox1/upper" "$sandbox1/work" 2>/dev/null || {
             rm -rf "$sandbox1" "$sandbox2"
             return 0  # Skip if image missing
         }
 
     # Run container 2 and check for file
     local output
-    output=$(podman run --rm \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$agent_id2" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox2/upper,workdir=$sandbox2/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c "cat /workspace/agent1-file.txt 2>/dev/null || echo 'not found'" 2>&1)
+    output=$(run_overlay_container "$agent_id2" \
+        "cat /workspace/agent1-file.txt 2>/dev/null || echo 'not found'" \
+        "$sandbox2/upper" "$sandbox2/work")
 
     # Cleanup
     rm -rf "$sandbox1" "$sandbox2"
@@ -230,15 +181,8 @@ test_reuse_after_cleanup() {
 
     # First run
     mkdir -p "$sandbox/upper" "$sandbox/work"
-    podman run --rm \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$agent_id" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        echo "first run" 2>/dev/null || {
+    run_overlay_container "$agent_id" "echo 'first run'" \
+        "$sandbox/upper" "$sandbox/work" 2>/dev/null || {
             rm -rf "$sandbox"
             return 0  # Skip if image missing
         }
@@ -249,15 +193,8 @@ test_reuse_after_cleanup() {
 
     # Second run with same ID should work
     local exit_code=0
-    podman run --rm \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$agent_id" \
-        --userns=keep-id \
-        --security-opt label=disable \
-        -v "$TEST_PROJECT:/workspace:O,upperdir=$sandbox/upper,workdir=$sandbox/work" \
-        "$KAPSIS_TEST_IMAGE" \
-        echo "second run" 2>/dev/null || exit_code=$?
+    run_overlay_container "$agent_id" "echo 'second run'" \
+        "$sandbox/upper" "$sandbox/work" 2>/dev/null || exit_code=$?
 
     rm -rf "$sandbox"
 

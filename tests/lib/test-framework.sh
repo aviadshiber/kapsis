@@ -78,6 +78,42 @@ run_simple_container() {
         bash -c "$command" 2>&1
 }
 
+# run_named_container <name> <command> [extra_podman_args...]
+# Runs a named container with standard env vars.
+# Use this for tests that need a specific container name (e.g., for cleanup tracking).
+# Example: run_named_container "mytest-$$" "echo test"
+# Example: run_named_container "mytest-$$" "echo \$MY_VAR" "-e MY_VAR=test"
+run_named_container() {
+    local name="$1"
+    local command="$2"
+    shift 2
+    # shellcheck disable=SC2046 # Word splitting intentional for env args
+    podman run --rm \
+        $(get_test_container_env_args) \
+        --name "$name" \
+        --userns=keep-id \
+        "$@" \
+        "$KAPSIS_TEST_IMAGE" \
+        bash -c "$command" 2>&1
+}
+
+# run_detached_named_container <name> <command> [extra_podman_args...]
+# Runs a named container in detached mode with standard env vars.
+# Returns immediately - use podman rm -f to cleanup.
+run_detached_named_container() {
+    local name="$1"
+    local command="$2"
+    shift 2
+    # shellcheck disable=SC2046 # Word splitting intentional for env args
+    podman run -d \
+        $(get_test_container_env_args) \
+        --name "$name" \
+        --userns=keep-id \
+        "$@" \
+        "$KAPSIS_TEST_IMAGE" \
+        bash -c "$command" 2>&1
+}
+
 # run_overlay_container <name> <command> <upper_dir> <work_dir> [extra_podman_args...]
 # Runs a container with overlay mount for CoW isolation.
 # Use this for tests that need to write to the workspace without affecting the host.

@@ -26,9 +26,9 @@ test_branch_flag_creates_branch() {
     # Run container with KAPSIS_BRANCH env var - entrypoint.sh handles branch creation
     # The init_git_branch function in entrypoint creates/checks out the branch
     local output
+    # shellcheck disable=SC2046  # Word splitting intentional for env args
     output=$(podman run --rm \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+        $(get_test_container_env_args) \
         --name "$CONTAINER_TEST_ID" \
         --hostname "$CONTAINER_TEST_ID" \
         --userns=keep-id \
@@ -177,14 +177,8 @@ test_branch_env_var_passed() {
 
     # Check env var is set
     local output
-    output=$(podman run --rm \
-        -e CI="${CI:-true}" \
-        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
-        --name "$CONTAINER_TEST_ID" \
-        --userns=keep-id \
-        -e KAPSIS_BRANCH="$branch_name" \
-        "$KAPSIS_TEST_IMAGE" \
-        bash -c 'echo $KAPSIS_BRANCH' 2>&1) || true
+    output=$(run_named_container "$CONTAINER_TEST_ID" 'echo $KAPSIS_BRANCH' \
+        -e KAPSIS_BRANCH="$branch_name") || true
 
     cleanup_container_test
 
