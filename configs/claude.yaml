@@ -29,6 +29,66 @@ resources:
   memory: 8g
   cpus: 4
 
+# Security hardening profile
+# Profiles: minimal, standard (default), strict, paranoid
+#
+# Profile Comparison:
+# ┌─────────────┬──────────────────────────────────────────────────────────────┐
+# │ minimal     │ No security restrictions. Use only for trusted execution.    │
+# │ standard    │ Drops dangerous capabilities, prevents privilege escalation. │
+# │ strict      │ Adds syscall filtering, noexec /tmp, lower process limit.   │
+# │ paranoid    │ Adds immutable /usr /bin, requires AppArmor/SELinux.        │
+# └─────────────┴──────────────────────────────────────────────────────────────┘
+#
+# What each protection does:
+#   • capabilities: Dropping them prevents raw network access, mounting, etc.
+#   • no-new-privileges: Blocks setuid executables from gaining permissions.
+#   • pids_limit: Max processes. Prevents fork bombs (1000 = plenty for builds).
+#   • seccomp: Blocks dangerous syscalls (ptrace, mount, bpf) at kernel level.
+#   • noexec_tmp: Prevents executing binaries written to /tmp.
+#   • readonly_root: Makes /usr, /bin immutable (/workspace stays writable).
+#
+security:
+  profile: standard
+
+  # Enable seccomp filtering to block ptrace/mount/bpf syscalls
+  # This adds kernel-level protection against container escape attempts
+  seccomp:
+    enabled: true
+
+  # Keep higher PID limit for parallel builds (Maven, Gradle)
+  process:
+    pids_limit: 1000
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Configuration Examples:
+  # ─────────────────────────────────────────────────────────────────────────
+  #
+  # Example 1: Maximum security for untrusted execution
+  # security:
+  #   profile: strict
+  #   filesystem:
+  #     noexec_tmp: true
+  #     readonly_root: true
+  #
+  # Example 2: Trusted execution (no restrictions)
+  # security:
+  #   profile: minimal
+  #
+  # Example 3: High-process workloads (large monorepos)
+  # security:
+  #   profile: standard
+  #   seccomp:
+  #     enabled: true
+  #   process:
+  #     pids_limit: 2000
+  #
+  # Example 4: Air-gapped security (requires LSM setup)
+  # security:
+  #   profile: paranoid
+  #   lsm:
+  #     required: true
+
 maven:
   mirror_url: "https://artifactory.example.org/artifactory/releases"
   block_remote_snapshots: true

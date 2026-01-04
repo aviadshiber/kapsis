@@ -112,6 +112,56 @@ resources:
   # pids: 1000
 
 #===============================================================================
+# SECURITY HARDENING
+#===============================================================================
+# Container security profiles with increasing levels of protection.
+# See docs/SECURITY-HARDENING.md for detailed documentation.
+#
+# Profiles:
+#   minimal   - No restrictions (trusted execution only)
+#   standard  - Drops capabilities, prevents privilege escalation
+#   strict    - Adds syscall filtering (seccomp), noexec /tmp (untrusted execution)
+#   paranoid  - Adds read-only root, requires AppArmor/SELinux
+#
+security:
+  # Security profile to use
+  # Default: standard
+  profile: standard
+
+  # Seccomp syscall filtering
+  # Blocks dangerous syscalls: ptrace, mount, bpf, kexec_load, etc.
+  # Default: enabled for strict/paranoid, disabled for standard/minimal
+  seccomp:
+    enabled: true  # Recommended even for standard profile
+    # profile: /custom/seccomp.json  # Optional custom profile
+
+  # Process isolation
+  process:
+    # Maximum processes the agent can spawn (prevents fork bombs)
+    # Default: minimal=unlimited, standard=1000, strict=500, paranoid=300
+    pids_limit: 1000
+
+    # Prevent setuid/setgid executables from escalating privileges
+    # Default: true for standard/strict/paranoid
+    no_new_privileges: true
+
+  # Filesystem hardening
+  filesystem:
+    # Mount /tmp with noexec flag (blocks executing code from /tmp)
+    # Default: true for strict/paranoid
+    noexec_tmp: false
+
+    # Make container root (/usr, /bin) read-only (/workspace remains writable)
+    # Default: true for paranoid only
+    readonly_root: false
+
+  # Linux Security Modules (AppArmor/SELinux)
+  lsm:
+    # Require AppArmor or SELinux policy to be installed
+    # Default: true for paranoid only
+    required: false
+
+#===============================================================================
 # MAVEN ISOLATION
 #===============================================================================
 maven:
