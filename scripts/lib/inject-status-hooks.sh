@@ -226,6 +226,12 @@ EOF
 #===============================================================================
 
 inject_gist_instructions() {
+    # Requires opt-in via config (default: false for safe rollout)
+    if [[ "${KAPSIS_INJECT_GIST:-false}" != "true" ]]; then
+        log_debug "Gist injection disabled (set agent.inject_gist: true to enable)"
+        return 0
+    fi
+
     local workspace="${KAPSIS_WORKSPACE:-/workspace}"
     local kapsis_dir="${workspace}/.kapsis"
     local gist_instructions="${KAPSIS_LIB:-/opt/kapsis/lib}/gist-instructions.md"

@@ -90,15 +90,20 @@ _status_timestamp() {
     fi
 }
 
-# Escape string for JSON (handles quotes, backslashes, newlines)
+# Escape string for JSON (handles quotes, backslashes, newlines, control chars)
+# Security: Removes control characters that could break JSON parsing or enable injection
 _status_json_escape() {
     local str="$1"
-    # Escape backslashes first, then quotes, then newlines
+    # Escape backslashes first, then quotes, then whitespace chars
     str="${str//\\/\\\\}"
     str="${str//\"/\\\"}"
     str="${str//$'\n'/\\n}"
     str="${str//$'\r'/\\r}"
     str="${str//$'\t'/\\t}"
+    # Security: Remove control characters (0x00-0x1F except those already handled)
+    # This prevents JSON injection and parsing issues
+    # Using tr to remove: NUL, SOH-US (except \t\n\r already escaped), DEL
+    str=$(printf '%s' "$str" | tr -d '\000-\010\013\014\016-\037\177')
     echo "$str"
 }
 
@@ -328,13 +333,28 @@ status_set_gist() {
 # This function reads it and updates internal state
 # Arguments:
 #   $1 - Path to gist file (default: $KAPSIS_GIST_FILE)
+# Security:
+#   - Path is canonicalized with realpath to prevent traversal attacks
+#   - Only reads files within /workspace/.kapsis/ directory
 status_read_gist_file() {
     local gist_file="${1:-$KAPSIS_GIST_FILE}"
 
-    if [[ -f "$gist_file" ]]; then
+    # Security: Canonicalize path to prevent directory traversal
+    # realpath -m allows non-existent paths (for validation before file exists)
+    local canonical_path
+    canonical_path=$(realpath -m "$gist_file" 2>/dev/null) || return 0
+
+    # Security: Only allow gist files within the workspace .kapsis directory
+    local allowed_prefix="/workspace/.kapsis/"
+    if [[ "$canonical_path" != "${allowed_prefix}"* ]]; then
+        # Path escapes allowed directory - silently ignore for security
+        return 0
+    fi
+
+    if [[ -f "$canonical_path" ]]; then
         local gist
         # Read first 500 chars, strip newlines
-        gist=$(head -c 500 "$gist_file" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+        gist=$(head -c 500 "$canonical_path" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
         if [[ -n "$gist" ]]; then
             status_set_gist "$gist"
         fi
