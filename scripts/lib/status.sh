@@ -65,6 +65,10 @@ _KAPSIS_REMOTE_COMMIT=""    # Remote HEAD commit SHA after push
 _KAPSIS_GIST=""                  # Current gist message from agent
 _KAPSIS_GIST_UPDATED_AT=""       # When gist was last updated
 
+# Gist rate limiting state (reduce I/O on frequent PostToolUse calls)
+_KAPSIS_GIST_LAST_READ=""        # Epoch timestamp of last gist read
+_KAPSIS_GIST_LAST_MTIME=""       # Last known file mtime
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -336,6 +340,9 @@ status_set_gist() {
 # Security:
 #   - Path is canonicalized with realpath to prevent traversal attacks
 #   - Only reads files within /workspace/.kapsis/ directory
+# Rate Limiting:
+#   - Time debounce: Skip read if read within last N seconds (KAPSIS_GIST_DEBOUNCE, default: 5)
+#   - Mtime bypass: If file changed (different mtime), read immediately
 status_read_gist_file() {
     local gist_file="${1:-$KAPSIS_GIST_FILE}"
 
@@ -352,11 +359,38 @@ status_read_gist_file() {
     fi
 
     if [[ -f "$canonical_path" ]]; then
-        local gist
-        # Read first 500 chars, strip newlines
-        gist=$(head -c 500 "$canonical_path" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
-        if [[ -n "$gist" ]]; then
-            status_set_gist "$gist"
+        local should_read=false
+        local now
+        now=$(date +%s)
+
+        # Check mtime - if file changed, always read (bypass debounce)
+        local current_mtime
+        # macOS uses -f %m, Linux uses -c %Y
+        current_mtime=$(stat -f %m "$canonical_path" 2>/dev/null || stat -c %Y "$canonical_path" 2>/dev/null || echo "")
+
+        if [[ -n "$current_mtime" && "$current_mtime" != "${_KAPSIS_GIST_LAST_MTIME:-}" ]]; then
+            should_read=true
+            _KAPSIS_GIST_LAST_MTIME="$current_mtime"
+        fi
+
+        # Time debounce (default: 5 seconds)
+        # Only check time if mtime didn't trigger a read
+        if [[ "$should_read" != "true" ]]; then
+            local debounce_secs="${KAPSIS_GIST_DEBOUNCE:-5}"
+            if [[ -z "$_KAPSIS_GIST_LAST_READ" ]] || (( now - _KAPSIS_GIST_LAST_READ >= debounce_secs )); then
+                should_read=true
+            fi
+        fi
+
+        # Update last read timestamp when we actually read
+        if [[ "$should_read" == "true" ]]; then
+            _KAPSIS_GIST_LAST_READ="$now"
+            local gist
+            # Read first 500 chars, strip newlines
+            gist=$(head -c 500 "$canonical_path" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+            if [[ -n "$gist" ]]; then
+                status_set_gist "$gist"
+            fi
         fi
     fi
 }
