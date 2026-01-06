@@ -29,6 +29,11 @@ agent:
   # Default: /workspace
   workdir: /workspace
 
+  # Enable gist instruction injection into project files (CLAUDE.md, AGENTS.md)
+  # When true, appends gist update instructions to help agents report live status
+  # Default: false (opt-in for safe rollout)
+  inject_gist: false
+
 #===============================================================================
 # FILESYSTEM MOUNTS
 #===============================================================================

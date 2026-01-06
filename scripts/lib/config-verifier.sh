@@ -307,6 +307,17 @@ validate_launch_config() {
         fi
     fi
 
+    # Validate agent.inject_gist if present
+    local inject_gist
+    inject_gist=$(yq -r '.agent.inject_gist // ""' "$config_file" 2>/dev/null)
+    if [[ -n "$inject_gist" && "$inject_gist" != "null" ]]; then
+        if [[ "$inject_gist" == "true" || "$inject_gist" == "false" ]]; then
+            log_pass "Valid agent.inject_gist: $inject_gist"
+        else
+            log_error "Invalid agent.inject_gist: $inject_gist (must be true/false)"
+        fi
+    fi
+
     return 0
 }
 
