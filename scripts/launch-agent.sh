@@ -837,26 +837,25 @@ setup_overlay_sandbox() {
 # VOLUME MOUNTS GENERATION (dispatches to mode-specific)
 #===============================================================================
 generate_volume_mounts() {
+    VOLUME_MOUNTS=()
+
+    # Mode-specific workspace mount
     if [[ "$SANDBOX_MODE" == "worktree" ]]; then
-        generate_volume_mounts_worktree
+        generate_worktree_specific_mounts
     else
-        generate_volume_mounts_overlay
+        generate_overlay_specific_mounts
     fi
+
+    # Common mounts (shared by both modes)
+    generate_common_volume_mounts
 }
 
 #===============================================================================
-# WORKTREE VOLUME MOUNTS
+# WORKTREE-SPECIFIC MOUNTS
 #===============================================================================
-generate_volume_mounts_worktree() {
-    VOLUME_MOUNTS=()
-
+generate_worktree_specific_mounts() {
     # Mount worktree directly (no overlay needed!)
     VOLUME_MOUNTS+=("-v" "${WORKTREE_PATH}:/workspace")
-
-    # Status reporting directory (shared between host and container)
-    local status_dir="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
-    ensure_dir "$status_dir"
-    VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
 
     # Mount sanitized git at $CONTAINER_GIT_PATH, replacing the worktree's .git file
     # This makes git work without needing GIT_DIR environment variable
@@ -864,41 +863,20 @@ generate_volume_mounts_worktree() {
 
     # Mount objects directory read-only
     VOLUME_MOUNTS+=("-v" "${OBJECTS_PATH}:${CONTAINER_OBJECTS_PATH}:ro")
-
-    # Maven repository (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")
-
-    # Gradle cache (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-gradle:/home/developer/.gradle")
-
-    # GE workspace (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-ge:/home/developer/.m2/.gradle-enterprise")
-
-    # Spec file (if provided)
-    if [[ -n "$SPEC_FILE" ]]; then
-        SPEC_FILE_ABS="$(cd "$(dirname "$SPEC_FILE")" && pwd)/$(basename "$SPEC_FILE")"
-        VOLUME_MOUNTS+=("-v" "${SPEC_FILE_ABS}:/task-spec.md:ro")
-    fi
-
-    # Filesystem whitelist from config
-    generate_filesystem_includes
-
-    # SSH known_hosts for verified git remotes
-    generate_ssh_known_hosts
-    if [[ -n "$SSH_KNOWN_HOSTS_FILE" ]]; then
-        VOLUME_MOUNTS+=("-v" "${SSH_KNOWN_HOSTS_FILE}:/etc/ssh/ssh_known_hosts:ro")
-    fi
 }
 
 #===============================================================================
-# OVERLAY VOLUME MOUNTS (legacy)
+# OVERLAY-SPECIFIC MOUNTS (legacy)
 #===============================================================================
-generate_volume_mounts_overlay() {
-    VOLUME_MOUNTS=()
-
+generate_overlay_specific_mounts() {
     # Project with CoW overlay
     VOLUME_MOUNTS+=("-v" "${PROJECT_PATH}:/workspace:O,upperdir=${UPPER_DIR},workdir=${WORK_DIR}")
+}
 
+#===============================================================================
+# COMMON VOLUME MOUNTS (shared by both modes)
+#===============================================================================
+generate_common_volume_mounts() {
     # Status reporting directory (shared between host and container)
     local status_dir="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
     ensure_dir "$status_dir"
