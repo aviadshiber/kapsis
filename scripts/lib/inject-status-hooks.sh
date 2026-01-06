@@ -222,6 +222,79 @@ EOF
 }
 
 #===============================================================================
+# Gist Instructions (All Agents)
+#===============================================================================
+
+inject_gist_instructions() {
+    # Requires opt-in via config (default: false for safe rollout)
+    if [[ "${KAPSIS_INJECT_GIST:-false}" != "true" ]]; then
+        log_debug "Gist injection disabled (set agent.inject_gist: true to enable)"
+        return 0
+    fi
+
+    local workspace="${KAPSIS_WORKSPACE:-/workspace}"
+    local kapsis_dir="${workspace}/.kapsis"
+    local gist_instructions="${KAPSIS_LIB:-/opt/kapsis/lib}/gist-instructions.md"
+
+    # Create .kapsis directory in workspace (where gist.txt will be written)
+    mkdir -p "$kapsis_dir"
+
+    # Only inject if gist instructions file exists
+    if [[ ! -f "$gist_instructions" ]]; then
+        log_debug "Gist instructions not found: $gist_instructions"
+        return 0
+    fi
+
+    local marker="Kapsis Activity Gist"
+    local injected=false
+
+    # Append to CLAUDE.md if it exists (for Claude Code)
+    local claude_md="${workspace}/CLAUDE.md"
+    if [[ -f "$claude_md" ]]; then
+        if ! grep -q "$marker" "$claude_md" 2>/dev/null; then
+            {
+                echo ""
+                echo "---"
+                echo ""
+                cat "$gist_instructions"
+            } >> "$claude_md"
+            log_debug "Gist instructions appended to $claude_md"
+            injected=true
+        fi
+    fi
+
+    # Append to AGENTS.md if it exists (for Gemini CLI, Codex CLI)
+    local agents_md="${workspace}/AGENTS.md"
+    if [[ -f "$agents_md" ]]; then
+        if ! grep -q "$marker" "$agents_md" 2>/dev/null; then
+            {
+                echo ""
+                echo "---"
+                echo ""
+                cat "$gist_instructions"
+            } >> "$agents_md"
+            log_debug "Gist instructions appended to $agents_md"
+            injected=true
+        fi
+    fi
+
+    # Always create .kapsis/README.md as fallback for agents that explore workspace
+    local kapsis_readme="${kapsis_dir}/README.md"
+    if [[ ! -f "$kapsis_readme" ]]; then
+        cp "$gist_instructions" "$kapsis_readme"
+        log_debug "Gist instructions placed in $kapsis_readme"
+        injected=true
+    fi
+
+    if [[ "$injected" == "true" ]]; then
+        log_success "Gist instructions injected for all agents"
+    else
+        log_debug "Gist instructions already present"
+    fi
+    return 0
+}
+
+#===============================================================================
 # Main Logic
 #===============================================================================
 
@@ -233,6 +306,9 @@ inject_kapsis_hooks() {
         log_debug "Status tracking not enabled (KAPSIS_STATUS_AGENT_ID not set)"
         return 0
     fi
+
+    # Inject gist instructions (works for all agents)
+    inject_gist_instructions
 
     # Verify hooks exist
     if [[ ! -x "$STATUS_HOOK" ]]; then

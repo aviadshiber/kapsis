@@ -43,6 +43,7 @@ _KAPSIS_STATUS_LOADED=1
 : "${KAPSIS_STATUS_DIR:=${HOME}/.kapsis/status}"
 : "${KAPSIS_STATUS_ENABLED:=true}"
 : "${KAPSIS_STATUS_VERSION:=1.0}"
+: "${KAPSIS_GIST_FILE:=/workspace/.kapsis/gist.txt}"
 
 # Internal state
 _KAPSIS_STATUS_PROJECT=""
@@ -59,6 +60,14 @@ _KAPSIS_PUSH_STATUS=""           # "success", "failed", "skipped", "unverified"
 _KAPSIS_PUSH_FALLBACK_CMD=""     # Fallback command for agent recovery when push fails
 _KAPSIS_LOCAL_COMMIT=""     # Local HEAD commit SHA
 _KAPSIS_REMOTE_COMMIT=""    # Remote HEAD commit SHA after push
+
+# Agent gist state (agent-provided summary of current activity)
+_KAPSIS_GIST=""                  # Current gist message from agent
+_KAPSIS_GIST_UPDATED_AT=""       # When gist was last updated
+
+# Gist rate limiting state (reduce I/O on frequent PostToolUse calls)
+_KAPSIS_GIST_LAST_READ=""        # Epoch timestamp of last gist read
+_KAPSIS_GIST_LAST_MTIME=""       # Last known file mtime
 
 # =============================================================================
 # Helper Functions
@@ -85,15 +94,20 @@ _status_timestamp() {
     fi
 }
 
-# Escape string for JSON (handles quotes, backslashes, newlines)
+# Escape string for JSON (handles quotes, backslashes, newlines, control chars)
+# Security: Removes control characters that could break JSON parsing or enable injection
 _status_json_escape() {
     local str="$1"
-    # Escape backslashes first, then quotes, then newlines
+    # Escape backslashes first, then quotes, then whitespace chars
     str="${str//\\/\\\\}"
     str="${str//\"/\\\"}"
     str="${str//$'\n'/\\n}"
     str="${str//$'\r'/\\r}"
     str="${str//$'\t'/\\t}"
+    # Security: Remove control characters (0x00-0x1F except those already handled)
+    # This prevents JSON injection and parsing issues
+    # Using tr to remove: NUL, SOH-US (except \t\n\r already escaped), DEL
+    str=$(printf '%s' "$str" | tr -d '\000-\010\013\014\016-\037\177')
     echo "$str"
 }
 
@@ -304,6 +318,84 @@ status_push_skipped() {
 }
 
 # =============================================================================
+# Agent Gist (Activity Summary)
+# =============================================================================
+
+# Set agent gist from a message
+# Called by hooks when they read the gist file
+# Arguments:
+#   $1 - Gist message (truncated to 500 chars for safety)
+status_set_gist() {
+    local gist="${1:-}"
+    # Truncate to 500 chars for safety
+    _KAPSIS_GIST="${gist:0:500}"
+    _KAPSIS_GIST_UPDATED_AT=$(_status_timestamp)
+}
+
+# Read gist from the signaling file
+# The agent writes to $KAPSIS_GIST_FILE (default: /workspace/.kapsis/gist.txt)
+# This function reads it and updates internal state
+# Arguments:
+#   $1 - Path to gist file (default: $KAPSIS_GIST_FILE)
+# Security:
+#   - Path is canonicalized with realpath to prevent traversal attacks
+#   - Only reads files within /workspace/.kapsis/ directory
+# Rate Limiting:
+#   - Time debounce: Skip read if read within last N seconds (KAPSIS_GIST_DEBOUNCE, default: 5)
+#   - Mtime bypass: If file changed (different mtime), read immediately
+status_read_gist_file() {
+    local gist_file="${1:-$KAPSIS_GIST_FILE}"
+
+    # Security: Canonicalize path to prevent directory traversal
+    # realpath -m allows non-existent paths (for validation before file exists)
+    local canonical_path
+    canonical_path=$(realpath -m "$gist_file" 2>/dev/null) || return 0
+
+    # Security: Only allow gist files within the workspace .kapsis directory
+    local allowed_prefix="/workspace/.kapsis/"
+    if [[ "$canonical_path" != "${allowed_prefix}"* ]]; then
+        # Path escapes allowed directory - silently ignore for security
+        return 0
+    fi
+
+    if [[ -f "$canonical_path" ]]; then
+        local should_read=false
+        local now
+        now=$(date +%s)
+
+        # Check mtime - if file changed, always read (bypass debounce)
+        local current_mtime
+        # macOS uses -f %m, Linux uses -c %Y
+        current_mtime=$(stat -f %m "$canonical_path" 2>/dev/null || stat -c %Y "$canonical_path" 2>/dev/null || echo "")
+
+        if [[ -n "$current_mtime" && "$current_mtime" != "${_KAPSIS_GIST_LAST_MTIME:-}" ]]; then
+            should_read=true
+            _KAPSIS_GIST_LAST_MTIME="$current_mtime"
+        fi
+
+        # Time debounce (default: 5 seconds)
+        # Only check time if mtime didn't trigger a read
+        if [[ "$should_read" != "true" ]]; then
+            local debounce_secs="${KAPSIS_GIST_DEBOUNCE:-5}"
+            if [[ -z "$_KAPSIS_GIST_LAST_READ" ]] || (( now - _KAPSIS_GIST_LAST_READ >= debounce_secs )); then
+                should_read=true
+            fi
+        fi
+
+        # Update last read timestamp when we actually read
+        if [[ "$should_read" == "true" ]]; then
+            _KAPSIS_GIST_LAST_READ="$now"
+            local gist
+            # Read first 500 chars, strip newlines
+            gist=$(head -c 500 "$canonical_path" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+            if [[ -n "$gist" ]]; then
+                status_set_gist "$gist"
+            fi
+        fi
+    fi
+}
+
+# =============================================================================
 # Internal Write Function
 # =============================================================================
 
@@ -370,6 +462,16 @@ _status_write() {
         push_fallback_json="\"$escaped_fallback\""
     fi
 
+    # Agent gist fields
+    local gist_json="null"
+    local gist_updated_at_json="null"
+    if [[ -n "$_KAPSIS_GIST" ]]; then
+        local escaped_gist
+        escaped_gist=$(_status_json_escape "$_KAPSIS_GIST")
+        gist_json="\"$escaped_gist\""
+        [[ -n "$_KAPSIS_GIST_UPDATED_AT" ]] && gist_updated_at_json="\"$_KAPSIS_GIST_UPDATED_AT\""
+    fi
+
     # Build JSON (using heredoc for readability)
     local json
     json=$(cat << EOF
@@ -382,6 +484,8 @@ _status_write() {
   "phase": "${phase}",
   "progress": ${progress},
   "message": "${escaped_message}",
+  "gist": ${gist_json},
+  "gist_updated_at": ${gist_updated_at_json},
   "started_at": "${_KAPSIS_STATUS_STARTED}",
   "updated_at": "${updated_at}",
   "exit_code": ${exit_code_json},

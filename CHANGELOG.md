@@ -6,7 +6,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.4.0] - 2026-01-04
+## [1.5.1] - 2026-01-06
+
+### Changed
+- Bump actions/checkout from 4.3.1 to 6.0.1 in the github-actions group (#108)
+
+## [Unreleased]
+
+## [0.8.3] - 2025-12-28
+
+### Added
+- Add agent gist for live activity updates
+
+### Fixed
+- Prevent CWD corruption in scope validation tests
+- Improve gist feature with constant and instruction injection
+
+### Security
+- Harden gist feature with path validation and config control
+
 
 ### Added
 - Add --dev flag for developer setup with pre-commit hooks
@@ -31,9 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Make security profiles interactive with hover/click
 - Add security profiles spectrum visualization
 
-## [Unreleased]
-
-## [0.8.3] - 2025-12-28
 
 ### Fixed
 - Help text shows correct command name for package manager installs
@@ -294,7 +309,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.5.1...HEAD
+[1.5.1]: https://github.com/aviadshiber/kapsis/releases/tag/v1.5.1
+[1.5.0]: https://github.com/aviadshiber/kapsis/releases/tag/v1.5.0
 [1.4.0]: https://github.com/aviadshiber/kapsis/releases/tag/v1.4.0
 [1.3.2]: https://github.com/aviadshiber/kapsis/releases/tag/v1.3.2
 [1.3.1]: https://github.com/aviadshiber/kapsis/releases/tag/v1.3.1
