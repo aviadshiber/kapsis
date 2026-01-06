@@ -9,6 +9,7 @@
 #   - get_file_mtime() returns Unix epoch timestamps
 #   - is_macos() / is_linux() correctly detect platform
 #   - get_file_md5() returns correct 32-char hex hash
+#   - expand_path_vars() expands ~, $HOME, $KAPSIS_ROOT in paths
 #
 # Note: Tests run on the current platform and verify correct behavior for that
 # platform. Cross-platform consistency is verified via CI on both Linux and macOS.
@@ -407,6 +408,129 @@ test_get_file_md5_same_content() {
 }
 
 #===============================================================================
+# expand_path_vars() TESTS
+#===============================================================================
+
+test_expand_path_vars_tilde() {
+    log_test "expand_path_vars: expands ~ to \$HOME"
+
+    local result
+    result=$(expand_path_vars "~/.config/test")
+
+    assert_equals "$HOME/.config/test" "$result" "Tilde should expand to \$HOME"
+}
+
+test_expand_path_vars_tilde_only() {
+    log_test "expand_path_vars: expands standalone ~"
+
+    local result
+    result=$(expand_path_vars "~")
+
+    assert_equals "$HOME" "$result" "Standalone ~ should expand to \$HOME"
+}
+
+test_expand_path_vars_dollar_home() {
+    log_test "expand_path_vars: expands \$HOME to actual path"
+
+    local result
+    result=$(expand_path_vars '$HOME/.config/test')
+
+    assert_equals "$HOME/.config/test" "$result" "\$HOME should expand to actual home directory"
+}
+
+test_expand_path_vars_dollar_home_braces() {
+    log_test "expand_path_vars: expands \${HOME} to actual path"
+
+    local result
+    result=$(expand_path_vars '${HOME}/.config/test')
+
+    assert_equals "$HOME/.config/test" "$result" "\${HOME} should expand to actual home directory"
+}
+
+test_expand_path_vars_kapsis_root() {
+    log_test "expand_path_vars: expands \$KAPSIS_ROOT to actual path"
+
+    # KAPSIS_ROOT should be set by test-framework.sh
+    local result
+    result=$(expand_path_vars '$KAPSIS_ROOT/configs/test.yaml')
+
+    assert_equals "$KAPSIS_ROOT/configs/test.yaml" "$result" "\$KAPSIS_ROOT should expand to actual Kapsis root"
+}
+
+test_expand_path_vars_kapsis_root_braces() {
+    log_test "expand_path_vars: expands \${KAPSIS_ROOT} to actual path"
+
+    local result
+    result=$(expand_path_vars '${KAPSIS_ROOT}/configs/test.yaml')
+
+    assert_equals "$KAPSIS_ROOT/configs/test.yaml" "$result" "\${KAPSIS_ROOT} should expand to actual Kapsis root"
+}
+
+test_expand_path_vars_absolute_path() {
+    log_test "expand_path_vars: preserves absolute paths without variables"
+
+    local result
+    result=$(expand_path_vars "/usr/local/bin/test")
+
+    assert_equals "/usr/local/bin/test" "$result" "Absolute paths should be preserved"
+}
+
+test_expand_path_vars_relative_path() {
+    log_test "expand_path_vars: preserves relative paths without variables"
+
+    local result
+    result=$(expand_path_vars "./config/test.yaml")
+
+    assert_equals "./config/test.yaml" "$result" "Relative paths should be preserved"
+}
+
+test_expand_path_vars_middle_of_path() {
+    log_test "expand_path_vars: expands variables in middle of path"
+
+    local result
+    result=$(expand_path_vars '/opt$HOME/test')
+
+    # $HOME in the middle should still be expanded
+    assert_equals "/opt$HOME/test" "$result" "\$HOME in middle of path should expand"
+}
+
+test_expand_path_vars_multiple_vars() {
+    log_test "expand_path_vars: expands multiple occurrences"
+
+    local result
+    result=$(expand_path_vars '$HOME/projects$HOME/test')
+
+    assert_equals "$HOME/projects$HOME/test" "$result" "Multiple \$HOME should both expand"
+}
+
+test_expand_path_vars_empty_string() {
+    log_test "expand_path_vars: handles empty string"
+
+    local result
+    result=$(expand_path_vars "")
+
+    assert_equals "" "$result" "Empty string should return empty"
+}
+
+test_expand_path_vars_no_expansion_needed() {
+    log_test "expand_path_vars: handles paths with no variables"
+
+    local result
+    result=$(expand_path_vars "/etc/passwd")
+
+    assert_equals "/etc/passwd" "$result" "Path without variables should be unchanged"
+}
+
+test_expand_path_vars_spaces_in_path() {
+    log_test "expand_path_vars: handles paths with spaces"
+
+    local result
+    result=$(expand_path_vars '$HOME/My Documents/test file.txt')
+
+    assert_equals "$HOME/My Documents/test file.txt" "$result" "Paths with spaces should work"
+}
+
+#===============================================================================
 # EDGE CASES
 #===============================================================================
 
@@ -519,6 +643,21 @@ main() {
     run_test test_get_file_md5_binary_content
     run_test test_get_file_md5_different_content
     run_test test_get_file_md5_same_content
+
+    # expand_path_vars() tests
+    run_test test_expand_path_vars_tilde
+    run_test test_expand_path_vars_tilde_only
+    run_test test_expand_path_vars_dollar_home
+    run_test test_expand_path_vars_dollar_home_braces
+    run_test test_expand_path_vars_kapsis_root
+    run_test test_expand_path_vars_kapsis_root_braces
+    run_test test_expand_path_vars_absolute_path
+    run_test test_expand_path_vars_relative_path
+    run_test test_expand_path_vars_middle_of_path
+    run_test test_expand_path_vars_multiple_vars
+    run_test test_expand_path_vars_empty_string
+    run_test test_expand_path_vars_no_expansion_needed
+    run_test test_expand_path_vars_spaces_in_path
 
     # Edge cases
     run_test test_special_characters_in_filename

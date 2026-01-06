@@ -86,6 +86,9 @@ source "$SCRIPT_DIR/lib/constants.sh"
 # Source security library (provides generate_security_args, validate_security_config, etc.)
 source "$SCRIPT_DIR/lib/security.sh"
 
+# Source cross-platform compatibility helpers (provides expand_path_vars, etc.)
+source "$SCRIPT_DIR/lib/compat.sh"
+
 # Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
 NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
 
@@ -813,8 +816,8 @@ parse_config() {
         exit 1
     fi
 
-    # Expand ~ in paths
-    SANDBOX_UPPER_BASE="${SANDBOX_UPPER_BASE/#\~/$HOME}"
+    # Expand environment variables in paths (fixes #104)
+    SANDBOX_UPPER_BASE=$(expand_path_vars "$SANDBOX_UPPER_BASE")
 
     log_debug "Config parsed successfully:"
     log_debug "  AGENT_COMMAND=$AGENT_COMMAND"
@@ -1032,7 +1035,8 @@ generate_filesystem_includes() {
     if [[ -n "$FILESYSTEM_INCLUDES" ]]; then
         while IFS= read -r path; do
             [[ -z "$path" ]] && continue
-            expanded_path="${path/#\~/$HOME}"
+            # Expand environment variables in path (fixes #104)
+            expanded_path=$(expand_path_vars "$path")
 
             if [[ ! -e "$expanded_path" ]]; then
                 log_debug "Skipping non-existent path: ${expanded_path}"
@@ -1040,7 +1044,8 @@ generate_filesystem_includes() {
             fi
 
             # Home directory paths: use staging-and-copy pattern
-            if [[ "$path" == "~"* ]] || [[ "$expanded_path" == "$HOME"* ]]; then
+            # Check original path for ~, $HOME, or ${HOME} patterns
+            if [[ "$path" == "~"* ]] || [[ "$path" == *'$HOME'* ]] || [[ "$path" == *'${HOME}'* ]] || [[ "$expanded_path" == "$HOME"* ]]; then
                 # Extract relative path (e.g., .claude, .gitconfig)
                 relative_path="${expanded_path#"$HOME"/}"
                 staging_path="${staging_dir}/${relative_path}"

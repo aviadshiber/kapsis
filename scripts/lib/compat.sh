@@ -90,3 +90,37 @@ get_file_md5() {
         md5sum "$file" 2>/dev/null | cut -d' ' -f1
     fi
 }
+
+#-------------------------------------------------------------------------------
+# expand_path_vars <path>
+#
+# Expands environment variables and tilde in a path string.
+# Supports:
+#   - ~ (tilde) -> $HOME
+#   - $HOME -> actual home directory path
+#   - $KAPSIS_ROOT -> actual Kapsis installation path
+#
+# This is used to expand paths read from YAML config files where
+# shell expansion doesn't occur automatically.
+#
+# Security: Uses explicit variable substitution instead of eval to
+# prevent command injection attacks.
+#-------------------------------------------------------------------------------
+expand_path_vars() {
+    local path="$1"
+
+    # Expand tilde at start of path
+    path="${path/#\~/$HOME}"
+
+    # Expand $HOME (with optional braces)
+    path="${path//\$\{HOME\}/$HOME}"
+    path="${path//\$HOME/$HOME}"
+
+    # Expand $KAPSIS_ROOT (with optional braces)
+    if [[ -n "${KAPSIS_ROOT:-}" ]]; then
+        path="${path//\$\{KAPSIS_ROOT\}/$KAPSIS_ROOT}"
+        path="${path//\$KAPSIS_ROOT/$KAPSIS_ROOT}"
+    fi
+
+    echo "$path"
+}
