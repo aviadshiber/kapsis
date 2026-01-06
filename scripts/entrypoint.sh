@@ -643,42 +643,31 @@ setup_status_tracking() {
 
     log_info "Setting up status tracking for agent: $agent_type"
 
-    # Use library functions if available for capability detection
-    if type agent_supports_hooks &>/dev/null; then
-        if agent_supports_hooks "$agent_type"; then
-            case "$agent_type" in
-                "$AGENT_TYPE_CLAUDE_CLI"|claude-cli)   setup_claude_hooks ;;
-                "$AGENT_TYPE_CODEX_CLI"|codex-cli)     setup_codex_hooks ;;
-                "$AGENT_TYPE_GEMINI_CLI"|gemini-cli)   setup_gemini_hooks ;;
-            esac
-        elif agent_uses_python_status "$agent_type" 2>/dev/null; then
-            log_info "Python agent - status.py library available for direct integration"
-        else
-            log_info "Using progress monitor fallback for agent: $agent_type"
-            start_progress_monitor
-            inject_progress_instructions
-        fi
+    # Agent hook lookup: maps normalized agent type to display name
+    # Format: <agent-type>|<display-name> for agents with hook support
+    local hook_agents="claude-cli|Claude Code
+codex-cli|Codex CLI
+gemini-cli|Gemini CLI"
+
+    # Python agents that use status.py directly (no hooks needed)
+    local python_agents="python claude-api"
+
+    # Check if this agent supports hooks
+    local hook_entry display_name
+    hook_entry=$(echo "$hook_agents" | grep "^${agent_type}|" || true)
+
+    if [[ -n "$hook_entry" ]]; then
+        # Agent supports hooks - install them
+        display_name="${hook_entry#*|}"
+        install_agent_hooks "$agent_type" "$display_name"
+    elif [[ " $python_agents " == *" $agent_type "* ]]; then
+        # Python agent - status.py library available
+        log_info "Python agent - status.py library available for direct integration"
     else
-        # Fallback if library not loaded
-        case "$agent_type" in
-            claude|claude-cli)
-                setup_claude_hooks
-                ;;
-            codex|codex-cli)
-                setup_codex_hooks
-                ;;
-            gemini|gemini-cli)
-                setup_gemini_hooks
-                ;;
-            python|claude-api)
-                log_info "Python agent - status.py library available for direct integration"
-                ;;
-            *)
-                log_info "Using progress monitor fallback for agent: $agent_type"
-                start_progress_monitor
-                inject_progress_instructions
-                ;;
-        esac
+        # Fallback to progress monitor for unsupported agents
+        log_info "Using progress monitor fallback for agent: $agent_type"
+        start_progress_monitor
+        inject_progress_instructions
     fi
 }
 
@@ -718,10 +707,9 @@ install_agent_hooks() {
     fi
 }
 
-# Agent-specific wrappers (for backward compatibility and clarity)
-setup_claude_hooks() { install_agent_hooks "claude-cli" "Claude Code"; }
-setup_codex_hooks()  { install_agent_hooks "codex-cli" "Codex CLI"; }
-setup_gemini_hooks() { install_agent_hooks "gemini-cli" "Gemini CLI"; }
+# Note: Agent-specific wrapper functions (setup_claude_hooks, etc.) have been
+# removed in favor of the data-driven lookup in setup_status_tracking().
+# Add new agents by updating the hook_agents variable there.
 
 # Start background progress monitor for agents without hook support
 start_progress_monitor() {
