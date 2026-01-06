@@ -110,48 +110,20 @@ ensure_git_excludes() {
     # Ensure info directory exists
     mkdir -p "$git_dir/info"
 
-    # Marker comment to identify Kapsis-added patterns
-    local marker="# Kapsis protective patterns"
-
     # Check if patterns are already present (idempotency check)
-    if [[ -f "$exclude_path" ]] && grep -qF "$marker" "$exclude_path" 2>/dev/null; then
+    # Uses KAPSIS_GIT_EXCLUDE_MARKER from constants.sh
+    if [[ -f "$exclude_path" ]] && grep -qF "$KAPSIS_GIT_EXCLUDE_MARKER" "$exclude_path" 2>/dev/null; then
         log_debug "Protective exclude patterns already present in info/exclude"
         return 0
     fi
 
-    # Patterns to add - these prevent accidental commits of:
-    # 1. Internal Kapsis directories
-    # 2. Literal ~ paths (when tilde expansion fails)
-    # 3. AI tool config directories
-    local patterns
-    patterns=$(cat << 'EOF'
-
-# Kapsis protective patterns
-# These patterns prevent accidental commits of internal files
-# This file is local-only and never committed (transparent to user)
-
-# Kapsis internal files
-.kapsis/
-
-# Literal tilde paths (failed tilde expansion creates directory named "~")
-# This is NOT the same as *~ which matches backup files ending in ~
-~
-~/
-
-# AI tool configuration directories (should stay local)
-.claude/
-.codex/
-.aider/
-EOF
-)
-
-    # Append to existing info/exclude or create new
+    # Append patterns from constants.sh to existing info/exclude or create new
     if [[ -f "$exclude_path" ]]; then
         log_debug "Appending protective patterns to existing info/exclude"
-        printf '%s\n' "$patterns" >> "$exclude_path"
+        printf '%s\n' "$KAPSIS_GIT_EXCLUDE_PATTERNS" >> "$exclude_path"
     else
         log_debug "Creating info/exclude with protective patterns"
-        printf '%s\n' "$patterns" > "$exclude_path"
+        printf '%s\n' "$KAPSIS_GIT_EXCLUDE_PATTERNS" > "$exclude_path"
     fi
 
     log_debug "Protective patterns written to $exclude_path"
@@ -399,23 +371,8 @@ prepare_sanitized_git() {
     # Create info/exclude with protective patterns (issue #89)
     # This ensures the container's git operations respect our exclude patterns
     # even though we're using a sanitized git directory
-    cat > "$sanitized_dir/info/exclude" << 'EXCLUDE_EOF'
-# Kapsis protective patterns
-# These patterns prevent accidental commits of internal files
-# This file is local-only and never committed (transparent to user)
-
-# Kapsis internal files
-.kapsis/
-
-# Literal tilde paths (failed tilde expansion creates directory named "~")
-~
-~/
-
-# AI tool configuration directories (should stay local)
-.claude/
-.codex/
-.aider/
-EXCLUDE_EOF
+    # Uses KAPSIS_GIT_EXCLUDE_PATTERNS from constants.sh for consistency
+    printf '%s\n' "$KAPSIS_GIT_EXCLUDE_PATTERNS" > "$sanitized_dir/info/exclude"
     log_debug "Created info/exclude with protective patterns"
 
     # Create a marker file with paths for container setup
