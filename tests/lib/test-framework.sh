@@ -39,6 +39,14 @@ KAPSIS_ROOT="$(dirname "$TESTS_DIR")"
 # Use $HOME path for reliable Podman VM filesystem sharing on macOS
 TEST_PROJECT="$HOME/.kapsis-test-project"
 
+# CRITICAL: Unset git environment variables that could leak from parent processes
+# When tests run via pre-commit hooks, git exports GIT_DIR, GIT_INDEX_FILE, and
+# GIT_WORK_TREE pointing to the repository being committed. If tests then run
+# "git add" in $TEST_PROJECT without a .git directory, these env vars cause git
+# to add files to the WRONG repository's index, corrupting it.
+# See: https://github.com/pre-commit/pre-commit/issues/300
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES 2>/dev/null || true
+
 # Source shared constants (provides CONTAINER_GIT_PATH, CONTAINER_OBJECTS_PATH, etc.)
 source "$KAPSIS_ROOT/scripts/lib/constants.sh"
 
