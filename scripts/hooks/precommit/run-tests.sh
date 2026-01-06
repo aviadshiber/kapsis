@@ -12,6 +12,11 @@
 
 set -euo pipefail
 
+# CRITICAL: Unset git environment variables before running tests
+# Git exports GIT_DIR/GIT_INDEX_FILE during hook execution, which can cause
+# test git operations to corrupt the main repository's index.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY 2>/dev/null || true
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 

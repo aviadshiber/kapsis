@@ -399,13 +399,22 @@ log_section() {
 }
 
 # Log elapsed time for a phase (Bash 3.2 compatible)
+# Timer names must be alphanumeric/underscore to prevent eval injection
 log_timer_start() {
     local timer_name="${1:-default}"
+    if [[ ! "$timer_name" =~ ^[a-zA-Z0-9_]+$ ]]; then
+        log_warn "Invalid timer name: $timer_name (must be alphanumeric/underscore)"
+        return 1
+    fi
     eval "_KAPSIS_TIMER_${timer_name}=$(date +%s)"
 }
 
 log_timer_end() {
     local timer_name="${1:-default}"
+    if [[ ! "$timer_name" =~ ^[a-zA-Z0-9_]+$ ]]; then
+        log_warn "Invalid timer name: $timer_name (must be alphanumeric/underscore)"
+        return 1
+    fi
     local var_name="_KAPSIS_TIMER_${timer_name}"
     local start_time="${!var_name:-$(date +%s)}"
     local end_time

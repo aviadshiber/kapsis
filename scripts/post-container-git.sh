@@ -32,9 +32,13 @@ fi
 # Source shared constants (provides KAPSIS_DEFAULT_COMMIT_EXCLUDE)
 source "$POST_GIT_SCRIPT_DIR/lib/constants.sh"
 
+# Source git remote utilities (provides generate_pr_url, is_github_repo, etc.)
+source "$POST_GIT_SCRIPT_DIR/lib/git-remote-utils.sh"
+
 # Note: logging functions are provided by lib/logging.sh
 # Note: status functions are provided by lib/status.sh
 # Note: constants are provided by lib/constants.sh
+# Note: git remote utilities are provided by lib/git-remote-utils.sh
 
 #===============================================================================
 # VALIDATE AND CLEAN STAGED FILES
@@ -433,8 +437,8 @@ push_changes() {
         # Verify the push actually succeeded
         echo ""
         if verify_push "$worktree_path" "$remote" "$branch"; then
-            # Generate PR URL only after verified push
-            generate_pr_url "$worktree_path" "$branch"
+            # Show PR instructions only after verified push
+            show_pr_instructions "$worktree_path" "$branch"
             return 0
         else
             log_error "Push reported success but verification failed!"
@@ -458,10 +462,12 @@ push_changes() {
 # Outputs a clickable URL to create a PR for the branch.
 # Also sets the global PR_URL variable for status reporting.
 #===============================================================================
-# Global variable for PR URL (set by generate_pr_url, used by status reporting)
+# Global variable for PR URL (set by show_pr_instructions, used by status reporting)
 export PR_URL=""
 
-generate_pr_url() {
+# Display PR creation instructions with URL
+# Uses generate_pr_url from git-remote-utils.sh
+show_pr_instructions() {
     local worktree_path="$1"
     local branch="$2"
 
@@ -479,33 +485,9 @@ generate_pr_url() {
     echo "│ CREATE PULL REQUEST                                                │"
     echo "└────────────────────────────────────────────────────────────────────┘"
 
-    local pr_url=""
-    if [[ "$remote_url" == *"bitbucket"* ]]; then
-        # Bitbucket Cloud
-        local repo_path
-        repo_path=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
-        pr_url="https://bitbucket.org/${repo_path}/pull-requests/new?source=${branch}"
-
-    elif [[ "$remote_url" == ssh://* ]] || [[ "$remote_url" == https://*git* ]]; then
-        # Generic Bitbucket Server / self-hosted git
-        local base_url
-        base_url=$(echo "$remote_url" | sed -E 's|^(https?://[^/]+).*|\1|' | sed -E 's|^ssh://([^@]+@)?([^:/]+).*|https://\2|')
-        local repo_path
-        repo_path=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
-        pr_url="${base_url}/${repo_path}/pull-requests/new?source=${branch}"
-
-    elif [[ "$remote_url" == *"github"* ]]; then
-        # GitHub
-        local repo_path
-        repo_path=$(echo "$remote_url" | sed -E 's|.*github\.com[:/](.*)\.git|\1|' | sed 's/\.git$//')
-        pr_url="https://github.com/${repo_path}/compare/${branch}?expand=1"
-
-    elif [[ "$remote_url" == *"gitlab"* ]]; then
-        # GitLab
-        local repo_path
-        repo_path=$(echo "$remote_url" | sed -E 's|.*gitlab\.com[:/](.*)\.git|\1|' | sed 's/\.git$//')
-        pr_url="https://gitlab.com/${repo_path}/-/merge_requests/new?merge_request[source_branch]=${branch}"
-    fi
+    # Use library function to generate PR URL
+    local pr_url
+    pr_url=$(generate_pr_url "$remote_url" "$branch")
 
     if [[ -n "$pr_url" ]]; then
         echo "  $pr_url"
@@ -544,23 +526,7 @@ sync_index_from_container() {
     fi
 }
 
-#===============================================================================
-# DETECT GITHUB REPO
-#
-# Checks if remote URL is a GitHub repository
-# Returns: 0 if GitHub, 1 otherwise
-#===============================================================================
-is_github_repo() {
-    local worktree_path="$1"
-    local remote="${2:-origin}"
-
-    cd "$worktree_path" || return 1
-
-    local remote_url
-    remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
-
-    [[ "$remote_url" == *"github.com"* ]]
-}
+# Note: is_github_repo() is provided by lib/git-remote-utils.sh
 
 #===============================================================================
 # CHECK IF USER HAS PUSH ACCESS
@@ -603,12 +569,12 @@ generate_fork_fallback() {
         return 1
     fi
 
-    # Extract repo info (owner/repo) - validate format
+    # Extract repo info (owner/repo) using library function
     local repo_path
-    repo_path=$(echo "$remote_url" | sed -E 's|.*github\.com[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
+    repo_path=$(extract_repo_path "$remote_url")
 
-    # Validate repo_path format (should be owner/repo with safe characters)
-    if [[ ! "$repo_path" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]]; then
+    # Validate repo_path format using library function (security: prevents injection)
+    if ! validate_repo_path "$repo_path"; then
         log_warn "Invalid repository path format: $repo_path"
         return 1
     fi

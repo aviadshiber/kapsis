@@ -12,6 +12,11 @@
 
 set -euo pipefail
 
+# Clear git environment variables that could interfere with git operations
+# Note: This hook intentionally uses the staged index, so we preserve GIT_INDEX_FILE
+# but clear others that could cause issues
+unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY 2>/dev/null || true
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 

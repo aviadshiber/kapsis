@@ -13,6 +13,9 @@
 
 set -euo pipefail
 
+# Clear git environment variables that could interfere with git operations
+unset GIT_DIR GIT_WORK_TREE GIT_OBJECT_DIRECTORY 2>/dev/null || true
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 
