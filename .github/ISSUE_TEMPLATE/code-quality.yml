@@ -1,0 +1,87 @@
+name: Code Quality Improvement
+description: Report code quality issues (DRY, separation of concerns, simplification, security)
+title: "[Quality] "
+labels: ["enhancement", "code-quality", "tech-debt"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to report code quality improvements!
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: What type of code quality issue is this?
+      options:
+        - DRY Violation (duplicated code)
+        - Separation of Concerns
+        - Simplification Opportunity
+        - Security Hardening
+        - Performance
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      description: How important is this improvement?
+      options:
+        - High (security or major maintainability issue)
+        - Medium (significant improvement)
+        - Low (nice to have)
+    validations:
+      required: true
+
+  - type: input
+    id: location
+    attributes:
+      label: File Location(s)
+      description: Which files are affected?
+      placeholder: "e.g., scripts/launch-agent.sh:100-200"
+    validations:
+      required: true
+
+  - type: textarea
+    id: current-behavior
+    attributes:
+      label: Current Code/Behavior
+      description: Describe or show the current code that needs improvement
+      placeholder: |
+        ```bash
+        # Current implementation
+        ```
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-improvement
+    attributes:
+      label: Proposed Improvement
+      description: How should this be improved?
+      placeholder: |
+        Describe the improvement or show proposed code
+    validations:
+      required: true
+
+  - type: dropdown
+    id: effort
+    attributes:
+      label: Estimated Effort
+      description: How much work is this?
+      options:
+        - Low (< 1 hour)
+        - Medium (1-4 hours)
+        - High (> 4 hours)
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any other context about the improvement
+    validations:
+      required: false
