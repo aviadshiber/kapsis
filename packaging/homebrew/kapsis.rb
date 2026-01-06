@@ -22,8 +22,8 @@ class Kapsis < Formula
     strategy :github_latest
   end
 
-  depends_on "bash" => "3.2"
-  depends_on "git" => "2.0"
+  depends_on "bash"
+  depends_on "git"
   depends_on "jq"
   depends_on "yq"
 
@@ -37,9 +37,12 @@ class Kapsis < Formula
     # Verify critical scripts are installed (fixes #106)
     critical_scripts = %w[
       scripts/launch-agent.sh
+      scripts/build-image.sh
       scripts/post-container-git.sh
       scripts/entrypoint.sh
       scripts/worktree-manager.sh
+      scripts/kapsis-cleanup.sh
+      scripts/kapsis-status.sh
       scripts/lib/logging.sh
       scripts/lib/status.sh
       scripts/lib/constants.sh
@@ -99,10 +102,17 @@ class Kapsis < Formula
     # Test that kapsis command works (--help returns exit code 0 per Unix convention)
     assert_match "Usage:", shell_output("#{bin}/kapsis --help 2>&1", 0)
 
-    # Verify critical scripts exist (fixes #106)
-    assert_predicate libexec/"scripts/post-container-git.sh", :exist?,
-      "post-container-git.sh should be installed"
-    assert_predicate libexec/"scripts/post-container-git.sh", :executable?,
-      "post-container-git.sh should be executable"
+    # Verify sample of critical scripts exist and are executable (fixes #106)
+    # Tests representative scripts: main entry point, post-container handler, and library
+    %w[
+      scripts/launch-agent.sh
+      scripts/post-container-git.sh
+      scripts/lib/logging.sh
+    ].each do |script|
+      assert_predicate libexec/script, :exist?,
+        "#{script} should be installed"
+      assert_predicate libexec/script, :executable?,
+        "#{script} should be executable"
+    end
   end
 end
