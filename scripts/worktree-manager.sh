@@ -136,18 +136,6 @@ ensure_git_excludes() {
 }
 
 #===============================================================================
-# ENSURE PROTECTIVE GITIGNORE (DEPRECATED - kept for backward compatibility)
-#
-# This function is deprecated. Use ensure_git_excludes() instead.
-# Kept temporarily for any external scripts that may call it.
-#===============================================================================
-ensure_protective_gitignore() {
-    local worktree_path="$1"
-    log_warn "ensure_protective_gitignore is deprecated, using ensure_git_excludes instead"
-    ensure_git_excludes "$worktree_path"
-}
-
-#===============================================================================
 # CREATE WORKTREE
 #
 # Creates a git worktree for an agent on the host filesystem.

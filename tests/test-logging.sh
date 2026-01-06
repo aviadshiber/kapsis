@@ -478,6 +478,43 @@ test_log_timer() {
     assert_file_contains "$log_file" "elapsed" "Should contain elapsed text"
 }
 
+test_log_timer_rejects_invalid_names() {
+    log_test "log_timer: rejects invalid timer names (security)"
+
+    local exit_code
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "timer-security"
+
+        # Valid names should succeed
+        log_timer_start "valid_name" || exit 1
+        log_timer_start "CamelCase123" || exit 1
+
+        # Invalid names should fail (security: prevents eval injection)
+        log_timer_start "invalid;name" 2>/dev/null && exit 2
+        log_timer_start "with spaces" 2>/dev/null && exit 3
+        log_timer_start "hyphen-name" 2>/dev/null && exit 4
+        log_timer_start 'foo$(rm -rf /)' 2>/dev/null && exit 5
+
+        exit 0
+    )
+    exit_code=$?
+
+    case $exit_code in
+        0) log_pass "Timer name validation works correctly" ;;
+        1) log_fail "Valid timer name was rejected"; return 1 ;;
+        2) log_fail "Timer name with semicolon should be rejected"; return 1 ;;
+        3) log_fail "Timer name with spaces should be rejected"; return 1 ;;
+        4) log_fail "Timer name with hyphens should be rejected"; return 1 ;;
+        5) log_fail "Timer name with command substitution should be rejected"; return 1 ;;
+        *) log_fail "Unexpected exit code: $exit_code"; return 1 ;;
+    esac
+}
+
 test_log_enter_exit() {
     log_test "log_enter/log_exit: logs function entry and exit"
 
@@ -740,6 +777,7 @@ main() {
     run_test test_log_var_outputs_variable
     run_test test_log_var_unset_variable
     run_test test_log_timer
+    run_test test_log_timer_rejects_invalid_names
     run_test test_log_enter_exit
     run_test test_log_cmd_executes_command
     run_test test_log_finalize

@@ -569,12 +569,12 @@ generate_fork_fallback() {
         return 1
     fi
 
-    # Extract repo info (owner/repo) - validate format
+    # Extract repo info (owner/repo) using library function
     local repo_path
-    repo_path=$(echo "$remote_url" | sed -E 's|.*github\.com[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
+    repo_path=$(extract_repo_path "$remote_url")
 
-    # Validate repo_path format (should be owner/repo with safe characters)
-    if [[ ! "$repo_path" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]]; then
+    # Validate repo_path format using library function (security: prevents injection)
+    if ! validate_repo_path "$repo_path"; then
         log_warn "Invalid repository path format: $repo_path"
         return 1
     fi
