@@ -34,6 +34,20 @@ class Kapsis < Formula
     # Install everything to libexec, then create wrappers
     libexec.install Dir["*"]
 
+    # Verify critical scripts are installed (fixes #106)
+    critical_scripts = %w[
+      scripts/launch-agent.sh
+      scripts/post-container-git.sh
+      scripts/entrypoint.sh
+      scripts/worktree-manager.sh
+      scripts/lib/logging.sh
+      scripts/lib/status.sh
+      scripts/lib/constants.sh
+    ]
+    critical_scripts.each do |script|
+      odie "Missing critical script: #{script}" unless (libexec/script).exist?
+    end
+
     # Create wrapper scripts for main commands
     {
       "kapsis" => "scripts/launch-agent.sh",
@@ -84,5 +98,11 @@ class Kapsis < Formula
   test do
     # Test that kapsis command works (--help returns exit code 0 per Unix convention)
     assert_match "Usage:", shell_output("#{bin}/kapsis --help 2>&1", 0)
+
+    # Verify critical scripts exist (fixes #106)
+    assert_predicate libexec/"scripts/post-container-git.sh", :exist?,
+      "post-container-git.sh should be installed"
+    assert_predicate libexec/"scripts/post-container-git.sh", :executable?,
+      "post-container-git.sh should be executable"
   end
 end
