@@ -19,22 +19,33 @@ VALIDATE_SCOPE_SCRIPT="$KAPSIS_ROOT/scripts/lib/validate-scope.sh"
 
 # Create isolated test worktree
 SCOPE_TEST_DIR=""
+_SCOPE_ORIGINAL_DIR=""
 
 setup_scope_test() {
+    # Save original directory to restore after cleanup
+    _SCOPE_ORIGINAL_DIR="$(pwd)"
     SCOPE_TEST_DIR=$(mktemp -d)
     cd "$SCOPE_TEST_DIR"
     git init -q
-    git config user.email "test@kapsis.test"
-    git config user.name "Kapsis Test"
+    # Use --local to ensure config only affects this temp repo
+    git config --local user.email "test@kapsis.test"
+    git config --local user.name "Kapsis Test"
     echo "initial" > README.md
     git add README.md
     git commit -q -m "Initial commit"
 }
 
 cleanup_scope_test() {
+    # CRITICAL: Restore original directory BEFORE deleting temp dir
+    # This prevents undefined CWD behavior that can corrupt git state
+    if [[ -n "$_SCOPE_ORIGINAL_DIR" ]]; then
+        cd "$_SCOPE_ORIGINAL_DIR" || cd /tmp
+    fi
     if [[ -n "$SCOPE_TEST_DIR" ]] && [[ -d "$SCOPE_TEST_DIR" ]]; then
         rm -rf "$SCOPE_TEST_DIR"
     fi
+    SCOPE_TEST_DIR=""
+    _SCOPE_ORIGINAL_DIR=""
 }
 
 #===============================================================================

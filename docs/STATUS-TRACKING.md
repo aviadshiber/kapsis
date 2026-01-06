@@ -1,10 +1,11 @@
+<!-- markdownlint-disable MD060 -->
 # Status Tracking Design
 
 Kapsis provides real-time status tracking through agent-agnostic hooks that report progress without requiring modifications to the AI agents themselves.
 
 ## Architecture
 
-```
+```text
                          KAPSIS STATUS TRACKER
                                   │
     ┌────────────────┬────────────┼────────────┬────────────────┐
@@ -46,7 +47,7 @@ CLAUDE CODE     CODEX CLI    GEMINI CLI    AIDER/OTHER    PYTHON AGENT
 
 Kapsis automatically injects status tracking hooks at container startup. This happens inside the container after Copy-on-Write setup, so **user's host configuration is never modified**.
 
-```
+```text
 Container Startup (entrypoint.sh)
         │
         ├─→ CoW/Worktree setup (host configs mounted read-only)
@@ -75,6 +76,7 @@ Container Startup (entrypoint.sh)
 ### Per-Agent Injection Methods
 
 **Claude Code** - Uses `settings.local.json` which Claude automatically merges with `settings.json`:
+
 ```json
 {
   "hooks": {
@@ -90,6 +92,7 @@ Container Startup (entrypoint.sh)
 ```
 
 **Codex CLI** - Merges hooks into `config.yaml`:
+
 ```yaml
 hooks:
   exec.post:
@@ -103,6 +106,7 @@ hooks:
 ```
 
 **Gemini CLI** - Creates or appends to shell script hooks:
+
 ```bash
 # ~/.gemini/hooks/post-tool.sh
 #!/usr/bin/env bash
@@ -152,6 +156,8 @@ Configuration is stored in `configs/tool-phase-mapping.yaml`.
   "phase": "implementing",
   "progress": 45,
   "message": "Implementing feature",
+  "gist": "Refactoring authentication module to use JWT tokens",
+  "gist_updated_at": "2025-12-16T14:34:55Z",
   "started_at": "2025-12-16T14:30:00Z",
   "updated_at": "2025-12-16T14:35:00Z",
   "exit_code": null,
@@ -161,9 +167,88 @@ Configuration is stored in `configs/tool-phase-mapping.yaml`.
 }
 ```
 
+## Agent Gist (Live Activity Summary)
+
+During long "thinking" periods, the standard status message may become stale. The **gist** feature provides a signaling file that agents can update in real-time to communicate what they're currently working on.
+
+### How It Works
+
+```text
+AGENT (inside container)              KAPSIS STATUS SYSTEM
+         │                                    │
+         │  writes current activity           │
+         ├──────────────────────────────────► /workspace/.kapsis/gist.txt
+         │                                    │
+         │  makes tool call (Edit, Bash...)   │
+         ├──────────────────────────────────► PostToolUse hook fires
+         │                                    │
+         │                                    ├─► reads gist.txt
+         │                                    ├─► includes in status.json
+         │                                    │
+         │                                    │
+USER     │                                    │
+         │  kapsis-status                     │
+         ├──────────────────────────────────► reads status.json
+         │                                    │
+         │  sees: "Refactoring auth module"   │
+         ◄────────────────────────────────────┤
+```
+
+### For Agent Authors
+
+Agents should update the gist file whenever they begin a new logical step. The gist persists until overwritten, so it always reflects the most recent activity.
+
+**Write to gist (Bash):**
+
+```bash
+echo "your current activity" > /workspace/.kapsis/gist.txt
+```
+
+**Guidelines:**
+
+- Update at the START of each significant work phase
+- Keep messages short (< 100 chars; truncated at 500)
+- Use present tense, action-oriented language
+- Overwrite (not append) - file should contain only current activity
+
+**Example workflow - agent dynamically updates gist as it works:**
+
+```text
+[Agent starts task]
+  └─► echo "Exploring codebase structure" > gist.txt
+
+[Agent reads several files, finds relevant code]
+  └─► echo "Analyzing UserService authentication flow" > gist.txt
+
+[Agent begins implementing]
+  └─► echo "Adding JWT validation to AuthController" > gist.txt
+
+[Agent runs tests]
+  └─► echo "Running auth module integration tests" > gist.txt
+```
+
+Each write overwrites the previous gist, so `kapsis-status` always shows the agent's current focus.
+
+### Configuration
+
+```bash
+# Default path (can be overridden)
+export KAPSIS_GIST_FILE=/workspace/.kapsis/gist.txt
+```
+
+### Viewing Gists
+
+```bash
+# List view - gist shown in STATUS column (preferred over message when present)
+kapsis-status
+
+# Detailed view - gist shown in "Agent Activity" section
+kapsis-status products 1
+```
+
 ## Container-to-Host Communication
 
-```
+```text
 HOST                                    CONTAINER
 ~/.kapsis/status/  ←──volume mount──→  /kapsis-status/
      ↓                                       ↓
