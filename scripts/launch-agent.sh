@@ -712,6 +712,8 @@ parse_config() {
         AGENT_COMMAND=$(yq -r '.agent.command // "bash"' "$CONFIG_FILE")
         export AGENT_WORKDIR
         AGENT_WORKDIR=$(yq -r '.agent.workdir // "/workspace"' "$CONFIG_FILE")
+        # Gist instruction injection (default: false for safe rollout)
+        INJECT_GIST=$(yq -r '.agent.inject_gist // "false"' "$CONFIG_FILE")
         RESOURCE_MEMORY=$(yq -r '.resources.memory // "8g"' "$CONFIG_FILE")
         RESOURCE_CPUS=$(yq -r '.resources.cpus // "4"' "$CONFIG_FILE")
         SANDBOX_UPPER_BASE=$(yq -r '.sandbox.upper_dir_base // "~/.ai-sandboxes"' "$CONFIG_FILE")
@@ -1224,6 +1226,7 @@ generate_env_vars() {
     ENV_VARS+=("-e" "KAPSIS_STATUS_PROJECT=$(basename "$PROJECT_PATH")")
     ENV_VARS+=("-e" "KAPSIS_STATUS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_STATUS_BRANCH=${BRANCH:-}")
+    ENV_VARS+=("-e" "KAPSIS_INJECT_GIST=${INJECT_GIST:-false}")
 
     # Agent type for status tracking hooks
     # Maps to hook mechanism: claude-cli, codex-cli, gemini-cli use hooks; others use monitor

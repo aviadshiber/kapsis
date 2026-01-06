@@ -118,20 +118,21 @@ list_all() {
         echo "]"
     else
         # Pretty table output
-        printf "${CYAN}%-15s %-8s %-12s %5s %-30s${NC}\n" "PROJECT" "AGENT" "PHASE" "PROG" "MESSAGE"
-        printf "%-15s %-8s %-12s %5s %-30s\n" "-------" "-----" "-----" "----" "-------"
+        printf "${CYAN}%-15s %-8s %-12s %5s %-40s${NC}\n" "PROJECT" "AGENT" "PHASE" "PROG" "STATUS"
+        printf "%-15s %-8s %-12s %5s %-40s\n" "-------" "-----" "-----" "----" "------"
 
         for file in "${files[@]}"; do
             [[ -f "$file" ]] || continue
             local content
             content=$(cat "$file")
 
-            local project agent phase progress message
+            local project agent phase progress message gist
             project=$(json_get "$content" "project")
             agent=$(json_get "$content" "agent_id")
             phase=$(json_get "$content" "phase")
             progress=$(json_get_num "$content" "progress")
             message=$(json_get "$content" "message")
+            gist=$(json_get "$content" "gist")
 
             # Color based on phase
             local color="$NC"
@@ -149,11 +150,16 @@ list_all() {
                 color="$RED"
             fi
 
-            # Truncate message if too long
-            message="${message:0:30}"
+            # Prefer gist over message if available, otherwise use message
+            local display_status
+            if [[ -n "$gist" && "$gist" != "null" ]]; then
+                display_status="${gist:0:40}"
+            else
+                display_status="${message:0:40}"
+            fi
 
-            printf "${color}%-15s %-8s %-12s %4s%% %-30s${NC}\n" \
-                "${project:0:15}" "${agent:0:8}" "$phase" "$progress" "$message"
+            printf "${color}%-15s %-8s %-12s %4s%% %-40s${NC}\n" \
+                "${project:0:15}" "${agent:0:8}" "$phase" "$progress" "$display_status"
         done
     fi
 }
@@ -187,6 +193,7 @@ get_status() {
         # Parse all fields
         local project_name agent_id branch sandbox_mode phase progress message
         local started_at updated_at exit_code error worktree_path pr_url
+        local gist gist_updated_at
 
         project_name=$(json_get "$content" "project")
         agent_id=$(json_get "$content" "agent_id")
@@ -195,6 +202,8 @@ get_status() {
         phase=$(json_get "$content" "phase")
         progress=$(json_get_num "$content" "progress")
         message=$(json_get "$content" "message")
+        gist=$(json_get "$content" "gist")
+        gist_updated_at=$(json_get "$content" "gist_updated_at")
         started_at=$(json_get "$content" "started_at")
         updated_at=$(json_get "$content" "updated_at")
         exit_code=$(json_get_num "$content" "exit_code")
@@ -216,6 +225,13 @@ get_status() {
         echo "  Phase:        $phase"
         echo "  Progress:     ${progress}%"
         echo "  Message:      $message"
+        if [[ -n "$gist" && "$gist" != "null" ]]; then
+            echo ""
+            echo -e "${CYAN}--- Agent Activity ---${NC}"
+            echo ""
+            echo "  $gist"
+            [[ -n "$gist_updated_at" && "$gist_updated_at" != "null" ]] && echo "  (updated: $gist_updated_at)"
+        fi
         echo ""
         echo -e "${CYAN}--- Timing ---${NC}"
         echo ""
