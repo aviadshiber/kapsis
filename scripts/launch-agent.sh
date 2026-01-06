@@ -86,6 +86,9 @@ source "$SCRIPT_DIR/lib/constants.sh"
 # Source security library (provides generate_security_args, validate_security_config, etc.)
 source "$SCRIPT_DIR/lib/security.sh"
 
+# Source secret store library (provides query_secret_store, query_secret_store_with_fallbacks)
+source "$SCRIPT_DIR/lib/secret-store.sh"
+
 # Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
 NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
 
@@ -118,93 +121,6 @@ ensure_dir() {
     else
         mkdir -p "$path" 2>/dev/null || true
     fi
-}
-
-#===============================================================================
-# SECRET STORE HELPERS (macOS Keychain, Linux secret-tool)
-#===============================================================================
-
-# Detect the current OS for secret store selection
-detect_os() {
-    case "$(uname -s)" in
-        Darwin*) echo "macos" ;;
-        Linux*)  echo "linux" ;;
-        *)       echo "unknown" ;;
-    esac
-}
-
-# Query system secret store for a credential
-# Usage: query_secret_store "service" ["account"]
-# Returns: credential on stdout, exit 1 if not found
-# Supports: macOS Keychain, Linux secret-tool
-query_secret_store() {
-    local service="$1"
-    local account="${2:-}"
-    local os
-    os="$(detect_os)"
-
-    case "$os" in
-        macos)
-            # macOS Keychain via security command
-            if [[ -n "$account" ]]; then
-                security find-generic-password -s "$service" -a "$account" -w 2>/dev/null
-            else
-                security find-generic-password -s "$service" -w 2>/dev/null
-            fi
-            ;;
-        linux)
-            # Linux secret-tool (GNOME Keyring / KDE Wallet)
-            if ! command -v secret-tool &>/dev/null; then
-                log_warn "secret-tool not found - install libsecret-tools"
-                return 1
-            fi
-            if [[ -n "$account" ]]; then
-                secret-tool lookup service "$service" account "$account" 2>/dev/null
-            else
-                secret-tool lookup service "$service" 2>/dev/null
-            fi
-            ;;
-        *)
-            log_warn "Unsupported OS for secret store: $os"
-            return 1
-            ;;
-    esac
-}
-
-# Query secret store with fallback accounts
-# Usage: query_secret_store_with_fallbacks "service" "account1,account2,..." "var_name"
-# Returns: credential on stdout, exit 1 if none found
-# Logs which account succeeded (obfuscated for security)
-query_secret_store_with_fallbacks() {
-    local service="$1"
-    local accounts="$2"  # Comma-separated list or single account
-    local var_name="${3:-}"  # For logging context
-
-    # If no commas, treat as single account (backward compat)
-    if [[ "$accounts" != *,* ]]; then
-        if value=$(query_secret_store "$service" "$accounts"); then
-            echo "$value"
-            return 0
-        fi
-        return 1
-    fi
-
-    # Split accounts and try each in order
-    IFS=',' read -ra account_list <<< "$accounts"
-    for account in "${account_list[@]}"; do
-        account="${account## }"  # Trim leading space
-        account="${account%% }"  # Trim trailing space
-        [[ -z "$account" ]] && continue
-
-        if value=$(query_secret_store "$service" "$account"); then
-            # Log which account worked (obfuscate: show first 3 chars + ***)
-            local masked_account="${account:0:3}***"
-            log_debug "Found $var_name via account: $masked_account"
-            echo "$value"
-            return 0
-        fi
-    done
-    return 1
 }
 
 #===============================================================================
