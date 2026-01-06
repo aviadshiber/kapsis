@@ -274,9 +274,10 @@ start_dns_filter() {
     stop_dns_filter
 
     # Create log file if logging enabled
+    # Security: DNS logs may contain sensitive query patterns - restrict to owner only
     if [[ "$KAPSIS_DNS_LOG_QUERIES" == "true" ]]; then
         touch "$KAPSIS_DNS_LOG_FILE" 2>/dev/null || true
-        chmod 644 "$KAPSIS_DNS_LOG_FILE" 2>/dev/null || true
+        chmod 600 "$KAPSIS_DNS_LOG_FILE" 2>/dev/null || true
     fi
 
     # Start dnsmasq

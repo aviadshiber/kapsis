@@ -56,6 +56,13 @@ elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/constants.sh" ]]; then
     source "$(dirname "${BASH_SOURCE[0]}")/lib/constants.sh"
 fi
 
+# Source git remote utilities (provides PR URL generation, provider detection)
+if [[ -f "$KAPSIS_HOME/lib/git-remote-utils.sh" ]]; then
+    source "$KAPSIS_HOME/lib/git-remote-utils.sh"
+elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/git-remote-utils.sh" ]]; then
+    source "$(dirname "${BASH_SOURCE[0]}")/lib/git-remote-utils.sh"
+fi
+
 #===============================================================================
 # CREDENTIAL FILE INJECTION (Agent-Agnostic)
 #
@@ -580,23 +587,21 @@ Branch: ${KAPSIS_BRANCH}"
             return
         fi
 
-        # Generate PR URL
+        # Generate PR URL using library
         local remote_url
         remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
 
         echo ""
-        if [[ "$remote_url" == *"bitbucket"* ]]; then
-            local repo_path
-            repo_path=$(echo "$remote_url" | sed -E 's/.*[:/]([^/]+\/[^/]+)(\.git)?$/\1/' | sed 's/\.git$//')
-            log_success "Create/View PR: https://bitbucket.org/${repo_path}/pull-requests/new?source=${KAPSIS_BRANCH}"
-        elif [[ "$remote_url" == *"github"* ]]; then
-            local repo_path
-            repo_path=$(echo "$remote_url" | sed -E 's/.*github.com[:/](.*)\.git/\1/' | sed 's/\.git$//')
-            log_success "Create/View PR: https://github.com/${repo_path}/compare/${KAPSIS_BRANCH}?expand=1"
-        elif [[ "$remote_url" == *"gitlab"* ]]; then
-            local repo_path
-            repo_path=$(echo "$remote_url" | sed -E 's/.*gitlab.com[:/](.*)\.git/\1/' | sed 's/\.git$//')
-            log_success "Create/View MR: https://gitlab.com/${repo_path}/-/merge_requests/new?merge_request[source_branch]=${KAPSIS_BRANCH}"
+        if [[ -n "$remote_url" ]]; then
+            local pr_url
+            pr_url=$(generate_pr_url "$remote_url" "$KAPSIS_BRANCH")
+            if [[ -n "$pr_url" ]]; then
+                local provider
+                provider=$(detect_git_provider "$remote_url")
+                local pr_name
+                pr_name=$(get_pr_display_name "$provider")
+                log_success "Create/View ${pr_name}: ${pr_url}"
+            fi
         fi
 
         echo ""

@@ -32,9 +32,13 @@ fi
 # Source shared constants (provides KAPSIS_DEFAULT_COMMIT_EXCLUDE)
 source "$POST_GIT_SCRIPT_DIR/lib/constants.sh"
 
+# Source git remote utilities (provides PR URL generation, provider detection)
+source "$POST_GIT_SCRIPT_DIR/lib/git-remote-utils.sh"
+
 # Note: logging functions are provided by lib/logging.sh
 # Note: status functions are provided by lib/status.sh
 # Note: constants are provided by lib/constants.sh
+# Note: git remote utils are provided by lib/git-remote-utils.sh
 
 #===============================================================================
 # VALIDATE AND CLEAN STAGED FILES
@@ -434,7 +438,7 @@ push_changes() {
         echo ""
         if verify_push "$worktree_path" "$remote" "$branch"; then
             # Generate PR URL only after verified push
-            generate_pr_url "$worktree_path" "$branch"
+            output_pr_url "$worktree_path" "$branch"
             return 0
         else
             log_error "Push reported success but verification failed!"
@@ -457,18 +461,19 @@ push_changes() {
 #
 # Outputs a clickable URL to create a PR for the branch.
 # Also sets the global PR_URL variable for status reporting.
+# Uses lib/git-remote-utils.sh for provider detection and URL generation.
 #===============================================================================
-# Global variable for PR URL (set by generate_pr_url, used by status reporting)
+# Global variable for PR URL (set by output_pr_url, used by status reporting)
 export PR_URL=""
 
-generate_pr_url() {
+output_pr_url() {
     local worktree_path="$1"
     local branch="$2"
 
     cd "$worktree_path"
 
     local remote_url
-    remote_url=$(git remote get-url origin 2>/dev/null || echo "")
+    remote_url=$(get_remote_url "$worktree_path" "origin")
 
     if [[ -z "$remote_url" ]]; then
         return
@@ -479,33 +484,9 @@ generate_pr_url() {
     echo "│ CREATE PULL REQUEST                                                │"
     echo "└────────────────────────────────────────────────────────────────────┘"
 
-    local pr_url=""
-    if [[ "$remote_url" == *"bitbucket"* ]]; then
-        # Bitbucket Cloud
-        local repo_path
-        repo_path=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
-        pr_url="https://bitbucket.org/${repo_path}/pull-requests/new?source=${branch}"
-
-    elif [[ "$remote_url" == ssh://* ]] || [[ "$remote_url" == https://*git* ]]; then
-        # Generic Bitbucket Server / self-hosted git
-        local base_url
-        base_url=$(echo "$remote_url" | sed -E 's|^(https?://[^/]+).*|\1|' | sed -E 's|^ssh://([^@]+@)?([^:/]+).*|https://\2|')
-        local repo_path
-        repo_path=$(echo "$remote_url" | sed -E 's|.*[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
-        pr_url="${base_url}/${repo_path}/pull-requests/new?source=${branch}"
-
-    elif [[ "$remote_url" == *"github"* ]]; then
-        # GitHub
-        local repo_path
-        repo_path=$(echo "$remote_url" | sed -E 's|.*github\.com[:/](.*)\.git|\1|' | sed 's/\.git$//')
-        pr_url="https://github.com/${repo_path}/compare/${branch}?expand=1"
-
-    elif [[ "$remote_url" == *"gitlab"* ]]; then
-        # GitLab
-        local repo_path
-        repo_path=$(echo "$remote_url" | sed -E 's|.*gitlab\.com[:/](.*)\.git|\1|' | sed 's/\.git$//')
-        pr_url="https://gitlab.com/${repo_path}/-/merge_requests/new?merge_request[source_branch]=${branch}"
-    fi
+    # Use library function to generate PR URL
+    local pr_url
+    pr_url=$(generate_pr_url "$remote_url" "$branch")
 
     if [[ -n "$pr_url" ]]; then
         echo "  $pr_url"
@@ -547,19 +528,18 @@ sync_index_from_container() {
 #===============================================================================
 # DETECT GITHUB REPO
 #
-# Checks if remote URL is a GitHub repository
+# Checks if remote URL is a GitHub repository.
+# Wrapper around lib/git-remote-utils.sh is_github_repo function.
 # Returns: 0 if GitHub, 1 otherwise
 #===============================================================================
-is_github_repo() {
+is_github_repo_path() {
     local worktree_path="$1"
     local remote="${2:-origin}"
 
-    cd "$worktree_path" || return 1
-
     local remote_url
-    remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
+    remote_url=$(get_remote_url "$worktree_path" "$remote")
 
-    [[ "$remote_url" == *"github.com"* ]]
+    is_github_repo "$remote_url"
 }
 
 #===============================================================================
@@ -586,67 +566,35 @@ has_push_access() {
 # GENERATE FORK-BASED FALLBACK COMMAND
 #
 # Creates a fallback command that forks the repo and pushes to the fork.
-# Uses GitHub CLI (gh) for forking.
+# Uses lib/git-remote-utils.sh generate_fork_fallback_command function.
 #===============================================================================
-generate_fork_fallback() {
+get_fork_fallback_command() {
     local worktree_path="$1"
     local branch="$2"
     local remote="${3:-origin}"
 
-    cd "$worktree_path" || return 1
-
-    local remote_url
-    remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
-
-    # Only for GitHub repos
-    if [[ "$remote_url" != *"github.com"* ]]; then
-        return 1
-    fi
-
-    # Extract repo info (owner/repo) - validate format
-    local repo_path
-    repo_path=$(echo "$remote_url" | sed -E 's|.*github\.com[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
-
-    # Validate repo_path format (should be owner/repo with safe characters)
-    if [[ ! "$repo_path" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]]; then
-        log_warn "Invalid repository path format: $repo_path"
-        return 1
-    fi
-
-    # Validate branch name (safe characters only)
-    if [[ ! "$branch" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
-        log_warn "Invalid branch name format: $branch"
-        return 1
-    fi
-
-    # Use single quotes to prevent shell injection when command is eval'd
-    printf "cd '%s' && gh repo fork '%s' --remote --remote-name fork 2>/dev/null || true && git push -u fork '%s'" \
-        "$worktree_path" "$repo_path" "$branch"
+    # Use library function
+    generate_fork_fallback_command "$worktree_path" "$branch" "$remote"
 }
 
 #===============================================================================
 # GENERATE FORK PR URL
 #
-# Creates a PR URL for a fork-based contribution
+# Creates a PR URL for a fork-based contribution.
+# Uses lib/git-remote-utils.sh generate_fork_pr_url function.
 #===============================================================================
-generate_fork_pr_url() {
+get_fork_pr_url() {
     local worktree_path="$1"
     local branch="$2"
     local remote="${3:-origin}"
 
-    cd "$worktree_path" || return 1
-
     local remote_url
-    remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
+    remote_url=$(get_remote_url "$worktree_path" "$remote")
 
     # Only for GitHub repos
-    if [[ "$remote_url" != *"github.com"* ]]; then
+    if ! is_github_repo "$remote_url"; then
         return 1
     fi
-
-    # Extract upstream repo info
-    local upstream_repo
-    upstream_repo=$(echo "$remote_url" | sed -E 's|.*github\.com[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
 
     # Get current user (from gh or git config)
     local github_user=""
@@ -656,11 +604,11 @@ generate_fork_pr_url() {
 
     if [[ -z "$github_user" ]]; then
         # Try to infer from fork remote if it exists
-        github_user=$(git remote get-url fork 2>/dev/null | sed -E 's|.*github\.com[:/]([^/]+)/.*|\1|' || echo "YOUR_USERNAME")
+        github_user=$(git -C "$worktree_path" remote get-url fork 2>/dev/null | sed -E 's|.*github\.com[:/]([^/]+)/.*|\1|' || echo "YOUR_USERNAME")
     fi
 
-    # Generate cross-fork PR URL
-    echo "https://github.com/${upstream_repo}/compare/main...${github_user}:${branch}?expand=1"
+    # Use library function
+    generate_fork_pr_url "$remote_url" "$branch" "$github_user"
 }
 
 #===============================================================================
@@ -749,12 +697,12 @@ post_container_git() {
             log_warn "Push failed. Changes are committed locally."
 
             # Check if fork workflow is enabled and this is a GitHub repo
-            if [[ "$fork_fallback" == "fork" ]] && is_github_repo "$worktree_path" "$remote"; then
+            if [[ "$fork_fallback" == "fork" ]] && is_github_repo_path "$worktree_path" "$remote"; then
                 log_info ""
                 log_info "Fork workflow available for GitHub contribution:"
 
                 local fork_cmd
-                fork_cmd=$(generate_fork_fallback "$worktree_path" "$branch" "$remote")
+                fork_cmd=$(get_fork_fallback_command "$worktree_path" "$branch" "$remote")
                 if [[ -n "$fork_cmd" ]]; then
                     echo ""
                     echo "┌────────────────────────────────────────────────────────────────────┐"
@@ -770,7 +718,7 @@ post_container_git() {
 
                     # Generate fork PR URL
                     local fork_pr_url
-                    fork_pr_url=$(generate_fork_pr_url "$worktree_path" "$branch" "$remote")
+                    fork_pr_url=$(get_fork_pr_url "$worktree_path" "$branch" "$remote")
                     if [[ -n "$fork_pr_url" ]]; then
                         echo "Then create a PR at:"
                         echo "  $fork_pr_url"
