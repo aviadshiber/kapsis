@@ -226,6 +226,201 @@ test_validate_scope_worktree_git_hooks_warning() {
 }
 
 #===============================================================================
+# INTEGRATION TESTS - Overlay Mode Validation
+#===============================================================================
+
+# Helper to set up overlay test directory structure
+setup_overlay_test() {
+    OVERLAY_TEST_DIR=$(mktemp -d)
+    OVERLAY_UPPER_DIR="$OVERLAY_TEST_DIR/upper"
+    mkdir -p "$OVERLAY_UPPER_DIR"
+}
+
+cleanup_overlay_test() {
+    if [[ -n "$OVERLAY_TEST_DIR" ]] && [[ -d "$OVERLAY_TEST_DIR" ]]; then
+        rm -rf "$OVERLAY_TEST_DIR"
+    fi
+    OVERLAY_TEST_DIR=""
+    OVERLAY_UPPER_DIR=""
+}
+
+test_validate_scope_overlay_allows_workspace_files() {
+    log_test "Testing validate_scope_overlay allows workspace files"
+
+    setup_overlay_test
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    # Create allowed workspace files in upper directory
+    mkdir -p "$OVERLAY_UPPER_DIR/workspace/src"
+    echo "code" > "$OVERLAY_UPPER_DIR/workspace/src/main.java"
+    echo "readme" > "$OVERLAY_UPPER_DIR/workspace/README.md"
+
+    local exit_code=0
+    validate_scope_overlay "$OVERLAY_UPPER_DIR" || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Workspace files should pass overlay validation"
+
+    cleanup_overlay_test
+}
+
+test_validate_scope_overlay_allows_workspace_agent_configs() {
+    log_test "Testing validate_scope_overlay allows workspace agent configs (not home configs)"
+
+    setup_overlay_test
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    # Create project-level agent configs in workspace (these should be ALLOWED)
+    mkdir -p "$OVERLAY_UPPER_DIR/workspace/.claude/rules"
+    echo "# Project config" > "$OVERLAY_UPPER_DIR/workspace/.claude/CLAUDE.md"
+    echo "# Rule" > "$OVERLAY_UPPER_DIR/workspace/.claude/rules/custom.md"
+
+    mkdir -p "$OVERLAY_UPPER_DIR/workspace/.cursor"
+    echo "{}" > "$OVERLAY_UPPER_DIR/workspace/.cursor/settings.json"
+
+    mkdir -p "$OVERLAY_UPPER_DIR/workspace/.continue"
+    echo "{}" > "$OVERLAY_UPPER_DIR/workspace/.continue/config.json"
+
+    echo "# Aider ignore" > "$OVERLAY_UPPER_DIR/workspace/.aiderignore"
+
+    local exit_code=0
+    validate_scope_overlay "$OVERLAY_UPPER_DIR" || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Workspace agent configs should pass overlay validation"
+
+    cleanup_overlay_test
+}
+
+test_validate_scope_overlay_blocks_home_agent_configs() {
+    log_test "Testing validate_scope_overlay blocks HOME directory agent configs"
+
+    setup_overlay_test
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    # Create home directory agent config (this should be BLOCKED)
+    mkdir -p "$OVERLAY_UPPER_DIR/home/developer/.claude"
+    echo "# Malicious config" > "$OVERLAY_UPPER_DIR/home/developer/.claude/settings.json"
+
+    local exit_code=0
+    validate_scope_overlay "$OVERLAY_UPPER_DIR" 2>&1 || exit_code=$?
+
+    assert_not_equals 0 "$exit_code" "Home .claude config should be blocked"
+
+    cleanup_overlay_test
+}
+
+test_validate_scope_overlay_blocks_home_ssh() {
+    log_test "Testing validate_scope_overlay blocks HOME .ssh directory"
+
+    setup_overlay_test
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    # Create home SSH files (this should be BLOCKED)
+    mkdir -p "$OVERLAY_UPPER_DIR/home/developer/.ssh"
+    echo "fake key" > "$OVERLAY_UPPER_DIR/home/developer/.ssh/id_rsa"
+
+    local exit_code=0
+    validate_scope_overlay "$OVERLAY_UPPER_DIR" 2>&1 || exit_code=$?
+
+    assert_not_equals 0 "$exit_code" "Home .ssh should be blocked"
+
+    cleanup_overlay_test
+}
+
+test_validate_scope_overlay_blocks_shell_configs() {
+    log_test "Testing validate_scope_overlay blocks shell configuration files"
+
+    setup_overlay_test
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    # Create shell config file (this should be BLOCKED)
+    mkdir -p "$OVERLAY_UPPER_DIR/home/developer"
+    echo "export MALICIOUS=1" > "$OVERLAY_UPPER_DIR/home/developer/.bashrc"
+
+    local exit_code=0
+    validate_scope_overlay "$OVERLAY_UPPER_DIR" 2>&1 || exit_code=$?
+
+    assert_not_equals 0 "$exit_code" "Home .bashrc should be blocked"
+
+    cleanup_overlay_test
+}
+
+test_validate_scope_overlay_blocks_multiple_agent_home_configs() {
+    log_test "Testing validate_scope_overlay blocks all AI agent home configs (agent-agnostic)"
+
+    setup_overlay_test
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    # Test each agent's home config is blocked
+    local agents=(".cursor" ".continue" ".codex" ".gemini" ".codeium" ".copilot")
+
+    for agent_dir in "${agents[@]}"; do
+        # Clean up from previous iteration
+        rm -rf "${OVERLAY_UPPER_DIR:?}/home"
+
+        # Create agent home config
+        mkdir -p "$OVERLAY_UPPER_DIR/home/developer/$agent_dir"
+        echo "config" > "$OVERLAY_UPPER_DIR/home/developer/$agent_dir/config.json"
+
+        local exit_code=0
+        validate_scope_overlay "$OVERLAY_UPPER_DIR" 2>&1 || exit_code=$?
+
+        assert_not_equals 0 "$exit_code" "Home $agent_dir should be blocked"
+    done
+
+    cleanup_overlay_test
+}
+
+test_validate_scope_overlay_allows_build_caches() {
+    log_test "Testing validate_scope_overlay allows build tool caches"
+
+    setup_overlay_test
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    # Create build cache files (these should be ALLOWED)
+    mkdir -p "$OVERLAY_UPPER_DIR/home/developer/.m2/repository/org/example"
+    echo "jar content" > "$OVERLAY_UPPER_DIR/home/developer/.m2/repository/org/example/lib.jar"
+
+    mkdir -p "$OVERLAY_UPPER_DIR/home/developer/.gradle/caches"
+    echo "cache" > "$OVERLAY_UPPER_DIR/home/developer/.gradle/caches/modules.lock"
+
+    mkdir -p "$OVERLAY_UPPER_DIR/home/developer/.npm"
+    echo "cache" > "$OVERLAY_UPPER_DIR/home/developer/.npm/cache.json"
+
+    local exit_code=0
+    validate_scope_overlay "$OVERLAY_UPPER_DIR" || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Build caches should pass overlay validation"
+
+    cleanup_overlay_test
+}
+
+test_validate_scope_overlay_empty_upper_dir() {
+    log_test "Testing validate_scope_overlay with empty upper directory"
+
+    setup_overlay_test
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    # Upper dir exists but is empty
+    local exit_code=0
+    validate_scope_overlay "$OVERLAY_UPPER_DIR" || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Empty upper dir should pass validation"
+
+    cleanup_overlay_test
+}
+
+test_validate_scope_overlay_nonexistent_upper_dir() {
+    log_test "Testing validate_scope_overlay with nonexistent upper directory"
+
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    local exit_code=0
+    validate_scope_overlay "/nonexistent/upper/dir" || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Nonexistent upper dir should pass (no modifications)"
+}
+
+#===============================================================================
 # AUDIT LOGGING TESTS
 #===============================================================================
 
@@ -315,6 +510,17 @@ main() {
     run_test test_validate_scope_worktree_allowed_changes
     run_test test_validate_scope_worktree_allows_project_agent_configs  # Issue #115
     run_test test_validate_scope_worktree_git_hooks_warning
+
+    # Integration tests - overlay mode
+    run_test test_validate_scope_overlay_allows_workspace_files
+    run_test test_validate_scope_overlay_allows_workspace_agent_configs
+    run_test test_validate_scope_overlay_blocks_home_agent_configs
+    run_test test_validate_scope_overlay_blocks_home_ssh
+    run_test test_validate_scope_overlay_blocks_shell_configs
+    run_test test_validate_scope_overlay_blocks_multiple_agent_home_configs
+    run_test test_validate_scope_overlay_allows_build_caches
+    run_test test_validate_scope_overlay_empty_upper_dir
+    run_test test_validate_scope_overlay_nonexistent_upper_dir
 
     # Audit logging tests
     run_test test_audit_log_created_on_violation

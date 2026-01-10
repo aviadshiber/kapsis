@@ -37,7 +37,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TESTS_DIR="$(dirname "$SCRIPT_DIR")"
 KAPSIS_ROOT="$(dirname "$TESTS_DIR")"
 # Use $HOME path for reliable Podman VM filesystem sharing on macOS
-TEST_PROJECT="$HOME/.kapsis-test-project"
+# Add PID suffix to allow parallel test execution without conflicts
+TEST_PROJECT="$HOME/.kapsis-test-project-$$"
 
 # CRITICAL: Unset git environment variables that could leak from parent processes
 # When tests run via pre-commit hooks, git exports GIT_DIR, GIT_INDEX_FILE, and
