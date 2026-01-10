@@ -126,89 +126,9 @@ ensure_dir() {
 #===============================================================================
 # SECRET STORE HELPERS (macOS Keychain, Linux secret-tool)
 #===============================================================================
-
-# Detect the current OS for secret store selection
-detect_os() {
-    case "$(uname -s)" in
-        Darwin*) echo "macos" ;;
-        Linux*)  echo "linux" ;;
-        *)       echo "unknown" ;;
-    esac
-}
-
-# Query system secret store for a credential
-# Usage: query_secret_store "service" ["account"]
-# Returns: credential on stdout, exit 1 if not found
-# Supports: macOS Keychain, Linux secret-tool
-query_secret_store() {
-    local service="$1"
-    local account="${2:-}"
-    local os
-    os="$(detect_os)"
-
-    case "$os" in
-        macos)
-            # macOS Keychain via security command
-            if [[ -n "$account" ]]; then
-                security find-generic-password -s "$service" -a "$account" -w 2>/dev/null
-            else
-                security find-generic-password -s "$service" -w 2>/dev/null
-            fi
-            ;;
-        linux)
-            # Linux secret-tool (GNOME Keyring / KDE Wallet)
-            if ! command -v secret-tool &>/dev/null; then
-                log_warn "secret-tool not found - install libsecret-tools"
-                return 1
-            fi
-            if [[ -n "$account" ]]; then
-                secret-tool lookup service "$service" account "$account" 2>/dev/null
-            else
-                secret-tool lookup service "$service" 2>/dev/null
-            fi
-            ;;
-        *)
-            log_warn "Unsupported OS for secret store: $os"
-            return 1
-            ;;
-    esac
-}
-
-# Query secret store with fallback accounts
-# Usage: query_secret_store_with_fallbacks "service" "account1,account2,..." "var_name"
-# Returns: credential on stdout, exit 1 if none found
-# Logs which account succeeded (obfuscated for security)
-query_secret_store_with_fallbacks() {
-    local service="$1"
-    local accounts="$2"  # Comma-separated list or single account
-    local var_name="${3:-}"  # For logging context
-
-    # If no commas, treat as single account (backward compat)
-    if [[ "$accounts" != *,* ]]; then
-        if value=$(query_secret_store "$service" "$accounts"); then
-            echo "$value"
-            return 0
-        fi
-        return 1
-    fi
-
-    # Split accounts and try each in order
-    IFS=',' read -ra account_list <<< "$accounts"
-    for account in "${account_list[@]}"; do
-        account="${account## }"  # Trim leading space
-        account="${account%% }"  # Trim trailing space
-        [[ -z "$account" ]] && continue
-
-        if value=$(query_secret_store "$service" "$account"); then
-            # Log which account worked (obfuscate: show first 3 chars + ***)
-            local masked_account="${account:0:3}***"
-            log_debug "Found $var_name via account: $masked_account"
-            echo "$value"
-            return 0
-        fi
-    done
-    return 1
-}
+# Functions: detect_os, query_secret_store, query_secret_store_with_fallbacks
+# Now in lib/secret-store.sh for reuse across scripts
+source "$SCRIPT_DIR/lib/secret-store.sh"
 
 #===============================================================================
 # USAGE
@@ -923,8 +843,43 @@ setup_overlay_sandbox() {
 }
 
 #===============================================================================
-# VOLUME MOUNTS GENERATION (dispatches to mode-specific)
+# VOLUME MOUNTS GENERATION
 #===============================================================================
+
+# Add common volume mounts shared by all sandbox modes
+# These include: status dir, build caches, spec file, filesystem includes, SSH
+add_common_volume_mounts() {
+    # Status reporting directory (shared between host and container)
+    local status_dir="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
+    ensure_dir "$status_dir"
+    VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
+
+    # Maven repository (isolated per agent)
+    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")
+
+    # Gradle cache (isolated per agent)
+    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-gradle:/home/developer/.gradle")
+
+    # GE workspace (isolated per agent)
+    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-ge:/home/developer/.m2/.gradle-enterprise")
+
+    # Spec file (if provided)
+    if [[ -n "$SPEC_FILE" ]]; then
+        SPEC_FILE_ABS="$(cd "$(dirname "$SPEC_FILE")" && pwd)/$(basename "$SPEC_FILE")"
+        VOLUME_MOUNTS+=("-v" "${SPEC_FILE_ABS}:/task-spec.md:ro")
+    fi
+
+    # Filesystem whitelist from config
+    generate_filesystem_includes
+
+    # SSH known_hosts for verified git remotes
+    generate_ssh_known_hosts
+    if [[ -n "$SSH_KNOWN_HOSTS_FILE" ]]; then
+        VOLUME_MOUNTS+=("-v" "${SSH_KNOWN_HOSTS_FILE}:/etc/ssh/ssh_known_hosts:ro")
+    fi
+}
+
+# Main dispatcher for volume mount generation
 generate_volume_mounts() {
     if [[ "$SANDBOX_MODE" == "worktree" ]]; then
         generate_volume_mounts_worktree
@@ -942,11 +897,6 @@ generate_volume_mounts_worktree() {
     # Mount worktree directly (no overlay needed!)
     VOLUME_MOUNTS+=("-v" "${WORKTREE_PATH}:/workspace")
 
-    # Status reporting directory (shared between host and container)
-    local status_dir="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
-    ensure_dir "$status_dir"
-    VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
-
     # Mount sanitized git at $CONTAINER_GIT_PATH, replacing the worktree's .git file
     # This makes git work without needing GIT_DIR environment variable
     VOLUME_MOUNTS+=("-v" "${SANITIZED_GIT_PATH}:${CONTAINER_GIT_PATH}:ro")
@@ -954,29 +904,8 @@ generate_volume_mounts_worktree() {
     # Mount objects directory read-only
     VOLUME_MOUNTS+=("-v" "${OBJECTS_PATH}:${CONTAINER_OBJECTS_PATH}:ro")
 
-    # Maven repository (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")
-
-    # Gradle cache (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-gradle:/home/developer/.gradle")
-
-    # GE workspace (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-ge:/home/developer/.m2/.gradle-enterprise")
-
-    # Spec file (if provided)
-    if [[ -n "$SPEC_FILE" ]]; then
-        SPEC_FILE_ABS="$(cd "$(dirname "$SPEC_FILE")" && pwd)/$(basename "$SPEC_FILE")"
-        VOLUME_MOUNTS+=("-v" "${SPEC_FILE_ABS}:/task-spec.md:ro")
-    fi
-
-    # Filesystem whitelist from config
-    generate_filesystem_includes
-
-    # SSH known_hosts for verified git remotes
-    generate_ssh_known_hosts
-    if [[ -n "$SSH_KNOWN_HOSTS_FILE" ]]; then
-        VOLUME_MOUNTS+=("-v" "${SSH_KNOWN_HOSTS_FILE}:/etc/ssh/ssh_known_hosts:ro")
-    fi
+    # Add common mounts (status, caches, spec, filesystem includes, SSH)
+    add_common_volume_mounts
 }
 
 #===============================================================================
@@ -988,34 +917,8 @@ generate_volume_mounts_overlay() {
     # Project with CoW overlay
     VOLUME_MOUNTS+=("-v" "${PROJECT_PATH}:/workspace:O,upperdir=${UPPER_DIR},workdir=${WORK_DIR}")
 
-    # Status reporting directory (shared between host and container)
-    local status_dir="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
-    ensure_dir "$status_dir"
-    VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
-
-    # Maven repository (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")
-
-    # Gradle cache (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-gradle:/home/developer/.gradle")
-
-    # GE workspace (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-ge:/home/developer/.m2/.gradle-enterprise")
-
-    # Spec file (if provided)
-    if [[ -n "$SPEC_FILE" ]]; then
-        SPEC_FILE_ABS="$(cd "$(dirname "$SPEC_FILE")" && pwd)/$(basename "$SPEC_FILE")"
-        VOLUME_MOUNTS+=("-v" "${SPEC_FILE_ABS}:/task-spec.md:ro")
-    fi
-
-    # Filesystem whitelist from config
-    generate_filesystem_includes
-
-    # SSH known_hosts for verified git remotes
-    generate_ssh_known_hosts
-    if [[ -n "$SSH_KNOWN_HOSTS_FILE" ]]; then
-        VOLUME_MOUNTS+=("-v" "${SSH_KNOWN_HOSTS_FILE}:/etc/ssh/ssh_known_hosts:ro")
-    fi
+    # Add common mounts (status, caches, spec, filesystem includes, SSH)
+    add_common_volume_mounts
 }
 
 #===============================================================================

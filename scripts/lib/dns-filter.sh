@@ -236,8 +236,8 @@ EOF
         done
     fi
 
-    # Set permissions
-    chmod 644 "$config_file"
+    # Set permissions (600 = owner read/write only, contains DNS config)
+    chmod 600 "$config_file"
 
     log_success "dnsmasq config generated: $domain_count domains allowed"
     log_debug "Config file: $config_file"
@@ -273,10 +273,10 @@ start_dns_filter() {
     # Stop existing dnsmasq if running
     stop_dns_filter
 
-    # Create log file if logging enabled
+    # Create log file if logging enabled (600 = owner only, may contain sensitive queries)
     if [[ "$KAPSIS_DNS_LOG_QUERIES" == "true" ]]; then
         touch "$KAPSIS_DNS_LOG_FILE" 2>/dev/null || true
-        chmod 644 "$KAPSIS_DNS_LOG_FILE" 2>/dev/null || true
+        chmod 600 "$KAPSIS_DNS_LOG_FILE" 2>/dev/null || true
     fi
 
     # Start dnsmasq

@@ -67,3 +67,35 @@ readonly KAPSIS_DEFAULT_COMMIT_EXCLUDE=".gitignore
 #===============================================================================
 
 readonly KAPSIS_DEFAULT_NETWORK_MODE="filtered"
+
+#===============================================================================
+# GIT EXCLUDE PATTERNS (Issue #89)
+#
+# These patterns are written to $GIT_DIR/info/exclude to prevent accidental
+# commits of internal files. The info/exclude file is local-only and never
+# committed, making Kapsis's protection invisible to the repository.
+#
+# These are used by:
+# - ensure_git_excludes() in worktree-manager.sh
+# - create_sanitized_git() in worktree-manager.sh
+#===============================================================================
+
+# Header comment for info/exclude file
+readonly KAPSIS_GIT_EXCLUDE_HEADER="# Kapsis protective patterns
+# These patterns prevent accidental commits of internal files
+# This file is local-only and never committed (transparent to user)"
+
+# Patterns that should be excluded from git operations
+# Each pattern on its own line, formatted for gitignore syntax
+readonly KAPSIS_GIT_EXCLUDE_PATTERNS="# Kapsis internal files
+.kapsis/
+
+# Literal tilde paths (failed tilde expansion creates directory named \"~\")
+# This is NOT the same as *~ which matches backup files ending in ~
+~
+~/
+
+# AI tool configuration directories (should stay local)
+.claude/
+.codex/
+.aider/"

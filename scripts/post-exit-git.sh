@@ -32,6 +32,15 @@ log_info() { echo -e "${CYAN}[GIT]${NC} $*"; }
 log_success() { echo -e "${GREEN}[GIT]${NC} $*"; }
 log_warn() { echo -e "${YELLOW}[GIT]${NC} $*"; }
 
+# Source git remote utilities (provides generate_pr_url, detect_git_provider, etc.)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+KAPSIS_HOME="${KAPSIS_HOME:-/opt/kapsis}"
+if [[ -f "$KAPSIS_HOME/lib/git-remote-utils.sh" ]]; then
+    source "$KAPSIS_HOME/lib/git-remote-utils.sh"
+elif [[ -f "$SCRIPT_DIR/lib/git-remote-utils.sh" ]]; then
+    source "$SCRIPT_DIR/lib/git-remote-utils.sh"
+fi
+
 cd "${WORKSPACE:-/workspace}"
 
 # Check if there are changes
@@ -91,19 +100,16 @@ if [[ "$NO_PUSH" != "true" ]]; then
         exit 1
     }
 
-    # Generate PR URL
+    # Generate PR URL using git-remote-utils library
     REMOTE_URL=$(git remote get-url "$REMOTE" 2>/dev/null || echo "")
 
     echo ""
-    if [[ "$REMOTE_URL" == *"bitbucket"* ]]; then
-        REPO_PATH=$(echo "$REMOTE_URL" | sed -E 's/.*[:/]([^/]+\/[^/]+)(\.git)?$/\1/' | sed 's/\.git$//')
-        echo "Create/View PR: https://bitbucket.org/${REPO_PATH}/pull-requests/new?source=${BRANCH}"
-    elif [[ "$REMOTE_URL" == *"github"* ]]; then
-        REPO_PATH=$(echo "$REMOTE_URL" | sed -E 's/.*github.com[:/](.*)\.git/\1/' | sed 's/\.git$//')
-        echo "Create/View PR: https://github.com/${REPO_PATH}/compare/${BRANCH}?expand=1"
-    elif [[ "$REMOTE_URL" == *"gitlab"* ]]; then
-        REPO_PATH=$(echo "$REMOTE_URL" | sed -E 's/.*gitlab.com[:/](.*)\.git/\1/' | sed 's/\.git$//')
-        echo "Create/View MR: https://gitlab.com/${REPO_PATH}/-/merge_requests/new?merge_request[source_branch]=${BRANCH}"
+    if [[ -n "$REMOTE_URL" ]] && type generate_pr_url &>/dev/null; then
+        PR_URL=$(generate_pr_url "$REMOTE_URL" "$BRANCH")
+        PR_TERM=$(get_pr_term "$REMOTE_URL")
+        if [[ -n "$PR_URL" ]]; then
+            echo "Create/View ${PR_TERM}: ${PR_URL}"
+        fi
     fi
 
     echo ""

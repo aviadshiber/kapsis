@@ -6,6 +6,22 @@
 # This is a critical security control to prevent prompt injection attacks
 # from modifying host configuration files.
 #
+# SECURITY MODEL:
+#
+# Worktree Mode:
+#   - Container can ONLY write to the mounted worktree (/workspace)
+#   - Host paths (like ~/.claude/, ~/.ssh/) are not accessible
+#   - Security is enforced by mount isolation, not path validation
+#   - git status only shows workspace-relative paths (e.g., .claude/CLAUDE.md)
+#   - These are PROJECT config files, not host config - safe to commit
+#   - Only .git/hooks/ gets a warning (could affect host on checkout)
+#
+# Overlay Mode:
+#   - Container changes captured in upper_dir with full paths
+#   - Paths like home/developer/.claude/ indicate host config modification attempts
+#   - Must distinguish workspace/ paths (allowed) from home/ paths (blocked)
+#   - Agent-agnostic: blocks ALL home directory agent configs, not just specific ones
+#
 # Usage:
 #   source validate-scope.sh
 #   validate_scope "$worktree_path" "$upper_dir"
@@ -28,39 +44,73 @@ fi
 # SCOPE CONFIGURATION
 #===============================================================================
 
-# Allowed paths (modifications permitted)
-# These are container paths, not host paths
-ALLOWED_PATHS=(
-    "^workspace/"
+# Allowed paths for OVERLAY mode (modifications permitted)
+# These are container paths relative to upper_dir
+# Workspace paths are allowed - this includes project-level agent configs
+ALLOWED_PATHS_OVERLAY=(
+    "^workspace/"                    # All workspace files including project agent configs
     "^tmp/"
-    "^home/developer/.m2/"
-    "^home/developer/.gradle/"
-    "^home/developer/.npm/"
-    "^home/developer/.cache/"
+    "^home/developer/\.m2/"          # Maven cache
+    "^home/developer/\.gradle/"      # Gradle cache
+    "^home/developer/\.npm/"         # NPM cache
+    "^home/developer/\.cache/"       # Generic cache
     "^kapsis-status/"
     "^var/tmp/"
 )
 
-# Blocked paths (ABORT on modification)
-BLOCKED_PATHS=(
-    "\.ssh/"
-    "\.claude/"
-    "\.bashrc$"
-    "\.zshrc$"
-    "\.profile$"
-    "\.bash_profile$"
-    "\.gitconfig$"
+# Blocked paths for OVERLAY mode (ABORT on modification)
+# These are HOME DIRECTORY paths - agent tried to modify host-level config
+# Agent-agnostic: covers all known and future AI coding agent config directories
+BLOCKED_PATHS_OVERLAY=(
+    # SSH and security
+    "^home/developer/\.ssh/"
+    "^home/developer/\.gnupg/"
+    "^home/developer/\.aws/"
+    "^home/developer/\.kube/"
+
+    # Shell configuration (could inject malicious commands)
+    "^home/developer/\.bashrc$"
+    "^home/developer/\.zshrc$"
+    "^home/developer/\.profile$"
+    "^home/developer/\.bash_profile$"
+    "^home/developer/\.zprofile$"
+
+    # Git configuration
+    "^home/developer/\.gitconfig$"
+    "^home/developer/\.config/git/"
+
+    # AI Agent home configs (agent-agnostic - covers all agents)
+    # These are HOST-LEVEL configs, not project configs
+    "^home/developer/\.claude/"      # Claude Code
+    "^home/developer/\.aider"        # Aider (files and dirs)
+    "^home/developer/\.cursor/"      # Cursor
+    "^home/developer/\.continue/"    # Continue.dev
+    "^home/developer/\.codex/"       # Codex CLI
+    "^home/developer/\.gemini/"      # Gemini CLI
+    "^home/developer/\.codeium/"     # Codeium/Windsurf
+    "^home/developer/\.copilot/"     # GitHub Copilot
+    "^home/developer/\.config/github-copilot/"
+
+    # System paths
     "^etc/"
-    "\.aws/"
-    "\.kube/"
-    "\.gnupg/"
-    "\.config/git/"
 )
 
-# Warning-only paths (log warning but allow)
+# For WORKTREE mode, no paths are blocked
+# Security rationale: Mount isolation prevents access to host paths.
+# All paths in git status are workspace-relative (project files).
+# Project-level agent configs (.claude/, .aider*, etc.) are legitimate.
+# shellcheck disable=SC2034  # Intentionally empty - documents security model
+BLOCKED_PATHS_WORKTREE=()
+
+# Warning-only paths (log warning but allow) - applies to both modes
+# .git/hooks/ could inject malicious hooks that run on host
 WARNING_PATHS=(
     "\.git/hooks/"
 )
+
+# Legacy compatibility - used by is_path_blocked() for overlay mode
+BLOCKED_PATHS=("${BLOCKED_PATHS_OVERLAY[@]}")
+ALLOWED_PATHS=("${ALLOWED_PATHS_OVERLAY[@]}")
 
 #===============================================================================
 # VALIDATION FUNCTIONS
@@ -107,12 +157,29 @@ is_path_warning() {
 
 # Validate filesystem scope for worktree mode
 # Usage: validate_scope_worktree "$worktree_path"
+#
+# SECURITY MODEL FOR WORKTREE MODE:
+# In worktree mode, security is enforced by MOUNT ISOLATION, not path validation.
+# The container can only write to /workspace (the mounted worktree).
+# Host paths like ~/.claude/, ~/.ssh/ are not mounted or mounted read-only.
+#
+# git status only shows workspace-relative paths like:
+#   .claude/CLAUDE.md     <- Project config (SAFE - not host ~/.claude/)
+#   .aiderignore          <- Project config (SAFE)
+#   src/main.java         <- Code (SAFE)
+#
+# These are all PROJECT files, not host configuration.
+# Blocking them based on patterns designed for host paths is incorrect.
+#
+# We only WARN on .git/hooks/ because hooks could execute on the host
+# when the user interacts with the repo after Kapsis completes.
 validate_scope_worktree() {
     local worktree_path="$1"
-    local violations=()
     local warnings=()
 
     log_info "Validating filesystem scope (worktree mode)..."
+    log_debug "Security: Mount isolation prevents host path access"
+    log_debug "Security: All git status paths are workspace-relative (project files)"
 
     # Get list of modified files from git
     local modified_files
@@ -126,7 +193,7 @@ validate_scope_worktree() {
         return 0
     fi
 
-    # Check each modified file
+    # Check each modified file - only for warnings (no blocking in worktree mode)
     while IFS= read -r line; do
         # Skip empty lines
         [[ -z "$line" ]] && continue
@@ -135,53 +202,28 @@ validate_scope_worktree() {
         local file_path
         file_path=$(echo "$line" | awk '{print $2}')
 
-        # Check for blocked paths first
-        if is_path_blocked "$file_path"; then
-            violations+=("$file_path")
-            continue
-        fi
-
-        # Check for warning paths
+        # Check for warning paths (.git/hooks/ could affect host)
         if is_path_warning "$file_path"; then
             warnings+=("$file_path")
             continue
         fi
 
-        # For worktree mode, all files should be in workspace
-        # This is mostly a sanity check since git won't track files outside the repo
+        # All other workspace paths are allowed
+        # Project-level agent configs (.claude/, .aider*, .cursor/, etc.) are legitimate
         log_debug "Validated: $file_path"
     done <<< "$modified_files"
 
-    # Report warnings (non-fatal)
+    # Report warnings (non-fatal) - .git/hooks/ modifications
     if [[ ${#warnings[@]} -gt 0 ]]; then
-        log_warn "Git hooks modified (review carefully):"
+        log_warn "⚠️  Git hooks modified (review carefully before using this repo):"
         for w in "${warnings[@]}"; do
-            log_warn "  ⚠️  $w"
+            log_warn "    $w"
         done
+        log_warn "These hooks will execute on your host when you interact with this repo."
     fi
 
-    # Report violations (fatal)
-    if [[ ${#violations[@]} -gt 0 ]]; then
-        log_error "⛔ SCOPE VIOLATION DETECTED"
-        log_error "The following files were modified in blocked paths:"
-        log_error ""
-        for v in "${violations[@]}"; do
-            log_error "  ❌ $v"
-        done
-        log_error ""
-        log_error "ACTION TAKEN:"
-        log_error "  - Container output will NOT be committed"
-        log_error "  - Worktree preserved for forensic analysis"
-        log_error ""
-        log_error "Worktree location: $worktree_path"
-
-        # Log to audit file
-        log_scope_violation "$worktree_path" "${violations[@]}"
-
-        return 1
-    fi
-
-    log_success "✓ Filesystem scope validation passed"
+    # No blocking in worktree mode - mount isolation is the security boundary
+    log_success "✓ Filesystem scope validation passed (worktree mode)"
     return 0
 }
 
