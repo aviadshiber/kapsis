@@ -94,7 +94,9 @@ get_current_version() {
 
     case "$install_method" in
         "$INSTALL_HOMEBREW")
-            brew info kapsis 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+            # Use subshell to avoid pipefail issues with brew's broken pipe error in CI
+            # When CI=true, brew exits non-zero on broken pipe from head
+            (brew info kapsis 2>/dev/null || true) | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
             ;;
         "$INSTALL_APT")
             dpkg -l kapsis 2>/dev/null | grep "^ii" | awk '{print $3}' | sed 's/-[0-9]*$//'

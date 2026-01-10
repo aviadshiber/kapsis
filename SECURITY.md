@@ -68,12 +68,12 @@ Please provide:
 
 ### Response Timeline
 
-| Action | Timeline |
-|--------|----------|
-| Initial response | Within 48 hours |
-| Vulnerability assessment | Within 7 days |
-| Fix development | Within 30 days (severity dependent) |
-| Public disclosure | After fix is released |
+| Action                   | Timeline                            |
+| ------------------------ | ----------------------------------- |
+| Initial response         | Within 48 hours                     |
+| Vulnerability assessment | Within 7 days                       |
+| Fix development          | Within 30 days (severity dependent) |
+| Public disclosure        | After fix is released               |
 
 ### Recognition
 
@@ -116,11 +116,11 @@ Kapsis supports two network modes for container isolation:
 ./scripts/launch-agent.sh ~/project --network-mode open --task "..."
 ```
 
-| Mode | Description | Use Case |
-|------|-------------|----------|
-| `none` | No network access (`--network=none`) | Maximum isolation, offline tasks |
-| `filtered` | DNS-based allowlist **(default)** | Standard development (git, package registries) |
-| `open` | Full network access | Special cases requiring unrestricted access |
+| Mode       | Description                          | Use Case                                       |
+| ---------- | ------------------------------------ | ---------------------------------------------- |
+| `none`     | No network access (`--network=none`) | Maximum isolation, offline tasks               |
+| `filtered` | DNS-based allowlist **(default)**    | Standard development (git, package registries) |
+| `open`     | Full network access                  | Special cases requiring unrestricted access    |
 
 **Note**: The default is `filtered` which allows access to common development domains (GitHub, npm, PyPI, Maven) while blocking unknown hosts.
 
@@ -151,25 +151,48 @@ network_mode: none
 
 ### Filesystem Scope Enforcement
 
-Kapsis validates that container modifications stay within allowed boundaries:
+Kapsis validates that container modifications stay within allowed boundaries.
+The security model differs between sandbox modes:
+
+#### Worktree Mode (Recommended)
+
+In worktree mode, security is enforced by **mount isolation**:
+
+- Container can ONLY write to `/workspace` (the mounted worktree)
+- Host paths (`~/.claude/`, `~/.ssh/`, etc.) are not mounted or read-only
+- All `git status` paths are workspace-relative (project files)
+- **No path blocking** - mount structure prevents host access
+
+Project-level agent configs are **allowed** (they're project files, not host config):
+
+- `.claude/`, `.aiderignore`, `.cursor/`, `.continue/`, etc.
+
+#### Overlay Mode
+
+In overlay mode, path validation blocks HOME DIRECTORY modifications:
 
 **Allowed Paths** (modifications permitted):
-- `/workspace/**` - Project files
+
+- `/workspace/**` - Project files (including project-level agent configs)
 - `/tmp/**` - Temporary files
 - `/home/developer/.m2/repository/**` - Maven cache
 - `/home/developer/.gradle/**` - Gradle cache
 - `/kapsis-status/**` - Status files
 
-**Blocked Paths** (modifications blocked, container aborted):
+**Blocked Paths** (HOME directory - container aborted):
+
 - `~/.ssh/*` - SSH keys
-- `~/.claude/*` - Agent configuration
 - `~/.bashrc`, `~/.zshrc`, `~/.profile` - Shell startup files
 - `~/.gitconfig` - Git credentials
 - `/etc/*` - System configuration
 - `~/.aws/*`, `~/.kube/*` - Cloud credentials
+- AI agent home configs (agent-agnostic):
+  - `~/.claude/*`, `~/.aider*`, `~/.cursor/*`, `~/.continue/*`
+  - `~/.codex/*`, `~/.gemini/*`, `~/.codeium/*`, `~/.copilot/*`
 
-**Warning Paths** (allowed but logged):
-- `.git/hooks/*` - Git hooks (potential for persistence)
+#### Warning Paths (Both Modes)
+
+- `.git/hooks/*` - Git hooks (could execute on host)
 
 Scope violations are logged to `~/.kapsis/audit/scope-violations.jsonl` for forensic analysis.
 
@@ -178,11 +201,13 @@ Scope violations are logged to `~/.kapsis/audit/scope-violations.jsonl` for fore
 Kapsis pins all dependencies to prevent supply chain attacks:
 
 1. **Base Image**: Pinned to specific SHA256 digest
+
    ```dockerfile
    FROM ubuntu@sha256:955364933d0d91afa6e10fb045948c16d2b191114aa54bed3ab5430d8bbc58cc
    ```
 
 2. **GitHub Actions**: Pinned to commit SHAs
+
    ```yaml
    uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
    ```
@@ -205,9 +230,9 @@ Subscribe to releases to receive security update notifications:
 
 ## Audit History
 
-| Date | Auditor | Scope | Status |
-|------|---------|-------|--------|
-| - | - | Initial release pending formal audit | - |
+| Date | Auditor | Scope                                | Status |
+| ---- | ------- | ------------------------------------ | ------ |
+| -    | -       | Initial release pending formal audit | -      |
 
 ## Contact
 

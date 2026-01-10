@@ -4,8 +4,15 @@
 #
 # Verifies that the scope validation system correctly detects:
 # - Allowed modifications (workspace, caches)
-# - Blocked modifications (.ssh, .claude, shell configs)
+# - Blocked modifications in OVERLAY mode (.ssh, .claude home config, shell configs)
 # - Warning-level modifications (git hooks)
+#
+# SECURITY MODEL:
+# - Worktree mode: Mount isolation is the security boundary. All workspace paths
+#   are allowed. Project-level agent configs (.claude/, .aider*, etc.) are safe.
+# - Overlay mode: Path validation blocks home directory modifications.
+#   Paths like home/developer/.claude/ are blocked (host config).
+#   Paths like workspace/.claude/ are allowed (project config).
 #
 # Phase 1 security feature - defense in depth against prompt injection.
 #===============================================================================
@@ -65,21 +72,48 @@ test_is_path_allowed_workspace() {
     assert_command_succeeds "is_path_allowed 'kapsis-status/status.json'" "kapsis-status should be allowed"
 }
 
-test_is_path_blocked_sensitive() {
-    log_test "Testing is_path_blocked for sensitive paths"
+test_is_path_blocked_overlay_home_paths() {
+    log_test "Testing is_path_blocked for HOME directory paths (overlay mode)"
 
     source "$VALIDATE_SCOPE_SCRIPT"
 
-    # These should all be blocked
-    assert_command_succeeds "is_path_blocked 'home/developer/.ssh/id_rsa'" ".ssh should be blocked"
-    assert_command_succeeds "is_path_blocked 'home/developer/.claude/settings.json'" ".claude should be blocked"
-    assert_command_succeeds "is_path_blocked 'home/developer/.bashrc'" ".bashrc should be blocked"
-    assert_command_succeeds "is_path_blocked 'home/developer/.zshrc'" ".zshrc should be blocked"
-    assert_command_succeeds "is_path_blocked 'home/developer/.profile'" ".profile should be blocked"
-    assert_command_succeeds "is_path_blocked 'home/developer/.gitconfig'" ".gitconfig should be blocked"
+    # HOME directory paths should be blocked in overlay mode
+    # These patterns match home/developer/.<sensitive>
+    assert_command_succeeds "is_path_blocked 'home/developer/.ssh/id_rsa'" "home .ssh should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.claude/settings.json'" "home .claude should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.bashrc'" "home .bashrc should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.zshrc'" "home .zshrc should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.profile'" "home .profile should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.gitconfig'" "home .gitconfig should be blocked"
     assert_command_succeeds "is_path_blocked 'etc/passwd'" "/etc should be blocked"
-    assert_command_succeeds "is_path_blocked 'home/developer/.aws/credentials'" ".aws should be blocked"
-    assert_command_succeeds "is_path_blocked 'home/developer/.kube/config'" ".kube should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.aws/credentials'" "home .aws should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.kube/config'" "home .kube should be blocked"
+
+    # Agent-agnostic: all AI agent home configs should be blocked
+    assert_command_succeeds "is_path_blocked 'home/developer/.aider.conf.yml'" "home .aider should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.cursor/settings.json'" "home .cursor should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.continue/config.json'" "home .continue should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.codex/config'" "home .codex should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.gemini/settings'" "home .gemini should be blocked"
+    assert_command_succeeds "is_path_blocked 'home/developer/.codeium/config'" "home .codeium should be blocked"
+}
+
+test_workspace_agent_configs_allowed() {
+    log_test "Testing that WORKSPACE agent configs are allowed (not blocked)"
+
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    # WORKSPACE paths should NOT be blocked - these are project configs, not host configs
+    # The patterns are specific to home/developer/, so workspace/ paths pass through
+    assert_command_fails "is_path_blocked 'workspace/.claude/CLAUDE.md'" "workspace .claude should NOT be blocked"
+    assert_command_fails "is_path_blocked 'workspace/.claude/rules/custom.md'" "workspace .claude/rules should NOT be blocked"
+    assert_command_fails "is_path_blocked 'workspace/.aiderignore'" "workspace .aiderignore should NOT be blocked"
+    assert_command_fails "is_path_blocked 'workspace/.cursor/settings.json'" "workspace .cursor should NOT be blocked"
+    assert_command_fails "is_path_blocked 'workspace/.continue/config.json'" "workspace .continue should NOT be blocked"
+
+    # Verify these pass the allowed check
+    assert_command_succeeds "is_path_allowed 'workspace/.claude/CLAUDE.md'" "workspace .claude should be allowed"
+    assert_command_succeeds "is_path_allowed 'workspace/src/main.java'" "workspace src should be allowed"
 }
 
 test_is_path_warning_git_hooks() {
@@ -130,6 +164,41 @@ test_validate_scope_worktree_allowed_changes() {
     validate_scope_worktree "$SCOPE_TEST_DIR" || exit_code=$?
 
     assert_equals 0 "$exit_code" "Normal code changes should pass validation"
+
+    cleanup_scope_test
+}
+
+test_validate_scope_worktree_allows_project_agent_configs() {
+    log_test "Testing validate_scope_worktree allows project-level agent configs (issue #115)"
+
+    setup_scope_test
+    source "$VALIDATE_SCOPE_SCRIPT"
+
+    # Create project-level agent config directories and files
+    # These should ALL be allowed in worktree mode (they're project configs, not host configs)
+    mkdir -p .claude/rules
+    echo "# Project instructions" > .claude/CLAUDE.md
+    echo "# Custom rule" > .claude/rules/custom.md
+    git add .claude/
+
+    # Aider config
+    echo "# Aider ignore" > .aiderignore
+    git add .aiderignore
+
+    # Cursor config
+    mkdir -p .cursor
+    echo "{}" > .cursor/settings.json
+    git add .cursor/
+
+    # Continue.dev config
+    mkdir -p .continue
+    echo "{}" > .continue/config.json
+    git add .continue/
+
+    local exit_code=0
+    validate_scope_worktree "$SCOPE_TEST_DIR" || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Project-level agent configs should pass validation in worktree mode"
 
     cleanup_scope_test
 }
@@ -235,14 +304,16 @@ test_audit_log_escapes_special_chars() {
 #===============================================================================
 
 main() {
-    # Unit tests (no container required)
+    # Unit tests - path matching (no container required)
     run_test test_is_path_allowed_workspace
-    run_test test_is_path_blocked_sensitive
+    run_test test_is_path_blocked_overlay_home_paths
+    run_test test_workspace_agent_configs_allowed
     run_test test_is_path_warning_git_hooks
 
-    # Integration tests
+    # Integration tests - worktree mode
     run_test test_validate_scope_worktree_clean
     run_test test_validate_scope_worktree_allowed_changes
+    run_test test_validate_scope_worktree_allows_project_agent_configs  # Issue #115
     run_test test_validate_scope_worktree_git_hooks_warning
 
     # Audit logging tests

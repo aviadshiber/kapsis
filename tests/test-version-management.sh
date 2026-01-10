@@ -212,7 +212,7 @@ test_upgrade_rejects_malicious_version() {
     local output
     local exit_code=0
     # shellcheck disable=SC2016
-    output=$("$LAUNCH_SCRIPT" --upgrade '1$(id)' --dry-run 2>&1) || exit_code=$?
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" --upgrade '1$(id)' --dry-run 2>&1) || exit_code=$?
 
     assert_not_equals 0 "$exit_code" "Should fail on malicious input"
     assert_contains "$output" "Invalid version format" "Should show validation error"
@@ -270,7 +270,9 @@ test_version_flag_output() {
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" --version 2>&1) || exit_code=$?
+    # Use env -u to ensure the subprocess doesn't inherit _KAPSIS_VERSION_LOADED
+    # (This test file sources version.sh for unit tests, which sets the guard)
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" --version 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should exit with 0"
     assert_contains "$output" "Kapsis" "Should show Kapsis name"
@@ -283,7 +285,8 @@ test_version_short_flag() {
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" -V 2>&1) || exit_code=$?
+    # Use env -u to ensure the subprocess doesn't inherit _KAPSIS_VERSION_LOADED
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" -V 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should exit with 0"
     assert_contains "$output" "Kapsis" "Should show Kapsis name"
@@ -299,7 +302,7 @@ test_check_upgrade_flag() {
     fi
 
     local output
-    output=$("$LAUNCH_SCRIPT" --check-upgrade 2>&1) || true
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" --check-upgrade 2>&1) || true
 
     assert_contains "$output" "Current version:" "Should show current version"
     assert_contains "$output" "Latest version:" "Should show latest version"
@@ -312,7 +315,7 @@ test_upgrade_dry_run() {
     # (avoids "Already on version" when current equals latest)
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" --upgrade 99.0.0 --dry-run 2>&1) || exit_code=$?
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" --upgrade 99.0.0 --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should exit with 0 on dry-run"
     assert_contains "$output" "[DRY-RUN]" "Should indicate dry run mode"
@@ -328,7 +331,7 @@ test_upgrade_already_on_latest() {
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" --upgrade "$current" --dry-run 2>&1) || exit_code=$?
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" --upgrade "$current" --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should exit with 0"
     assert_contains "$output" "Already on version" "Should indicate already on target"
@@ -340,7 +343,7 @@ test_upgrade_with_v_prefix_dry_run() {
     # Use a version that's different from current
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" --upgrade v99.0.0 --dry-run 2>&1) || exit_code=$?
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" --upgrade v99.0.0 --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should exit with 0 on dry-run"
     assert_contains "$output" "99.0.0" "Should handle v prefix (strip v)"
@@ -357,7 +360,7 @@ test_downgrade_without_version() {
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" --downgrade --dry-run 2>&1) || exit_code=$?
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" --downgrade --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should succeed with dry-run"
     assert_contains "$output" "previous version" "Should mention finding previous version"
@@ -370,7 +373,7 @@ test_downgrade_dry_run() {
     local output
     local exit_code=0
     # Use a very old version that's definitely older than current
-    output=$("$LAUNCH_SCRIPT" --downgrade 0.1.0 --dry-run 2>&1) || exit_code=$?
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" --downgrade 0.1.0 --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "Should exit with 0 on dry-run"
     assert_contains "$output" "0.1.0" "Should reference target version"
@@ -382,7 +385,7 @@ test_downgrade_rejects_newer_version() {
     local output
     local exit_code=0
     # Try to downgrade to a version that's newer than any possible current version
-    output=$("$LAUNCH_SCRIPT" --downgrade 999.0.0 2>&1) || exit_code=$?
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" --downgrade 999.0.0 2>&1) || exit_code=$?
 
     assert_not_equals 0 "$exit_code" "Should fail when target is newer"
     assert_contains "$output" "newer" "Should explain target is newer"
@@ -396,7 +399,7 @@ test_downgrade_rejects_same_version() {
 
     local output
     local exit_code=0
-    output=$("$LAUNCH_SCRIPT" --downgrade "$current" 2>&1) || exit_code=$?
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" --downgrade "$current" 2>&1) || exit_code=$?
 
     assert_not_equals 0 "$exit_code" "Should fail when target is same"
     assert_contains "$output" "same" "Should explain target is same version"
@@ -406,7 +409,7 @@ test_usage_shows_version_flags() {
     log_test "Testing usage shows version management flags"
 
     local output
-    output=$("$LAUNCH_SCRIPT" --help 2>&1) || true
+    output=$(env -u _KAPSIS_VERSION_LOADED "$LAUNCH_SCRIPT" --help 2>&1) || true
 
     assert_contains "$output" "--version" "Usage should document --version"
     assert_contains "$output" "--check-upgrade" "Usage should document --check-upgrade"
