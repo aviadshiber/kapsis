@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.5.4] - 2026-01-06
+## [1.5.5] - 2026-01-10
 
-### Changed
-- Release v1.5.4
+### Fixed
+- Add artifactory-build to DNS allowlist (#117)
 
 ## [Unreleased]
 
 ## [0.8.3] - 2025-12-28
+
+### Changed
+- Release v1.5.4
+
 
 ### Fixed
 - Verify critical scripts during installation (#106) (#111)
@@ -317,7 +321,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.5.4...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.5.5...HEAD
+[1.5.5]: https://github.com/aviadshiber/kapsis/releases/tag/v1.5.5
 [1.5.4]: https://github.com/aviadshiber/kapsis/releases/tag/v1.5.4
 [1.5.3]: https://github.com/aviadshiber/kapsis/releases/tag/v1.5.3
 [1.5.1]: https://github.com/aviadshiber/kapsis/releases/tag/v1.5.1
