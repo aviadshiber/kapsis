@@ -415,7 +415,7 @@ test_expand_path_vars_tilde() {
     log_test 'expand_path_vars: expands ~ to $HOME'
 
     local result
-    result=$(expand_path_vars '~/.config/test')
+    result=$(expand_path_vars $'~/.config/test')
 
     assert_equals "$HOME/.config/test" "$result" 'Tilde should expand to $HOME'
 }
@@ -424,7 +424,7 @@ test_expand_path_vars_tilde_only() {
     log_test 'expand_path_vars: expands standalone ~'
 
     local result
-    result=$(expand_path_vars '~')
+    result=$(expand_path_vars $'~')
 
     assert_equals "$HOME" "$result" 'Standalone ~ should expand to $HOME'
 }
