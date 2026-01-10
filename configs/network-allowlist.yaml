@@ -126,6 +126,7 @@ network:
     # Custom/corporate hosts (add your internal registries here)
     custom:
       - artifactory.taboolasyndication.com
+      - artifactory-build.taboolasyndication.com
       - ci.taboolasyndication.com
 
   # DNS servers to use for resolving allowed domains
