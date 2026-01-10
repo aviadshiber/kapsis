@@ -1,5 +1,5 @@
 Name:           kapsis
-Version:        1.5.6  # RELEASE_VERSION_MARKER - Do not remove, used by CI
+Version:        1.5.7  # RELEASE_VERSION_MARKER - Do not remove, used by CI
 Release:        1%{?dist}
 Summary:        Hermetically isolated AI agent sandbox
 
