@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.5.7] - 2026-01-10
+## [1.5.8] - 2026-01-13
 
 ### Fixed
-- Expand environment variables in config paths (#112)
+- Map schedule event to manual for differential-shellcheck (#119)
 
 ## [Unreleased]
 
 ## [0.8.3] - 2025-12-28
+
+### Fixed
+- Expand environment variables in config paths (#112)
+
 
 ### Fixed
 - Scope validation agent-agnostic and mode-aware (#118)
@@ -329,7 +333,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.5.7...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.5.8...HEAD
+[1.5.8]: https://github.com/aviadshiber/kapsis/releases/tag/v1.5.8
 [1.5.7]: https://github.com/aviadshiber/kapsis/releases/tag/v1.5.7
 [1.5.6]: https://github.com/aviadshiber/kapsis/releases/tag/v1.5.6
 [1.5.5]: https://github.com/aviadshiber/kapsis/releases/tag/v1.5.5
