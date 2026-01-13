@@ -31,6 +31,9 @@ jobs:
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           severity: warning
+          # Map schedule/workflow_dispatch events to 'manual' since the action
+          # only supports: merge_group, pull_request, push, manual
+          triggering-event: ${{ github.event_name == 'schedule' && 'manual' || github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}
 
   container-scan:
     name: Container Vulnerability Scan
