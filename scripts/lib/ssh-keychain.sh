@@ -203,6 +203,53 @@ ssh_get_custom_fingerprint() {
     return 1
 }
 
+# Check user's ~/.ssh/known_hosts for host entries (Fix #2: fallback source)
+# This allows enterprise hosts to be verified against the user's existing known_hosts
+# which was likely populated via prior SSH connections.
+# Args: $1 = hostname
+# Returns: known_hosts entries for the host, or 1 if not found
+ssh_check_user_known_hosts() {
+    local target_host="$1"
+    local known_hosts_file="${HOME}/.ssh/known_hosts"
+
+    [[ ! -f "$known_hosts_file" ]] && return 1
+
+    # Extract entries matching target host
+    # Handles:
+    #   - hostname ssh-rsa/ed25519 AAAA...
+    #   - [hostname]:port ssh-rsa AAAA...
+    #   - hostname,ip ssh-rsa AAAA...
+    local entries
+    entries=$(grep -E "^${target_host}[, ]|^\[${target_host}\]" "$known_hosts_file" 2>/dev/null || true)
+
+    if [[ -n "$entries" ]]; then
+        echo "$entries"
+        return 0
+    fi
+
+    return 1
+}
+
+# Compute fingerprints from user known_hosts entries
+# Args: $1 = hostname
+# Returns: SHA256 fingerprints for the host's keys
+ssh_get_user_known_hosts_fingerprints() {
+    local target_host="$1"
+    local entries
+
+    entries=$(ssh_check_user_known_hosts "$target_host") || return 1
+
+    # Compute fingerprint for each entry
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        local fp
+        fp=$(ssh_compute_fingerprint "$line" 2>/dev/null)
+        [[ -n "$fp" ]] && echo "$fp"
+    done <<< "$entries"
+
+    return 0
+}
+
 # Add a custom host fingerprint (persists to config file)
 # Args: $1 = hostname, $2 = fingerprint (SHA256:...)
 ssh_add_custom_host() {
@@ -249,7 +296,15 @@ ssh_get_official_fingerprints() {
             ssh_fetch_bitbucket_fingerprints
             ;;
         *)
-            # Unknown host - no official fingerprints available
+            # Unknown host - try user's ~/.ssh/known_hosts as fallback (Fix #2)
+            # This allows verification against hosts the user has previously connected to
+            local user_fps
+            if user_fps=$(ssh_get_user_known_hosts_fingerprints "$host"); then
+                echo "  (verified via ~/.ssh/known_hosts)" >&2
+                echo "$user_fps"
+                return 0
+            fi
+            # No official fingerprints available
             return 1
             ;;
     esac

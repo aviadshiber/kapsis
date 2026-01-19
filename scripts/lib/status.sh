@@ -61,6 +61,12 @@ _KAPSIS_PUSH_FALLBACK_CMD=""     # Fallback command for agent recovery when push
 _KAPSIS_LOCAL_COMMIT=""     # Local HEAD commit SHA
 _KAPSIS_REMOTE_COMMIT=""    # Remote HEAD commit SHA after push
 
+# Commit verification state (Fix #3: verify commit before reporting completion)
+_KAPSIS_COMMIT_STATUS=""         # "success", "failed", "uncommitted", "no_changes"
+_KAPSIS_COMMIT_SHA=""            # SHA of committed changes
+_KAPSIS_UNCOMMITTED_FILES=0      # Count of uncommitted files remaining
+_KAPSIS_PRE_COMMIT_SHA=""        # SHA before commit (to verify HEAD moved)
+
 # Agent gist state (agent-provided summary of current activity)
 _KAPSIS_GIST=""                  # Current gist message from agent
 _KAPSIS_GIST_UPDATED_AT=""       # When gist was last updated
@@ -318,6 +324,88 @@ status_push_skipped() {
 }
 
 # =============================================================================
+# Commit Verification (Fix #3)
+# =============================================================================
+
+# Set commit verification information
+# Arguments:
+#   $1 - Commit status: "success", "failed", "uncommitted", "no_changes"
+#   $2 - Commit SHA (optional)
+#   $3 - Uncommitted file count (optional)
+status_set_commit_info() {
+    _KAPSIS_COMMIT_STATUS="${1:-uncommitted}"
+    _KAPSIS_COMMIT_SHA="${2:-}"
+    _KAPSIS_UNCOMMITTED_FILES="${3:-0}"
+}
+
+# Record the pre-commit SHA for later verification
+# Call this BEFORE attempting to commit
+# Arguments:
+#   $1 - Worktree path
+status_record_pre_commit() {
+    local worktree_path="$1"
+    _KAPSIS_PRE_COMMIT_SHA=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "")
+}
+
+# Verify that a commit was created and no uncommitted changes remain
+# Call this AFTER commit_changes() to verify success
+# Arguments:
+#   $1 - Worktree path
+# Returns:
+#   0 if commit verified (HEAD moved and working tree is clean)
+#   1 if no commit happened (HEAD unchanged)
+#   2 if uncommitted changes remain
+status_verify_commit() {
+    local worktree_path="$1"
+
+    # Get current HEAD
+    local current_sha
+    current_sha=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null)
+
+    # Check if HEAD moved (commit happened)
+    if [[ -n "$_KAPSIS_PRE_COMMIT_SHA" && "$current_sha" == "$_KAPSIS_PRE_COMMIT_SHA" ]]; then
+        # HEAD didn't move - no commit was created
+        # Check if there were changes that should have been committed
+        local uncommitted_count
+        uncommitted_count=$(git -C "$worktree_path" status --porcelain 2>/dev/null | wc -l | tr -d ' ')
+
+        if [[ "$uncommitted_count" -gt 0 ]]; then
+            status_set_commit_info "uncommitted" "" "$uncommitted_count"
+            return 2
+        else
+            # No changes and HEAD didn't move - this is "no_changes" not a failure
+            status_set_commit_info "no_changes" "$current_sha" "0"
+            return 0
+        fi
+    fi
+
+    # HEAD moved - verify no uncommitted changes remain
+    local remaining_changes
+    remaining_changes=$(git -C "$worktree_path" status --porcelain 2>/dev/null)
+
+    if [[ -n "$remaining_changes" ]]; then
+        local uncommitted_count
+        uncommitted_count=$(echo "$remaining_changes" | wc -l | tr -d ' ')
+        status_set_commit_info "uncommitted" "$current_sha" "$uncommitted_count"
+        return 2
+    fi
+
+    # Success: HEAD moved and no uncommitted changes
+    status_set_commit_info "success" "$current_sha" "0"
+    return 0
+}
+
+# Get commit status for external queries
+status_get_commit_status() {
+    echo "${_KAPSIS_COMMIT_STATUS:-unknown}"
+}
+
+# Get commit SHA for external queries
+status_get_commit_sha() {
+    echo "${_KAPSIS_COMMIT_SHA:-}"
+}
+
+# =============================================================================
 # Agent Gist (Activity Summary)
 # =============================================================================
 
@@ -462,6 +550,15 @@ _status_write() {
         push_fallback_json="\"$escaped_fallback\""
     fi
 
+    # Commit verification fields (Fix #3)
+    local commit_status_json="null"
+    [[ -n "$_KAPSIS_COMMIT_STATUS" ]] && commit_status_json="\"$_KAPSIS_COMMIT_STATUS\""
+
+    local commit_sha_json="null"
+    [[ -n "$_KAPSIS_COMMIT_SHA" ]] && commit_sha_json="\"$_KAPSIS_COMMIT_SHA\""
+
+    local uncommitted_files_json="${_KAPSIS_UNCOMMITTED_FILES:-0}"
+
     # Agent gist fields
     local gist_json="null"
     local gist_updated_at_json="null"
@@ -495,7 +592,10 @@ _status_write() {
   "push_status": ${push_status_json},
   "local_commit": ${local_commit_json},
   "remote_commit": ${remote_commit_json},
-  "push_fallback_command": ${push_fallback_json}
+  "push_fallback_command": ${push_fallback_json},
+  "commit_status": ${commit_status_json},
+  "commit_sha": ${commit_sha_json},
+  "uncommitted_files": ${uncommitted_files_json}
 }
 EOF
 )

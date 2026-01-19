@@ -679,6 +679,10 @@ post_container_git() {
     log_debug "Checking for uncommitted changes..."
     if ! has_changes "$worktree_path"; then
         log_info "No changes to commit"
+        # Record no_changes status (Fix #3)
+        local current_sha
+        current_sha=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "")
+        status_set_commit_info "no_changes" "$current_sha" "0"
         return 0
     fi
     log_debug "Changes detected, proceeding with commit"
@@ -686,13 +690,28 @@ post_container_git() {
     # Update status: committing phase
     status_phase "committing" 92 "Staging and committing changes"
 
+    # Record pre-commit SHA for verification (Fix #3)
+    status_record_pre_commit "$worktree_path"
+
     # Commit changes
     log_debug "Committing changes..."
     if ! commit_changes "$worktree_path" "$commit_message" "$agent_id" "$co_authors"; then
         log_warn "Commit failed"
+        status_set_commit_info "failed" "" "0"
         return 1
     fi
     log_debug "Commit successful"
+
+    # Verify commit was created and no uncommitted changes remain (Fix #3)
+    local verify_result
+    status_verify_commit "$worktree_path"
+    verify_result=$?
+    if [[ $verify_result -eq 2 ]]; then
+        log_warn "Commit created but uncommitted changes remain!"
+        log_warn "Uncommitted files: $(git -C "$worktree_path" status --porcelain | wc -l | tr -d ' ')"
+    elif [[ $verify_result -eq 0 ]]; then
+        log_debug "Commit verified: SHA=$(status_get_commit_sha)"
+    fi
 
     # Push if not disabled
     if [[ "$no_push" != "true" ]]; then

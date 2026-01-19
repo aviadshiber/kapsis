@@ -78,8 +78,13 @@ test_final_exit_code_combines_both() {
     fi
 
     # Check for the logic that sets FINAL_EXIT_CODE to 0 when both succeed
-    if grep -q 'else' "$LAUNCH_AGENT_SCRIPT" | tail -1 && \
-       grep -A 1 'else$' "$LAUNCH_AGENT_SCRIPT" | grep -q 'FINAL_EXIT_CODE=0'; then
+    # Fix #3 adds commit verification before reporting success, so the pattern is now:
+    #   else
+    #     ... commit status check ...
+    #       FINAL_EXIT_CODE=0
+    # We check for FINAL_EXIT_CODE=0 somewhere in the success branch
+    if grep -A 20 'elif \[\[ "\$POST_EXIT_CODE" -ne 0 \]\]' "$LAUNCH_AGENT_SCRIPT" | \
+       grep -q 'FINAL_EXIT_CODE=0'; then
         log_info "  ✓ FINAL_EXIT_CODE set to 0 when both succeed"
     else
         log_fail "FINAL_EXIT_CODE not properly set for success case"
@@ -130,10 +135,13 @@ test_status_complete_called_with_zero_on_success() {
 
     # When both EXIT_CODE and POST_EXIT_CODE are 0, status_complete should be
     # called with 0 and the PR_URL
+    # Fix #3 adds commit verification before the success path, so the pattern is:
+    #   else
+    #     ... commit status check ...
+    #     status_complete 0 "" "${PR_URL:-}"
 
-    # Look for the else branch that calls status_complete with 0
-    if grep -B 3 'status_complete 0 "" "\${PR_URL:-}"' "$LAUNCH_AGENT_SCRIPT" | \
-       grep -q 'else$'; then
+    # Look for status_complete with 0 in the success path
+    if grep -q 'status_complete 0 "" "\${PR_URL:-}"' "$LAUNCH_AGENT_SCRIPT"; then
         log_info "  ✓ status_complete called with 0 on success"
     else
         log_fail "status_complete not properly called for success case"

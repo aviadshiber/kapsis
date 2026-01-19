@@ -136,6 +136,95 @@ ensure_git_excludes() {
 }
 
 #===============================================================================
+# FIND WORKTREE FOR BRANCH (Fix #1)
+#
+# Finds which worktree (if any) has a specific branch checked out.
+# This is used to detect resume scenarios where a branch already exists.
+#
+# Arguments:
+#   $1 - project_path
+#   $2 - branch name
+# Returns:
+#   0 + prints worktree path if found
+#   1 if branch not found in any worktree
+#===============================================================================
+find_worktree_for_branch() {
+    local project_path="$1"
+    local branch="$2"
+
+    cd "$project_path" || return 1
+
+    # Use git worktree list --porcelain for reliable parsing
+    # Format:
+    #   worktree /path/to/worktree
+    #   HEAD abc123...
+    #   branch refs/heads/feature/foo
+    #   (blank line)
+    local path=""
+    while IFS= read -r line; do
+        if [[ "$line" == "worktree "* ]]; then
+            path="${line#worktree }"
+        elif [[ "$line" == "branch refs/heads/$branch" ]]; then
+            # Found the branch
+            echo "$path"
+            return 0
+        elif [[ -z "$line" ]]; then
+            # Reset for next entry
+            path=""
+        fi
+    done < <(git worktree list --porcelain 2>/dev/null)
+
+    return 1
+}
+
+#===============================================================================
+# GET WORKTREE METADATA (Fix #1)
+#
+# Returns metadata about a worktree for resume/conflict detection.
+# Output format: JSON-like key=value pairs
+#===============================================================================
+get_worktree_metadata() {
+    local worktree_path="$1"
+
+    if [[ ! -d "$worktree_path" ]]; then
+        return 1
+    fi
+
+    # Extract agent-id from path (assumes format: project-agentid)
+    local agent_id
+    agent_id=$(basename "$worktree_path" | sed 's/.*-//')
+
+    # Get branch
+    local branch
+    branch=$(git -C "$worktree_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+
+    # Get last modified time of worktree
+    local last_modified
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        last_modified=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M" "$worktree_path" 2>/dev/null || echo "unknown")
+    else
+        last_modified=$(stat -c "%y" "$worktree_path" 2>/dev/null | cut -d. -f1 || echo "unknown")
+    fi
+
+    # Check for uncommitted changes
+    local has_changes="false"
+    if [[ -n "$(git -C "$worktree_path" status --porcelain 2>/dev/null)" ]]; then
+        has_changes="true"
+    fi
+
+    # Get last commit info
+    local last_commit
+    last_commit=$(git -C "$worktree_path" log -1 --format="%h %s" 2>/dev/null | head -c 60 || echo "no commits")
+
+    echo "path=$worktree_path"
+    echo "agent_id=$agent_id"
+    echo "branch=$branch"
+    echo "last_modified=$last_modified"
+    echo "has_changes=$has_changes"
+    echo "last_commit=$last_commit"
+}
+
+#===============================================================================
 # CREATE WORKTREE
 #
 # Creates a git worktree for an agent on the host filesystem.
@@ -232,12 +321,41 @@ create_worktree() {
     # Verify worktree was actually created
     if [[ ! -d "$worktree_path" ]]; then
         log_error "Worktree directory was not created: $worktree_path"
-        log_error "This can happen when:"
-        log_error "  1. The branch is already checked out elsewhere (including main repo)"
-        log_error "  2. There's a git lock file preventing operations"
-        log_error "  3. Insufficient disk space or permissions"
         log_error ""
-        log_error "Check 'git worktree list' in $project_path for existing worktrees"
+
+        # Check if another worktree has this branch (Fix #1: enhanced diagnostics)
+        local existing_worktree
+        if existing_worktree=$(find_worktree_for_branch "$project_path" "$branch"); then
+            log_error "FOUND: Branch '$branch' is already checked out in another worktree:"
+            log_error "  → $existing_worktree"
+            log_error ""
+            # Get metadata for the existing worktree
+            local metadata
+            metadata=$(get_worktree_metadata "$existing_worktree")
+            local existing_agent_id last_modified has_changes
+            existing_agent_id=$(echo "$metadata" | grep "^agent_id=" | cut -d= -f2)
+            last_modified=$(echo "$metadata" | grep "^last_modified=" | cut -d= -f2-)
+            has_changes=$(echo "$metadata" | grep "^has_changes=" | cut -d= -f2)
+            log_error "  Agent ID: $existing_agent_id"
+            log_error "  Last modified: $last_modified"
+            [[ "$has_changes" == "true" ]] && log_error "  ⚠ Has uncommitted changes"
+            log_error ""
+            log_error "To resume this worktree:"
+            log_error "  kapsis --agent-id $existing_agent_id ..."
+            log_error ""
+            log_error "To start fresh (removes existing worktree):"
+            log_error "  kapsis --force-clean ..."
+            # Export for use by callers (shellcheck: SC2034 - intentionally exported)
+            export KAPSIS_EXISTING_WORKTREE="$existing_worktree"
+            export KAPSIS_EXISTING_AGENT_ID="$existing_agent_id"
+        else
+            log_error "This can happen when:"
+            log_error "  1. The branch is already checked out in the main repository"
+            log_error "  2. There's a git lock file preventing operations"
+            log_error "  3. Insufficient disk space or permissions"
+            log_error ""
+            log_error "Check 'git worktree list' in $project_path for existing worktrees"
+        fi
         return 1
     fi
 
