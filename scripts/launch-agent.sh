@@ -36,6 +36,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KAPSIS_ROOT="$(dirname "$SCRIPT_DIR")"
 
+# Debug: Log critical paths early (before logging is initialized, write to stderr)
+[[ "${KAPSIS_DEBUG:-}" == "1" ]] && echo "[DEBUG] SCRIPT_DIR=$SCRIPT_DIR" >&2
+[[ "${KAPSIS_DEBUG:-}" == "1" ]] && echo "[DEBUG] KAPSIS_ROOT=$KAPSIS_ROOT" >&2
+
 # Source logging library
 source "$SCRIPT_DIR/lib/logging.sh"
 log_init "launch-agent"
@@ -72,6 +76,8 @@ SPEC_FILE=""
 BRANCH=""
 AUTO_BRANCH=false
 NO_PUSH=false
+RESUME_MODE=false      # Fix #1: Auto-resume existing worktree
+FORCE_CLEAN=false      # Fix #1: Force remove existing worktree
 INTERACTIVE=false
 DRY_RUN=false
 # Use KAPSIS_IMAGE env var if set (for CI), otherwise default
@@ -323,6 +329,16 @@ parse_args() {
                 ;;
             --no-push)
                 NO_PUSH=true
+                shift
+                ;;
+            --resume)
+                # Resume existing worktree for branch (Fix #1)
+                RESUME_MODE=true
+                shift
+                ;;
+            --force-clean)
+                # Force clean start, remove existing worktree (Fix #1)
+                FORCE_CLEAN=true
                 shift
                 ;;
             --interactive)
@@ -1229,6 +1245,126 @@ generate_branch_name() {
 }
 
 #===============================================================================
+# HANDLE EXISTING WORKTREE (Fix #1)
+#
+# Detects if a worktree already exists for the target branch and handles
+# resume/force-clean scenarios. This prevents cryptic errors when a branch
+# is already checked out elsewhere.
+#===============================================================================
+handle_existing_worktree() {
+    # Skip if not using worktree mode
+    [[ -z "$BRANCH" ]] && return 0
+
+    log_debug "Checking for existing worktree with branch: $BRANCH"
+
+    # Source worktree manager for find_worktree_for_branch
+    source "$SCRIPT_DIR/worktree-manager.sh"
+
+    local existing_worktree
+    if ! existing_worktree=$(find_worktree_for_branch "$PROJECT_PATH" "$BRANCH"); then
+        log_debug "No existing worktree found for branch: $BRANCH"
+        return 0
+    fi
+
+    log_info "Found existing worktree for branch '$BRANCH':"
+    log_info "  → $existing_worktree"
+
+    # Get metadata about the existing worktree
+    local metadata
+    metadata=$(get_worktree_metadata "$existing_worktree")
+    local existing_agent_id has_changes last_commit
+    existing_agent_id=$(echo "$metadata" | grep "^agent_id=" | cut -d= -f2)
+    has_changes=$(echo "$metadata" | grep "^has_changes=" | cut -d= -f2)
+    last_commit=$(echo "$metadata" | grep "^last_commit=" | cut -d= -f2-)
+
+    if [[ "$has_changes" == "true" ]]; then
+        log_warn "  ⚠ Worktree has uncommitted changes"
+    fi
+    log_info "  Last commit: $last_commit"
+
+    # Handle --force-clean: remove existing worktree
+    if [[ "$FORCE_CLEAN" == "true" ]]; then
+        log_warn "Force-clean requested: removing existing worktree..."
+        cleanup_worktree "$PROJECT_PATH" "$existing_agent_id"
+        log_info "Existing worktree removed. Continuing with fresh start."
+        return 0
+    fi
+
+    # Handle --resume: use existing worktree
+    if [[ "$RESUME_MODE" == "true" ]]; then
+        log_info "Resume mode: using existing worktree"
+        # Update AGENT_ID to match existing worktree
+        AGENT_ID="$existing_agent_id"
+        log_info "  Agent ID set to: $AGENT_ID"
+        return 0
+    fi
+
+    # Interactive prompt (if not in non-interactive mode)
+    if [[ -t 0 ]] && [[ "$INTERACTIVE" != "false" ]]; then
+        echo ""
+        echo "┌────────────────────────────────────────────────────────────────────┐"
+        echo "│ EXISTING WORKTREE DETECTED                                         │"
+        echo "└────────────────────────────────────────────────────────────────────┘"
+        echo ""
+        echo "  Branch '$BRANCH' already has a worktree at:"
+        echo "  $existing_worktree"
+        echo ""
+        echo "  [R] Resume - Continue with existing worktree"
+        echo "  [S] Start fresh - Remove existing worktree and create new"
+        echo "  [V] View - Show worktree status and diff"
+        echo "  [A] Abort - Cancel and exit"
+        echo ""
+        echo -n "  Your choice [R/s/v/a]: "
+
+        local choice
+        read -r choice
+
+        case "${choice,,}" in
+            r|"")
+                # Default: resume
+                log_info "Resuming existing worktree..."
+                AGENT_ID="$existing_agent_id"
+                return 0
+                ;;
+            s)
+                log_warn "Starting fresh: removing existing worktree..."
+                cleanup_worktree "$PROJECT_PATH" "$existing_agent_id"
+                log_info "Existing worktree removed. Continuing with fresh start."
+                return 0
+                ;;
+            v)
+                echo ""
+                echo "─── Worktree Status ───"
+                git -C "$existing_worktree" status 2>/dev/null || true
+                echo ""
+                echo "─── Recent Changes ───"
+                git -C "$existing_worktree" diff --stat HEAD~3..HEAD 2>/dev/null || true
+                echo ""
+                echo "─── Uncommitted Changes ───"
+                git -C "$existing_worktree" diff --stat 2>/dev/null || echo "(none)"
+                echo ""
+                # Recurse to prompt again
+                handle_existing_worktree
+                return $?
+                ;;
+            a)
+                log_info "Aborted by user."
+                exit 0
+                ;;
+            *)
+                log_error "Invalid choice: $choice"
+                exit 1
+                ;;
+        esac
+    fi
+
+    # Non-interactive mode: default to resume
+    log_info "Non-interactive mode: auto-resuming existing worktree"
+    AGENT_ID="$existing_agent_id"
+    return 0
+}
+
+#===============================================================================
 # BUILD CONTAINER COMMAND
 #===============================================================================
 build_container_command() {
@@ -1338,6 +1474,11 @@ main() {
 
     generate_branch_name
 
+    # Handle existing worktree for branch (Fix #1: resume/force-clean)
+    if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]] && [[ "$DRY_RUN" != "true" ]]; then
+        handle_existing_worktree
+    fi
+
     # Run pre-flight validation for worktree mode (skip in dry-run)
     if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]] && [[ "$DRY_RUN" != "true" ]]; then
         log_timer_start "preflight"
@@ -1415,7 +1556,8 @@ main() {
 
     log_timer_end "container"
     log_info "Container exited with code: $EXIT_CODE"
-    status_phase "running" 90 "Agent completed (exit code: $EXIT_CODE)"
+    # Update status to post_processing (Fix #3: don't report "completed" until commit verified)
+    status_phase "post_processing" 85 "Processing agent output (exit code: $EXIT_CODE)"
 
     echo ""
     echo "┌────────────────────────────────────────────────────────────────────┐"
@@ -1438,6 +1580,11 @@ main() {
     log_timer_end "total"
 
     # Combine exit codes - fail if either container or post-container operations failed
+    # Exit codes (Fix #3):
+    #   0 = Success (changes committed or no changes)
+    #   1 = Agent failure (container exit code non-zero)
+    #   2 = Push failed
+    #   3 = Uncommitted changes remain
     if [[ "$EXIT_CODE" -ne 0 ]]; then
         FINAL_EXIT_CODE=$EXIT_CODE
         log_finalize $EXIT_CODE
@@ -1447,9 +1594,23 @@ main() {
         log_finalize $POST_EXIT_CODE
         status_complete "$POST_EXIT_CODE" "Post-container operations failed (push)"
     else
-        FINAL_EXIT_CODE=0
-        log_finalize 0
-        status_complete 0 "" "${PR_URL:-}"
+        # Check commit status before reporting success (Fix #3)
+        local commit_status
+        commit_status=$(status_get_commit_status 2>/dev/null || echo "unknown")
+        log_debug "Commit status: $commit_status"
+
+        if [[ "$commit_status" == "uncommitted" ]]; then
+            # Exit code 3: changes exist but weren't fully committed
+            FINAL_EXIT_CODE=3
+            log_finalize 3
+            log_warn "Uncommitted changes remain in worktree!"
+            status_complete 3 "Uncommitted changes remain"
+        else
+            # Success: no changes, or changes were committed
+            FINAL_EXIT_CODE=0
+            log_finalize 0
+            status_complete 0 "" "${PR_URL:-}"
+        fi
     fi
 
     exit $FINAL_EXIT_CODE
@@ -1489,7 +1650,15 @@ post_container_worktree() {
         fi
 
         # Run post-container git operations on HOST
-        source "$SCRIPT_DIR/post-container-git.sh"
+        local post_container_script="$SCRIPT_DIR/post-container-git.sh"
+        log_debug "Sourcing post-container script: $post_container_script"
+        if [[ ! -f "$post_container_script" ]]; then
+            log_error "post-container-git.sh not found at: $post_container_script"
+            log_error "SCRIPT_DIR=$SCRIPT_DIR"
+            log_error "Contents of SCRIPT_DIR: $(ls -la "$SCRIPT_DIR" 2>&1 | head -20)"
+            return 1
+        fi
+        source "$post_container_script"
         # post_container_git sets PR_URL global variable
         post_container_git \
             "$WORKTREE_PATH" \
