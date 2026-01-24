@@ -229,16 +229,26 @@ get_worktree_metadata() {
 #
 # Creates a git worktree for an agent on the host filesystem.
 # Returns the path to the created worktree.
+#
+# Arguments:
+#   $1 - project_path: Path to the git repository
+#   $2 - agent_id: Unique agent identifier
+#   $3 - branch: Target branch name for the worktree
+#   $4 - base_branch: (Optional) Base branch/tag to create new branch from
+#                     If not specified, uses current HEAD (existing behavior)
+#                     Fix #116: Prevents orphan-like commits from wrong base
 #===============================================================================
 create_worktree() {
     local project_path="$1"
     local agent_id="$2"
     local branch="$3"
+    local base_branch="${4:-}"  # Fix #116: Optional base branch/tag
 
     log_debug "create_worktree called with:"
     log_debug "  project_path=$project_path"
     log_debug "  agent_id=$agent_id"
     log_debug "  branch=$branch"
+    log_debug "  base_branch=${base_branch:-<not specified>}"
 
     # Validate inputs
     if [[ ! -d "$project_path/.git" ]]; then
@@ -310,10 +320,32 @@ create_worktree() {
             log_debug "Running: git worktree add $worktree_path $branch"
             run_git git worktree add "$worktree_path" "$branch" || true
         else
-            # Create new branch from current HEAD
-            log_info "Creating new branch: $branch"
-            log_debug "Running: git worktree add $worktree_path -b $branch"
-            run_git git worktree add "$worktree_path" -b "$branch" || true
+            # Create new branch - use base_branch if specified (Fix #116)
+            if [[ -n "$base_branch" ]]; then
+                # Verify base_branch exists (as branch, tag, or commit)
+                if ! git rev-parse --verify "$base_branch" >/dev/null 2>&1; then
+                    # Try fetching it from remote
+                    log_info "Fetching base ref: $base_branch"
+                    git fetch origin "$base_branch" --depth=1 2>/dev/null || true
+                    git fetch origin "refs/tags/$base_branch:refs/tags/$base_branch" 2>/dev/null || true
+                fi
+
+                if git rev-parse --verify "$base_branch" >/dev/null 2>&1; then
+                    log_info "Creating new branch: $branch from $base_branch"
+                    log_debug "Running: git worktree add $worktree_path -b $branch $base_branch"
+                    run_git git worktree add "$worktree_path" -b "$branch" "$base_branch" || true
+                else
+                    log_error "Base branch/tag not found: $base_branch"
+                    log_error "Available branches: $(git branch -a | head -10)"
+                    log_error "Available tags: $(git tag -l | head -10)"
+                    return 1
+                fi
+            else
+                # No base specified - use current HEAD (original behavior)
+                log_info "Creating new branch: $branch (from current HEAD)"
+                log_debug "Running: git worktree add $worktree_path -b $branch"
+                run_git git worktree add "$worktree_path" -b "$branch" || true
+            fi
         fi
         log_debug "Worktree creation attempt completed"
     fi

@@ -6,17 +6,24 @@
 # or is called by the container entrypoint.
 #
 # Usage:
-#   ./init-git-branch.sh <branch-name> [remote]
+#   ./init-git-branch.sh <branch-name> [remote] [base-branch]
+#
+# Arguments:
+#   branch-name  - Target branch to create or checkout
+#   remote       - Git remote name (default: origin)
+#   base-branch  - Base branch/tag for new branches (default: current HEAD)
+#                  Fix #116: Ensures branches are created from correct base
 #
 # Behavior:
 #   - If remote branch exists: checkout and track it (continue from previous work)
-#   - If remote branch doesn't exist: create new branch from current HEAD
+#   - If remote branch doesn't exist: create new branch from base-branch or HEAD
 #===============================================================================
 
 set -euo pipefail
 
 BRANCH="${1:?Branch name required}"
 REMOTE="${2:-origin}"
+BASE_BRANCH="${3:-}"  # Fix #116: Optional base branch/tag
 
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
@@ -52,15 +59,31 @@ if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
     git log --oneline -5
     echo ""
 else
+    # Fix #116: Use BASE_BRANCH if specified, otherwise current HEAD
+    local base_ref="${BASE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+
     echo ""
     echo "┌────────────────────────────────────────────────────────────────┐"
     echo "│ CREATING NEW BRANCH                                            │"
     echo "│ Branch: $BRANCH"
-    echo "│ Base: $(git rev-parse --abbrev-ref HEAD)"
+    echo "│ Base: $base_ref"
     echo "└────────────────────────────────────────────────────────────────┘"
 
-    # Create new branch from current HEAD
-    git checkout -b "$BRANCH"
+    # Create new branch from specified base or current HEAD
+    if [[ -n "$BASE_BRANCH" ]]; then
+        # Ensure we have the base ref
+        git fetch "$REMOTE" "$BASE_BRANCH" 2>/dev/null || true
+        git fetch "$REMOTE" "refs/tags/$BASE_BRANCH:refs/tags/$BASE_BRANCH" 2>/dev/null || true
+
+        if git rev-parse --verify "$BASE_BRANCH" >/dev/null 2>&1; then
+            git checkout -b "$BRANCH" "$BASE_BRANCH"
+        else
+            log_info "Warning: Base ref '$BASE_BRANCH' not found, using current HEAD"
+            git checkout -b "$BRANCH"
+        fi
+    else
+        git checkout -b "$BRANCH"
+    fi
     echo ""
 fi
 
