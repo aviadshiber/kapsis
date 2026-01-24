@@ -86,7 +86,7 @@ test_dry_run_shows_branch() {
     cd "$TEST_PROJECT"
     git init -q
     git config user.email "test@test.com"
-    git config user.name "Test"
+    git config user.name "Test" && git config commit.gpgsign false
     touch .gitkeep
     git add .
     git commit -q -m "init"
@@ -158,7 +158,7 @@ test_dry_run_no_worktree_created() {
     cd "$TEST_PROJECT"
     git init -q
     git config user.email "test@test.com"
-    git config user.name "Test"
+    git config user.name "Test" && git config commit.gpgsign false
     touch .gitkeep
     git add .
     git commit -q -m "init"
@@ -186,7 +186,7 @@ test_dry_run_no_sanitized_git_created() {
     if [[ ! -d .git ]]; then
         git init -q
         git config user.email "test@test.com"
-        git config user.name "Test"
+        git config user.name "Test" && git config commit.gpgsign false
         touch .gitkeep
         git add .
         git commit -q -m "init"
@@ -213,7 +213,7 @@ test_dry_run_no_branch_created() {
     if [[ ! -d .git ]]; then
         git init -q
         git config user.email "test@test.com"
-        git config user.name "Test"
+        git config user.name "Test" && git config commit.gpgsign false
         touch .gitkeep
         git add .
         git commit -q -m "init"
@@ -245,7 +245,7 @@ test_dry_run_shows_would_create_messages() {
     if [[ ! -d .git ]]; then
         git init -q
         git config user.email "test@test.com"
-        git config user.name "Test"
+        git config user.name "Test" && git config commit.gpgsign false
         touch .gitkeep
         git add .
         git commit -q -m "init"

@@ -36,6 +36,9 @@ setup_test_git_repo() {
     git init -q
     git config user.email "test@kapsis.local"
     git config user.name "Kapsis Test"
+    # Disable commit signing for tests (may be enabled in CI environment)
+    git config commit.gpgsign false
+    git config tag.gpgsign false
 
     echo "test content" > README.md
     git add README.md

@@ -627,7 +627,7 @@ test_cli_security_profile_flag() {
     mkdir -p "$project_dir"
 
     # Initialize a minimal git repo for the test
-    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test")
+    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test") && git config commit.gpgsign false
 
     local output
     output=$("$launch_script" "$project_dir" --security-profile strict --task "echo test" --dry-run 2>&1) || true
@@ -645,7 +645,7 @@ test_cli_dry_run_shows_security() {
     mkdir -p "$project_dir"
 
     # Initialize a minimal git repo for the test
-    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test")
+    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test") && git config commit.gpgsign false
 
     local output
     output=$("$launch_script" "$project_dir" --security-profile paranoid --task "echo test" --dry-run 2>&1) || true
@@ -669,7 +669,7 @@ test_yaml_config_security_profile() {
     mkdir -p "$project_dir"
 
     # Initialize a minimal git repo
-    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test")
+    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test") && git config commit.gpgsign false
 
     # Create config with security section
     cat > "$project_dir/agent-sandbox.yaml" << 'EOF'
@@ -697,7 +697,7 @@ test_yaml_config_security_pids_limit() {
     mkdir -p "$project_dir"
 
     # Initialize a minimal git repo
-    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test")
+    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test") && git config commit.gpgsign false
 
     # Create config with custom PID limit
     cat > "$project_dir/agent-sandbox.yaml" << 'EOF'
@@ -727,7 +727,7 @@ test_yaml_config_priority_order() {
     mkdir -p "$project_dir"
 
     # Initialize a minimal git repo
-    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test")
+    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test") && git config commit.gpgsign false
 
     # Create config with standard profile
     cat > "$project_dir/agent-sandbox.yaml" << 'EOF'

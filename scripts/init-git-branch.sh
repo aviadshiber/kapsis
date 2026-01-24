@@ -60,7 +60,7 @@ if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
     echo ""
 else
     # Fix #116: Use BASE_BRANCH if specified, otherwise current HEAD
-    local base_ref="${BASE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+    base_ref="${BASE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
 
     echo ""
     echo "┌────────────────────────────────────────────────────────────────┐"
