@@ -203,6 +203,53 @@ test_branch_flag_validation() {
     assert_contains "$output" "git repository" "Should mention git requirement"
 }
 
+test_base_branch_parameter_dry_run() {
+    log_test "Testing --base-branch parameter in dry-run mode"
+
+    # Test that --base-branch is recognized and shown in dry-run output
+    local output
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" \
+        --branch "feature/test-base" \
+        --base-branch "main" \
+        --task "test task" \
+        --dry-run 2>&1) || true
+
+    # Should show base branch in configuration output
+    assert_contains "$output" "Base Branch:" "Should show base branch in config"
+    assert_contains "$output" "main" "Should show the specified base branch"
+}
+
+test_base_branch_env_var_passed() {
+    log_test "Testing KAPSIS_BASE_BRANCH env var is passed to container"
+
+    setup_container_test "git-base-env"
+
+    local base_branch="stable/trunk"
+
+    # Check env var is set in container
+    # Note: Don't set KAPSIS_BRANCH here as it triggers git init which requires /workspace
+    # We just want to verify the env var is passed through
+    local output
+    output=$(run_named_container "$CONTAINER_TEST_ID" 'echo $KAPSIS_BASE_BRANCH' \
+        --entrypoint "" \
+        -e KAPSIS_BASE_BRANCH="$base_branch") || true
+
+    cleanup_container_test
+
+    # Container should have received the base branch env var
+    assert_contains "$output" "$base_branch" "KAPSIS_BASE_BRANCH should be set in container"
+}
+
+test_base_branch_in_help() {
+    log_test "Testing --base-branch appears in help output"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" --help 2>&1) || true
+
+    assert_contains "$output" "--base-branch" "Help should document --base-branch"
+    assert_contains "$output" "Base branch" "Help should explain base-branch purpose"
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -227,6 +274,10 @@ main() {
     run_test test_multiple_branches_different_agents
     run_test test_branch_env_var_passed
     run_test test_branch_flag_validation
+    # Fix #116: Base branch tests
+    run_test test_base_branch_parameter_dry_run
+    run_test test_base_branch_env_var_passed
+    run_test test_base_branch_in_help
 
     # Cleanup
     cleanup_test_project

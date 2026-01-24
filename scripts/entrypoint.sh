@@ -442,15 +442,31 @@ init_git_branch() {
         git log --oneline -5
         echo ""
     else
+        # Fix #116: Use KAPSIS_BASE_BRANCH if specified, otherwise current HEAD
+        local base_ref="${KAPSIS_BASE_BRANCH:-$(git rev-parse --abbrev-ref HEAD)}"
+
         echo ""
         echo "┌────────────────────────────────────────────────────────────────┐"
         echo "│ CREATING NEW BRANCH                                            │"
         echo "│ Branch: $KAPSIS_BRANCH"
-        echo "│ Base: $(git rev-parse --abbrev-ref HEAD)"
+        echo "│ Base: $base_ref"
         echo "└────────────────────────────────────────────────────────────────┘"
 
-        # Create new branch from current HEAD
-        git checkout -b "$KAPSIS_BRANCH"
+        # Create new branch from specified base or current HEAD
+        if [[ -n "${KAPSIS_BASE_BRANCH:-}" ]]; then
+            # Ensure we have the base ref
+            git fetch "$remote" "$KAPSIS_BASE_BRANCH" 2>/dev/null || true
+            git fetch "$remote" "refs/tags/$KAPSIS_BASE_BRANCH:refs/tags/$KAPSIS_BASE_BRANCH" 2>/dev/null || true
+
+            if git rev-parse --verify "$KAPSIS_BASE_BRANCH" >/dev/null 2>&1; then
+                git checkout -b "$KAPSIS_BRANCH" "$KAPSIS_BASE_BRANCH"
+            else
+                log_warn "Base ref '$KAPSIS_BASE_BRANCH' not found, using current HEAD"
+                git checkout -b "$KAPSIS_BRANCH"
+            fi
+        else
+            git checkout -b "$KAPSIS_BRANCH"
+        fi
         echo ""
     fi
 

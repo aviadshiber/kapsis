@@ -74,6 +74,7 @@ CONFIG_FILE=""
 TASK_INLINE=""
 SPEC_FILE=""
 BRANCH=""
+BASE_BRANCH=""  # Fix #116: Base branch/tag for new feature branches
 AUTO_BRANCH=false
 NO_PUSH=false
 RESUME_MODE=false      # Fix #1: Auto-resume existing worktree
@@ -171,6 +172,7 @@ Options:
   --task <description>  Inline task description (for simple tasks)
   --spec <file>         Task specification file (for complex tasks)
   --branch <name>       Git branch to work on (creates new or continues existing)
+  --base-branch <ref>   Base branch/tag for new branches (e.g., main, stable/trunk)
   --auto-branch         Auto-generate branch name from task/spec
   --no-push             Create branch and commit, but don't push
   --interactive         Force interactive shell mode (ignores agent.command)
@@ -203,6 +205,9 @@ Examples:
 
   # With git branch workflow (creates or continues)
   $cmd_name ~/project --branch feature/DEV-123 --spec ./task.md
+
+  # Create branch from specific base (e.g., stable/trunk tag)
+  $cmd_name ~/project --branch feature/DEV-123 --base-branch stable/trunk --spec ./task.md
 
   # Continue a previous session (use same agent ID)
   $cmd_name ~/project --agent-id a3f2b1 --branch feature/DEV-123 --task "continue"
@@ -321,6 +326,11 @@ parse_args() {
                 ;;
             --branch)
                 BRANCH="$2"
+                shift 2
+                ;;
+            --base-branch)
+                # Fix #116: Specify base branch/tag for new feature branches
+                BASE_BRANCH="$2"
                 shift 2
                 ;;
             --auto-branch)
@@ -819,8 +829,8 @@ setup_worktree_sandbox() {
         return
     fi
 
-    # Create worktree on host
-    WORKTREE_PATH=$(create_worktree "$PROJECT_PATH" "$AGENT_ID" "$BRANCH")
+    # Create worktree on host (Fix #116: pass base branch for proper branching)
+    WORKTREE_PATH=$(create_worktree "$PROJECT_PATH" "$AGENT_ID" "$BRANCH" "$BASE_BRANCH")
 
     # Prepare sanitized git for container
     SANITIZED_GIT_PATH=$(prepare_sanitized_git "$WORKTREE_PATH" "$AGENT_ID" "$PROJECT_PATH")
@@ -1188,6 +1198,10 @@ generate_env_vars() {
         ENV_VARS+=("-e" "KAPSIS_BRANCH=${BRANCH}")
         ENV_VARS+=("-e" "KAPSIS_GIT_REMOTE=${GIT_REMOTE}")
         ENV_VARS+=("-e" "KAPSIS_NO_PUSH=${NO_PUSH}")
+        # Fix #116: Pass base branch for proper branch creation
+        if [[ -n "$BASE_BRANCH" ]]; then
+            ENV_VARS+=("-e" "KAPSIS_BASE_BRANCH=${BASE_BRANCH}")
+        fi
     fi
 
     if [[ -n "$TASK_INLINE" ]]; then
@@ -1518,6 +1532,7 @@ main() {
     echo "  Sandbox Mode:  $SANDBOX_MODE"
     echo "  Network Mode:  $NETWORK_MODE"
     [[ -n "$BRANCH" ]] && echo "  Branch:        $BRANCH"
+    [[ -n "$BASE_BRANCH" ]] && echo "  Base Branch:   $BASE_BRANCH"
     [[ "$SANDBOX_MODE" == "worktree" ]] && echo "  Worktree:      $WORKTREE_PATH"
     [[ -n "$SPEC_FILE" ]] && echo "  Spec File:     $SPEC_FILE"
     [[ -n "$TASK_INLINE" ]] && echo "  Task:          ${TASK_INLINE:0:50}..."

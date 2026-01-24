@@ -36,6 +36,7 @@ setup_test_worktree() {
     git init --quiet
     git config user.email "test@kapsis.local"
     git config user.name "Kapsis Test"
+    git config commit.gpgsign false
 
     # Create initial commit so we have a valid repo state
     echo "# Test Project" > README.md

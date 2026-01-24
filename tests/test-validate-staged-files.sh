@@ -38,6 +38,7 @@ setup_test_repo() {
     git init --quiet
     git config user.email "test@kapsis.local"
     git config user.name "Kapsis Test"
+    git config commit.gpgsign false
 
     # Create initial commit
     echo "# Test Project" > README.md
@@ -151,6 +152,7 @@ test_detects_submodule_references() {
     git add index.js
     git config user.email "test@plugin.local"
     git config user.name "Plugin Test"
+    git config commit.gpgsign false
     git commit --quiet -m "Plugin init"
     cd "$TEST_REPO"
 
@@ -321,6 +323,7 @@ test_regression_claude_plugins_submodule() {
     git add plugin.js
     git config user.email "test@plugin.local"
     git config user.name "Plugin"
+    git config commit.gpgsign false
     git commit --quiet -m "Init plugin"
     cd "$TEST_REPO"
 
