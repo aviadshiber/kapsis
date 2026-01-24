@@ -11,9 +11,9 @@ class Kapsis < Formula
 
   # Stable release - automatically updated by CI on each release
   # RELEASE_VERSION_MARKER_START - Do not remove, used by CI
-  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v1.5.0.tar.gz"
-  sha256 "c7602911e7344037c02f43687cfa0c971aaefc788e8082b4d870f947473e3fc2"
-  version "1.5.0"
+  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v1.6.0.tar.gz"
+  sha256 "0a910c41a3a972e01c7f75f815e2596e55b4977fb351131a1bf157c3d507d0e6"
+  version "1.6.0"
   # RELEASE_VERSION_MARKER_END
 
   # Homebrew livecheck - detects new releases automatically
@@ -22,8 +22,8 @@ class Kapsis < Formula
     strategy :github_latest
   end
 
-  depends_on "bash" => "3.2"
-  depends_on "git" => "2.0"
+  depends_on "bash"
+  depends_on "git"
   depends_on "jq"
   depends_on "yq"
 
@@ -33,6 +33,23 @@ class Kapsis < Formula
   def install
     # Install everything to libexec, then create wrappers
     libexec.install Dir["*"]
+
+    # Verify critical scripts are installed (fixes #106)
+    critical_scripts = %w[
+      scripts/launch-agent.sh
+      scripts/build-image.sh
+      scripts/post-container-git.sh
+      scripts/entrypoint.sh
+      scripts/worktree-manager.sh
+      scripts/kapsis-cleanup.sh
+      scripts/kapsis-status.sh
+      scripts/lib/logging.sh
+      scripts/lib/status.sh
+      scripts/lib/constants.sh
+    ]
+    critical_scripts.each do |script|
+      odie "Missing critical script: #{script}" unless (libexec/script).exist?
+    end
 
     # Create wrapper scripts for main commands
     {
@@ -84,5 +101,18 @@ class Kapsis < Formula
   test do
     # Test that kapsis command works (--help returns exit code 0 per Unix convention)
     assert_match "Usage:", shell_output("#{bin}/kapsis --help 2>&1", 0)
+
+    # Verify sample of critical scripts exist and are executable (fixes #106)
+    # Tests representative scripts: main entry point, post-container handler, and library
+    %w[
+      scripts/launch-agent.sh
+      scripts/post-container-git.sh
+      scripts/lib/logging.sh
+    ].each do |script|
+      assert_predicate libexec/script, :exist?,
+        "#{script} should be installed"
+      assert_predicate libexec/script, :executable?,
+        "#{script} should be executable"
+    end
   end
 end

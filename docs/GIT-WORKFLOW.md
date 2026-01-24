@@ -165,6 +165,32 @@ EOF
     --spec ./specs/add-user-endpoint.md
 ```
 
+### Branch from Specific Base (Fix #116)
+
+When your repository uses a specific tag or branch as the stable base (e.g., `stable/trunk`), use `--base-branch` to ensure new branches start from the correct point:
+
+```bash
+# Create branch from a specific tag
+./scripts/launch-agent.sh ~/project \
+    --branch feature/DEV-123-user-preferences \
+    --base-branch stable/trunk \
+    --spec ./specs/add-user-endpoint.md
+
+# Create branch from a release tag
+./scripts/launch-agent.sh ~/project \
+    --branch hotfix/PROD-456 \
+    --base-branch v2.5.0 \
+    --spec ./specs/hotfix.md
+
+# Create branch from another branch
+./scripts/launch-agent.sh ~/project \
+    --branch feature/DEV-789 \
+    --base-branch develop \
+    --spec ./specs/feature.md
+```
+
+Without `--base-branch`, new branches are created from the current HEAD of the main repository, which may not be the intended base. This can cause PRs to show incorrect diffs.
+
 ### Continue Existing Branch
 
 ```bash
