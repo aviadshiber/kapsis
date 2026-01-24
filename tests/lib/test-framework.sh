@@ -618,6 +618,9 @@ setup_test_project() {
     git init -q
     git config user.email "test@kapsis.local"
     git config user.name "Kapsis Test"
+    # Disable commit signing for tests (may be enabled in CI environment)
+    git config commit.gpgsign false
+    git config tag.gpgsign false
 
     # Create minimal Maven project
     cat > pom.xml << 'EOF'
