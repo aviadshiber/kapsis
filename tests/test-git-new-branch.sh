@@ -225,12 +225,13 @@ test_base_branch_env_var_passed() {
     setup_container_test "git-base-env"
 
     local base_branch="stable/trunk"
-    local branch_name="feature/from-base"
 
     # Check env var is set in container
+    # Note: Don't set KAPSIS_BRANCH here as it triggers git init which requires /workspace
+    # We just want to verify the env var is passed through
     local output
     output=$(run_named_container "$CONTAINER_TEST_ID" 'echo $KAPSIS_BASE_BRANCH' \
-        -e KAPSIS_BRANCH="$branch_name" \
+        --entrypoint "" \
         -e KAPSIS_BASE_BRANCH="$base_branch") || true
 
     cleanup_container_test
