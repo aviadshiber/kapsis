@@ -24,7 +24,7 @@ jobs:
       scripts: ${{ steps.filter.outputs.scripts }}
       container: ${{ steps.filter.outputs.container }}
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
       - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36  # v3
         id: filter
         with:
@@ -51,7 +51,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
@@ -98,7 +98,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Verify base image digest pinning
         run: |
@@ -185,7 +185,7 @@ jobs:
             echo "$unpinned"
             echo ""
             echo "Actions must be pinned to commit SHAs for security."
-            echo "Example: uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6"
+            echo "Example: uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6"
             exit 1
           fi
           echo "✓ All GitHub Actions are pinned to commit SHAs"
@@ -197,7 +197,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Install dependencies
         run: |
@@ -223,7 +223,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Install test dependencies
         run: |
@@ -266,7 +266,7 @@ jobs:
     if: needs.changes.outputs.container == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
       - name: Configure git for tests
         run: |
