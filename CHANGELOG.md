@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.6.2] - 2026-01-28
+## [1.6.3] - 2026-01-28
 
 ### Fixed
-- Sanitize secrets in debug logs
+- Extend secret sanitization to all log levels
 
 ## [Unreleased]
 
 ## [0.8.3] - 2025-12-28
+
+### Fixed
+- Sanitize secrets in debug logs
+
 
 ### Fixed
 - Skip entrypoint in base-branch env var test
@@ -351,7 +355,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.6.2...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.6.3...HEAD
+[1.6.3]: https://github.com/aviadshiber/kapsis/releases/tag/v1.6.3
 [1.6.2]: https://github.com/aviadshiber/kapsis/releases/tag/v1.6.2
 [1.6.1]: https://github.com/aviadshiber/kapsis/releases/tag/v1.6.1
 [1.6.0]: https://github.com/aviadshiber/kapsis/releases/tag/v1.6.0
