@@ -1545,11 +1545,9 @@ main() {
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "DRY RUN - Command that would be executed:"
         echo ""
-        # Sanitize sensitive env vars in output (mask API keys and tokens)
-        local sanitized_cmd="${CONTAINER_CMD[*]}"
-        # Mask any -e VAR=value where VAR contains KEY, TOKEN, SECRET, PASSWORD, CREDENTIALS
-        # Pattern includes alphanumeric + underscore for var names like CONTEXT7_API_KEY
-        sanitized_cmd=$(echo "$sanitized_cmd" | sed -E 's/(-e [A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS)[A-Za-z0-9_]*)=[^ ]*/\1=***MASKED***/gi')
+        # Security: Use centralized sanitization to mask secrets
+        local sanitized_cmd
+        sanitized_cmd=$(sanitize_secrets "${CONTAINER_CMD[*]}")
         echo "$sanitized_cmd"
         echo ""
         exit 0
@@ -1561,7 +1559,10 @@ main() {
     echo ""
 
     log_info "Starting container..."
-    log_debug "Container command: ${CONTAINER_CMD[*]}"
+    # Security: Sanitize secrets before logging container command
+    local sanitized_cmd
+    sanitized_cmd=$(sanitize_secrets "${CONTAINER_CMD[*]}")
+    log_debug "Container command: $sanitized_cmd"
     log_timer_start "container"
     status_phase "starting" 22 "Launching container"
 

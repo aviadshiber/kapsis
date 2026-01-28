@@ -38,7 +38,18 @@ else
     log_success() { echo -e "${GREEN}[KAPSIS]${NC} $*"; }
     log_warn() { echo -e "${YELLOW}[KAPSIS]${NC} $*"; }
     log_error() { echo -e "\033[0;31m[KAPSIS]\033[0m $*" >&2; }
-    log_debug() { [[ -n "${KAPSIS_DEBUG:-}" ]] && echo -e "\033[0;90m[DEBUG]\033[0m $*"; }
+    # Fallback sanitize_secrets for when logging.sh is not available
+    # Security: Mask sensitive environment variables in log output
+    sanitize_secrets() {
+        echo "$*" | sed -E 's/(-e [A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS|AUTH|BEARER|API_KEY|PRIVATE)[A-Za-z0-9_]*)=[^ ]*/\1=***MASKED***/gi'
+    }
+    log_debug() {
+        if [[ -n "${KAPSIS_DEBUG:-}" ]]; then
+            local sanitized
+            sanitized=$(sanitize_secrets "$*")
+            echo -e "\033[0;90m[DEBUG]\033[0m $sanitized"
+        fi
+    }
 fi
 
 # Source status reporting library if available
