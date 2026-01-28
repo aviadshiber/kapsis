@@ -1559,10 +1559,8 @@ main() {
     echo ""
 
     log_info "Starting container..."
-    # Security: Sanitize secrets before logging container command
-    local sanitized_cmd
-    sanitized_cmd=$(sanitize_secrets "${CONTAINER_CMD[*]}")
-    log_debug "Container command: $sanitized_cmd"
+    # Note: Secret sanitization is handled by _log()
+    log_debug "Container command: ${CONTAINER_CMD[*]}"
     log_timer_start "container"
     status_phase "starting" 22 "Launching container"
 

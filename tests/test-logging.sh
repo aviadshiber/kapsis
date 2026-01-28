@@ -904,6 +904,102 @@ test_log_enter_sanitizes_args() {
     assert_file_contains "$log_file" "API_TOKEN=***MASKED***" "Secret should be masked in log_enter"
 }
 
+test_log_info_sanitizes_secrets() {
+    log_test "log_info: sanitizes secrets in messages"
+
+    local log_file="$TEST_LOG_DIR/kapsis-info-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "info-secret"
+
+        log_info "Setting API_KEY=supersecret123 for user"
+    )
+
+    assert_file_not_contains "$log_file" "supersecret123" "Secret value should NOT appear in log_info"
+    assert_file_contains "$log_file" "API_KEY=***MASKED***" "Secret should be masked in log_info"
+}
+
+test_log_warn_sanitizes_secrets() {
+    log_test "log_warn: sanitizes secrets in messages"
+
+    local log_file="$TEST_LOG_DIR/kapsis-warn-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "warn-secret"
+
+        log_warn "Token expired: MY_TOKEN=abc123xyz"
+    )
+
+    assert_file_not_contains "$log_file" "abc123xyz" "Secret value should NOT appear in log_warn"
+    assert_file_contains "$log_file" "MY_TOKEN=***MASKED***" "Secret should be masked in log_warn"
+}
+
+test_log_error_sanitizes_secrets() {
+    log_test "log_error: sanitizes secrets in messages"
+
+    local log_file="$TEST_LOG_DIR/kapsis-error-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "error-secret"
+
+        log_error "Auth failed with DB_PASSWORD=mypassword123"
+    )
+
+    assert_file_not_contains "$log_file" "mypassword123" "Secret value should NOT appear in log_error"
+    assert_file_contains "$log_file" "DB_PASSWORD=***MASKED***" "Secret should be masked in log_error"
+}
+
+test_log_success_sanitizes_secrets() {
+    log_test "log_success: sanitizes secrets in messages"
+
+    local log_file="$TEST_LOG_DIR/kapsis-success-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "success-secret"
+
+        log_success "Connected with AUTH_SECRET=topsecret456"
+    )
+
+    assert_file_not_contains "$log_file" "topsecret456" "Secret value should NOT appear in log_success"
+    assert_file_contains "$log_file" "AUTH_SECRET=***MASKED***" "Secret should be masked in log_success"
+}
+
+test_log_debug_sanitizes_secrets() {
+    log_test "log_debug: sanitizes secrets in messages"
+
+    local log_file="$TEST_LOG_DIR/kapsis-debug-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        export KAPSIS_LOG_LEVEL="DEBUG"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "debug-secret"
+
+        log_debug "Debug info: BEARER_TOKEN=secretbearer789"
+    )
+
+    assert_file_not_contains "$log_file" "secretbearer789" "Secret value should NOT appear in log_debug"
+    assert_file_contains "$log_file" "BEARER_TOKEN=***MASKED***" "Secret should be masked in log_debug"
+}
+
 #===============================================================================
 # LOG TAIL TEST
 #===============================================================================
@@ -1010,6 +1106,11 @@ main() {
     run_test test_log_var_masks_secrets
     run_test test_log_cmd_sanitizes_command
     run_test test_log_enter_sanitizes_args
+    run_test test_log_info_sanitizes_secrets
+    run_test test_log_warn_sanitizes_secrets
+    run_test test_log_error_sanitizes_secrets
+    run_test test_log_success_sanitizes_secrets
+    run_test test_log_debug_sanitizes_secrets
 
     # Summary
     print_summary
