@@ -230,7 +230,9 @@ _should_log() {
 _log_raw() {
     local level="$1"
     shift
-    local message="$*"
+    # Security: Sanitize potential secrets from all log messages
+    local message
+    message=$(sanitize_secrets "$*")
 
     local timestamp=""
     [[ "$KAPSIS_LOG_TIMESTAMPS" == "true" ]] && timestamp="[$(date '+%Y-%m-%d %H:%M:%S')] "
@@ -248,7 +250,9 @@ _log_raw() {
 _log() {
     local level="$1"
     shift
-    local message="$*"
+    # Security: Sanitize potential secrets from all log messages
+    local message
+    message=$(sanitize_secrets "$*")
 
     # Check if we should log this level
     _should_log "$level" || return 0
@@ -310,7 +314,9 @@ log_error() {
 
 # Success is INFO level with green color
 log_success() {
-    local message="$*"
+    # Security: Sanitize potential secrets from all log messages
+    local message
+    message=$(sanitize_secrets "$*")
 
     _should_log "INFO" || return 0
 
@@ -404,11 +410,9 @@ sanitize_var_value() {
 
 # Log a command before executing it (useful for debugging)
 # Security: Use "$@" instead of eval to prevent command injection
-# Security: Sanitize potential secrets from logged output
+# Note: Secret sanitization is handled by _log()
 log_cmd() {
-    local sanitized
-    sanitized=$(sanitize_secrets "$*")
-    log_debug "Executing: $sanitized"
+    log_debug "Executing: $*"
     "$@"
     local rc=$?
     if [[ $rc -ne 0 ]]; then
@@ -418,12 +422,10 @@ log_cmd() {
 }
 
 # Log entry into a function
-# Security: Sanitize potential secrets from function arguments
+# Note: Secret sanitization is handled by _log()
 log_enter() {
     local func="${FUNCNAME[1]:-unknown}"
-    local sanitized_args
-    sanitized_args=$(sanitize_secrets "$*")
-    log_debug ">>> Entering ${func}() with args: $sanitized_args"
+    log_debug ">>> Entering ${func}() with args: $*"
 }
 
 # Log exit from a function
@@ -434,13 +436,11 @@ log_exit() {
 }
 
 # Log a variable's value
-# Security: Mask values of variables with sensitive names
+# Note: Secret sanitization is handled by _log()
 log_var() {
     local var_name="$1"
     local var_value="${!var_name:-<unset>}"
-    local sanitized_value
-    sanitized_value=$(sanitize_var_value "$var_name" "$var_value")
-    log_debug "${var_name}=${sanitized_value}"
+    log_debug "${var_name}=${var_value}"
 }
 
 # Log multiple variables
