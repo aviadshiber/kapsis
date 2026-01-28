@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.6.1] - 2026-01-24
+## [1.6.2] - 2026-01-28
+
+### Fixed
+- Sanitize secrets in debug logs
+
+## [Unreleased]
+
+## [0.8.3] - 2025-12-28
 
 ### Fixed
 - Skip entrypoint in base-branch env var test
@@ -14,9 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Disable commit signing in test repos
 - Add --base-branch parameter for proper branch creation (#116)
 
-## [Unreleased]
-
-## [0.8.3] - 2025-12-28
 
 ### Added
 - Add commit verification, SSH fallback, and worktree resume (#121)
@@ -347,7 +351,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.6.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.6.2...HEAD
+[1.6.2]: https://github.com/aviadshiber/kapsis/releases/tag/v1.6.2
 [1.6.1]: https://github.com/aviadshiber/kapsis/releases/tag/v1.6.1
 [1.6.0]: https://github.com/aviadshiber/kapsis/releases/tag/v1.6.0
 [1.5.8]: https://github.com/aviadshiber/kapsis/releases/tag/v1.5.8
