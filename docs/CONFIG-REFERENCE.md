@@ -240,6 +240,45 @@ gradle_enterprise:
 # To update versions, modify the ARGs in Containerfile and rebuild the image.
 
 #===============================================================================
+# PROTOBUF/PROTOC SUPPORT
+#===============================================================================
+# Kapsis pre-caches protoc binaries for common versions, enabling proto
+# compilation without runtime network access. This is necessary because
+# the protobuf-maven-plugin downloads platform-specific protoc binaries
+# that cannot use authenticated mirrors.
+#
+# Pre-cached versions:
+#   - protoc 25.1 (linux-x86_64, linux-aarch_64)
+#
+# Custom Protoc Versions:
+# If your project requires a different protoc version, you can:
+#
+# 1. Rebuild the image with custom version:
+#    podman build --build-arg PROTOC_VERSION=24.4 -t kapsis-custom:latest .
+#
+# 2. The pre-cached binaries are automatically available in ~/.m2/repository
+#    when the container starts.
+
+#===============================================================================
+# JAVA VERSION CONFIGURATION
+#===============================================================================
+# Kapsis supports automatic Java version switching via KAPSIS_JAVA_VERSION.
+# When set, the entrypoint automatically switches to the specified Java version
+# using SDKMAN.
+#
+# Available Java versions in the container:
+#   - 17 (default)
+#   - 8
+#
+# Configuration via environment.set:
+environment:
+  set:
+    KAPSIS_JAVA_VERSION: "8"  # Switch to Java 8 at startup
+#
+# This is useful for projects that require specific Java versions, such as
+# legacy codebases requiring Java 8 compatibility.
+
+#===============================================================================
 # SANDBOX BEHAVIOR
 #===============================================================================
 sandbox:
