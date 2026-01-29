@@ -380,6 +380,20 @@ setup_environment() {
         set -u
     fi
 
+    # Auto-switch Java version if configured via KAPSIS_JAVA_VERSION
+    # This allows users to specify Java version in their Kapsis config:
+    #   environment:
+    #     set:
+    #       KAPSIS_JAVA_VERSION: "8"
+    if [[ -n "${KAPSIS_JAVA_VERSION:-}" ]]; then
+        log_info "Switching to Java $KAPSIS_JAVA_VERSION (from KAPSIS_JAVA_VERSION)"
+        if [[ -x "$KAPSIS_HOME/switch-java.sh" ]]; then
+            source "$KAPSIS_HOME/switch-java.sh" "$KAPSIS_JAVA_VERSION"
+        else
+            log_warn "switch-java.sh not found at $KAPSIS_HOME/switch-java.sh"
+        fi
+    fi
+
     # Decode DOCKER_ARTIFACTORY_TOKEN into username/password for Maven
     # Token format: base64(username:password)
     if [[ -n "${DOCKER_ARTIFACTORY_TOKEN:-}" ]] && [[ -z "${KAPSIS_MAVEN_USERNAME:-}" ]]; then

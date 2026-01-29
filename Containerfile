@@ -168,6 +168,52 @@ RUN mkdir -p /tmp/ge-cache && cd /tmp/ge-cache && \
     rm -rf /tmp/ge-cache
 
 #===============================================================================
+# PRE-CACHE PROTOC BINARIES FOR JAVA BUILDS
+#===============================================================================
+# The protobuf-maven-plugin downloads platform-specific protoc binaries.
+# Pre-caching ensures builds work in DNS-filtered network mode.
+ARG PROTOC_VERSION=25.1
+
+RUN mkdir -p /tmp/protoc-cache && cd /tmp/protoc-cache && \
+    cat > pom.xml << 'PROTOC_POM' && \
+<?xml version="1.0" encoding="UTF-8"?>
+<project>
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>kapsis</groupId>
+  <artifactId>protoc-cache</artifactId>
+  <version>1.0</version>
+  <dependencies>
+    <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protoc</artifactId>
+      <version>${protoc.version}</version>
+      <classifier>linux-x86_64</classifier>
+      <type>exe</type>
+    </dependency>
+    <dependency>
+      <groupId>com.google.protobuf</groupId>
+      <artifactId>protoc</artifactId>
+      <version>${protoc.version}</version>
+      <classifier>linux-aarch_64</classifier>
+      <type>exe</type>
+    </dependency>
+  </dependencies>
+  <properties>
+    <protoc.version>PROTOC_VERSION_PLACEHOLDER</protoc.version>
+  </properties>
+</project>
+PROTOC_POM
+    sed -i "s/PROTOC_VERSION_PLACEHOLDER/${PROTOC_VERSION}/g" pom.xml && \
+    source "$SDKMAN_DIR/bin/sdkman-init.sh" && \
+    mvn -B dependency:resolve -Dmaven.repo.local=/opt/kapsis/m2-cache \
+        -DincludeScope=runtime 2>/dev/null || true && \
+    find /opt/kapsis/m2-cache -name "_remote.repositories" -delete && \
+    rm -rf /tmp/protoc-cache
+
+# Make protoc binaries executable
+RUN find /opt/kapsis/m2-cache -name "protoc-*" -type f -exec chmod +x {} \;
+
+#===============================================================================
 # NON-ROOT USER SETUP
 #===============================================================================
 ARG USER_ID=1000
