@@ -24,9 +24,9 @@
 set -euo pipefail
 
 # Load status library if available
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_PROGRESS_MONITOR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=status.sh
-[[ -f "$SCRIPT_DIR/status.sh" ]] && source "$SCRIPT_DIR/status.sh"
+[[ -f "$_PROGRESS_MONITOR_DIR/status.sh" ]] && source "$_PROGRESS_MONITOR_DIR/status.sh"
 
 #===============================================================================
 # Configuration
