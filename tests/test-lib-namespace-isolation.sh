@@ -60,22 +60,22 @@ test_config_verifier_does_not_overwrite_script_dir() {
 # =============================================================================
 test_lib_scripts_use_prefixed_dir_variables() {
     local lib_dir="$KAPSIS_ROOT/scripts/lib"
-    local violations=""
+    local -a violation_list=()
 
     # Check for any lib script that defines SCRIPT_DIR without underscore prefix
     # Exclude files that legitimately use SCRIPT_DIR in comments or strings
     for script in "$lib_dir"/*.sh; do
-        local basename
-        basename=$(basename "$script")
+        local script_basename
+        script_basename=$(basename "$script")
 
         # Look for SCRIPT_DIR= at the start of a line (actual assignment)
         if grep -qE '^SCRIPT_DIR=' "$script" 2>/dev/null; then
-            violations="${violations}${basename} "
+            violation_list+=("$script_basename")
         fi
     done
 
-    if [[ -n "$violations" ]]; then
-        _log_failure "Scripts with SCRIPT_DIR pollution: $violations"
+    if [[ ${#violation_list[@]} -gt 0 ]]; then
+        _log_failure "Scripts with SCRIPT_DIR pollution: ${violation_list[*]}"
         return 1
     fi
 
