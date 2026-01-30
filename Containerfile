@@ -175,35 +175,15 @@ RUN mkdir -p /tmp/ge-cache && cd /tmp/ge-cache && \
 ARG PROTOC_VERSION=25.1
 
 RUN mkdir -p /tmp/protoc-cache && cd /tmp/protoc-cache && \
-    cat > pom.xml << 'PROTOC_POM' && \
-<?xml version="1.0" encoding="UTF-8"?>
-<project>
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>kapsis</groupId>
-  <artifactId>protoc-cache</artifactId>
-  <version>1.0</version>
-  <dependencies>
-    <dependency>
-      <groupId>com.google.protobuf</groupId>
-      <artifactId>protoc</artifactId>
-      <version>${protoc.version}</version>
-      <classifier>linux-x86_64</classifier>
-      <type>exe</type>
-    </dependency>
-    <dependency>
-      <groupId>com.google.protobuf</groupId>
-      <artifactId>protoc</artifactId>
-      <version>${protoc.version}</version>
-      <classifier>linux-aarch_64</classifier>
-      <type>exe</type>
-    </dependency>
-  </dependencies>
-  <properties>
-    <protoc.version>PROTOC_VERSION_PLACEHOLDER</protoc.version>
-  </properties>
-</project>
-PROTOC_POM
-    sed -i "s/PROTOC_VERSION_PLACEHOLDER/${PROTOC_VERSION}/g" pom.xml && \
+    # Create minimal pom to resolve protoc binaries
+    echo '<?xml version="1.0" encoding="UTF-8"?>' > pom.xml && \
+    echo '<project><modelVersion>4.0.0</modelVersion>' >> pom.xml && \
+    echo '<groupId>kapsis</groupId><artifactId>protoc-cache</artifactId><version>1.0</version>' >> pom.xml && \
+    echo '<dependencies>' >> pom.xml && \
+    echo "  <dependency><groupId>com.google.protobuf</groupId><artifactId>protoc</artifactId><version>${PROTOC_VERSION}</version><classifier>linux-x86_64</classifier><type>exe</type></dependency>" >> pom.xml && \
+    echo "  <dependency><groupId>com.google.protobuf</groupId><artifactId>protoc</artifactId><version>${PROTOC_VERSION}</version><classifier>linux-aarch_64</classifier><type>exe</type></dependency>" >> pom.xml && \
+    echo '</dependencies></project>' >> pom.xml && \
+    # Download to global location that will be copied to user's .m2 later
     source "$SDKMAN_DIR/bin/sdkman-init.sh" && \
     mvn -B dependency:resolve -Dmaven.repo.local=/opt/kapsis/m2-cache \
         -DincludeScope=runtime 2>/dev/null || true && \
