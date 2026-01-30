@@ -47,7 +47,7 @@ jobs:
     needs: determine-version
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           ref: ${{ needs.determine-version.outputs.tag }}
 
@@ -100,7 +100,7 @@ jobs:
       image: fedora:latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           ref: ${{ needs.determine-version.outputs.tag }}
 
@@ -146,7 +146,7 @@ jobs:
     needs: determine-version
     steps:
       - name: Checkout code
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           ref: ${{ needs.determine-version.outputs.tag }}
 
@@ -237,7 +237,7 @@ jobs:
           path: packages
 
       - name: Checkout gh-pages
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           ref: gh-pages
           path: gh-pages
@@ -336,7 +336,7 @@ jobs:
           path: packages
 
       - name: Checkout gh-pages
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8  # v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           ref: gh-pages
           path: gh-pages
