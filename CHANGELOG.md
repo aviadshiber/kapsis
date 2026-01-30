@@ -6,14 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.6.3] - 2026-01-28
+## [1.7.0] - 2026-01-30
+
+### Added
+- Pre-cache protoc binaries and add Java version config
 
 ### Fixed
-- Extend secret sanitization to all log levels
+- Replace heredoc with echo commands in protoc cache section
+- Resolve ShellCheck warnings SC2178 and SC2128
+- Prevent SCRIPT_DIR namespace pollution in sourced scripts
 
 ## [Unreleased]
 
 ## [0.8.3] - 2025-12-28
+
+### Fixed
+- Extend secret sanitization to all log levels
+
 
 ### Fixed
 - Sanitize secrets in debug logs
@@ -355,7 +364,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.6.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.7.0...HEAD
+[1.7.0]: https://github.com/aviadshiber/kapsis/releases/tag/v1.7.0
 [1.6.3]: https://github.com/aviadshiber/kapsis/releases/tag/v1.6.3
 [1.6.2]: https://github.com/aviadshiber/kapsis/releases/tag/v1.6.2
 [1.6.1]: https://github.com/aviadshiber/kapsis/releases/tag/v1.6.1
