@@ -1,0 +1,63 @@
+#===============================================================================
+# Kapsis Build Profile: Java Development
+#
+# Java + Maven + Gradle Enterprise extensions.
+# Optimized for Java/Spring development (Taboola default).
+# Estimated size: ~1.5GB
+#
+# Use case: Java backend services, Spring Boot applications
+#===============================================================================
+
+version: "1.0"
+
+languages:
+  java:
+    enabled: true
+    versions:
+      - "21.0.6-zulu"
+      - "17.0.14-zulu"
+      - "8.0.422-zulu"
+    default_version: "17.0.14-zulu"
+
+  nodejs:
+    enabled: false
+
+  python:
+    enabled: true    # Needed for some build scripts
+    version: "system"
+    venv: true
+    pip: true
+
+  rust:
+    enabled: false
+
+  go:
+    enabled: false
+
+build_tools:
+  maven:
+    enabled: true
+    version: "3.9.9"
+
+  gradle:
+    enabled: false
+
+  gradle_enterprise:
+    enabled: true
+    extension_version: "1.20"
+    ccud_version: "1.12.5"
+
+  protoc:
+    enabled: true
+    version: "25.1"
+
+system_packages:
+  development:
+    enabled: true
+  shells:
+    enabled: true
+  utilities:
+    enabled: true
+  overlay:
+    enabled: true
+  custom: []

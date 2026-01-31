@@ -1,0 +1,56 @@
+#===============================================================================
+# Kapsis Build Profile: Backend Go
+#
+# Go + Python for Go microservices development.
+# Estimated size: ~1.2GB
+#
+# Use case: Go microservices, CLI tools, cloud-native applications
+#===============================================================================
+
+version: "1.0"
+
+languages:
+  java:
+    enabled: false
+
+  nodejs:
+    enabled: false
+
+  python:
+    enabled: true
+    version: "system"
+    venv: true
+    pip: true
+
+  rust:
+    enabled: false
+
+  go:
+    enabled: true
+    version: "1.22.0"
+    modules: true
+
+build_tools:
+  maven:
+    enabled: false
+
+  gradle:
+    enabled: false
+
+  gradle_enterprise:
+    enabled: false
+
+  protoc:
+    enabled: true
+    version: "25.1"
+
+system_packages:
+  development:
+    enabled: true
+  shells:
+    enabled: true
+  utilities:
+    enabled: true
+  overlay:
+    enabled: true
+  custom: []

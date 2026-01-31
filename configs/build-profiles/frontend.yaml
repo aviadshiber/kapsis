@@ -1,0 +1,65 @@
+#===============================================================================
+# Kapsis Build Profile: Frontend
+#
+# Node.js + Rust for frontend and WebAssembly development.
+# Estimated size: ~1.2GB
+#
+# Use case: React/Vue/Angular apps, WebAssembly, frontend tooling
+#===============================================================================
+
+version: "1.0"
+
+languages:
+  java:
+    enabled: false
+
+  nodejs:
+    enabled: true
+    versions:
+      - "20.10.0"
+      - "18.18.0"
+    default_version: "20.10.0"
+    package_managers:
+      pnpm: "9.15.3"
+      yarn: "latest"
+
+  python:
+    enabled: true
+    version: "system"
+    venv: true
+    pip: true
+
+  rust:
+    enabled: true
+    channel: "stable"
+    components:
+      - "rustfmt"
+      - "clippy"
+    cargo_binstall: true
+
+  go:
+    enabled: false
+
+build_tools:
+  maven:
+    enabled: false
+
+  gradle:
+    enabled: false
+
+  gradle_enterprise:
+    enabled: false
+
+  protoc:
+    enabled: false
+
+system_packages:
+  development:
+    enabled: true
+  shells:
+    enabled: true
+  utilities:
+    enabled: true
+  overlay:
+    enabled: true
+  custom: []

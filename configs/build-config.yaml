@@ -1,0 +1,251 @@
+#===============================================================================
+# Kapsis Build Configuration
+#
+# Controls which dependencies are installed in the container image.
+# Default: All common features enabled for backwards compatibility.
+#
+# Usage:
+#   ./scripts/build-image.sh                          # Uses this config
+#   ./scripts/build-image.sh --build-config custom.yaml
+#   ./scripts/build-image.sh --profile minimal        # Use preset profile
+#   ./scripts/configure-deps.sh                       # Interactive editor
+#   ./scripts/configure-deps.sh --profile java-dev    # Apply preset
+#
+# Profiles available in configs/build-profiles/:
+#   minimal      - Base only (~500MB)
+#   java-dev     - Java + Maven + GE (~1.5GB)
+#   java8-legacy - Java 8 only (~1.3GB)
+#   full-stack   - Java + Node + Python (~2.1GB) [default]
+#   backend-go   - Go + Python (~1.2GB)
+#   backend-rust - Rust + Python (~1.4GB)
+#   ml-python    - Python + Node + Rust (~1.8GB)
+#   frontend     - Node + Rust (~1.2GB)
+#===============================================================================
+
+# Schema version for forward compatibility
+version: "1.0"
+
+#===============================================================================
+# LANGUAGE RUNTIMES
+#===============================================================================
+languages:
+  #-----------------------------------------------------------------------------
+  # Java (via SDKMAN)
+  # Supports multiple versions and distributions
+  #-----------------------------------------------------------------------------
+  java:
+    enabled: true
+    # Versions to install (SDKMAN format: VERSION-DISTRIBUTION)
+    # Use `sdk list java` to see all available versions
+    versions:
+      - "21.0.6-zulu"    # Azul Zulu 21 LTS (recommended)
+      - "17.0.14-zulu"   # Azul Zulu 17 LTS
+      - "8.0.422-zulu"   # Azul Zulu 8 LTS
+    # Default version (must be in versions list)
+    default_version: "17.0.14-zulu"
+    # Supported distributions (SDKMAN suffix):
+    #   -zulu    Azul Zulu - TCK-tested, broad platform support
+    #   -tem     Eclipse Temurin - SDKMAN default, vendor-neutral
+    #   -amzn    Amazon Corretto - AWS-optimized, long-term support
+    #   -librca  BellSoft Liberica - Spring Boot official
+    #   -graalce GraalVM CE - native image, polyglot
+    #   -ms      Microsoft OpenJDK - Azure-optimized
+    #   -sem     IBM Semeru - OpenJ9 VM, low memory
+    #   -sapmchn SAP Machine
+    #   -open    Oracle OpenJDK (not recommended - short support)
+
+  #-----------------------------------------------------------------------------
+  # Node.js (via NVM)
+  #-----------------------------------------------------------------------------
+  nodejs:
+    enabled: true
+    # Versions to install (first is primary)
+    versions:
+      - "18.18.0"        # LTS
+    default_version: "18.18.0"
+    # Package managers to install globally
+    package_managers:
+      pnpm: "9.15.3"
+      # yarn: "latest"   # Uncomment to install yarn
+
+  #-----------------------------------------------------------------------------
+  # Python
+  # Uses system Python from Ubuntu (3.12 on 24.04)
+  #-----------------------------------------------------------------------------
+  python:
+    enabled: true
+    version: "system"    # Uses Ubuntu's Python 3.12
+    venv: true           # Install python3-venv
+    pip: true            # Install pip
+    # Additional packages to install globally via pip
+    packages: []
+    # Example:
+    # packages:
+    #   - "poetry"
+    #   - "pipenv"
+
+  #-----------------------------------------------------------------------------
+  # Rust (via rustup)
+  #-----------------------------------------------------------------------------
+  rust:
+    enabled: false
+    channel: "stable"    # stable, beta, nightly
+    components:
+      - "rustfmt"
+      - "clippy"
+    # Enable cargo-binstall for faster binary installs
+    cargo_binstall: true
+
+  #-----------------------------------------------------------------------------
+  # Go
+  #-----------------------------------------------------------------------------
+  go:
+    enabled: false
+    version: "1.22.0"
+    # Enable module support (default behavior in modern Go)
+    modules: true
+
+  #-----------------------------------------------------------------------------
+  # Ruby (from apt)
+  #-----------------------------------------------------------------------------
+  ruby:
+    enabled: false
+    version: "system"    # Uses Ubuntu's Ruby
+    bundler: true        # Install bundler gem
+
+  #-----------------------------------------------------------------------------
+  # .NET (from Microsoft repos)
+  #-----------------------------------------------------------------------------
+  dotnet:
+    enabled: false
+    version: "8.0"       # .NET 8 LTS
+    sdk: true            # Install SDK (not just runtime)
+
+#===============================================================================
+# BUILD TOOLS
+#===============================================================================
+build_tools:
+  #-----------------------------------------------------------------------------
+  # Maven (via SDKMAN, requires Java)
+  #-----------------------------------------------------------------------------
+  maven:
+    enabled: true
+    version: "3.9.9"
+
+  #-----------------------------------------------------------------------------
+  # Gradle (via SDKMAN, requires Java)
+  # Note: Most projects use gradlew, so this is optional
+  #-----------------------------------------------------------------------------
+  gradle:
+    enabled: false
+    version: "8.5"
+
+  #-----------------------------------------------------------------------------
+  # Gradle Enterprise Extensions
+  # Pre-cached for offline/network-isolated builds
+  #-----------------------------------------------------------------------------
+  gradle_enterprise:
+    enabled: true
+    extension_version: "1.20"
+    ccud_version: "1.12.5"
+
+  #-----------------------------------------------------------------------------
+  # Protocol Buffers (protoc)
+  # Pre-cached for offline builds
+  #-----------------------------------------------------------------------------
+  protoc:
+    enabled: true
+    version: "25.1"
+    # Pre-cache binaries for both architectures
+    cache_binaries: true
+    architectures:
+      - "linux-x86_64"
+      - "linux-aarch_64"
+
+#===============================================================================
+# SYSTEM PACKAGES (apt)
+#===============================================================================
+system_packages:
+  #-----------------------------------------------------------------------------
+  # Essential packages (always installed, cannot be disabled)
+  #-----------------------------------------------------------------------------
+  # curl, wget, git, jq, unzip, zip, ca-certificates, gnupg, openssh-client
+
+  #-----------------------------------------------------------------------------
+  # Development tools
+  #-----------------------------------------------------------------------------
+  development:
+    enabled: true
+    packages:
+      - build-essential
+      - ripgrep
+      - fd-find
+
+  #-----------------------------------------------------------------------------
+  # Shell environments
+  #-----------------------------------------------------------------------------
+  shells:
+    enabled: true
+    packages:
+      - bash
+      - zsh
+
+  #-----------------------------------------------------------------------------
+  # System utilities
+  #-----------------------------------------------------------------------------
+  utilities:
+    enabled: true
+    packages:
+      - procps
+      - htop
+      - less
+      - vim-tiny
+      - netcat-openbsd
+      - dnsutils
+      - dnsmasq
+
+  #-----------------------------------------------------------------------------
+  # Filesystem overlay (required for macOS CoW support)
+  #-----------------------------------------------------------------------------
+  overlay:
+    enabled: true
+    packages:
+      - fuse-overlayfs
+      - fuse3
+
+  #-----------------------------------------------------------------------------
+  # Custom packages (add your own)
+  #-----------------------------------------------------------------------------
+  custom: []
+  # Example:
+  # custom:
+  #   - kafkacat
+  #   - postgresql-client
+  #   - redis-tools
+
+#===============================================================================
+# DEPENDENCY MANAGERS
+#===============================================================================
+dependency_managers:
+  # yq (YAML processor) - required for Kapsis, always installed
+  yq:
+    version: "4.44.3"
+    sha256: "a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7"
+
+#===============================================================================
+# IMAGE CONFIGURATION
+#===============================================================================
+image:
+  # Base image (architecture-specific digest resolved at build time)
+  base: "ubuntu:24.04"
+
+  # Non-root user configuration
+  user:
+    name: "developer"
+    uid: 1000
+    gid: 1000
+
+  # Image labels
+  labels:
+    maintainer: "Kapsis Project"
+    description: "Hermetically isolated sandbox for AI coding agents"

@@ -1,0 +1,60 @@
+#===============================================================================
+# Kapsis Build Profile: Java 8 Legacy
+#
+# Java 8 only for legacy projects.
+# Estimated size: ~1.3GB
+#
+# Use case: Legacy Java 8 applications, older Spring versions
+#===============================================================================
+
+version: "1.0"
+
+languages:
+  java:
+    enabled: true
+    versions:
+      - "8.0.422-zulu"
+    default_version: "8.0.422-zulu"
+
+  nodejs:
+    enabled: false
+
+  python:
+    enabled: true
+    version: "system"
+    venv: true
+    pip: true
+
+  rust:
+    enabled: false
+
+  go:
+    enabled: false
+
+build_tools:
+  maven:
+    enabled: true
+    version: "3.9.9"
+
+  gradle:
+    enabled: false
+
+  gradle_enterprise:
+    enabled: true
+    extension_version: "1.20"
+    ccud_version: "1.12.5"
+
+  protoc:
+    enabled: true
+    version: "25.1"
+
+system_packages:
+  development:
+    enabled: true
+  shells:
+    enabled: true
+  utilities:
+    enabled: true
+  overlay:
+    enabled: true
+  custom: []
