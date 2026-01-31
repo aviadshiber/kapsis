@@ -3,16 +3,22 @@
 #
 # Build: ./scripts/build-agent-image.sh claude-cli
 # Result: kapsis-claude-cli:latest
+#
+# NOTE: Uses native installer (no Node.js required)
+# See: https://docs.anthropic.com/en/docs/claude-code/getting-started
 
 name: claude-cli
 description: Claude Code CLI (official Anthropic)
 version: latest
 
 install:
-  npm: "@anthropic-ai/claude-code"
+  # Native installer - standalone binary, no Node.js needed
+  # Installed to /usr/local/bin/claude for system-wide access
+  script: "curl -fsSL https://claude.ai/install.sh | bash"
+  binary_path: "/usr/local/bin/claude"
 
 dependencies:
-  - nodejs >= 18
+  - git  # Required for git operations
 
 auth:
   required:

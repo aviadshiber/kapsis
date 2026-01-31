@@ -1,18 +1,22 @@
 # Aider AI Agent Profile
 # AI pair programming in your terminal
 #
-# Build: ./scripts/build-agent-image.sh aider
+# Build: ./scripts/build-agent-image.sh aider --profile full-stack
 # Result: kapsis-aider:latest
+#
+# NOTE: Aider is Python-based and requires Python runtime.
+# No native binary available (as of Jan 2026).
+# See: https://aider.chat/docs/install.html
 
 name: aider
-description: Aider - AI pair programming in your terminal
+description: Aider - AI pair programming (requires Python)
 version: latest
 
 install:
   pip: "aider-chat"
 
 dependencies:
-  - python3 >= 3.9
+  - python3 >= 3.9  # Required - no native binary available
   - git
 
 auth:

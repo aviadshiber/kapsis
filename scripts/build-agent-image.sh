@@ -150,12 +150,14 @@ fi
 AGENT_NAME=$(yq -r '.name // ""' "$PROFILE_PATH")
 AGENT_NPM=$(yq -r '.install.npm // ""' "$PROFILE_PATH")
 AGENT_PIP=$(yq -r '.install.pip // ""' "$PROFILE_PATH")
+AGENT_SCRIPT=$(yq -r '.install.script // ""' "$PROFILE_PATH")
 AGENT_DESC=$(yq -r '.description // ""' "$PROFILE_PATH")
 
 log_info "Agent: $AGENT_NAME"
 [[ -n "$AGENT_DESC" ]] && log_info "Description: $AGENT_DESC"
 [[ -n "$AGENT_NPM" ]] && log_info "NPM packages: $AGENT_NPM"
 [[ -n "$AGENT_PIP" ]] && log_info "PIP packages: $AGENT_PIP"
+[[ -n "$AGENT_SCRIPT" ]] && log_info "Install script: $AGENT_SCRIPT"
 
 #===============================================================================
 # RESOLVE BUILD CONFIGURATION
@@ -328,9 +330,8 @@ IMAGE_NAME="kapsis-${AGENT_PROFILE}:latest"
 
 log_info "Building image: $IMAGE_NAME"
 
+# Initialize BUILD_ARGS (may be reset by parse_build_config)
 BUILD_ARGS=()
-[[ -n "$AGENT_NPM" ]] && BUILD_ARGS+=("--build-arg" "AGENT_NPM=$AGENT_NPM")
-[[ -n "$AGENT_PIP" ]] && BUILD_ARGS+=("--build-arg" "AGENT_PIP=$AGENT_PIP")
 
 # Pass build config args if using a custom config
 if [[ -n "$CONFIG_FILE" ]] && [[ -f "$SCRIPT_DIR/lib/build-config.sh" ]]; then
@@ -368,6 +369,11 @@ if [[ -n "$CONFIG_FILE" ]] && [[ -f "$SCRIPT_DIR/lib/build-config.sh" ]]; then
         exit 1
     fi
 fi
+
+# Add agent-specific build args AFTER config parsing (which may reset BUILD_ARGS)
+[[ -n "$AGENT_NPM" ]] && BUILD_ARGS+=("--build-arg" "AGENT_NPM=$AGENT_NPM")
+[[ -n "$AGENT_PIP" ]] && BUILD_ARGS+=("--build-arg" "AGENT_PIP=$AGENT_PIP")
+[[ -n "$AGENT_SCRIPT" ]] && BUILD_ARGS+=("--build-arg" "AGENT_SCRIPT=$AGENT_SCRIPT")
 
 cd "$KAPSIS_ROOT"
 
