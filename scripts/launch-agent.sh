@@ -1407,6 +1407,7 @@ build_container_command() {
         none)
             log_info "Network: isolated (no network access)"
             CONTAINER_CMD+=("--network=none")
+            CONTAINER_CMD+=("-e" "KAPSIS_NETWORK_MODE=none")
             ;;
         filtered)
             log_info "Network: filtered (DNS-based allowlist)"
@@ -1424,6 +1425,7 @@ build_container_command() {
             ;;
         open)
             log_warn "Network: unrestricted (consider --network-mode=none for security)"
+            CONTAINER_CMD+=("-e" "KAPSIS_NETWORK_MODE=open")
             ;;
     esac
 
