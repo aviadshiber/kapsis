@@ -1,0 +1,59 @@
+#===============================================================================
+# Kapsis Build Profile: Backend Rust
+#
+# Rust + Python for Rust backend services.
+# Estimated size: ~1.4GB
+#
+# Use case: Rust services, high-performance backends, WebAssembly
+#===============================================================================
+
+version: "1.0"
+
+languages:
+  java:
+    enabled: false
+
+  nodejs:
+    enabled: false
+
+  python:
+    enabled: true
+    version: "system"
+    venv: true
+    pip: true
+
+  rust:
+    enabled: true
+    channel: "stable"
+    components:
+      - "rustfmt"
+      - "clippy"
+    cargo_binstall: true
+
+  go:
+    enabled: false
+
+build_tools:
+  maven:
+    enabled: false
+
+  gradle:
+    enabled: false
+
+  gradle_enterprise:
+    enabled: false
+
+  protoc:
+    enabled: true
+    version: "25.1"
+
+system_packages:
+  development:
+    enabled: true
+  shells:
+    enabled: true
+  utilities:
+    enabled: true
+  overlay:
+    enabled: true
+  custom: []

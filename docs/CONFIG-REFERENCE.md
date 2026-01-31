@@ -12,6 +12,119 @@ When `--config` is not specified, Kapsis looks for config files in this order:
 4. `~/.config/kapsis/default.yaml` - User default
 5. Built-in defaults
 
+## Build Configuration (build-config.yaml)
+
+Kapsis supports customizable container images through build configuration profiles. This allows you to create optimized images for specific use cases.
+
+### Build Configuration vs Agent Configuration
+
+| File | Purpose | Used By |
+|------|---------|---------|
+| `configs/build-config.yaml` | Container image contents (languages, tools) | `build-image.sh` |
+| `configs/build-profiles/*.yaml` | Preset build configurations | `build-image.sh --profile` |
+| `agent-sandbox.yaml` | Agent runtime behavior | `launch-agent.sh` |
+
+### Quick Start
+
+```bash
+# Build with a profile
+./scripts/build-image.sh --profile java-dev
+
+# Configure interactively
+./scripts/configure-deps.sh
+
+# Configure for AI agents (JSON output)
+./scripts/configure-deps.sh --profile minimal --json
+```
+
+### Build Configuration Schema
+
+```yaml
+version: "1.0"
+
+languages:
+  java:
+    enabled: true
+    versions:
+      - "21.0.6-zulu"
+      - "17.0.14-zulu"
+      - "8.0.422-zulu"
+    default_version: "17.0.14-zulu"
+
+  nodejs:
+    enabled: true
+    versions:
+      - "18.18.0"
+      - "20.10.0"
+    default_version: "18.18.0"
+    package_managers:
+      pnpm: "9.15.3"
+      yarn: "latest"
+
+  python:
+    enabled: true
+    version: "system"
+    venv: true
+    pip: true
+
+  rust:
+    enabled: false
+    channel: "stable"
+    components:
+      - "rustfmt"
+      - "clippy"
+
+  go:
+    enabled: false
+    version: "1.22.0"
+
+build_tools:
+  maven:
+    enabled: true
+    version: "3.9.9"
+
+  gradle:
+    enabled: false
+    version: "8.5"
+
+  gradle_enterprise:
+    enabled: true
+    extension_version: "1.20"
+    ccud_version: "1.12.5"
+
+  protoc:
+    enabled: true
+    version: "25.1"
+
+system_packages:
+  development:
+    enabled: true
+  shells:
+    enabled: true
+  utilities:
+    enabled: true
+  overlay:
+    enabled: true
+  custom: []
+```
+
+### Available Profiles
+
+| Profile | Est. Size | Languages | Best For |
+|---------|-----------|-----------|----------|
+| `minimal` | ~500MB | None | Shell scripts, basic tasks |
+| `java-dev` | ~1.5GB | Java 17/8 | Taboola Java development |
+| `java8-legacy` | ~1.3GB | Java 8 only | Legacy Java 8 projects |
+| `full-stack` | ~2.1GB | Java, Node.js, Python | Multi-language projects |
+| `backend-go` | ~1.2GB | Go, Python | Go microservices |
+| `backend-rust` | ~1.4GB | Rust, Python | Rust backend services |
+| `ml-python` | ~1.8GB | Python, Node.js, Rust | ML/AI development |
+| `frontend` | ~1.2GB | Node.js, Rust | Frontend/WebAssembly |
+
+See [BUILD-CONFIGURATION.md](BUILD-CONFIGURATION.md) for detailed documentation.
+
+---
+
 ## Full Configuration Schema
 
 ```yaml

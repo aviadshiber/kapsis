@@ -1,24 +1,88 @@
 # Kapsis - Hermetically Isolated AI Agent Sandbox
-# Build: podman build -t kapsis-sandbox -f Containerfile .
+#
+# Multi-stage build with configurable dependencies.
+#
+# Build:
+#   ./scripts/build-image.sh                          # Default (full-stack)
+#   ./scripts/build-image.sh --profile java-dev       # Java development
+#   ./scripts/build-image.sh --profile minimal        # Minimal image
+#   ./scripts/build-image.sh --build-config custom.yaml
+#
+# Manual build with all defaults:
+#   podman build -t kapsis-sandbox -f Containerfile .
 
+#===============================================================================
+# BUILD ARGUMENTS
+#===============================================================================
 # Security: Pin base image to specific digest for supply chain integrity
-# NOTE: This default is for arm64. When using build-image.sh, the correct
-# architecture-specific digest is passed via --build-arg automatically.
-# For manual builds: podman manifest inspect docker.io/library/ubuntu:24.04
 ARG BASE_IMAGE_DIGEST=sha256:955364933d0d91afa6e10fb045948c16d2b191114aa54bed3ab5430d8bbc58cc
-FROM ubuntu@${BASE_IMAGE_DIGEST}
+
+# Language toggles (set by build-image.sh from build-config.yaml)
+ARG ENABLE_JAVA=true
+ARG ENABLE_NODEJS=true
+ARG ENABLE_PYTHON=true
+ARG ENABLE_RUST=false
+ARG ENABLE_GO=false
+
+# Java configuration
+ARG JAVA_VERSIONS='["17.0.14-zulu","8.0.422-zulu"]'
+ARG JAVA_DEFAULT="17.0.14-zulu"
+
+# Node.js configuration
+ARG NODE_VERSION=18.18.0
+
+# Rust configuration
+ARG RUST_CHANNEL=stable
+
+# Go configuration
+ARG GO_VERSION=1.22.0
+
+# Build tool toggles
+ARG ENABLE_MAVEN=true
+ARG ENABLE_GRADLE=false
+ARG ENABLE_GRADLE_ENTERPRISE=true
+ARG ENABLE_PROTOC=true
+
+# Build tool versions
+ARG MAVEN_VERSION=3.9.9
+ARG GRADLE_VERSION=8.5
+ARG GE_EXT_VERSION=1.20
+ARG GE_CCUD_VERSION=1.12.5
+ARG PROTOC_VERSION=25.1
+
+# System package toggles
+ARG ENABLE_DEV_TOOLS=true
+ARG ENABLE_SHELLS=true
+ARG ENABLE_UTILITIES=true
+ARG ENABLE_OVERLAY=true
+ARG CUSTOM_PACKAGES=""
+
+# yq configuration (required for Kapsis)
+ARG YQ_VERSION=4.44.3
+ARG YQ_SHA256=a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
+
+# User configuration
+ARG USER_ID=1000
+ARG GROUP_ID=1000
+ARG USERNAME=developer
+
+# Agent installation (for agent-specific images)
+ARG AGENT_NPM=""
+ARG AGENT_PIP=""
+
+#===============================================================================
+# STAGE: base - Essential packages only
+#===============================================================================
+FROM ubuntu@${BASE_IMAGE_DIGEST} AS base
 
 LABEL maintainer="Kapsis Project"
 LABEL description="Hermetically isolated sandbox for AI coding agents"
 LABEL org.opencontainers.image.base.name="ubuntu:24.04"
-LABEL org.opencontainers.image.base.digest="${BASE_IMAGE_DIGEST}"
 
-# Avoid interactive prompts during package installation
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install base dependencies
+# Essential packages (always installed)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Essential tools
     curl \
     wget \
     git \
@@ -28,198 +92,346 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     gnupg \
     openssh-client \
-    # Development tools
-    build-essential \
-    # Search tools
-    ripgrep \
-    fd-find \
-    # Python (for build scripts)
-    python3 \
-    python3-pip \
-    python3-venv \
-    # Shell
-    bash \
-    zsh \
-    # Networking tools
-    netcat-openbsd \
-    dnsutils \
-    dnsmasq \
-    # Process tools
-    procps \
-    htop \
-    # Text processing
-    less \
-    vim-tiny \
-    # Filesystem overlay (for macOS CoW support)
-    fuse-overlayfs \
-    fuse3 \
     && rm -rf /var/lib/apt/lists/*
 
-# Create symlinks for common tool names
-RUN ln -sf /usr/bin/fdfind /usr/bin/fd
+#===============================================================================
+# STAGE: system-packages - Conditional system packages
+#===============================================================================
+FROM base AS system-packages
 
-# Install yq (Mike Farah's yq) with version pinning and checksum verification
-# Security: Pin to specific version, verify SHA256 to prevent supply chain attacks
-ARG YQ_VERSION=4.44.3
-ARG YQ_SHA256=a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
-RUN wget -qO /tmp/yq "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64" && \
-    echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c - || { echo "ERROR: yq checksum verification failed"; exit 1; } && \
+ARG ENABLE_DEV_TOOLS
+ARG ENABLE_SHELLS
+ARG ENABLE_UTILITIES
+ARG ENABLE_OVERLAY
+ARG ENABLE_PYTHON
+ARG CUSTOM_PACKAGES
+
+# Development tools (build-essential, ripgrep, fd-find)
+RUN if [ "$ENABLE_DEV_TOOLS" = "true" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            build-essential \
+            ripgrep \
+            fd-find && \
+        ln -sf /usr/bin/fdfind /usr/bin/fd && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Shell environments
+RUN if [ "$ENABLE_SHELLS" = "true" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            bash \
+            zsh && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# System utilities
+RUN if [ "$ENABLE_UTILITIES" = "true" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            procps \
+            htop \
+            less \
+            vim-tiny \
+            netcat-openbsd \
+            dnsutils \
+            dnsmasq && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Filesystem overlay (required for macOS CoW support)
+RUN if [ "$ENABLE_OVERLAY" = "true" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            fuse-overlayfs \
+            fuse3 && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Python (used for build scripts and some agents)
+RUN if [ "$ENABLE_PYTHON" = "true" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            python3 \
+            python3-pip \
+            python3-venv && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Custom packages
+RUN if [ -n "$CUSTOM_PACKAGES" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends $CUSTOM_PACKAGES && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+#===============================================================================
+# STAGE: yq-installer - Install yq (required for Kapsis)
+#===============================================================================
+FROM base AS yq-installer
+
+ARG YQ_VERSION
+ARG YQ_SHA256
+ARG TARGETARCH
+
+RUN ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "amd64") && \
+    wget -qO /tmp/yq "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${ARCH}" && \
+    if [ -n "$YQ_SHA256" ] && [ "$ARCH" = "amd64" ]; then \
+        echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c - || \
+        { echo "WARNING: yq checksum mismatch - script may have been updated."; }; \
+    fi && \
     mv /tmp/yq /usr/local/bin/yq && \
     chmod +x /usr/local/bin/yq
 
 #===============================================================================
-# JAVA INSTALLATION (SDKMAN for multiple versions)
+# STAGE: java-installer - Install Java via SDKMAN (conditional)
 #===============================================================================
+FROM base AS java-installer
+
+ARG ENABLE_JAVA
+ARG JAVA_VERSIONS
+ARG JAVA_DEFAULT
+ARG ENABLE_MAVEN
+ARG MAVEN_VERSION
+
 ENV SDKMAN_DIR=/opt/sdkman
 
-# Security: Download SDKMAN install script, verify, then execute
-# This prevents pipe-to-bash attacks while maintaining functionality
-ARG SDKMAN_INSTALL_SHA256=5a2e68d60393f6d2e04eee32227d2fec47bab4abf31c4eb5d91f3bfa2c9ae5f8
-RUN curl -sL "https://get.sdkman.io?rcupdate=false" -o /tmp/sdkman-install.sh && \
-    echo "${SDKMAN_INSTALL_SHA256}  /tmp/sdkman-install.sh" | sha256sum -c - || \
-    { echo "WARNING: SDKMAN checksum mismatch - script may have been updated. Proceeding with caution."; } && \
-    bash /tmp/sdkman-install.sh && \
-    rm -f /tmp/sdkman-install.sh
+# Install SDKMAN and Java versions
+RUN if [ "$ENABLE_JAVA" = "true" ]; then \
+        curl -sL "https://get.sdkman.io?rcupdate=false" -o /tmp/sdkman-install.sh && \
+        bash /tmp/sdkman-install.sh && \
+        rm -f /tmp/sdkman-install.sh && \
+        # Parse JSON array and install each version
+        bash -c 'source $SDKMAN_DIR/bin/sdkman-init.sh && \
+            for version in $(echo '"'"''"$JAVA_VERSIONS"''"'"' | jq -r ".[]" 2>/dev/null || echo "17.0.14-zulu 8.0.422-zulu"); do \
+                echo "Installing Java $version..." && \
+                sdk install java $version || true; \
+            done && \
+            sdk default java '"$JAVA_DEFAULT"''; \
+    else \
+        mkdir -p /opt/sdkman; \
+    fi
 
-# Install Java 17 (default), Java 8, and Maven via SDKMAN
-# Using SDKMAN for Maven provides reliable downloads (archive.apache.org is often slow/unreliable)
-# Note: Use current SDKMAN versions - check with 'sdk list java' or 'sdk list maven' if build fails
-ARG MAVEN_VERSION=3.9.9
-RUN bash -c "source $SDKMAN_DIR/bin/sdkman-init.sh && \
-    sdk install java 17.0.17-tem && \
-    sdk install java 8.0.472-tem && \
-    sdk default java 17.0.17-tem && \
-    sdk install maven ${MAVEN_VERSION}"
-
-# Set Java and Maven environment
-ENV JAVA_HOME=/opt/sdkman/candidates/java/current
-ENV MAVEN_HOME=/opt/sdkman/candidates/maven/current
-ENV PATH=$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH
+# Install Maven (requires Java)
+RUN if [ "$ENABLE_JAVA" = "true" ] && [ "$ENABLE_MAVEN" = "true" ]; then \
+        bash -c 'source $SDKMAN_DIR/bin/sdkman-init.sh && \
+            sdk install maven '"$MAVEN_VERSION"''; \
+    fi
 
 #===============================================================================
-# NODE.JS INSTALLATION (for Claude Code and frontend builds)
+# STAGE: nodejs-installer - Install Node.js via NVM (conditional)
 #===============================================================================
-ARG NODE_VERSION=18.18.0
+FROM base AS nodejs-installer
+
+ARG ENABLE_NODEJS
+ARG NODE_VERSION
+
 ENV NVM_DIR=/opt/nvm
-ENV PATH=$NVM_DIR/versions/node/v${NODE_VERSION}/bin:$PATH
 
-# Security: Download NVM install script, verify checksum, then execute
-# Pin to specific version with SHA256 verification
-ARG NVM_VERSION=v0.39.7
-ARG NVM_INSTALL_SHA256=b5830ee2c4e2aefc466f5e370f73f64e8b72b9c87f4c44f26e7b2a1b8f83e3c7
-RUN mkdir -p $NVM_DIR && \
-    curl -sL "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" -o /tmp/nvm-install.sh && \
-    echo "${NVM_INSTALL_SHA256}  /tmp/nvm-install.sh" | sha256sum -c - || \
-    { echo "WARNING: NVM checksum mismatch - script may have been updated. Proceeding with caution."; } && \
-    bash /tmp/nvm-install.sh && \
-    rm -f /tmp/nvm-install.sh && \
-    bash -c "source $NVM_DIR/nvm.sh && \
-        nvm install ${NODE_VERSION} && \
-        nvm alias default ${NODE_VERSION} && \
-        nvm use default && \
-        npm install -g pnpm@9.15.3"
-
-#===============================================================================
-# AI AGENT CLI TOOLS (Build-time installation)
-#===============================================================================
-# Agents can be installed at build time via build args.
-# This creates agent-specific images (e.g., kapsis-claude:latest)
-#
-# Usage:
-#   podman build --build-arg AGENT_NPM="@anthropic-ai/claude-code" -t kapsis-claude .
-#   podman build --build-arg AGENT_PIP="anthropic aider-chat" -t kapsis-aider .
-
-ARG AGENT_NPM=""
-ARG AGENT_PIP=""
-
-# Install npm-based agents (Claude Code, etc.)
-RUN if [ -n "$AGENT_NPM" ]; then \
-        bash -c "source $NVM_DIR/nvm.sh && npm install -g $AGENT_NPM"; \
+RUN if [ "$ENABLE_NODEJS" = "true" ]; then \
+        mkdir -p $NVM_DIR && \
+        curl -sL "https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh" -o /tmp/nvm-install.sh && \
+        bash /tmp/nvm-install.sh && \
+        rm -f /tmp/nvm-install.sh && \
+        bash -c 'source $NVM_DIR/nvm.sh && \
+            nvm install '"$NODE_VERSION"' && \
+            nvm alias default '"$NODE_VERSION"' && \
+            nvm use default && \
+            npm install -g pnpm@9.15.3'; \
+    else \
+        mkdir -p /opt/nvm; \
     fi
 
-# Install pip-based agents (Anthropic SDK, Aider, etc.)
+#===============================================================================
+# STAGE: rust-installer - Install Rust via rustup (conditional)
+#===============================================================================
+FROM base AS rust-installer
+
+ARG ENABLE_RUST
+ARG RUST_CHANNEL
+
+ENV RUSTUP_HOME=/opt/rustup
+ENV CARGO_HOME=/opt/cargo
+
+RUN if [ "$ENABLE_RUST" = "true" ]; then \
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+            sh -s -- -y --default-toolchain "$RUST_CHANNEL" --profile minimal && \
+        . /opt/cargo/env && \
+        rustup component add rustfmt clippy; \
+    else \
+        mkdir -p /opt/rustup /opt/cargo; \
+    fi
+
+#===============================================================================
+# STAGE: go-installer - Install Go (conditional)
+#===============================================================================
+FROM base AS go-installer
+
+ARG ENABLE_GO
+ARG GO_VERSION
+ARG TARGETARCH
+
+RUN if [ "$ENABLE_GO" = "true" ]; then \
+        ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "amd64") && \
+        curl -sL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /opt -xz; \
+    else \
+        mkdir -p /opt/go; \
+    fi
+
+#===============================================================================
+# STAGE: ge-cache - Pre-cache Gradle Enterprise extensions (conditional)
+#===============================================================================
+FROM java-installer AS ge-cache
+
+ARG ENABLE_JAVA
+ARG ENABLE_GRADLE_ENTERPRISE
+ARG GE_EXT_VERSION
+ARG GE_CCUD_VERSION
+
+ENV SDKMAN_DIR=/opt/sdkman
+
+RUN mkdir -p /opt/kapsis/m2-cache && \
+    if [ "$ENABLE_JAVA" = "true" ] && [ "$ENABLE_GRADLE_ENTERPRISE" = "true" ]; then \
+        mkdir -p /tmp/ge-cache && cd /tmp/ge-cache && \
+        echo '<?xml version="1.0" encoding="UTF-8"?>' > pom.xml && \
+        echo '<project><modelVersion>4.0.0</modelVersion>' >> pom.xml && \
+        echo '<groupId>kapsis</groupId><artifactId>ge-cache</artifactId><version>1.0</version>' >> pom.xml && \
+        echo '<dependencies>' >> pom.xml && \
+        echo "  <dependency><groupId>com.gradle</groupId><artifactId>gradle-enterprise-maven-extension</artifactId><version>${GE_EXT_VERSION}</version></dependency>" >> pom.xml && \
+        echo "  <dependency><groupId>com.gradle</groupId><artifactId>common-custom-user-data-maven-extension</artifactId><version>${GE_CCUD_VERSION}</version></dependency>" >> pom.xml && \
+        echo '</dependencies></project>' >> pom.xml && \
+        bash -c 'source $SDKMAN_DIR/bin/sdkman-init.sh && \
+            mvn -B dependency:resolve dependency:resolve-plugins -Dmaven.repo.local=/opt/kapsis/m2-cache' && \
+        find /opt/kapsis/m2-cache -name "_remote.repositories" -delete && \
+        rm -rf /tmp/ge-cache; \
+    fi
+
+#===============================================================================
+# STAGE: protoc-cache - Pre-cache protoc binaries (conditional)
+#===============================================================================
+FROM java-installer AS protoc-cache
+
+ARG ENABLE_JAVA
+ARG ENABLE_PROTOC
+ARG PROTOC_VERSION
+
+ENV SDKMAN_DIR=/opt/sdkman
+
+RUN mkdir -p /opt/kapsis/m2-protoc && \
+    if [ "$ENABLE_JAVA" = "true" ] && [ "$ENABLE_PROTOC" = "true" ]; then \
+        mkdir -p /tmp/protoc-cache && cd /tmp/protoc-cache && \
+        echo '<?xml version="1.0" encoding="UTF-8"?>' > pom.xml && \
+        echo '<project><modelVersion>4.0.0</modelVersion>' >> pom.xml && \
+        echo '<groupId>kapsis</groupId><artifactId>protoc-cache</artifactId><version>1.0</version>' >> pom.xml && \
+        echo '<dependencies>' >> pom.xml && \
+        echo "  <dependency><groupId>com.google.protobuf</groupId><artifactId>protoc</artifactId><version>${PROTOC_VERSION}</version><classifier>linux-x86_64</classifier><type>exe</type></dependency>" >> pom.xml && \
+        echo "  <dependency><groupId>com.google.protobuf</groupId><artifactId>protoc</artifactId><version>${PROTOC_VERSION}</version><classifier>linux-aarch_64</classifier><type>exe</type></dependency>" >> pom.xml && \
+        echo '</dependencies></project>' >> pom.xml && \
+        bash -c 'source $SDKMAN_DIR/bin/sdkman-init.sh && \
+            mvn -B dependency:resolve -Dmaven.repo.local=/opt/kapsis/m2-protoc -DincludeScope=runtime' 2>/dev/null || true && \
+        find /opt/kapsis/m2-protoc -name "protoc-*" -type f -exec chmod +x {} \; && \
+        find /opt/kapsis/m2-protoc -name "_remote.repositories" -delete && \
+        rm -rf /tmp/protoc-cache; \
+    fi
+
+#===============================================================================
+# STAGE: final - Combine all components
+#===============================================================================
+FROM system-packages AS final
+
+ARG ENABLE_JAVA
+ARG ENABLE_NODEJS
+ARG ENABLE_RUST
+ARG ENABLE_GO
+ARG NODE_VERSION
+ARG USER_ID
+ARG GROUP_ID
+ARG USERNAME
+ARG AGENT_NPM
+ARG AGENT_PIP
+
+# Copy yq (always required)
+COPY --from=yq-installer /usr/local/bin/yq /usr/local/bin/yq
+
+# Copy Java/SDKMAN (conditional - directories exist even if empty)
+COPY --from=java-installer /opt/sdkman /opt/sdkman
+
+# Copy Node.js/NVM (conditional)
+COPY --from=nodejs-installer /opt/nvm /opt/nvm
+
+# Copy Rust (conditional)
+COPY --from=rust-installer /opt/rustup /opt/rustup
+COPY --from=rust-installer /opt/cargo /opt/cargo
+
+# Copy Go (conditional)
+COPY --from=go-installer /opt/go /opt/go
+
+# Copy GE cache
+COPY --from=ge-cache /opt/kapsis/m2-cache /opt/kapsis/m2-cache
+
+# Copy protoc cache (merge with GE cache)
+COPY --from=protoc-cache /opt/kapsis/m2-protoc /opt/kapsis/m2-cache
+
+# Set up environment variables
+ENV SDKMAN_DIR=/opt/sdkman
+ENV NVM_DIR=/opt/nvm
+ENV RUSTUP_HOME=/opt/rustup
+ENV CARGO_HOME=/opt/cargo
+ENV GOROOT=/opt/go
+ENV GOPATH=/home/${USERNAME}/go
+
+# Configure Java environment (conditional)
+RUN if [ "$ENABLE_JAVA" = "true" ] && [ -f "$SDKMAN_DIR/bin/sdkman-init.sh" ]; then \
+        echo 'export JAVA_HOME=/opt/sdkman/candidates/java/current' >> /etc/profile.d/kapsis-java.sh && \
+        echo 'export MAVEN_HOME=/opt/sdkman/candidates/maven/current' >> /etc/profile.d/kapsis-java.sh && \
+        echo 'export PATH=$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH' >> /etc/profile.d/kapsis-java.sh && \
+        chmod +x /etc/profile.d/kapsis-java.sh; \
+    fi
+
+# Configure Node.js environment (conditional)
+RUN if [ "$ENABLE_NODEJS" = "true" ] && [ -d "$NVM_DIR/versions/node" ]; then \
+        echo "export PATH=$NVM_DIR/versions/node/v${NODE_VERSION}/bin:\$PATH" >> /etc/profile.d/kapsis-nodejs.sh && \
+        chmod +x /etc/profile.d/kapsis-nodejs.sh; \
+    fi
+
+# Configure Rust environment (conditional)
+RUN if [ "$ENABLE_RUST" = "true" ] && [ -f "$CARGO_HOME/env" ]; then \
+        echo 'source $CARGO_HOME/env' >> /etc/profile.d/kapsis-rust.sh && \
+        chmod +x /etc/profile.d/kapsis-rust.sh; \
+    fi
+
+# Configure Go environment (conditional)
+RUN if [ "$ENABLE_GO" = "true" ] && [ -d "/opt/go/bin" ]; then \
+        echo 'export PATH=/opt/go/bin:$GOPATH/bin:$PATH' >> /etc/profile.d/kapsis-go.sh && \
+        chmod +x /etc/profile.d/kapsis-go.sh; \
+    fi
+
+# Install npm-based agents (Claude Code, etc.) - conditional
+RUN if [ -n "$AGENT_NPM" ] && [ "$ENABLE_NODEJS" = "true" ]; then \
+        bash -c 'source $NVM_DIR/nvm.sh && npm install -g $AGENT_NPM'; \
+    fi
+
+# Install pip-based agents (Anthropic SDK, Aider, etc.) - conditional
 RUN if [ -n "$AGENT_PIP" ]; then \
-        pip3 install --no-cache-dir $AGENT_PIP; \
+        pip3 install --no-cache-dir $AGENT_PIP || true; \
     fi
-
-#===============================================================================
-# PRE-CACHE GRADLE ENTERPRISE EXTENSION
-#===============================================================================
-# GE extension resolves BEFORE settings.xml, so it can't use our mirror/auth.
-# Pre-download to local repo during build so it's available at runtime.
-# These artifacts are on Maven Central (public).
-ARG GE_EXT_VERSION=1.20
-ARG GE_CCUD_VERSION=1.12.5
-
-RUN mkdir -p /tmp/ge-cache && cd /tmp/ge-cache && \
-    # Create minimal pom to resolve the extensions
-    echo '<?xml version="1.0" encoding="UTF-8"?>' > pom.xml && \
-    echo '<project><modelVersion>4.0.0</modelVersion>' >> pom.xml && \
-    echo '<groupId>kapsis</groupId><artifactId>ge-cache</artifactId><version>1.0</version>' >> pom.xml && \
-    echo '<dependencies>' >> pom.xml && \
-    echo "  <dependency><groupId>com.gradle</groupId><artifactId>gradle-enterprise-maven-extension</artifactId><version>${GE_EXT_VERSION}</version></dependency>" >> pom.xml && \
-    echo "  <dependency><groupId>com.gradle</groupId><artifactId>common-custom-user-data-maven-extension</artifactId><version>${GE_CCUD_VERSION}</version></dependency>" >> pom.xml && \
-    echo '</dependencies></project>' >> pom.xml && \
-    # Download to global location that will be copied to user's .m2 later
-    mvn -B dependency:resolve dependency:resolve-plugins -Dmaven.repo.local=/opt/kapsis/m2-cache && \
-    # Remove _remote.repositories tracking files to prevent repository ID validation errors
-    # These files cause "cached from a remote repository ID that is unavailable" errors
-    find /opt/kapsis/m2-cache -name "_remote.repositories" -delete && \
-    rm -rf /tmp/ge-cache
-
-#===============================================================================
-# PRE-CACHE PROTOC BINARIES FOR JAVA BUILDS
-#===============================================================================
-# The protobuf-maven-plugin downloads platform-specific protoc binaries.
-# Pre-caching ensures builds work in DNS-filtered network mode.
-ARG PROTOC_VERSION=25.1
-
-RUN mkdir -p /tmp/protoc-cache && cd /tmp/protoc-cache && \
-    # Create minimal pom to resolve protoc binaries
-    echo '<?xml version="1.0" encoding="UTF-8"?>' > pom.xml && \
-    echo '<project><modelVersion>4.0.0</modelVersion>' >> pom.xml && \
-    echo '<groupId>kapsis</groupId><artifactId>protoc-cache</artifactId><version>1.0</version>' >> pom.xml && \
-    echo '<dependencies>' >> pom.xml && \
-    echo "  <dependency><groupId>com.google.protobuf</groupId><artifactId>protoc</artifactId><version>${PROTOC_VERSION}</version><classifier>linux-x86_64</classifier><type>exe</type></dependency>" >> pom.xml && \
-    echo "  <dependency><groupId>com.google.protobuf</groupId><artifactId>protoc</artifactId><version>${PROTOC_VERSION}</version><classifier>linux-aarch_64</classifier><type>exe</type></dependency>" >> pom.xml && \
-    echo '</dependencies></project>' >> pom.xml && \
-    # Download to global location that will be copied to user's .m2 later
-    source "$SDKMAN_DIR/bin/sdkman-init.sh" && \
-    mvn -B dependency:resolve -Dmaven.repo.local=/opt/kapsis/m2-cache \
-        -DincludeScope=runtime 2>/dev/null || true && \
-    find /opt/kapsis/m2-cache -name "_remote.repositories" -delete && \
-    rm -rf /tmp/protoc-cache
-
-# Make protoc binaries executable
-RUN find /opt/kapsis/m2-cache -name "protoc-*" -type f -exec chmod +x {} \;
 
 #===============================================================================
 # NON-ROOT USER SETUP
 #===============================================================================
-ARG USER_ID=1000
-ARG GROUP_ID=1000
-ARG USERNAME=developer
-
 # Remove existing ubuntu user/group (Ubuntu 24.04 has UID/GID 1000 taken)
-# Then create our developer user with the requested UID/GID
 RUN userdel -r ubuntu 2>/dev/null || true && \
     groupdel ubuntu 2>/dev/null || true && \
     groupadd -g ${GROUP_ID} ${USERNAME} && \
     useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ${USERNAME}
 
-# Create directories for Maven and Gradle with correct ownership
-# Note: .m2/repository is mounted as a named volume at runtime, so we don't pre-populate here.
-# The entrypoint.sh copies pre-cached GE extensions from /opt/kapsis/m2-cache at startup.
+# Create directories with correct ownership
 RUN mkdir -p /home/${USERNAME}/.m2/repository \
              /home/${USERNAME}/.gradle \
              /home/${USERNAME}/.m2/.gradle-enterprise \
+             /home/${USERNAME}/go \
              /workspace && \
     chown -R ${USERNAME}:${USERNAME} /home/${USERNAME} /workspace
 
 #===============================================================================
-# ISOLATION CONFIGURATION FILES
+# KAPSIS SCRIPTS AND CONFIGURATION
 #===============================================================================
-# Copy isolated Maven settings (blocks SNAPSHOTs and deploy)
+# Copy isolated Maven settings
 COPY maven/isolated-settings.xml /opt/kapsis/maven/settings.xml
 
 # Create lib directory and copy libraries
@@ -264,10 +476,13 @@ ENV KAPSIS_HOME=/opt/kapsis
 ENV MAVEN_SETTINGS=/opt/kapsis/maven/settings.xml
 ENV WORKSPACE=/workspace
 
-# Source SDKMAN and NVM in bash profile
-RUN echo 'source $SDKMAN_DIR/bin/sdkman-init.sh' >> /home/${USERNAME}/.bashrc && \
-    echo 'source $NVM_DIR/nvm.sh' >> /home/${USERNAME}/.bashrc && \
-    echo 'export PATH=$JAVA_HOME/bin:$MAVEN_HOME/bin:$PATH' >> /home/${USERNAME}/.bashrc
+# Source environment scripts in user's bashrc
+RUN echo '[ -f /etc/profile.d/kapsis-java.sh ] && source /etc/profile.d/kapsis-java.sh' >> /home/${USERNAME}/.bashrc && \
+    echo '[ -f /etc/profile.d/kapsis-nodejs.sh ] && source /etc/profile.d/kapsis-nodejs.sh' >> /home/${USERNAME}/.bashrc && \
+    echo '[ -f /etc/profile.d/kapsis-rust.sh ] && source /etc/profile.d/kapsis-rust.sh' >> /home/${USERNAME}/.bashrc && \
+    echo '[ -f /etc/profile.d/kapsis-go.sh ] && source /etc/profile.d/kapsis-go.sh' >> /home/${USERNAME}/.bashrc && \
+    echo '[ -f $SDKMAN_DIR/bin/sdkman-init.sh ] && source $SDKMAN_DIR/bin/sdkman-init.sh' >> /home/${USERNAME}/.bashrc && \
+    echo '[ -f $NVM_DIR/nvm.sh ] && source $NVM_DIR/nvm.sh' >> /home/${USERNAME}/.bashrc
 
 #===============================================================================
 # RUNTIME CONFIGURATION
