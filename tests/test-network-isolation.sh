@@ -101,6 +101,61 @@ test_network_mode_flag_overrides_env() {
 }
 
 #===============================================================================
+# KAPSIS_NETWORK_MODE ENV VAR TESTS
+# Verify the env var is passed to container for all modes
+#===============================================================================
+
+test_network_mode_none_passes_env_var() {
+    log_test "Testing --network-mode=none passes KAPSIS_NETWORK_MODE=none to container"
+
+    local output
+    local exit_code=0
+
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --network-mode none --task "test" --dry-run 2>&1) || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should succeed"
+    assert_contains "$output" "-e KAPSIS_NETWORK_MODE=none" "Should pass KAPSIS_NETWORK_MODE=none to container"
+}
+
+test_network_mode_open_passes_env_var() {
+    log_test "Testing --network-mode=open passes KAPSIS_NETWORK_MODE=open to container"
+
+    local output
+    local exit_code=0
+
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --network-mode open --task "test" --dry-run 2>&1) || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should succeed"
+    assert_contains "$output" "-e KAPSIS_NETWORK_MODE=open" "Should pass KAPSIS_NETWORK_MODE=open to container"
+}
+
+test_network_mode_filtered_passes_env_var() {
+    log_test "Testing --network-mode=filtered passes KAPSIS_NETWORK_MODE=filtered to container"
+
+    local output
+    local exit_code=0
+
+    # Unset to avoid CI overrides
+    output=$(unset KAPSIS_NETWORK_MODE; "$LAUNCH_SCRIPT" "$TEST_PROJECT" --network-mode filtered --task "test" --dry-run 2>&1) || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should succeed"
+    assert_contains "$output" "-e KAPSIS_NETWORK_MODE=filtered" "Should pass KAPSIS_NETWORK_MODE=filtered to container"
+}
+
+test_network_mode_default_passes_env_var() {
+    log_test "Testing default network mode passes KAPSIS_NETWORK_MODE=filtered to container"
+
+    local output
+    local exit_code=0
+
+    # Unset to test actual default
+    output=$(unset KAPSIS_NETWORK_MODE; "$LAUNCH_SCRIPT" "$TEST_PROJECT" --task "test" --dry-run 2>&1) || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should succeed"
+    assert_contains "$output" "-e KAPSIS_NETWORK_MODE=filtered" "Default should pass KAPSIS_NETWORK_MODE=filtered to container"
+}
+
+#===============================================================================
 # CONTAINER TESTS (require Podman)
 # These verify network isolation actually works at runtime
 #===============================================================================
@@ -201,6 +256,12 @@ main() {
     run_test test_network_mode_default_is_filtered
     run_test test_network_mode_env_override
     run_test test_network_mode_flag_overrides_env
+
+    # KAPSIS_NETWORK_MODE env var tests - verify env var is passed to container
+    run_test test_network_mode_none_passes_env_var
+    run_test test_network_mode_open_passes_env_var
+    run_test test_network_mode_filtered_passes_env_var
+    run_test test_network_mode_default_passes_env_var
 
     # Container tests - verify network isolation actually works
     run_test test_network_none_blocks_network
