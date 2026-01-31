@@ -69,6 +69,7 @@ ARG USERNAME=developer
 # Agent installation (for agent-specific images)
 ARG AGENT_NPM=""
 ARG AGENT_PIP=""
+ARG AGENT_SCRIPT=""
 
 #===============================================================================
 # STAGE: base - Essential packages only
@@ -344,6 +345,7 @@ ARG GROUP_ID
 ARG USERNAME
 ARG AGENT_NPM
 ARG AGENT_PIP
+ARG AGENT_SCRIPT
 
 # Copy yq (always required)
 COPY --from=yq-installer /usr/local/bin/yq /usr/local/bin/yq
@@ -409,6 +411,24 @@ RUN if [ -n "$AGENT_NPM" ] && [ "$ENABLE_NODEJS" = "true" ]; then \
 # Install pip-based agents (Anthropic SDK, Aider, etc.) - conditional
 RUN if [ -n "$AGENT_PIP" ]; then \
         pip3 install --no-cache-dir $AGENT_PIP || true; \
+    fi
+
+# Install script-based agents (Claude native installer, etc.) - conditional
+# The script runs as root, binary is copied to /usr/local/bin for system-wide access
+# Note: Must use 'cp -L' to follow symlinks - Claude installer creates symlink at ~/.local/bin/claude
+#       pointing to actual binary in ~/.local/share/claude/versions/X.X.X
+RUN if [ -n "$AGENT_SCRIPT" ]; then \
+        echo "Running agent install script: $AGENT_SCRIPT" && \
+        bash -c "$AGENT_SCRIPT" && \
+        if [ -f "$HOME/.local/bin/claude" ] || [ -L "$HOME/.local/bin/claude" ]; then \
+            echo "Copying claude to /usr/local/bin/ (following symlink)" && \
+            cp -L "$HOME/.local/bin/claude" /usr/local/bin/claude && \
+            chmod +x /usr/local/bin/claude && \
+            rm -rf "$HOME/.local/bin/claude" "$HOME/.local/share/claude" && \
+            echo "Claude installed at /usr/local/bin/claude"; \
+        else \
+            echo "WARNING: claude binary not found at $HOME/.local/bin/claude"; \
+        fi; \
     fi
 
 #===============================================================================

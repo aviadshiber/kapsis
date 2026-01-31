@@ -29,16 +29,18 @@ Use `--dry-run` to see what would be built without actually building:
 
 ## Available Profiles
 
-| Profile | Est. Size | Languages | Build Tools | Best For |
-|---------|-----------|-----------|-------------|----------|
-| `minimal` | ~500MB | None | None | Shell scripts, basic tasks |
-| `java-dev` | ~1.5GB | Java 17/8 | Maven, GE, protoc | Taboola Java development |
-| `java8-legacy` | ~1.3GB | Java 8 only | Maven, GE, protoc | Legacy Java 8 projects |
-| `full-stack` | ~2.1GB | Java, Node.js, Python | Maven, GE, protoc | Multi-language projects |
-| `backend-go` | ~1.2GB | Go, Python | protoc | Go microservices |
-| `backend-rust` | ~1.4GB | Rust, Python | protoc | Rust backend services |
-| `ml-python` | ~1.8GB | Python, Node.js, Rust | None | ML/AI development |
-| `frontend` | ~1.2GB | Node.js, Rust | None | Frontend/WebAssembly |
+| Profile | Est. Size | With Claude | Languages | Build Tools | Best For |
+|---------|-----------|-------------|-----------|-------------|----------|
+| `minimal` | ~240MB | ~450MB | None | None | Shell scripts, basic tasks |
+| `java-dev` | ~1.9GB | ~2.1GB | Java 17/8 | Maven, GE, protoc | Taboola Java development |
+| `java8-legacy` | ~800MB | ~1.0GB | Java 8 only | Maven, GE, protoc | Legacy Java 8 projects |
+| `full-stack` | ~2.1GB | ~2.3GB | Java, Node.js, Python | Maven, GE, protoc | Multi-language projects |
+| `backend-go` | ~1.2GB | ~1.4GB | Go, Python | protoc | Go microservices |
+| `backend-rust` | ~1.4GB | ~1.6GB | Rust, Python | protoc | Rust backend services |
+| `ml-python` | ~1.8GB | ~2.0GB | Python, Node.js, Rust | None | ML/AI development |
+| `frontend` | ~1.2GB | ~1.4GB | Node.js, Rust | None | Frontend/WebAssembly |
+
+**Note:** Claude CLI adds ~210MB (native binary).
 
 ## Configuration File
 
@@ -249,6 +251,57 @@ Via CLI:
 ./scripts/configure-deps.sh --set languages.java.default_version="21.0.6-zulu"
 ```
 
+## Building Agent Images
+
+Agent-specific images combine a build profile (languages/tools) with an agent profile (AI agent installation).
+
+### Using build-agent-image.sh
+
+```bash
+# Build Claude CLI with minimal profile (~450MB)
+./scripts/build-agent-image.sh claude-cli --profile minimal
+
+# Build Claude CLI with Java 8 for legacy projects (~1GB)
+./scripts/build-agent-image.sh claude-cli --profile java8-legacy
+
+# Build Claude CLI with full Java dev environment (~2.1GB)
+./scripts/build-agent-image.sh claude-cli --profile java-dev
+
+# Build Aider (requires Python)
+./scripts/build-agent-image.sh aider --profile full-stack
+```
+
+### Agent Profile Requirements
+
+The build system validates that agent dependencies are satisfied by the build profile:
+
+| Agent | Native Binary? | Dependencies | Minimum Profile |
+|-------|----------------|--------------|-----------------|
+| `claude-cli` | ✅ Yes | git only | `minimal` |
+| `codex-cli` | ❌ No | Node.js 18+ | `full-stack`, `frontend` |
+| `aider` | ❌ No | Python 3.9+ | `full-stack`, `ml-python` |
+| `claude-api` | ❌ No | Python 3.9+ | `full-stack`, `ml-python` |
+| `gemini-cli` | ❌ No | Node.js 18+ | `full-stack`, `frontend` |
+
+**Note:** Claude CLI uses a native installer (no Node.js/Python required), making it compatible with the `minimal` profile for smallest image sizes (~450MB).
+
+### Dependency Validation
+
+If you try to build an agent with an incompatible profile, you'll get a clear error:
+
+```
+═══════════════════════════════════════════════════════════════
+DEPENDENCY VALIDATION FAILED
+═══════════════════════════════════════════════════════════════
+The agent 'aider' requires dependencies that are disabled
+in the build configuration.
+
+Options:
+  1. Use a different build profile:
+     ./scripts/build-agent-image.sh aider --profile full-stack
+  ...
+```
+
 ## Build Script Integration
 
 ### Using build-image.sh
@@ -359,7 +412,8 @@ system_packages:
 
 | Component | Size Impact |
 |-----------|-------------|
-| Base Ubuntu | ~300MB |
+| Base Ubuntu + essentials | ~240MB |
+| Claude CLI (native binary) | ~210MB |
 | Java (per version) | ~200MB |
 | Node.js | ~200MB |
 | Python | ~100MB |
@@ -368,6 +422,8 @@ system_packages:
 | Maven | ~50MB |
 | Gradle | ~100MB |
 | Development tools | ~150MB |
+
+**Tip:** Claude CLI uses a native installer and doesn't require Node.js, making it ideal for minimal builds.
 
 ## Troubleshooting
 

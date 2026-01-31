@@ -1,18 +1,22 @@
 # Google Gemini CLI Agent Profile
 # Official Google CLI for Gemini code generation
 #
-# Build: ./scripts/build-agent-image.sh gemini-cli
+# Build: ./scripts/build-agent-image.sh gemini-cli --profile full-stack
 # Result: kapsis-gemini-cli:latest
+#
+# NOTE: Gemini CLI is TypeScript-based and requires Node.js runtime.
+# No native binary available (as of Jan 2026).
+# See: https://github.com/google-gemini/gemini-cli
 
 name: gemini-cli
-description: Google Gemini CLI (official Google)
+description: Google Gemini CLI (requires Node.js)
 version: latest
 
 install:
   npm: "@google/gemini-cli"
 
 dependencies:
-  - nodejs >= 18
+  - nodejs >= 18  # Required - no native binary available
 
 auth:
   required:

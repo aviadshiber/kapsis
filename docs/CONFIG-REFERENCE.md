@@ -1092,14 +1092,16 @@ version: latest
 
 # Installation method (choose one)
 install:
-  npm: "@anthropic-ai/claude-code"    # NPM global install
-  # pip: "anthropic"                  # Pip install
-  # script: |                         # Custom script
-  #   curl -fsSL https://example.com/install.sh | bash
+  # Native installer (recommended for Claude) - no Node.js required
+  script: "curl -fsSL https://claude.ai/install.sh | bash"
+  binary_path: "/usr/local/bin/claude"
+  # npm: "@anthropic-ai/claude-code"  # (deprecated - use native installer)
+  # pip: "anthropic"                  # Pip install (for claude-api)
 
 # Dependencies (validated at build time)
+# Claude CLI native installer only requires git
 dependencies:
-  - nodejs >= 18
+  - git
 
 # Authentication requirements
 auth:
@@ -1139,17 +1141,23 @@ resources:
 Use `build-agent-image.sh` to create agent-specific container images:
 
 ```bash
-# Build Claude CLI image
-./scripts/build-agent-image.sh claude-cli
-# Creates: kapsis-claude-cli:latest
+# Build Claude CLI with minimal profile (smallest, ~450MB)
+./scripts/build-agent-image.sh claude-cli --profile minimal
 
-# Build Aider image
-./scripts/build-agent-image.sh aider
-# Creates: kapsis-aider:latest
+# Build Claude CLI with Java 8 support (~1GB)
+./scripts/build-agent-image.sh claude-cli --profile java8-legacy
+
+# Build Claude CLI with full Java dev environment (~2.1GB)
+./scripts/build-agent-image.sh claude-cli --profile java-dev
+
+# Build Aider (requires Python, use full-stack profile)
+./scripts/build-agent-image.sh aider --profile full-stack
 
 # List available profiles
 ./scripts/build-agent-image.sh --help
 ```
+
+**Note:** Claude CLI uses a native installer and works with the `minimal` profile (no Node.js required). Other agents like Aider, Codex, and Gemini require specific language runtimes.
 
 ### Using Agent Images
 
