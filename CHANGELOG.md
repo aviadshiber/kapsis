@@ -6,14 +6,42 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.0.1] - 2026-02-01
+## [2.1.0] - 2026-02-01
+
+### Added
+- Add animated progress display to terminal demo
+- Show log file location on failure
+- Add in-place terminal progress visualization
 
 ### Changed
-- Bump the github-actions group with 2 updates
+- Auto-prune dangling images after successful builds
+
+### Fixed
+- Update test patterns to accept quoted variable references
+- Preserve exit code in EXIT trap and fix short-circuit bugs
+- Show 100% progress before completion message
+- Remove -i flag for non-interactive runs to prevent hang
+- Address PR review issues for progress display
+- Resolve CLI network mode override and output buffering
+- Add set +u protection to switch-java.sh
+- Show real-time container output and log it
+- Handle set -u when sourcing SDKMAN/NVM in bashrc
+- Show actual container errors instead of generic message
+- Ensure completion message is always shown
+- Use ERROR log level for cleaner progress display
+- Suppress verbose logs when progress display is active
+
+### Documentation
+- Add security warning about bash -x debug mode exposing secrets
+- Document progress display environment variables
 
 ## [Unreleased]
 
 ## [0.8.3] - 2025-12-28
+
+### Changed
+- Bump the github-actions group with 2 updates
+
 
 ### BREAKING CHANGES
 - Refactor --no-push to positive --push flag
@@ -395,7 +423,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.0.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.1.0...HEAD
+[2.1.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.1.0
 [2.0.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.0.1
 [2.0.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.0.0
 [1.8.2]: https://github.com/aviadshiber/kapsis/releases/tag/v1.8.2
