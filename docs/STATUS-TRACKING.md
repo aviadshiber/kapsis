@@ -291,6 +291,34 @@ For agents without native hook support (Aider, custom agents), Kapsis uses a bac
 }
 ```
 
+## Terminal Progress Display
+
+For TTY environments, Kapsis provides in-place terminal progress updates using ANSI escape codes. This replaces the traditional line-by-line output with a smooth, animated display.
+
+### Features
+
+- **In-place updates**: Progress bar updates without repeating output lines
+- **Animated spinner**: Braille pattern spinner during active phases
+- **Progress bar**: Unicode block characters (█░) showing completion percentage
+- **Elapsed time**: Real-time tracking of task duration
+- **Non-TTY fallback**: Simple line-based output for CI/piped environments
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `KAPSIS_PROGRESS_DISPLAY` | Set to `1` when progress display is active (set by `display_init`) |
+| `KAPSIS_NO_PROGRESS` | Set to `true` or `1` to disable progress display entirely |
+| `NO_COLOR` | Standard variable to disable colors (also disables progress display) |
+
+### Integration
+
+The progress display library (`scripts/lib/progress-display.sh`) reads status updates from `status.json` and renders them in the terminal. It works alongside the status tracking system:
+
+```text
+Agent hooks → status.json → progress-display.sh → Terminal output
+```
+
 ## Files
 
 | File | Purpose |
@@ -298,6 +326,7 @@ For agents without native hook support (Aider, custom agents), Kapsis uses a bac
 | `scripts/lib/inject-status-hooks.sh` | Auto-inject hooks at container startup |
 | `scripts/lib/status.sh` | JSON status file management |
 | `scripts/lib/status.py` | Python status library for custom agents |
+| `scripts/lib/progress-display.sh` | Terminal progress display with ANSI rendering |
 | `scripts/lib/progress-monitor.sh` | Background progress file monitor (fallback) |
 | `scripts/hooks/kapsis-status-hook.sh` | Universal hook for all agents |
 | `scripts/hooks/kapsis-stop-hook.sh` | Completion hook |
