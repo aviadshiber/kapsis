@@ -40,11 +40,11 @@ KAPSIS_ROOT="$(dirname "$SCRIPT_DIR")"
 [[ "${KAPSIS_DEBUG:-}" == "1" ]] && echo "[DEBUG] SCRIPT_DIR=$SCRIPT_DIR" >&2
 [[ "${KAPSIS_DEBUG:-}" == "1" ]] && echo "[DEBUG] KAPSIS_ROOT=$KAPSIS_ROOT" >&2
 
-# Pre-set log level to ERROR when in a TTY for cleaner progress display
+# Pre-set log level to WARN when in a TTY for cleaner progress display
 # This must happen BEFORE sourcing logging.sh
-# Only errors will be shown; progress display handles status updates
+# Warnings and errors will be shown; progress display handles status updates
 if [[ -t 2 ]] && [[ -z "${NO_COLOR:-}" ]] && [[ "${TERM:-dumb}" != "dumb" ]] && [[ -z "${KAPSIS_DEBUG:-}" ]]; then
-    export KAPSIS_LOG_LEVEL="${KAPSIS_LOG_LEVEL:-ERROR}"
+    export KAPSIS_LOG_LEVEL="${KAPSIS_LOG_LEVEL:-WARN}"
 fi
 
 # Source logging library
@@ -1489,7 +1489,7 @@ build_container_command() {
     # Suppress verbose logs inside container when progress display is enabled
     # This prevents entrypoint logs from overwhelming the in-place progress updates
     if [[ "${KAPSIS_PROGRESS_DISPLAY:-0}" == "1" ]]; then
-        CONTAINER_CMD+=("-e" "KAPSIS_LOG_LEVEL=ERROR")
+        CONTAINER_CMD+=("-e" "KAPSIS_LOG_LEVEL=WARN")
     fi
 
     # Add volume mounts
@@ -1529,8 +1529,26 @@ main() {
     # Initialize progress display (must be early for trap registration)
     display_init
 
+    # Track if we've shown completion message (to avoid duplicate on normal exit)
+    _DISPLAY_COMPLETE_SHOWN=false
+
+    # Cleanup function that ensures completion message is shown
+    _cleanup_with_completion() {
+        local exit_code=$?
+        # Show completion message if not already shown
+        if [[ "$_DISPLAY_COMPLETE_SHOWN" != "true" ]]; then
+            if [[ $exit_code -eq 0 ]]; then
+                display_complete 0
+            else
+                display_complete "$exit_code" "" "Exited with code $exit_code"
+            fi
+        fi
+        display_cleanup
+    }
+
     # Cleanup display on exit (restore cursor visibility, etc.)
-    trap 'display_cleanup' EXIT INT TERM
+    trap '_cleanup_with_completion' EXIT
+    trap 'display_cleanup' INT TERM
 
     log_timer_start "total"
     log_section "Starting Kapsis Agent Launch"
@@ -1684,11 +1702,13 @@ main() {
         log_finalize $EXIT_CODE
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
         display_complete "$EXIT_CODE" "" "Agent exited with error code $EXIT_CODE"
+        _DISPLAY_COMPLETE_SHOWN=true
     elif [[ "$POST_EXIT_CODE" -ne 0 ]]; then
         FINAL_EXIT_CODE=$POST_EXIT_CODE
         log_finalize $POST_EXIT_CODE
         status_complete "$POST_EXIT_CODE" "Post-container operations failed (push)"
         display_complete "$POST_EXIT_CODE" "" "Post-container operations failed"
+        _DISPLAY_COMPLETE_SHOWN=true
     else
         # Check commit status before reporting success (Fix #3)
         local commit_status
@@ -1702,12 +1722,14 @@ main() {
             log_warn "Uncommitted changes remain in worktree!"
             status_complete 3 "Uncommitted changes remain"
             display_complete 3 "" "Uncommitted changes remain"
+            _DISPLAY_COMPLETE_SHOWN=true
         else
             # Success: no changes, or changes were committed
             FINAL_EXIT_CODE=0
             log_finalize 0
             status_complete 0 "" "${PR_URL:-}"
             display_complete 0 "${PR_URL:-}"
+            _DISPLAY_COMPLETE_SHOWN=true
         fi
     fi
 
