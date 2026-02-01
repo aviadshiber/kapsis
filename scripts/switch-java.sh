@@ -24,23 +24,29 @@ fi
 
 case "$VERSION" in
     8|1.8)
-        sdk use java 8.0.392-tem
+        # Try zulu first (used in full-stack/java8-legacy profiles), then tem as fallback
+        sdk use java 8.0.422-zulu 2>/dev/null || sdk use java 8.0.392-tem 2>/dev/null || {
+            echo "Java 8 not installed."
+            exit 1
+        }
         ;;
     11)
-        sdk use java 11.0.21-tem 2>/dev/null || {
-            echo "Java 11 not installed. Installing..."
-            sdk install java 11.0.21-tem
-            sdk use java 11.0.21-tem
+        sdk use java 11.0.21-tem 2>/dev/null || sdk use java 11.0.25-zulu 2>/dev/null || {
+            echo "Java 11 not installed."
+            exit 1
         }
         ;;
     17)
-        sdk use java 17.0.9-tem
+        # Try zulu first (used in full-stack profile), then tem as fallback
+        sdk use java 17.0.14-zulu 2>/dev/null || sdk use java 17.0.9-tem 2>/dev/null || {
+            echo "Java 17 not installed."
+            exit 1
+        }
         ;;
     21)
-        sdk use java 21.0.1-tem 2>/dev/null || {
-            echo "Java 21 not installed. Installing..."
-            sdk install java 21.0.1-tem
-            sdk use java 21.0.1-tem
+        sdk use java 21.0.6-zulu 2>/dev/null || sdk use java 21.0.1-tem 2>/dev/null || {
+            echo "Java 21 not installed."
+            exit 1
         }
         ;;
     *)
