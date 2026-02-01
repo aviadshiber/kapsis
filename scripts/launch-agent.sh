@@ -1670,24 +1670,35 @@ main() {
     log_timer_start "container"
     status_phase "starting" 22 "Launching container"
 
-    # Create temp file to capture output for error reporting
+    # Create temp file to capture output for error reporting and logging
     local container_output
     container_output=$(mktemp)
     CONTAINER_ERROR_OUTPUT=""
 
-    # Run the container and capture output for error reporting
-    # Use script(1) or similar to capture PTY output, but for now just redirect
-    # Note: This loses real-time output visibility, but ensures we capture errors
+    # Run the container with tee to show real-time output AND capture it
+    # This ensures users see what's happening while we still capture errors
     # Temporarily disable set -e to capture exit code
     set +e
-    "${CONTAINER_CMD[@]}" > "$container_output" 2>&1
-    EXIT_CODE=$?
+    "${CONTAINER_CMD[@]}" 2>&1 | tee "$container_output"
+    EXIT_CODE=${PIPESTATUS[0]}
     set -e
 
     log_timer_end "container"
     log_info "Container exited with code: $EXIT_CODE"
 
-    # On error, capture container output for error reporting
+    # Log full container output to log file for debugging
+    if [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
+        log_debug "=== Container output start ==="
+        while IFS= read -r line; do
+            # Strip ANSI codes for log file
+            local clean_line
+            clean_line=$(echo "$line" | sed 's/\x1b\[[0-9;]*m//g')
+            log_debug "  $clean_line"
+        done < "$container_output"
+        log_debug "=== Container output end ==="
+    fi
+
+    # On error, capture specific error lines for display
     if [[ "$EXIT_CODE" -ne 0 ]] && [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
         # Strip ANSI codes and get relevant error lines
         local stripped_output
