@@ -16,7 +16,7 @@
 #   --spec <file>         Task specification file (markdown)
 #   --branch <name>       Git branch to work on (creates or continues)
 #   --auto-branch         Auto-generate branch name
-#   --no-push             Commit but don't push
+#   --push                Push changes to remote after commit
 #   --interactive         Force interactive shell mode
 #   --dry-run             Show what would be executed without running
 #   --worktree-mode       Force worktree mode (git worktrees, simpler cleanup)
@@ -76,7 +76,7 @@ SPEC_FILE=""
 BRANCH=""
 BASE_BRANCH=""  # Fix #116: Base branch/tag for new feature branches
 AUTO_BRANCH=false
-NO_PUSH=false
+DO_PUSH=false
 RESUME_MODE=false      # Fix #1: Auto-resume existing worktree
 FORCE_CLEAN=false      # Fix #1: Force remove existing worktree
 INTERACTIVE=false
@@ -131,6 +131,32 @@ ensure_dir() {
 }
 
 #===============================================================================
+# COMMIT MESSAGE TEMPLATE SUBSTITUTION
+#===============================================================================
+# Substitutes placeholders in commit message templates
+# Available placeholders: {task}, {agent}, {agent_id}, {branch}, {timestamp}
+substitute_commit_placeholders() {
+    local template="$1"
+
+    # Extract task from inline task or spec filename
+    local task="${TASK_INLINE:-}"
+    if [[ -z "$task" && -n "${SPEC_FILE:-}" ]]; then
+        task="$(basename "$SPEC_FILE" .md)"
+    fi
+    task="${task:-changes}"
+
+    # Perform substitutions
+    local result="$template"
+    result="${result//\{task\}/$task}"
+    result="${result//\{agent\}/${AGENT_NAME:-agent}}"
+    result="${result//\{agent_id\}/${AGENT_ID:-unknown}}"
+    result="${result//\{branch\}/${BRANCH:-HEAD}}"
+    result="${result//\{timestamp\}/$(date +%Y-%m-%d_%H%M%S)}"
+
+    echo "$result"
+}
+
+#===============================================================================
 # SECRET STORE HELPERS (macOS Keychain, Linux secret-tool)
 #===============================================================================
 # Functions: detect_os, query_secret_store, query_secret_store_with_fallbacks
@@ -174,7 +200,8 @@ Options:
   --branch <name>       Git branch to work on (creates new or continues existing)
   --base-branch <ref>   Base branch/tag for new branches (e.g., main, stable/trunk)
   --auto-branch         Auto-generate branch name from task/spec
-  --no-push             Create branch and commit, but don't push
+  --push                Push changes to remote after commit (default: off)
+  --no-push             [DEPRECATED] Push is now off by default, use --push to enable
   --interactive         Force interactive shell mode (ignores agent.command)
   --dry-run             Show what would be executed without running
   --image <name>        Container image to use (e.g., kapsis-claude-cli:latest)
@@ -337,8 +364,14 @@ parse_args() {
                 AUTO_BRANCH=true
                 shift
                 ;;
+            --push)
+                DO_PUSH=true
+                shift
+                ;;
             --no-push)
-                NO_PUSH=true
+                # Deprecated: push is now off by default
+                log_warn "--no-push is deprecated: push is now OFF by default. Remove this flag."
+                DO_PUSH=false
                 shift
                 ;;
             --resume)
@@ -1211,7 +1244,7 @@ generate_env_vars() {
     if [[ -n "$BRANCH" ]]; then
         ENV_VARS+=("-e" "KAPSIS_BRANCH=${BRANCH}")
         ENV_VARS+=("-e" "KAPSIS_GIT_REMOTE=${GIT_REMOTE}")
-        ENV_VARS+=("-e" "KAPSIS_NO_PUSH=${NO_PUSH}")
+        ENV_VARS+=("-e" "KAPSIS_DO_PUSH=${DO_PUSH}")
         # Fix #116: Pass base branch for proper branch creation
         if [[ -n "$BASE_BRANCH" ]]; then
             ENV_VARS+=("-e" "KAPSIS_BASE_BRANCH=${BASE_BRANCH}")
@@ -1504,6 +1537,12 @@ main() {
 
     generate_branch_name
 
+    # Substitute placeholders in commit message template
+    if [[ -n "${GIT_COMMIT_MSG:-}" ]]; then
+        GIT_COMMIT_MSG=$(substitute_commit_placeholders "$GIT_COMMIT_MSG")
+        log_debug "Commit message after substitution: $GIT_COMMIT_MSG"
+    fi
+
     # Handle existing worktree for branch (Fix #1: resume/force-clean)
     if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]] && [[ "$DRY_RUN" != "true" ]]; then
         handle_existing_worktree
@@ -1695,7 +1734,7 @@ post_container_worktree() {
             "$BRANCH" \
             "$GIT_COMMIT_MSG" \
             "$GIT_REMOTE" \
-            "$NO_PUSH" \
+            "$DO_PUSH" \
             "$AGENT_ID" \
             "$SANITIZED_GIT_PATH" \
             "$GIT_CO_AUTHORS" \

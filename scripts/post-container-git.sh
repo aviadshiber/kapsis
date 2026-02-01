@@ -642,7 +642,7 @@ post_container_git() {
     local branch="$2"
     local commit_message="${3:-feat: AI agent changes}"
     local remote="${4:-origin}"
-    local no_push="${5:-false}"
+    local do_push="${5:-false}"
     local agent_id="${6:-unknown}"
     local sanitized_git="${7:-}"
     local co_authors="${8:-}"
@@ -654,7 +654,7 @@ post_container_git() {
     log_debug "  branch=$branch"
     log_debug "  commit_message=$commit_message"
     log_debug "  remote=$remote"
-    log_debug "  no_push=$no_push"
+    log_debug "  do_push=$do_push"
     log_debug "  agent_id=$agent_id"
     log_debug "  sanitized_git=$sanitized_git"
     log_debug "  co_authors=$co_authors"
@@ -713,8 +713,8 @@ post_container_git() {
         log_debug "Commit verified: SHA=$(status_get_commit_sha)"
     fi
 
-    # Push if not disabled
-    if [[ "$no_push" != "true" ]]; then
+    # Push if enabled (--push flag)
+    if [[ "$do_push" == "true" ]]; then
         # Update status: pushing phase
         status_phase "pushing" 97 "Pushing to remote"
 
@@ -768,8 +768,8 @@ post_container_git() {
             return 1
         fi
     else
-        log_info "Skipping push (--no-push specified)"
-        log_info "To push: cd $worktree_path && git push -u $remote $branch"
+        log_info "Skipping push (use --push to enable)"
+        log_info "To push manually: cd $worktree_path && git push -u $remote $branch"
         # Record that push was skipped with the local commit
         local local_commit
         local_commit=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "")

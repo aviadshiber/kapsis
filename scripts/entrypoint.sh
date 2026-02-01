@@ -571,9 +571,9 @@ Branch: ${KAPSIS_BRANCH}"
         }
     fi
 
-    # Push (unless KAPSIS_NO_PUSH is true)
+    # Push if enabled via --push flag (KAPSIS_DO_PUSH=true)
     # This runs regardless of whether we committed above - agent may have committed itself
-    if [[ "${KAPSIS_NO_PUSH:-false}" != "true" ]]; then
+    if [[ "${KAPSIS_DO_PUSH:-false}" == "true" ]]; then
         echo ""
         echo "┌────────────────────────────────────────────────────────────────┐"
         echo "│ PUSHING TO REMOTE                                              │"
@@ -648,7 +648,7 @@ Branch: ${KAPSIS_BRANCH}"
         echo "  ./launch-agent.sh <id> <project> --branch ${KAPSIS_BRANCH} --spec ./updated-spec.md"
     else
         echo ""
-        log_success "Changes committed locally (--no-push)"
+        log_success "Changes committed locally (use --push to enable auto-push)"
         echo "To push later: git push ${KAPSIS_GIT_REMOTE:-origin} ${KAPSIS_BRANCH}"
         # Record that push was skipped with the local commit
         local local_commit
@@ -981,7 +981,11 @@ print_welcome() {
 
     echo ""
     echo "Maven settings: $KAPSIS_HOME/maven/settings.xml (isolation enabled)"
-    [[ "${KAPSIS_WORKTREE_MODE:-}" == "true" ]] && echo "Git:         using sanitized .git-safe (hooks sandbox isolated)"
+    if [[ "${KAPSIS_WORKTREE_MODE:-}" == "true" ]]; then
+        local push_status="disabled"
+        [[ "${KAPSIS_DO_PUSH:-}" == "true" ]] && push_status="ENABLED"
+        echo "Git:         using sanitized .git-safe (hooks isolated, push ${push_status})"
+    fi
     echo ""
 }
 

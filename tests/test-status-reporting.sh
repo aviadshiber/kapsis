@@ -587,7 +587,7 @@ test_status_push_skipped() {
 
     status_init "test-project" "1" "" "worktree" ""
 
-    # Mark push as skipped (--no-push scenario)
+    # Mark push as skipped (--push not specified)
     status_push_skipped "abc123def456"
 
     status_phase "complete" 100 "Done"
