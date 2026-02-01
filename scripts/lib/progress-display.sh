@@ -362,7 +362,9 @@ display_header() {
     else
         # Non-TTY fallback
         echo "[kapsis] Sandbox ready · Agent: $agent_id" >&2
-        [[ -n "$branch" ]] && echo "[kapsis] Branch: $branch · Network: $network" >&2
+        if [[ -n "$branch" ]]; then
+            echo "[kapsis] Branch: $branch · Network: $network" >&2
+        fi
     fi
 }
 
@@ -432,7 +434,11 @@ display_complete() {
         else
             printf "\n${_PD_RED}✗${_PD_RESET} Task failed (exit code: %d, elapsed: %s)\n" "$exit_code" "$elapsed" >&2
             if [[ -n "$error_msg" ]]; then
-                printf "  ${_PD_DIM}%s${_PD_RESET}\n" "$error_msg" >&2
+                # Handle multi-line error messages (e.g., from container stderr)
+                printf "\n${_PD_DIM}Container output:${_PD_RESET}\n" >&2
+                while IFS= read -r line; do
+                    printf "  ${_PD_DIM}%s${_PD_RESET}\n" "$line" >&2
+                done <<< "$error_msg"
             fi
         fi
         echo "" >&2
@@ -443,7 +449,12 @@ display_complete() {
             [[ -n "$pr_url" ]] && echo "[kapsis] PR: $pr_url" >&2
         else
             echo "[kapsis] Failed (exit code: $exit_code, elapsed: $elapsed)" >&2
-            [[ -n "$error_msg" ]] && echo "[kapsis] Error: $error_msg" >&2
+            if [[ -n "$error_msg" ]]; then
+                echo "[kapsis] Container output:" >&2
+                while IFS= read -r line; do
+                    echo "[kapsis]   $line" >&2
+                done <<< "$error_msg"
+            fi
         fi
     fi
 }

@@ -1448,10 +1448,18 @@ build_container_command() {
     CONTAINER_CMD=(
         "podman" "run"
         "--rm"
-        "-it"
         "--name" "kapsis-${AGENT_ID}"
         "--hostname" "kapsis-${AGENT_ID}"
     )
+
+    # Add TTY flags only when we have a real TTY and not capturing output
+    # This allows proper output capture when redirecting for error reporting
+    if [[ -t 0 ]] && [[ -t 1 ]] && [[ "$INTERACTIVE" == "true" ]]; then
+        CONTAINER_CMD+=("-it")
+    else
+        # For non-interactive or when we need to capture output, use -i only
+        CONTAINER_CMD+=("-i")
+    fi
 
     # Generate security arguments from security.sh library
     # This includes: capabilities, seccomp, process isolation, LSM, resource limits
@@ -1662,12 +1670,38 @@ main() {
     log_timer_start "container"
     status_phase "starting" 22 "Launching container"
 
-    # Run the container
-    "${CONTAINER_CMD[@]}"
+    # Create temp file to capture output for error reporting
+    local container_output
+    container_output=$(mktemp)
+    CONTAINER_ERROR_OUTPUT=""
+
+    # Run the container and capture output for error reporting
+    # Use script(1) or similar to capture PTY output, but for now just redirect
+    # Note: This loses real-time output visibility, but ensures we capture errors
+    # Temporarily disable set -e to capture exit code
+    set +e
+    "${CONTAINER_CMD[@]}" > "$container_output" 2>&1
     EXIT_CODE=$?
+    set -e
 
     log_timer_end "container"
     log_info "Container exited with code: $EXIT_CODE"
+
+    # On error, capture container output for error reporting
+    if [[ "$EXIT_CODE" -ne 0 ]] && [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
+        # Strip ANSI codes and get relevant error lines
+        local stripped_output
+        stripped_output=$(sed 's/\x1b\[[0-9;]*m//g' "$container_output")
+
+        # Try to find ERROR lines or common error patterns (grep returns 1 if no matches)
+        CONTAINER_ERROR_OUTPUT=$(echo "$stripped_output" | grep -E '\[ERROR\]|SECURITY:|unbound variable|command not found|Permission denied' | head -10 || true)
+
+        # If no specific error lines, get the last 10 lines
+        if [[ -z "$CONTAINER_ERROR_OUTPUT" ]]; then
+            CONTAINER_ERROR_OUTPUT=$(echo "$stripped_output" | tail -10)
+        fi
+    fi
+    rm -f "$container_output"
     # Update status to post_processing (Fix #3: don't report "completed" until commit verified)
     status_phase "post_processing" 85 "Processing agent output (exit code: $EXIT_CODE)"
 
@@ -1701,7 +1735,12 @@ main() {
         FINAL_EXIT_CODE=$EXIT_CODE
         log_finalize $EXIT_CODE
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
-        display_complete "$EXIT_CODE" "" "Agent exited with error code $EXIT_CODE"
+        # Include captured container error in the failure message
+        local error_msg="Agent exited with error code $EXIT_CODE"
+        if [[ -n "$CONTAINER_ERROR_OUTPUT" ]]; then
+            error_msg="$CONTAINER_ERROR_OUTPUT"
+        fi
+        display_complete "$EXIT_CODE" "" "$error_msg"
         _DISPLAY_COMPLETE_SHOWN=true
     elif [[ "$POST_EXIT_CODE" -ne 0 ]]; then
         FINAL_EXIT_CODE=$POST_EXIT_CODE
