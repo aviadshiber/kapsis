@@ -463,6 +463,27 @@ See the header comments in `scripts/lib/logging.sh` for full documentation.
 
 ## Troubleshooting
 
+### Security Warning: Never Use `bash -x`
+
+**CRITICAL: Do NOT use `bash -x` or `set -x` to debug Kapsis scripts.**
+
+Bash debug mode prints command arguments to stderr BEFORE sanitization, exposing:
+- API keys (ANTHROPIC_API_KEY, etc.)
+- OAuth tokens and refresh tokens
+- Passwords and credentials from keychain
+
+**Safe debugging alternatives:**
+```bash
+# Enable debug logging (sanitized output to file)
+KAPSIS_DEBUG=1 ./scripts/launch-agent.sh ...
+
+# Check logs
+tail -f ~/.kapsis/logs/kapsis-launch-agent.log
+
+# Targeted debug output
+echo "DEBUG: variable=$variable" >&2
+```
+
 ### Common Issues
 
 1. **Podman machine not running**
