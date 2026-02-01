@@ -440,6 +440,14 @@ display_complete() {
                     printf "  ${_PD_DIM}%s${_PD_RESET}\n" "$line" >&2
                 done <<< "$error_msg"
             fi
+            # Show log file location for debugging
+            local log_file=""
+            if type -t get_log_file &>/dev/null; then
+                log_file=$(get_log_file 2>/dev/null || true)
+            fi
+            if [[ -n "$log_file" ]] && [[ -f "$log_file" ]]; then
+                printf "\n${_PD_DIM}📋 Full logs: %s${_PD_RESET}\n" "$log_file" >&2
+            fi
         fi
         echo "" >&2
     else
@@ -454,6 +462,14 @@ display_complete() {
                 while IFS= read -r line; do
                     echo "[kapsis]   $line" >&2
                 done <<< "$error_msg"
+            fi
+            # Show log file location for debugging
+            local log_file=""
+            if type -t get_log_file &>/dev/null; then
+                log_file=$(get_log_file 2>/dev/null || true)
+            fi
+            if [[ -n "$log_file" ]] && [[ -f "$log_file" ]]; then
+                echo "[kapsis] Full logs: $log_file" >&2
             fi
         fi
     fi
