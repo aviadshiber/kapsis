@@ -1296,6 +1296,19 @@ Kapsis provides JSON-based status reporting for monitoring agent progress. This 
 | `KAPSIS_STATUS_DIR` | ~/.kapsis/status | Directory for status files |
 | `KAPSIS_STATUS_VERSION` | 1.0 | JSON schema version |
 
+### Progress Display Environment Variables
+
+In TTY environments, Kapsis renders in-place progress updates with animated spinners and progress bars.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_PROGRESS_DISPLAY` | (auto) | Set to `1` when progress display is active (set automatically by `display_init`) |
+| `KAPSIS_NO_PROGRESS` | (unset) | Set to `true` or `1` to disable progress display entirely |
+| `NO_COLOR` | (unset) | Standard variable to disable colors (also disables progress display) |
+| `TERM` | (auto) | Terminal type; `dumb` disables progress display |
+
+**Note:** Progress display is automatically disabled for non-TTY environments (e.g., CI pipelines, piped output). In these cases, simple line-based output is used instead.
+
 ### Status File Location
 
 Status files are created at: `~/.kapsis/status/kapsis-{project}-{agent_id}.json`
