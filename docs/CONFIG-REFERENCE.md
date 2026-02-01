@@ -503,7 +503,12 @@ git:
     remote: origin
 
     # Commit message template
-    # Placeholders: {task}, {agent}, {timestamp}, {branch}
+    # Available placeholders (substituted at launch time):
+    #   {task}      - Task description (from --task or spec filename)
+    #   {agent}     - Agent name (claude, codex, aider)
+    #   {agent_id}  - Unique 6-char agent ID
+    #   {branch}    - Git branch name
+    #   {timestamp} - Current timestamp (YYYY-MM-DD_HHMMSS)
     commit_message: |
       feat: {task}
 
@@ -1001,7 +1006,7 @@ Some config values can be overridden via command line:
 | Config | CLI Override |
 |--------|--------------|
 | `network.mode` | `--network-mode <none\|filtered\|open>` |
-| `git.auto_push.enabled` | `--no-push` |
+| `git.auto_push.enabled` | `--push` (enables push, default: off) |
 | `agent.command` | `--interactive` |
 | `image.name:image.tag` | `--image <name:tag>` |
 | `sandbox.upper_dir_base` | Set via environment |
