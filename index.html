@@ -278,20 +278,22 @@
                     <div id="term-line-8" class="terminal-line text-slate-300 mb-2"></div>
                     <!-- Line 9: Launch box -->
                     <div id="term-line-9" class="terminal-line text-white mb-1"></div>
-                    <!-- Line 10: Starting container -->
-                    <div id="term-line-10" class="terminal-line text-cyan-400 mb-2"></div>
-                    <!-- Line 11: Agent output simulation -->
-                    <div id="term-line-11" class="terminal-line text-slate-500 mb-1"></div>
-                    <div id="term-line-12" class="terminal-line text-slate-400 mb-1"></div>
-                    <div id="term-line-13" class="terminal-line text-slate-400 mb-2"></div>
-                    <!-- Line 14: Container exited -->
-                    <div id="term-line-14" class="terminal-line text-cyan-400 mb-1"></div>
-                    <!-- Line 15: Exit box -->
+                    <!-- Line 10: Sandbox ready header -->
+                    <div id="term-line-10" class="terminal-line mb-1"></div>
+                    <!-- Line 11: Branch info -->
+                    <div id="term-line-11" class="terminal-line text-slate-300 mb-1"></div>
+                    <!-- Line 12: Separator -->
+                    <div id="term-line-12" class="terminal-line text-slate-600 mb-2"></div>
+                    <!-- Line 13: Progress bar (animated) -->
+                    <div id="term-line-13" class="terminal-line mb-1"></div>
+                    <!-- Line 14: Progress message -->
+                    <div id="term-line-14" class="terminal-line text-slate-500 mb-2"></div>
+                    <!-- Line 15: Agent exited box -->
                     <div id="term-line-15" class="terminal-line text-white mb-2"></div>
-                    <!-- Line 16: Changes detected -->
+                    <!-- Line 16: Completion message -->
                     <div id="term-line-16" class="terminal-line mb-1"></div>
-                    <!-- Line 17: Commit info -->
-                    <div id="term-line-17" class="terminal-line text-slate-400 mb-1"></div>
+                    <!-- Line 17: PR link -->
+                    <div id="term-line-17" class="terminal-line mb-2"></div>
                     <!-- Line 18: Push info -->
                     <div id="term-line-18" class="terminal-line mb-2"></div>
                     <!-- Line 19: Next prompt -->
@@ -1718,8 +1720,27 @@ logging in with email+password
             }
         }
 
-        // Terminal Demo Animation - reflects actual Kapsis output
+        // Terminal Demo Animation - reflects actual Kapsis output with progress display
         let terminalTimeouts = [];
+        let spinnerInterval = null;
+        const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let spinnerIdx = 0;
+
+        // Helper to render progress bar
+        function renderProgressBar(percent) {
+            const width = 20;
+            const filled = Math.floor(percent * width / 100);
+            const empty = width - filled;
+            return '<span class="text-emerald-400">' + '█'.repeat(filled) + '</span><span class="text-slate-600">' + '░'.repeat(empty) + '</span>';
+        }
+
+        // Helper to render progress line with spinner
+        function renderProgressLine(spinner, phase, percent, color = 'text-cyan-400') {
+            const bar = renderProgressBar(percent);
+            const pct = String(percent).padStart(3, ' ');
+            return `<span class="${color}">${spinner}</span> <span class="text-white">${phase.padEnd(14)}</span> ${bar} <span class="text-slate-400">${pct}%</span>`;
+        }
+
         const terminalSteps = [
             { delay: 0, action: 'show', line: 1 },
             { delay: 300, action: 'type', text: 'kapsis ~/myproject --agent claude --spec fix-auth.md --branch fix/auth-bug' },
@@ -1735,27 +1756,41 @@ logging in with email+password
             { delay: 3100, action: 'show', line: 8, html: '  Branch:        <span class="text-purple-400">fix/auth-bug</span>' },
             // Launch box
             { delay: 3400, action: 'show', line: 9, html: '┌────────────────────────────────────────────────────────────────────┐<br>│ LAUNCHING CLAUDE                                                   │<br>└────────────────────────────────────────────────────────────────────┘' },
-            { delay: 3700, action: 'show', line: 10, html: '[KAPSIS] Starting container...' },
-            // Simulated agent output
-            { delay: 4200, action: 'show', line: 11, html: '<span class="text-slate-600">... agent working ...</span>' },
-            { delay: 4800, action: 'show', line: 12, html: '  Reading src/auth/login.ts' },
-            { delay: 5400, action: 'update', line: 12, html: '  Editing src/auth/login.ts' },
-            { delay: 6000, action: 'show', line: 13, html: '  Running tests...' },
-            { delay: 6600, action: 'update', line: 13, html: '  <span class="text-emerald-400">✓</span> All tests passed' },
-            // Exit
-            { delay: 7200, action: 'show', line: 14, html: '[KAPSIS] Container exited with code: 0' },
-            { delay: 7500, action: 'show', line: 15, html: '┌────────────────────────────────────────────────────────────────────┐<br>│ AGENT EXITED                                                       │<br>└────────────────────────────────────────────────────────────────────┘' },
-            // Post-container
-            { delay: 8000, action: 'show', line: 16, html: '<span class="text-emerald-400">✓ Agent made 3 file change(s)</span>' },
-            { delay: 8400, action: 'show', line: 17, html: '  Committed: fix(auth): add token validation' },
-            { delay: 8800, action: 'show', line: 18, html: '<span class="text-emerald-400">✓ Pushed to origin/fix/auth-bug</span>' },
-            { delay: 9400, action: 'show', line: 19 },
+            // New progress display format
+            { delay: 3800, action: 'show', line: 10, html: '<span class="text-emerald-400">✓</span> Sandbox ready · Agent: <span class="text-cyan-400">c7e3f9</span> · 0m 02s' },
+            { delay: 3900, action: 'show', line: 11, html: 'Branch: <span class="text-white font-bold">fix/auth-bug</span> · Network: <span class="text-emerald-400">filtered</span>' },
+            { delay: 4000, action: 'show', line: 12, html: '────────────────────────────────────────────────────────────' },
+            // Animated progress: Exploring phase
+            { delay: 4200, action: 'startProgress', phase: 'Exploring', percent: 25, message: 'Reading project structure...' },
+            { delay: 4800, action: 'updateProgress', phase: 'Exploring', percent: 32, message: 'Analyzing src/auth/login.ts...' },
+            // Implementing phase
+            { delay: 5400, action: 'updateProgress', phase: 'Implementing', percent: 45, message: 'Adding token validation logic...' },
+            { delay: 6000, action: 'updateProgress', phase: 'Implementing', percent: 58, message: 'Writing error handling...' },
+            // Testing phase
+            { delay: 6600, action: 'updateProgress', phase: 'Testing', percent: 72, message: 'Running auth unit tests...' },
+            { delay: 7200, action: 'updateProgress', phase: 'Testing', percent: 85, message: 'All tests passed ✓' },
+            // Committing phase
+            { delay: 7800, action: 'updateProgress', phase: 'Committing', percent: 92, message: 'Creating commit...' },
+            // Complete
+            { delay: 8200, action: 'updateProgress', phase: 'Complete', percent: 100, message: 'Done' },
+            { delay: 8400, action: 'stopProgress' },
+            // Agent exited box
+            { delay: 8600, action: 'show', line: 15, html: '┌────────────────────────────────────────────────────────────────────┐<br>│ AGENT EXITED                                                       │<br>└────────────────────────────────────────────────────────────────────┘' },
+            // Completion message
+            { delay: 9000, action: 'show', line: 16, html: '<span class="text-emerald-400">✓</span> Task completed successfully! (1m 42s)' },
+            { delay: 9400, action: 'show', line: 17, html: '<span class="text-cyan-400">🔗</span> PR: <span class="text-blue-400 underline">https://github.com/acme/myproject/pull/127</span>' },
+            { delay: 10000, action: 'show', line: 19 },
         ];
 
         function runTerminalDemo() {
-            // Clear any existing timeouts
+            // Clear any existing timeouts and intervals
             terminalTimeouts.forEach(t => clearTimeout(t));
             terminalTimeouts = [];
+            if (spinnerInterval) {
+                clearInterval(spinnerInterval);
+                spinnerInterval = null;
+            }
+            spinnerIdx = 0;
 
             // Reset all lines
             for (let i = 1; i <= 19; i++) {
@@ -1767,6 +1802,10 @@ logging in with email+password
             }
             document.getElementById('term-cmd').textContent = '';
             document.getElementById('term-cursor').style.display = 'inline-block';
+
+            // Current progress state for spinner animation
+            let currentPhase = '';
+            let currentPercent = 0;
 
             terminalSteps.forEach(step => {
                 const timeout = setTimeout(() => {
@@ -1783,6 +1822,49 @@ logging in with email+password
                     } else if (step.action === 'update') {
                         const line = document.getElementById('term-line-' + step.line);
                         if (line) line.innerHTML = step.html;
+                    } else if (step.action === 'startProgress') {
+                        currentPhase = step.phase;
+                        currentPercent = step.percent;
+                        const line13 = document.getElementById('term-line-13');
+                        const line14 = document.getElementById('term-line-14');
+                        if (line13) {
+                            line13.innerHTML = renderProgressLine(spinnerFrames[spinnerIdx], currentPhase, currentPercent);
+                            line13.classList.add('visible');
+                        }
+                        if (line14) {
+                            line14.innerHTML = '  <span class="text-slate-500">' + step.message + '</span>';
+                            line14.classList.add('visible');
+                        }
+                        // Start spinner animation
+                        spinnerInterval = setInterval(() => {
+                            spinnerIdx = (spinnerIdx + 1) % spinnerFrames.length;
+                            const line = document.getElementById('term-line-13');
+                            if (line) {
+                                line.innerHTML = renderProgressLine(spinnerFrames[spinnerIdx], currentPhase, currentPercent);
+                            }
+                        }, 80);
+                    } else if (step.action === 'updateProgress') {
+                        currentPhase = step.phase;
+                        currentPercent = step.percent;
+                        const line13 = document.getElementById('term-line-13');
+                        const line14 = document.getElementById('term-line-14');
+                        if (line13) {
+                            const color = step.percent === 100 ? 'text-emerald-400' : 'text-cyan-400';
+                            line13.innerHTML = renderProgressLine(spinnerFrames[spinnerIdx], currentPhase, currentPercent, color);
+                        }
+                        if (line14) {
+                            line14.innerHTML = '  <span class="text-slate-500">' + step.message + '</span>';
+                        }
+                    } else if (step.action === 'stopProgress') {
+                        if (spinnerInterval) {
+                            clearInterval(spinnerInterval);
+                            spinnerInterval = null;
+                        }
+                        // Show final 100% state with checkmark
+                        const line13 = document.getElementById('term-line-13');
+                        if (line13) {
+                            line13.innerHTML = renderProgressLine('✓', 'Complete', 100, 'text-emerald-400');
+                        }
                     }
                 }, step.delay);
                 terminalTimeouts.push(timeout);
