@@ -47,6 +47,9 @@ log_init "launch-agent"
 # Source status reporting library
 source "$SCRIPT_DIR/lib/status.sh"
 
+# Source progress display library
+source "$SCRIPT_DIR/lib/progress-display.sh"
+
 # Bash 3.2 compatible uppercase conversion
 to_upper() {
     echo "$1" | tr '[:lower:]' '[:upper:]'
@@ -1510,6 +1513,12 @@ build_container_command() {
 # MAIN EXECUTION
 #===============================================================================
 main() {
+    # Initialize progress display (must be early for trap registration)
+    display_init
+
+    # Cleanup display on exit (restore cursor visibility, etc.)
+    trap 'display_cleanup' EXIT INT TERM
+
     log_timer_start "total"
     log_section "Starting Kapsis Agent Launch"
 
@@ -1613,6 +1622,9 @@ main() {
     echo "└────────────────────────────────────────────────────────────────────┘"
     echo ""
 
+    # Display progress header (shows sandbox ready status with timer)
+    display_header "$AGENT_ID" "$BRANCH" "$NETWORK_MODE"
+
     log_info "Starting container..."
     # Note: Secret sanitization is handled by _log()
     log_debug "Container command: ${CONTAINER_CMD[*]}"
@@ -1658,10 +1670,12 @@ main() {
         FINAL_EXIT_CODE=$EXIT_CODE
         log_finalize $EXIT_CODE
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
+        display_complete "$EXIT_CODE" "" "Agent exited with error code $EXIT_CODE"
     elif [[ "$POST_EXIT_CODE" -ne 0 ]]; then
         FINAL_EXIT_CODE=$POST_EXIT_CODE
         log_finalize $POST_EXIT_CODE
         status_complete "$POST_EXIT_CODE" "Post-container operations failed (push)"
+        display_complete "$POST_EXIT_CODE" "" "Post-container operations failed"
     else
         # Check commit status before reporting success (Fix #3)
         local commit_status
@@ -1674,11 +1688,13 @@ main() {
             log_finalize 3
             log_warn "Uncommitted changes remain in worktree!"
             status_complete 3 "Uncommitted changes remain"
+            display_complete 3 "" "Uncommitted changes remain"
         else
             # Success: no changes, or changes were committed
             FINAL_EXIT_CODE=0
             log_finalize 0
             status_complete 0 "" "${PR_URL:-}"
+            display_complete 0 "${PR_URL:-}"
         fi
     fi
 

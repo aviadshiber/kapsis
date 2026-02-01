@@ -57,7 +57,7 @@ get_tests_for_category() {
             echo "test-parallel-agents.sh test-full-workflow.sh"
             ;;
         libs)
-            echo "test-compat.sh test-logging.sh test-json-utils.sh test-git-remote-utils.sh"
+            echo "test-compat.sh test-logging.sh test-json-utils.sh test-git-remote-utils.sh test-progress-display.sh"
             ;;
         hooks)
             echo "test-precommit-spellcheck.sh test-precommit-check-tests.sh test-prepush-orchestrator.sh"
