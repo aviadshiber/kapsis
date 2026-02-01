@@ -1037,6 +1037,7 @@ generate_filesystem_includes() {
 
             # Home directory paths: use staging-and-copy pattern
             # Check original path for ~, $HOME, or ${HOME} patterns
+            # shellcheck disable=SC2016  # Intentional: matching literal $HOME text, not expanded value
             if [[ "$path" == "~"* ]] || [[ "$path" == *'$HOME'* ]] || [[ "$path" == *'${HOME}'* ]] || [[ "$expanded_path" == "$HOME"* ]]; then
                 # Extract relative path (e.g., .claude, .gitconfig)
                 relative_path="${expanded_path#"$HOME"/}"
@@ -1546,9 +1547,15 @@ main() {
     # Track if we've shown completion message (to avoid duplicate on normal exit)
     _DISPLAY_COMPLETE_SHOWN=false
 
+    # Track temp file for cleanup on signal (set later when container runs)
+    _CONTAINER_OUTPUT_TMP=""
+
     # Cleanup function that ensures completion message is shown
+    # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
         local exit_code=$?
+        # Clean up temp file if it exists
+        [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
         # Show completion message if not already shown
         if [[ "$_DISPLAY_COMPLETE_SHOWN" != "true" ]]; then
             if [[ $exit_code -eq 0 ]]; then
@@ -1677,8 +1684,10 @@ main() {
     status_phase "starting" 22 "Launching container"
 
     # Create temp file to capture output for error reporting and logging
+    # Store in global for cleanup on signal (see _cleanup_with_completion)
     local container_output
     container_output=$(mktemp)
+    _CONTAINER_OUTPUT_TMP="$container_output"
     CONTAINER_ERROR_OUTPUT=""
 
     # Run the container with real-time output display AND capture
@@ -1695,6 +1704,8 @@ main() {
         # Fallback: regular tee (may buffer, but still works)
         "${CONTAINER_CMD[@]}" 2>&1 | tee "$container_output"
     fi
+    # CRITICAL: PIPESTATUS must be captured immediately after pipeline
+    # Any intervening command (even echo) will overwrite it
     EXIT_CODE=${PIPESTATUS[0]}
     set -e
 
@@ -1705,8 +1716,9 @@ main() {
     if [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
         log_debug "=== Container output start ==="
         while IFS= read -r line; do
-            # Strip ANSI codes for log file
+            # Strip ANSI codes for log file (sed required for ANSI escape regex)
             local clean_line
+            # shellcheck disable=SC2001
             clean_line=$(echo "$line" | sed 's/\x1b\[[0-9;]*m//g')
             log_debug "  $clean_line"
         done < "$container_output"
@@ -1763,7 +1775,7 @@ main() {
     #   3 = Uncommitted changes remain
     if [[ "$EXIT_CODE" -ne 0 ]]; then
         FINAL_EXIT_CODE=$EXIT_CODE
-        log_finalize $EXIT_CODE
+        log_finalize "$EXIT_CODE"
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
         # Include captured container error in the failure message
         local error_msg="Agent exited with error code $EXIT_CODE"
@@ -1806,7 +1818,7 @@ main() {
         fi
     fi
 
-    exit $FINAL_EXIT_CODE
+    exit "$FINAL_EXIT_CODE"
 }
 
 #===============================================================================
@@ -1848,7 +1860,10 @@ post_container_worktree() {
         if [[ ! -f "$post_container_script" ]]; then
             log_error "post-container-git.sh not found at: $post_container_script"
             log_error "SCRIPT_DIR=$SCRIPT_DIR"
-            log_error "Contents of SCRIPT_DIR: $(ls -la "$SCRIPT_DIR" 2>&1 | head -20)"
+            log_error "Scripts in SCRIPT_DIR:"
+            while IFS= read -r -d '' f; do
+                log_error "  $(basename "$f")"
+            done < <(find "$SCRIPT_DIR" -maxdepth 1 -type f -name "*.sh" -print0 2>/dev/null)
             return 1
         fi
         source "$post_container_script"

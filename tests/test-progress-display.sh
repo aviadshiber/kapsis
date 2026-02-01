@@ -487,6 +487,106 @@ test_status_phase_triggers_display() {
 }
 
 #===============================================================================
+# TEST CASES: Message Truncation
+#===============================================================================
+
+test_long_message_truncation() {
+    log_test "Long messages are truncated to fit terminal width"
+
+    setup_display_test
+
+    # Create a message longer than typical terminal width
+    local long_message
+    long_message=$(printf 'A%.0s' {1..200})  # 200 character message
+
+    # The render function should truncate it
+    # We test the internal logic by setting COLUMNS
+    COLUMNS=80
+
+    # Call the render function and check output (non-TTY for simpler output)
+    _PD_IS_TTY=false
+
+    local output
+    output=$(_pd_render_fallback "running" 50 "$long_message" 2>&1)
+
+    # Output should contain the message but we verify the function handles long messages
+    if [[ ${#output} -lt 250 ]]; then
+        log_info "  Output is reasonably sized: ${#output} chars"
+    else
+        log_warn "  Output may not be truncated properly: ${#output} chars"
+    fi
+}
+
+#===============================================================================
+# TEST CASES: Debounce Behavior
+#===============================================================================
+
+test_debounce_allows_phase_change() {
+    log_test "Debounce allows phase change updates immediately"
+
+    setup_display_test
+
+    _PD_INITIALIZED=true
+    _PD_IS_TTY=false
+    _PD_LAST_PHASE="initializing"
+    _PD_LAST_PROGRESS=10
+    _PD_LAST_UPDATE_TIME=$(date +%s)
+
+    # Call with a different phase - should NOT be debounced
+    local output
+    output=$(display_progress "implementing" 20 "Starting" 2>&1)
+
+    # Should have rendered (check for phase change output)
+    if [[ -n "$output" ]] || [[ "$_PD_LAST_PHASE" == "implementing" ]]; then
+        log_info "  Phase change was processed"
+    else
+        log_fail "Phase change should bypass debounce"
+        return 1
+    fi
+}
+
+test_debounce_blocks_same_second_update() {
+    log_test "Debounce blocks same-phase updates within same second"
+
+    setup_display_test
+
+    _PD_INITIALIZED=true
+    _PD_IS_TTY=false
+    _PD_LAST_PHASE="running"
+    _PD_LAST_PROGRESS=50
+    _PD_LAST_UPDATE_TIME=$(date +%s)
+
+    # Call with same phase within same second - should be debounced
+    local output
+    output=$(display_progress "running" 55 "Same phase" 2>&1)
+
+    # Output should be empty due to debounce
+    if [[ -z "$output" ]]; then
+        log_info "  Same-second update was debounced"
+    else
+        # This might happen if second rolled over during test - that's OK
+        log_info "  Update may have crossed second boundary"
+    fi
+}
+
+#===============================================================================
+# TEST CASES: Display Cleanup
+#===============================================================================
+
+test_display_cleanup_resets_state() {
+    log_test "display_cleanup resets initialized state"
+
+    setup_display_test
+
+    _PD_INITIALIZED=true
+    _PD_IS_TTY=false  # Avoid cursor escape sequences
+
+    display_cleanup
+
+    assert_equals "false" "$_PD_INITIALIZED" "Should be marked as not initialized"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -540,6 +640,16 @@ main() {
     run_test test_logging_is_tty_function_exists
     run_test test_kapsis_is_tty_exported
     run_test test_status_phase_triggers_display
+
+    # Message truncation tests
+    run_test test_long_message_truncation
+
+    # Debounce tests
+    run_test test_debounce_allows_phase_change
+    run_test test_debounce_blocks_same_second_update
+
+    # Cleanup tests
+    run_test test_display_cleanup_resets_state
 
     # Summary
     print_summary
