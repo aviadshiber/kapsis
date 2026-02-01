@@ -281,7 +281,7 @@ test_push_changes_verifies_success() {
 #===============================================================================
 
 test_post_container_git_no_push_sets_skipped() {
-    log_test "post_container_git with --no-push sets status to skipped"
+    log_test "post_container_git without --push sets status to skipped"
 
     setup_git_test
 
@@ -293,8 +293,8 @@ test_post_container_git_no_push_sets_skipped() {
     local branch
     branch=$(git rev-parse --abbrev-ref HEAD)
 
-    # Run with no_push=true
-    post_container_git "$TEST_REPO_DIR" "$branch" "Test commit" "origin" "true" "test-agent" >/dev/null 2>&1
+    # Run with do_push=false (push disabled, should result in skipped status)
+    post_container_git "$TEST_REPO_DIR" "$branch" "Test commit" "origin" "false" "test-agent" >/dev/null 2>&1
 
     assert_equals "skipped" "$_KAPSIS_PUSH_STATUS" "Push status should be skipped"
     assert_not_equals "" "$_KAPSIS_LOCAL_COMMIT" "Local commit should be recorded"

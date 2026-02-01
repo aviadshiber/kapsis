@@ -21,6 +21,19 @@
 - Integration tests required: yes/no
 - Manual testing steps: [if applicable]
 
+## Git Workflow
+
+> **SSH Available**: You CAN commit and push from inside this container.
+> The container has verified SSH keys and sanitized git (hooks isolated).
+
+```bash
+# Commit your changes
+git add -A && git commit -m "feat: description"
+
+# Push to remote (if --push was specified at launch, this happens automatically)
+git push -u origin <branch>
+```
+
 ## Definition of Done
 - [ ] Code compiles without errors
 - [ ] Tests pass

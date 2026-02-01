@@ -100,16 +100,16 @@ test_no_commit_when_no_changes() {
     fi
 }
 
-test_no_push_flag_respected() {
-    log_test "Testing --no-push flag prevents push"
+test_push_flag_enables_push() {
+    log_test "Testing --push flag enables push"
 
-    # Check dry-run output includes no-push setting
+    # Check dry-run output includes push setting
     local output
-    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --branch "test-branch" --no-push --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --branch "test-branch" --push --dry-run 2>&1) || true
 
-    # Should show KAPSIS_NO_PUSH in env or command
-    assert_contains "$output" "KAPSIS_NO_PUSH" "Should set KAPSIS_NO_PUSH env var" || \
-    assert_contains "$output" "no-push" "Should indicate no-push mode" || true
+    # Should show KAPSIS_DO_PUSH in env or command
+    assert_contains "$output" "KAPSIS_DO_PUSH" "Should set KAPSIS_DO_PUSH env var" || \
+    assert_contains "$output" "push" "Should indicate push mode" || true
 }
 
 test_staged_and_unstaged_committed() {
@@ -349,7 +349,7 @@ main() {
     run_test test_changes_detected
     run_test test_commit_message_format
     run_test test_no_commit_when_no_changes
-    run_test test_no_push_flag_respected
+    run_test test_push_flag_enables_push
     run_test test_staged_and_unstaged_committed
     run_test test_binary_files_committed
     run_test test_deleted_files_committed

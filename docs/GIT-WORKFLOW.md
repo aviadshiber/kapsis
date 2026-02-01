@@ -46,7 +46,7 @@ The git workflow enables AI agents to push changes to branches for PR-based revi
 │  │   if changes exist:                                                 │   │
 │  │       git add -A                                                    │   │
 │  │       git commit -m "feat: {task_summary}"                          │   │
-│  │       if not --no-push:                                             │   │
+│  │       if --push specified:                                          │   │
 │  │           git push origin feature/DEV-123 --set-upstream            │   │
 │  │                                                                     │   │
 │  └─────────────────────────────────────────────────────────────────────┘   │
@@ -222,13 +222,18 @@ EOF
 ### Local-Only Commits
 
 ```bash
-# Commit but don't push (for review before push)
+# Default: commit but don't push (for review before push)
 ./scripts/launch-agent.sh ~/project \
     --branch feature/DEV-123 \
-    --no-push \
     --spec ./specs/task.md
 
-# Later, push manually
+# With auto-push enabled
+./scripts/launch-agent.sh ~/project \
+    --branch feature/DEV-123 \
+    --push \
+    --spec ./specs/task.md
+
+# Push manually after review
 cd ~/project
 git push origin feature/DEV-123
 ```
