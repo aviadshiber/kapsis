@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [1.8.0] - 2026-01-31
+## [1.8.1] - 2026-02-01
+
+### Fixed
+- Use fallback chain for Java version switching
+
+## [Unreleased]
+
+## [0.8.3] - 2025-12-28
 
 ### Added
 - Support Claude CLI native installer for minimal images
@@ -19,9 +26,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Pass KAPSIS_NETWORK_MODE env var for all network modes
 
-## [Unreleased]
-
-## [0.8.3] - 2025-12-28
 
 ### Added
 - Pre-cache protoc binaries and add Java version config
@@ -376,7 +380,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.8.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v1.8.1...HEAD
+[1.8.1]: https://github.com/aviadshiber/kapsis/releases/tag/v1.8.1
 [1.8.0]: https://github.com/aviadshiber/kapsis/releases/tag/v1.8.0
 [1.7.0]: https://github.com/aviadshiber/kapsis/releases/tag/v1.7.0
 [1.6.3]: https://github.com/aviadshiber/kapsis/releases/tag/v1.6.3
