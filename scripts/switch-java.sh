@@ -16,7 +16,10 @@ if [[ -z "${SDKMAN_DIR:-}" ]]; then
 fi
 
 if [[ -f "$SDKMAN_DIR/bin/sdkman-init.sh" ]]; then
+    # Disable strict mode - SDKMAN references ZSH_VERSION which may be unset
+    set +u 2>/dev/null || true
     source "$SDKMAN_DIR/bin/sdkman-init.sh"
+    set -u 2>/dev/null || true
 else
     echo "Error: SDKMAN not found at $SDKMAN_DIR"
     exit 1
