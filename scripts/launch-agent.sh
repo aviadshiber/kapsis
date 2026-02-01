@@ -1459,14 +1459,16 @@ build_container_command() {
         "--hostname" "kapsis-${AGENT_ID}"
     )
 
-    # Add TTY flags only when we have a real TTY and not capturing output
-    # This allows proper output capture when redirecting for error reporting
-    if [[ -t 0 ]] && [[ -t 1 ]] && [[ "$INTERACTIVE" == "true" ]]; then
-        CONTAINER_CMD+=("-it")
-    else
-        # For non-interactive or when we need to capture output, use -i only
-        CONTAINER_CMD+=("-i")
+    # Add TTY flags only for interactive mode
+    # -i (stdin open) causes hangs when piping through tee for non-interactive runs
+    if [[ "$INTERACTIVE" == "true" ]]; then
+        if [[ -t 0 ]] && [[ -t 1 ]]; then
+            CONTAINER_CMD+=("-it")
+        else
+            CONTAINER_CMD+=("-i")
+        fi
     fi
+    # Non-interactive: no -i or -t flags needed, container runs detached from stdin
 
     # Generate security arguments from security.sh library
     # This includes: capabilities, seccomp, process isolation, LSM, resource limits
