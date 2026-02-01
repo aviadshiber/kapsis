@@ -301,6 +301,14 @@ log_timer_end "build"
 
 echo ""
 log_success "Image built successfully: $FULL_IMAGE"
+
+# Prune dangling images from previous builds with same tag
+dangling_count=$(podman images -q --filter "dangling=true" 2>/dev/null | wc -l | tr -d ' ')
+if [[ "$dangling_count" -gt 0 ]]; then
+    log_info "Pruning $dangling_count dangling image(s) from previous builds..."
+    podman image prune -f >/dev/null 2>&1 || true
+fi
+
 echo ""
 
 # Show image info
