@@ -80,6 +80,7 @@ KAPSIS_CAPS_MINIMAL=(
     "SETGID"         # Group ID changes
     "SETUID"         # User ID changes
     "SYS_NICE"       # Process priority (Maven/Gradle)
+    "NET_BIND_SERVICE"  # Bind to privileged ports (dnsmasq for DNS filtering)
 )
 
 # Generate capability arguments for podman

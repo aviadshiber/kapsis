@@ -279,6 +279,15 @@ security:
     # Default: true for paranoid only
     required: false
 
+  # Container capabilities
+  # By default, Kapsis drops all capabilities and adds back a minimal set.
+  # Use this to add additional capabilities required by specific features.
+  capabilities:
+    # Additional capabilities to add to the container
+    # Common use case: NET_BIND_SERVICE for DNS filtering (dnsmasq on port 53)
+    add:
+      - NET_BIND_SERVICE  # Required for network.mode: filtered
+
 #===============================================================================
 # MAVEN ISOLATION
 #===============================================================================
