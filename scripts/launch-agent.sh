@@ -40,6 +40,12 @@ KAPSIS_ROOT="$(dirname "$SCRIPT_DIR")"
 [[ "${KAPSIS_DEBUG:-}" == "1" ]] && echo "[DEBUG] SCRIPT_DIR=$SCRIPT_DIR" >&2
 [[ "${KAPSIS_DEBUG:-}" == "1" ]] && echo "[DEBUG] KAPSIS_ROOT=$KAPSIS_ROOT" >&2
 
+# Pre-set log level to WARN when in a TTY for cleaner progress display
+# This must happen BEFORE sourcing logging.sh
+if [[ -t 2 ]] && [[ -z "${NO_COLOR:-}" ]] && [[ "${TERM:-dumb}" != "dumb" ]] && [[ -z "${KAPSIS_DEBUG:-}" ]]; then
+    export KAPSIS_LOG_LEVEL="${KAPSIS_LOG_LEVEL:-WARN}"
+fi
+
 # Source logging library
 source "$SCRIPT_DIR/lib/logging.sh"
 log_init "launch-agent"
@@ -1478,6 +1484,12 @@ build_container_command() {
             CONTAINER_CMD+=("-e" "KAPSIS_NETWORK_MODE=open")
             ;;
     esac
+
+    # Suppress verbose logs inside container when progress display is enabled
+    # This prevents entrypoint logs from overwhelming the in-place progress updates
+    if [[ "${KAPSIS_PROGRESS_DISPLAY:-0}" == "1" ]]; then
+        CONTAINER_CMD+=("-e" "KAPSIS_LOG_LEVEL=WARN")
+    fi
 
     # Add volume mounts
     CONTAINER_CMD+=("${VOLUME_MOUNTS[@]}")
