@@ -401,6 +401,14 @@ BUILD_EXIT=$?
 
 if [[ $BUILD_EXIT -eq 0 ]]; then
     log_success "Image built successfully: $IMAGE_NAME"
+
+    # Prune dangling images from previous builds with same tag
+    dangling_count=$($CONTAINER_RUNTIME images -q --filter "dangling=true" 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$dangling_count" -gt 0 ]]; then
+        log_info "Pruning $dangling_count dangling image(s) from previous builds..."
+        $CONTAINER_RUNTIME image prune -f >/dev/null 2>&1 || true
+    fi
+
     echo ""
     echo "To use this image, run:"
     echo "  ./scripts/launch-agent.sh ~/git/products --image $IMAGE_NAME --task \"Your task\""
