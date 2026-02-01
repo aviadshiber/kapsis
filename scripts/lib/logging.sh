@@ -72,6 +72,34 @@ LOG_COLOR_RESET='\033[0m'      # Reset
 # Enable debug if KAPSIS_DEBUG is set
 [[ -n "${KAPSIS_DEBUG:-}" ]] && KAPSIS_LOG_LEVEL="DEBUG"
 
+# =============================================================================
+# TTY Detection
+# =============================================================================
+
+# Check if we're running in a TTY with color support
+# Returns: 0 if TTY with color, 1 otherwise
+# This is used by progress-display.sh and other scripts that need TTY detection
+is_tty() {
+    # Check stderr is a terminal
+    [[ ! -t 2 ]] && return 1
+
+    # Check NO_COLOR standard (https://no-color.org/)
+    [[ -n "${NO_COLOR:-}" ]] && return 1
+
+    # Check for dumb terminal
+    [[ "${TERM:-dumb}" == "dumb" ]] && return 1
+
+    return 0
+}
+
+# Export TTY status for use by other scripts
+# This is evaluated once when the library is sourced
+if is_tty; then
+    export KAPSIS_IS_TTY=1
+else
+    export KAPSIS_IS_TTY=0
+fi
+
 # Internal state
 _KAPSIS_LOG_SCRIPT_NAME=""
 _KAPSIS_LOG_SESSION_ID=""

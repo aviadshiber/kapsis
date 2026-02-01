@@ -206,6 +206,15 @@ status_phase() {
     local message="${3:-}"
 
     _status_write "$phase" "$progress" "$message"
+
+    # Trigger progress display update if enabled
+    # The progress-display.sh library sets KAPSIS_PROGRESS_DISPLAY=1 when active
+    if [[ "${KAPSIS_PROGRESS_DISPLAY:-0}" == "1" ]]; then
+        # Check if display_progress function is available
+        if type display_progress &>/dev/null; then
+            display_progress "$phase" "$progress" "$message"
+        fi
+    fi
 }
 
 # Mark task as complete

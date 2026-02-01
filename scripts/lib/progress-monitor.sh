@@ -23,10 +23,12 @@
 
 set -euo pipefail
 
-# Load status library if available
+# Load libraries if available
 _PROGRESS_MONITOR_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=status.sh
 [[ -f "$_PROGRESS_MONITOR_DIR/status.sh" ]] && source "$_PROGRESS_MONITOR_DIR/status.sh"
+# shellcheck source=progress-display.sh
+[[ -f "$_PROGRESS_MONITOR_DIR/progress-display.sh" ]] && source "$_PROGRESS_MONITOR_DIR/progress-display.sh"
 
 #===============================================================================
 # Configuration
@@ -159,9 +161,15 @@ update_status() {
 
     log_monitor "INFO" "Progress update: $kapsis_progress% - $message"
 
-    # Update Kapsis status
+    # Update Kapsis status (this also triggers display_progress if enabled)
     if type status_phase &>/dev/null; then
         status_phase "$phase" "$kapsis_progress" "$message"
+    fi
+
+    # Also call display_progress directly if status_phase isn't available
+    # but progress display is (for edge cases)
+    if ! type status_phase &>/dev/null && type display_progress &>/dev/null; then
+        display_progress "$phase" "$kapsis_progress" "$message"
     fi
 
     # Save state
