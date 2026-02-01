@@ -91,7 +91,6 @@ _PD_IS_TTY=false
 _PD_START_TIME=""
 _PD_HEADER_LINES=0          # Number of lines in header (for cursor positioning)
 _PD_SPINNER_IDX=0
-_PD_SPINNER_PID=""
 _PD_LAST_PHASE=""
 _PD_LAST_PROGRESS=0
 _PD_LAST_MESSAGE=""
@@ -141,36 +140,10 @@ _pd_format_elapsed() {
 # Spinner Functions
 #===============================================================================
 
-# Get next spinner frame
+# Get next spinner frame (used inline by _pd_render_progress_section)
 _pd_spinner_tick() {
     _PD_SPINNER_IDX=$(( (_PD_SPINNER_IDX + 1) % ${#_PD_SPINNER_FRAMES[@]} ))
     echo -n "${_PD_SPINNER_FRAMES[$_PD_SPINNER_IDX]}"
-}
-
-# Start spinner in background (updates every 100ms)
-_pd_spinner_start() {
-    [[ "$_PD_IS_TTY" != "true" ]] && return
-    [[ -n "$_PD_SPINNER_PID" ]] && return
-
-    (
-        while true; do
-            # Trigger display update for spinner animation
-            if [[ -n "$_PD_LAST_PHASE" ]]; then
-                _pd_render_progress_section "$_PD_LAST_PHASE" "$_PD_LAST_PROGRESS" "$_PD_LAST_MESSAGE" >&2
-            fi
-            sleep 0.1
-        done
-    ) &
-    _PD_SPINNER_PID=$!
-}
-
-# Stop spinner
-_pd_spinner_stop() {
-    if [[ -n "$_PD_SPINNER_PID" ]]; then
-        kill "$_PD_SPINNER_PID" 2>/dev/null || true
-        wait "$_PD_SPINNER_PID" 2>/dev/null || true
-        _PD_SPINNER_PID=""
-    fi
 }
 
 #===============================================================================
@@ -380,11 +353,6 @@ display_progress() {
 
     [[ "$_PD_INITIALIZED" != "true" ]] && display_init
 
-    # Store for spinner updates
-    _PD_LAST_PHASE="$phase"
-    _PD_LAST_PROGRESS="$progress"
-    _PD_LAST_MESSAGE="$message"
-
     # Debounce updates (except for phase changes)
     # Note: Using seconds for cross-platform compatibility (macOS doesn't support %N)
     local now
@@ -392,13 +360,22 @@ display_progress() {
     if [[ "$phase" == "$_PD_LAST_PHASE" ]] && [[ "$now" == "$_PD_LAST_UPDATE_TIME" ]]; then
         return 0
     fi
+
+    # Capture old values for comparison BEFORE updating
+    local old_phase="$_PD_LAST_PHASE"
+    local old_progress="$_PD_LAST_PROGRESS"
+
+    # Store current values for next comparison
+    _PD_LAST_PHASE="$phase"
+    _PD_LAST_PROGRESS="$progress"
+    _PD_LAST_MESSAGE="$message"
     _PD_LAST_UPDATE_TIME="$now"
 
     if [[ "$_PD_IS_TTY" == "true" ]]; then
         _pd_render_progress_section "$phase" "$progress" "$message"
     else
         # Non-TTY: only log on phase change or significant progress change
-        if [[ "$phase" != "$_PD_LAST_PHASE" ]] || [[ $((progress - _PD_LAST_PROGRESS)) -ge 10 ]]; then
+        if [[ "$phase" != "$old_phase" ]] || [[ $((progress - old_progress)) -ge 10 ]]; then
             _pd_render_fallback "$phase" "$progress" "$message"
         fi
     fi
@@ -415,9 +392,6 @@ display_complete() {
     local error_msg="${3:-}"
 
     [[ "$_PD_INITIALIZED" != "true" ]] && return
-
-    # Stop spinner
-    _pd_spinner_stop
 
     local elapsed
     elapsed=$(_pd_format_elapsed)
@@ -442,8 +416,8 @@ display_complete() {
             fi
             # Show log file location for debugging
             local log_file=""
-            if type -t get_log_file &>/dev/null; then
-                log_file=$(get_log_file 2>/dev/null || true)
+            if type -t log_get_file &>/dev/null; then
+                log_file=$(log_get_file 2>/dev/null || true)
             fi
             if [[ -n "$log_file" ]] && [[ -f "$log_file" ]]; then
                 printf "\n${_PD_DIM}📋 Full logs: %s${_PD_RESET}\n" "$log_file" >&2
@@ -465,8 +439,8 @@ display_complete() {
             fi
             # Show log file location for debugging
             local log_file=""
-            if type -t get_log_file &>/dev/null; then
-                log_file=$(get_log_file 2>/dev/null || true)
+            if type -t log_get_file &>/dev/null; then
+                log_file=$(log_get_file 2>/dev/null || true)
             fi
             if [[ -n "$log_file" ]] && [[ -f "$log_file" ]]; then
                 echo "[kapsis] Full logs: $log_file" >&2
@@ -477,9 +451,6 @@ display_complete() {
 
 # Cleanup display state (call in trap or at end)
 display_cleanup() {
-    # Stop spinner if running
-    _pd_spinner_stop
-
     # Restore cursor visibility
     [[ "$_PD_IS_TTY" == "true" ]] && printf "${_PD_SHOW_CURSOR}" >&2
 
