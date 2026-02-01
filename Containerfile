@@ -497,12 +497,14 @@ ENV MAVEN_SETTINGS=/opt/kapsis/maven/settings.xml
 ENV WORKSPACE=/workspace
 
 # Source environment scripts in user's bashrc
+# Note: SDKMAN and NVM scripts reference variables like ZSH_VERSION that may be unset.
+# We wrap with 'set +u' to handle strict mode inherited from parent shells.
 RUN echo '[ -f /etc/profile.d/kapsis-java.sh ] && source /etc/profile.d/kapsis-java.sh' >> /home/${USERNAME}/.bashrc && \
     echo '[ -f /etc/profile.d/kapsis-nodejs.sh ] && source /etc/profile.d/kapsis-nodejs.sh' >> /home/${USERNAME}/.bashrc && \
     echo '[ -f /etc/profile.d/kapsis-rust.sh ] && source /etc/profile.d/kapsis-rust.sh' >> /home/${USERNAME}/.bashrc && \
     echo '[ -f /etc/profile.d/kapsis-go.sh ] && source /etc/profile.d/kapsis-go.sh' >> /home/${USERNAME}/.bashrc && \
-    echo '[ -f $SDKMAN_DIR/bin/sdkman-init.sh ] && source $SDKMAN_DIR/bin/sdkman-init.sh' >> /home/${USERNAME}/.bashrc && \
-    echo '[ -f $NVM_DIR/nvm.sh ] && source $NVM_DIR/nvm.sh' >> /home/${USERNAME}/.bashrc
+    echo '[ -f $SDKMAN_DIR/bin/sdkman-init.sh ] && { set +u 2>/dev/null; source $SDKMAN_DIR/bin/sdkman-init.sh; } || true' >> /home/${USERNAME}/.bashrc && \
+    echo '[ -f $NVM_DIR/nvm.sh ] && { set +u 2>/dev/null; source $NVM_DIR/nvm.sh; } || true' >> /home/${USERNAME}/.bashrc
 
 #===============================================================================
 # RUNTIME CONFIGURATION
