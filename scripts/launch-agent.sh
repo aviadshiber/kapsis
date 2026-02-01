@@ -108,6 +108,7 @@ source "$SCRIPT_DIR/lib/compat.sh"
 
 # Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
 NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
+CLI_NETWORK_MODE=""  # Track if CLI explicitly set network mode
 
 #===============================================================================
 # COLORS AND OUTPUT (colors used for banner only)
@@ -416,6 +417,7 @@ parse_args() {
                 ;;
             --network-mode)
                 NETWORK_MODE="$2"
+                CLI_NETWORK_MODE="$2"  # Track that CLI explicitly set this
                 shift 2
                 ;;
             --security-profile)
@@ -743,12 +745,16 @@ parse_config() {
         SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse network mode from config (CLI flag takes precedence)
-        if [[ "$NETWORK_MODE" == "open" ]]; then
+        # Only read from config if CLI didn't explicitly set the value
+        if [[ -z "$CLI_NETWORK_MODE" ]]; then
             local config_network_mode
-            config_network_mode=$(yq -r '.network.mode // "open"' "$CONFIG_FILE")
+            config_network_mode=$(yq -r '.network.mode // ""' "$CONFIG_FILE")
             if [[ "$config_network_mode" =~ ^(none|filtered|open)$ ]]; then
                 NETWORK_MODE="$config_network_mode"
+                log_debug "Network mode from config: $config_network_mode"
             fi
+        else
+            log_debug "Network mode from CLI: $CLI_NETWORK_MODE (overrides config)"
         fi
 
         # Parse DNS allowlist from config (for filtered mode)
@@ -1675,11 +1681,20 @@ main() {
     container_output=$(mktemp)
     CONTAINER_ERROR_OUTPUT=""
 
-    # Run the container with tee to show real-time output AND capture it
-    # This ensures users see what's happening while we still capture errors
-    # Temporarily disable set -e to capture exit code
+    # Run the container with real-time output display AND capture
+    # Use stdbuf to disable buffering on tee (if available), otherwise fall back to regular tee
+    # Note: On macOS, stdbuf requires coreutils (brew install coreutils provides gstdbuf)
     set +e
-    "${CONTAINER_CMD[@]}" 2>&1 | tee "$container_output"
+    if command -v stdbuf &>/dev/null; then
+        # Linux: use stdbuf for line-buffered output
+        "${CONTAINER_CMD[@]}" 2>&1 | stdbuf -oL tee "$container_output"
+    elif command -v gstdbuf &>/dev/null; then
+        # macOS with coreutils: use gstdbuf
+        "${CONTAINER_CMD[@]}" 2>&1 | gstdbuf -oL tee "$container_output"
+    else
+        # Fallback: regular tee (may buffer, but still works)
+        "${CONTAINER_CMD[@]}" 2>&1 | tee "$container_output"
+    fi
     EXIT_CODE=${PIPESTATUS[0]}
     set -e
 
@@ -1710,7 +1725,11 @@ main() {
         # If no specific error lines, get the last 10 lines
         if [[ -z "$CONTAINER_ERROR_OUTPUT" ]]; then
             CONTAINER_ERROR_OUTPUT=$(echo "$stripped_output" | tail -10)
+            log_debug "No specific error patterns found, using last 10 lines"
+        else
+            log_debug "Found error patterns in container output"
         fi
+        log_debug "CONTAINER_ERROR_OUTPUT: $CONTAINER_ERROR_OUTPUT"
     fi
     rm -f "$container_output"
     # Update status to post_processing (Fix #3: don't report "completed" until commit verified)
@@ -1750,7 +1769,11 @@ main() {
         local error_msg="Agent exited with error code $EXIT_CODE"
         if [[ -n "$CONTAINER_ERROR_OUTPUT" ]]; then
             error_msg="$CONTAINER_ERROR_OUTPUT"
+            log_debug "Using CONTAINER_ERROR_OUTPUT for display"
+        else
+            log_debug "CONTAINER_ERROR_OUTPUT is empty, using default message"
         fi
+        log_debug "Calling display_complete with error_msg: $error_msg"
         display_complete "$EXIT_CODE" "" "$error_msg"
         _DISPLAY_COMPLETE_SHOWN=true
     elif [[ "$POST_EXIT_CODE" -ne 0 ]]; then
