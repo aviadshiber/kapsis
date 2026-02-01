@@ -189,3 +189,16 @@ When completing a PR that will trigger a release, update version references in d
 ## Security & Configuration Tips
 - Copy `agent-sandbox.yaml.template` to `agent-sandbox.yaml` and keep secrets in keychain-backed fields.
 - Avoid committing API keys or local paths; prefer `environment.passthrough` for non-secret values.
+
+### CRITICAL: Never Use `bash -x` for Debugging
+
+**Do NOT use `bash -x` or `set -x` when debugging Kapsis scripts.** Bash debug mode prints all command arguments to stderr BEFORE any sanitization functions process them, which will expose:
+- API keys and OAuth tokens (ANTHROPIC_API_KEY, etc.)
+- Refresh tokens and session credentials
+- Passwords and secrets from keychain
+
+**Safe debugging alternatives:**
+1. Use `KAPSIS_DEBUG=1` which logs to file with sanitization
+2. Add targeted `echo` statements for specific variables
+3. Check log files at `~/.kapsis/logs/`
+4. Ask the user before enabling any form of trace output
