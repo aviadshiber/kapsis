@@ -83,7 +83,8 @@ test_final_exit_code_combines_both() {
     #     ... commit status check ...
     #       FINAL_EXIT_CODE=0
     # We check for FINAL_EXIT_CODE=0 somewhere in the success branch
-    if grep -A 20 'elif \[\[ "\$POST_EXIT_CODE" -ne 0 \]\]' "$LAUNCH_AGENT_SCRIPT" | \
+    # Note: Need -A 25 because the commit status check adds extra lines before FINAL_EXIT_CODE=0
+    if grep -A 25 'elif \[\[ "\$POST_EXIT_CODE" -ne 0 \]\]' "$LAUNCH_AGENT_SCRIPT" | \
        grep -q 'FINAL_EXIT_CODE=0'; then
         log_info "  ✓ FINAL_EXIT_CODE set to 0 when both succeed"
     else
@@ -98,8 +99,8 @@ test_exit_uses_final_exit_code() {
     # Before the fix, the script would exit with $EXIT_CODE
     # After the fix, it should exit with $FINAL_EXIT_CODE
 
-    # Check that the script exits with FINAL_EXIT_CODE
-    if grep -q '^    exit \$FINAL_EXIT_CODE$' "$LAUNCH_AGENT_SCRIPT"; then
+    # Check that the script exits with FINAL_EXIT_CODE (quoted or unquoted)
+    if grep -qE '^    exit "\$FINAL_EXIT_CODE"$|^    exit \$FINAL_EXIT_CODE$' "$LAUNCH_AGENT_SCRIPT"; then
         log_info "  ✓ Script exits with FINAL_EXIT_CODE"
     else
         log_fail "Script does not exit with FINAL_EXIT_CODE"
@@ -108,7 +109,7 @@ test_exit_uses_final_exit_code() {
 
     # Verify that the old "exit $EXIT_CODE" pattern is not present at the end of main()
     # (it should have been replaced with "exit $FINAL_EXIT_CODE")
-    if tail -50 "$LAUNCH_AGENT_SCRIPT" | grep -q '^    exit \$EXIT_CODE$'; then
+    if tail -50 "$LAUNCH_AGENT_SCRIPT" | grep -qE '^    exit "\$EXIT_CODE"$|^    exit \$EXIT_CODE$'; then
         log_fail "Script still has 'exit \$EXIT_CODE' instead of 'exit \$FINAL_EXIT_CODE'"
         return 1
     fi
@@ -170,8 +171,9 @@ test_bug_scenario_demonstration() {
     log_info ""
 
     # Verify the fix is in place by checking for FINAL_EXIT_CODE logic
+    # Note: Accept both quoted and unquoted variable references
     if grep -q 'FINAL_EXIT_CODE=\$POST_EXIT_CODE' "$LAUNCH_AGENT_SCRIPT" && \
-       grep -q 'exit \$FINAL_EXIT_CODE' "$LAUNCH_AGENT_SCRIPT"; then
+       grep -qE 'exit "\$FINAL_EXIT_CODE"|exit \$FINAL_EXIT_CODE' "$LAUNCH_AGENT_SCRIPT"; then
         log_info "  ✓ Fix verified: FINAL_EXIT_CODE logic is present"
     else
         log_fail "Fix not found: Missing FINAL_EXIT_CODE logic"
