@@ -397,6 +397,13 @@ display_complete() {
     elapsed=$(_pd_format_elapsed)
 
     if [[ "$_PD_IS_TTY" == "true" ]]; then
+        # Show final 100% progress before completion message
+        if [[ "$exit_code" -eq 0 ]]; then
+            _pd_render_progress_section "complete" 100 "Done"
+            # Brief pause to show 100% before clearing
+            sleep 0.3
+        fi
+
         # Clear progress section and move to final position
         printf "\n\n${_PD_CLEAR_LINE}" >&2
 
