@@ -435,7 +435,8 @@ display_complete() {
         # Non-TTY fallback
         if [[ "$exit_code" -eq 0 ]]; then
             echo "[kapsis] Complete! ($elapsed)" >&2
-            [[ -n "$pr_url" ]] && echo "[kapsis] PR: $pr_url" >&2
+            # Use || true to prevent short-circuit from setting exit status
+            [[ -n "$pr_url" ]] && echo "[kapsis] PR: $pr_url" >&2 || true
         else
             echo "[kapsis] Failed (exit code: $exit_code, elapsed: $elapsed)" >&2
             if [[ -n "$error_msg" ]]; then
@@ -458,8 +459,8 @@ display_complete() {
 
 # Cleanup display state (call in trap or at end)
 display_cleanup() {
-    # Restore cursor visibility
-    [[ "$_PD_IS_TTY" == "true" ]] && printf "${_PD_SHOW_CURSOR}" >&2
+    # Restore cursor visibility (|| true prevents exit status from short-circuit)
+    [[ "$_PD_IS_TTY" == "true" ]] && printf "${_PD_SHOW_CURSOR}" >&2 || true
 
     _PD_INITIALIZED=false
 }

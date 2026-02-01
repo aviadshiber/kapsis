@@ -1567,6 +1567,8 @@ main() {
             fi
         fi
         display_cleanup
+        # CRITICAL: Preserve original exit code - EXIT trap's return value becomes script's exit status
+        return $exit_code
     }
 
     # Cleanup display on exit (restore cursor visibility, etc.)
