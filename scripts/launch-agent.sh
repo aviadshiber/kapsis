@@ -727,6 +727,20 @@ parse_config() {
         # Parse DNS logging setting
         NETWORK_LOG_DNS=$(yq eval '.network.log_dns_queries // "false"' "$CONFIG_FILE" 2>/dev/null || echo "false")
 
+        # Parse security capabilities from config
+        # These are added to KAPSIS_CAPS_ADD for the capability generation
+        local config_caps_add
+        config_caps_add=$(yq eval '.security.capabilities.add // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+        if [[ -n "$config_caps_add" ]]; then
+            # Merge with existing KAPSIS_CAPS_ADD (env var takes precedence for overrides)
+            if [[ -n "${KAPSIS_CAPS_ADD:-}" ]]; then
+                KAPSIS_CAPS_ADD="${KAPSIS_CAPS_ADD},${config_caps_add}"
+            else
+                KAPSIS_CAPS_ADD="$config_caps_add"
+            fi
+            export KAPSIS_CAPS_ADD
+        fi
+
         # Parse security section (lower priority than env vars and CLI)
         # Only set if not already set by env var or CLI flag
         local cfg_security_profile

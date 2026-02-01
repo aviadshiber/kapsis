@@ -28,6 +28,18 @@ resources:
   memory: 8g
   cpus: 4
 
+#===============================================================================
+# SECURITY - Container security hardening
+#===============================================================================
+security:
+  profile: standard
+
+  # Additional capabilities needed for specific features
+  capabilities:
+    add:
+      # Required for network.mode: filtered (dnsmasq binds to port 53)
+      - NET_BIND_SERVICE
+
 maven:
   mirror_url: "https://artifactory.example.org/artifactory/releases"
   block_remote_snapshots: true

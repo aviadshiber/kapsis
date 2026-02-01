@@ -51,6 +51,12 @@ resources:
 security:
   profile: standard
 
+  # Additional capabilities needed for specific features
+  capabilities:
+    add:
+      # Required for network.mode: filtered (dnsmasq binds to port 53)
+      - NET_BIND_SERVICE
+
   # Enable seccomp filtering to block ptrace/mount/bpf syscalls
   # This adds kernel-level protection against container escape attempts
   seccomp:
