@@ -230,7 +230,9 @@ _should_log() {
 _log_raw() {
     local level="$1"
     shift
-    local message="$*"
+    # Security: Sanitize potential secrets from all log messages
+    local message
+    message=$(sanitize_secrets "$*")
 
     local timestamp=""
     [[ "$KAPSIS_LOG_TIMESTAMPS" == "true" ]] && timestamp="[$(date '+%Y-%m-%d %H:%M:%S')] "
@@ -248,7 +250,9 @@ _log_raw() {
 _log() {
     local level="$1"
     shift
-    local message="$*"
+    # Security: Sanitize potential secrets from all log messages
+    local message
+    message=$(sanitize_secrets "$*")
 
     # Check if we should log this level
     _should_log "$level" || return 0
@@ -310,7 +314,9 @@ log_error() {
 
 # Success is INFO level with green color
 log_success() {
-    local message="$*"
+    # Security: Sanitize potential secrets from all log messages
+    local message
+    message=$(sanitize_secrets "$*")
 
     _should_log "INFO" || return 0
 
@@ -347,11 +353,64 @@ log_success() {
 }
 
 # =============================================================================
+# Secret Sanitization
+# =============================================================================
+
+# Patterns that indicate sensitive variable names (case-insensitive)
+# These patterns match environment variable names containing sensitive keywords
+_KAPSIS_SECRET_PATTERNS='(KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS|AUTH|BEARER|API_KEY|PRIVATE)'
+
+# Sanitize secrets from a string for safe logging
+# This function masks values of variables that appear to contain secrets.
+# Usage: sanitize_secrets "string with -e MY_TOKEN=secret123"
+# Returns: "string with -e MY_TOKEN=***MASKED***"
+sanitize_secrets() {
+    local input="$*"
+
+    # Pattern 1: Mask -e VAR=value format (container env vars)
+    # Matches: -e SOME_TOKEN=value, -e API_KEY=value, etc.
+    local result
+    result=$(echo "$input" | sed -E "s/(-e [A-Za-z0-9_]*${_KAPSIS_SECRET_PATTERNS}[A-Za-z0-9_]*)=[^ ]*/\1=***MASKED***/gi")
+
+    # Pattern 2: Mask VAR=value at word boundary (general env var format)
+    # Matches: MY_SECRET=value, API_TOKEN=value at start or after space
+    result=$(echo "$result" | sed -E "s/(^|[[:space:]])([A-Za-z0-9_]*${_KAPSIS_SECRET_PATTERNS}[A-Za-z0-9_]*)=[^[:space:]]*/\1\2=***MASKED***/gi")
+
+    # Pattern 3: Mask common token formats (Bearer tokens, base64 tokens)
+    # Matches: Bearer xyz123..., authorization headers
+    result=$(echo "$result" | sed -E 's/(Bearer|Authorization:)[[:space:]]+[^[:space:]]+/\1 ***MASKED***/gi')
+
+    echo "$result"
+}
+
+# Check if a variable name looks like it contains a secret
+# Usage: if is_secret_var_name "MY_TOKEN"; then ...
+is_secret_var_name() {
+    local var_name="$1"
+    echo "$var_name" | grep -qiE "$_KAPSIS_SECRET_PATTERNS"
+}
+
+# Sanitize a variable value if the variable name suggests it's a secret
+# Usage: sanitize_var_value "VAR_NAME" "value"
+# Returns: "value" or "***MASKED***"
+sanitize_var_value() {
+    local var_name="$1"
+    local var_value="$2"
+
+    if is_secret_var_name "$var_name"; then
+        echo "***MASKED***"
+    else
+        echo "$var_value"
+    fi
+}
+
+# =============================================================================
 # Utility Functions
 # =============================================================================
 
 # Log a command before executing it (useful for debugging)
 # Security: Use "$@" instead of eval to prevent command injection
+# Note: Secret sanitization is handled by _log()
 log_cmd() {
     log_debug "Executing: $*"
     "$@"
@@ -363,6 +422,7 @@ log_cmd() {
 }
 
 # Log entry into a function
+# Note: Secret sanitization is handled by _log()
 log_enter() {
     local func="${FUNCNAME[1]:-unknown}"
     log_debug ">>> Entering ${func}() with args: $*"
@@ -376,6 +436,7 @@ log_exit() {
 }
 
 # Log a variable's value
+# Note: Secret sanitization is handled by _log()
 log_var() {
     local var_name="$1"
     local var_value="${!var_name:-<unset>}"

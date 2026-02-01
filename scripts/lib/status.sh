@@ -317,7 +317,7 @@ status_verify_push() {
     fi
 }
 
-# Mark push as skipped (for --no-push scenarios)
+# Mark push as skipped (when --push not specified)
 status_push_skipped() {
     local local_commit="${1:-}"
     status_set_push_info "skipped" "$local_commit" ""

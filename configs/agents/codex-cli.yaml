@@ -1,18 +1,23 @@
 # OpenAI Codex CLI Agent Profile
-# Official OpenAI CLI for Codex code generation
+# Official OpenAI CLI for code generation
 #
-# Build: ./scripts/build-agent-image.sh codex-cli
+# Build: ./scripts/build-agent-image.sh codex-cli --profile full-stack
 # Result: kapsis-codex-cli:latest
+#
+# NOTE: Codex CLI is Node.js-based and requires Node.js runtime.
+# No native binary available (as of Jan 2026).
+# See: https://github.com/openai/codex
 
 name: codex-cli
-description: OpenAI Codex CLI (official OpenAI)
+description: OpenAI Codex CLI (requires Node.js)
 version: latest
 
 install:
   npm: "@openai/codex"
 
 dependencies:
-  - nodejs >= 18
+  - nodejs >= 18  # Required - no native binary available
+  - git
 
 auth:
   required:

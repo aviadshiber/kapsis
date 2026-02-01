@@ -236,7 +236,7 @@ allow mounting a directory over a file.
    │   └── trap: post-exit-git.sh
    │       ├── git add -A
    │       ├── git commit
-   │       └── git push (unless --no-push)
+   │       └── git push (if --push specified)
    │
    └─→ User reviews PR
        │

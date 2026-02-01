@@ -1,0 +1,68 @@
+#===============================================================================
+# Kapsis Build Profile: ML Python
+#
+# Python + Node.js + Rust for ML/AI development.
+# Estimated size: ~1.8GB
+#
+# Use case: Machine learning, data science, AI projects
+#===============================================================================
+
+version: "1.0"
+
+languages:
+  java:
+    enabled: false
+
+  nodejs:
+    enabled: true
+    versions:
+      - "18.18.0"
+    default_version: "18.18.0"
+    package_managers:
+      pnpm: "9.15.3"
+
+  python:
+    enabled: true
+    version: "system"
+    venv: true
+    pip: true
+    packages: []
+    # Common ML packages (install in venv instead):
+    # packages:
+    #   - numpy
+    #   - pandas
+
+  rust:
+    enabled: true
+    channel: "stable"
+    components:
+      - "rustfmt"
+      - "clippy"
+    cargo_binstall: true
+
+  go:
+    enabled: false
+
+build_tools:
+  maven:
+    enabled: false
+
+  gradle:
+    enabled: false
+
+  gradle_enterprise:
+    enabled: false
+
+  protoc:
+    enabled: false
+
+system_packages:
+  development:
+    enabled: true
+  shells:
+    enabled: true
+  utilities:
+    enabled: true
+  overlay:
+    enabled: true
+  custom: []

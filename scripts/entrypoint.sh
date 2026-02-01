@@ -38,7 +38,18 @@ else
     log_success() { echo -e "${GREEN}[KAPSIS]${NC} $*"; }
     log_warn() { echo -e "${YELLOW}[KAPSIS]${NC} $*"; }
     log_error() { echo -e "\033[0;31m[KAPSIS]\033[0m $*" >&2; }
-    log_debug() { [[ -n "${KAPSIS_DEBUG:-}" ]] && echo -e "\033[0;90m[DEBUG]\033[0m $*"; }
+    # Fallback sanitize_secrets for when logging.sh is not available
+    # Security: Mask sensitive environment variables in log output
+    sanitize_secrets() {
+        echo "$*" | sed -E 's/(-e [A-Za-z0-9_]*(KEY|TOKEN|SECRET|PASSWORD|CREDENTIALS|AUTH|BEARER|API_KEY|PRIVATE)[A-Za-z0-9_]*)=[^ ]*/\1=***MASKED***/gi'
+    }
+    log_debug() {
+        if [[ -n "${KAPSIS_DEBUG:-}" ]]; then
+            local sanitized
+            sanitized=$(sanitize_secrets "$*")
+            echo -e "\033[0;90m[DEBUG]\033[0m $sanitized"
+        fi
+    }
 fi
 
 # Source status reporting library if available
@@ -369,6 +380,20 @@ setup_environment() {
         set -u
     fi
 
+    # Auto-switch Java version if configured via KAPSIS_JAVA_VERSION
+    # This allows users to specify Java version in their Kapsis config:
+    #   environment:
+    #     set:
+    #       KAPSIS_JAVA_VERSION: "8"
+    if [[ -n "${KAPSIS_JAVA_VERSION:-}" ]]; then
+        log_info "Switching to Java $KAPSIS_JAVA_VERSION (from KAPSIS_JAVA_VERSION)"
+        if [[ -x "$KAPSIS_HOME/switch-java.sh" ]]; then
+            source "$KAPSIS_HOME/switch-java.sh" "$KAPSIS_JAVA_VERSION"
+        else
+            log_warn "switch-java.sh not found at $KAPSIS_HOME/switch-java.sh"
+        fi
+    fi
+
     # Decode DOCKER_ARTIFACTORY_TOKEN into username/password for Maven
     # Token format: base64(username:password)
     if [[ -n "${DOCKER_ARTIFACTORY_TOKEN:-}" ]] && [[ -z "${KAPSIS_MAVEN_USERNAME:-}" ]]; then
@@ -546,9 +571,9 @@ Branch: ${KAPSIS_BRANCH}"
         }
     fi
 
-    # Push (unless KAPSIS_NO_PUSH is true)
+    # Push if enabled via --push flag (KAPSIS_DO_PUSH=true)
     # This runs regardless of whether we committed above - agent may have committed itself
-    if [[ "${KAPSIS_NO_PUSH:-false}" != "true" ]]; then
+    if [[ "${KAPSIS_DO_PUSH:-false}" == "true" ]]; then
         echo ""
         echo "┌────────────────────────────────────────────────────────────────┐"
         echo "│ PUSHING TO REMOTE                                              │"
@@ -623,7 +648,7 @@ Branch: ${KAPSIS_BRANCH}"
         echo "  ./launch-agent.sh <id> <project> --branch ${KAPSIS_BRANCH} --spec ./updated-spec.md"
     else
         echo ""
-        log_success "Changes committed locally (--no-push)"
+        log_success "Changes committed locally (use --push to enable auto-push)"
         echo "To push later: git push ${KAPSIS_GIT_REMOTE:-origin} ${KAPSIS_BRANCH}"
         # Record that push was skipped with the local commit
         local local_commit
@@ -956,7 +981,11 @@ print_welcome() {
 
     echo ""
     echo "Maven settings: $KAPSIS_HOME/maven/settings.xml (isolation enabled)"
-    [[ "${KAPSIS_WORKTREE_MODE:-}" == "true" ]] && echo "Git:         using sanitized .git-safe (hooks sandbox isolated)"
+    if [[ "${KAPSIS_WORKTREE_MODE:-}" == "true" ]]; then
+        local push_status="disabled"
+        [[ "${KAPSIS_DO_PUSH:-}" == "true" ]] && push_status="ENABLED"
+        echo "Git:         using sanitized .git-safe (hooks isolated, push ${push_status})"
+    fi
     echo ""
 }
 

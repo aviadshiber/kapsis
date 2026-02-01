@@ -35,9 +35,9 @@
 set -euo pipefail
 
 # Source logging if not already loaded
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+_VALIDATE_SCOPE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! declare -f log_info &>/dev/null; then
-    source "$SCRIPT_DIR/logging.sh"
+    source "$_VALIDATE_SCOPE_DIR/logging.sh"
 fi
 
 #===============================================================================
@@ -340,7 +340,7 @@ log_scope_violation() {
     local violations=("$@")
 
     # Source json-utils for proper escaping
-    source "$SCRIPT_DIR/json-utils.sh"
+    source "$_VALIDATE_SCOPE_DIR/json-utils.sh"
 
     local audit_dir="${KAPSIS_AUDIT_DIR:-$HOME/.kapsis/audit}"
     local audit_file="$audit_dir/scope-violations.jsonl"

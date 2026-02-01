@@ -12,6 +12,119 @@ When `--config` is not specified, Kapsis looks for config files in this order:
 4. `~/.config/kapsis/default.yaml` - User default
 5. Built-in defaults
 
+## Build Configuration (build-config.yaml)
+
+Kapsis supports customizable container images through build configuration profiles. This allows you to create optimized images for specific use cases.
+
+### Build Configuration vs Agent Configuration
+
+| File | Purpose | Used By |
+|------|---------|---------|
+| `configs/build-config.yaml` | Container image contents (languages, tools) | `build-image.sh` |
+| `configs/build-profiles/*.yaml` | Preset build configurations | `build-image.sh --profile` |
+| `agent-sandbox.yaml` | Agent runtime behavior | `launch-agent.sh` |
+
+### Quick Start
+
+```bash
+# Build with a profile
+./scripts/build-image.sh --profile java-dev
+
+# Configure interactively
+./scripts/configure-deps.sh
+
+# Configure for AI agents (JSON output)
+./scripts/configure-deps.sh --profile minimal --json
+```
+
+### Build Configuration Schema
+
+```yaml
+version: "1.0"
+
+languages:
+  java:
+    enabled: true
+    versions:
+      - "21.0.6-zulu"
+      - "17.0.14-zulu"
+      - "8.0.422-zulu"
+    default_version: "17.0.14-zulu"
+
+  nodejs:
+    enabled: true
+    versions:
+      - "18.18.0"
+      - "20.10.0"
+    default_version: "18.18.0"
+    package_managers:
+      pnpm: "9.15.3"
+      yarn: "latest"
+
+  python:
+    enabled: true
+    version: "system"
+    venv: true
+    pip: true
+
+  rust:
+    enabled: false
+    channel: "stable"
+    components:
+      - "rustfmt"
+      - "clippy"
+
+  go:
+    enabled: false
+    version: "1.22.0"
+
+build_tools:
+  maven:
+    enabled: true
+    version: "3.9.9"
+
+  gradle:
+    enabled: false
+    version: "8.5"
+
+  gradle_enterprise:
+    enabled: true
+    extension_version: "1.20"
+    ccud_version: "1.12.5"
+
+  protoc:
+    enabled: true
+    version: "25.1"
+
+system_packages:
+  development:
+    enabled: true
+  shells:
+    enabled: true
+  utilities:
+    enabled: true
+  overlay:
+    enabled: true
+  custom: []
+```
+
+### Available Profiles
+
+| Profile | Est. Size | Languages | Best For |
+|---------|-----------|-----------|----------|
+| `minimal` | ~500MB | None | Shell scripts, basic tasks |
+| `java-dev` | ~1.5GB | Java 17/8 | Taboola Java development |
+| `java8-legacy` | ~1.3GB | Java 8 only | Legacy Java 8 projects |
+| `full-stack` | ~2.1GB | Java, Node.js, Python | Multi-language projects |
+| `backend-go` | ~1.2GB | Go, Python | Go microservices |
+| `backend-rust` | ~1.4GB | Rust, Python | Rust backend services |
+| `ml-python` | ~1.8GB | Python, Node.js, Rust | ML/AI development |
+| `frontend` | ~1.2GB | Node.js, Rust | Frontend/WebAssembly |
+
+See [BUILD-CONFIGURATION.md](BUILD-CONFIGURATION.md) for detailed documentation.
+
+---
+
 ## Full Configuration Schema
 
 ```yaml
@@ -166,6 +279,15 @@ security:
     # Default: true for paranoid only
     required: false
 
+  # Container capabilities
+  # By default, Kapsis drops all capabilities and adds back a minimal set.
+  # Use this to add additional capabilities required by specific features.
+  capabilities:
+    # Additional capabilities to add to the container
+    # Common use case: NET_BIND_SERVICE for DNS filtering (dnsmasq on port 53)
+    add:
+      - NET_BIND_SERVICE  # Required for network.mode: filtered
+
 #===============================================================================
 # MAVEN ISOLATION
 #===============================================================================
@@ -238,6 +360,45 @@ gradle_enterprise:
 #   - com.gradle:common-custom-user-data-maven-extension:1.12.5
 #
 # To update versions, modify the ARGs in Containerfile and rebuild the image.
+
+#===============================================================================
+# PROTOBUF/PROTOC SUPPORT
+#===============================================================================
+# Kapsis pre-caches protoc binaries for common versions, enabling proto
+# compilation without runtime network access. This is necessary because
+# the protobuf-maven-plugin downloads platform-specific protoc binaries
+# that cannot use authenticated mirrors.
+#
+# Pre-cached versions:
+#   - protoc 25.1 (linux-x86_64, linux-aarch_64)
+#
+# Custom Protoc Versions:
+# If your project requires a different protoc version, you can:
+#
+# 1. Rebuild the image with custom version:
+#    podman build --build-arg PROTOC_VERSION=24.4 -t kapsis-custom:latest .
+#
+# 2. The pre-cached binaries are automatically available in ~/.m2/repository
+#    when the container starts.
+
+#===============================================================================
+# JAVA VERSION CONFIGURATION
+#===============================================================================
+# Kapsis supports automatic Java version switching via KAPSIS_JAVA_VERSION.
+# When set, the entrypoint automatically switches to the specified Java version
+# using SDKMAN.
+#
+# Available Java versions in the container:
+#   - 17 (default)
+#   - 8
+#
+# Configuration via environment.set:
+environment:
+  set:
+    KAPSIS_JAVA_VERSION: "8"  # Switch to Java 8 at startup
+#
+# This is useful for projects that require specific Java versions, such as
+# legacy codebases requiring Java 8 compatibility.
 
 #===============================================================================
 # SANDBOX BEHAVIOR
@@ -342,7 +503,12 @@ git:
     remote: origin
 
     # Commit message template
-    # Placeholders: {task}, {agent}, {timestamp}, {branch}
+    # Available placeholders (substituted at launch time):
+    #   {task}      - Task description (from --task or spec filename)
+    #   {agent}     - Agent name (claude, codex, aider)
+    #   {agent_id}  - Unique 6-char agent ID
+    #   {branch}    - Git branch name
+    #   {timestamp} - Current timestamp (YYYY-MM-DD_HHMMSS)
     commit_message: |
       feat: {task}
 
@@ -840,7 +1006,7 @@ Some config values can be overridden via command line:
 | Config | CLI Override |
 |--------|--------------|
 | `network.mode` | `--network-mode <none\|filtered\|open>` |
-| `git.auto_push.enabled` | `--no-push` |
+| `git.auto_push.enabled` | `--push` (enables push, default: off) |
 | `agent.command` | `--interactive` |
 | `image.name:image.tag` | `--image <name:tag>` |
 | `sandbox.upper_dir_base` | Set via environment |
@@ -940,14 +1106,16 @@ version: latest
 
 # Installation method (choose one)
 install:
-  npm: "@anthropic-ai/claude-code"    # NPM global install
-  # pip: "anthropic"                  # Pip install
-  # script: |                         # Custom script
-  #   curl -fsSL https://example.com/install.sh | bash
+  # Native installer (recommended for Claude) - no Node.js required
+  script: "curl -fsSL https://claude.ai/install.sh | bash"
+  binary_path: "/usr/local/bin/claude"
+  # npm: "@anthropic-ai/claude-code"  # (deprecated - use native installer)
+  # pip: "anthropic"                  # Pip install (for claude-api)
 
 # Dependencies (validated at build time)
+# Claude CLI native installer only requires git
 dependencies:
-  - nodejs >= 18
+  - git
 
 # Authentication requirements
 auth:
@@ -987,17 +1155,23 @@ resources:
 Use `build-agent-image.sh` to create agent-specific container images:
 
 ```bash
-# Build Claude CLI image
-./scripts/build-agent-image.sh claude-cli
-# Creates: kapsis-claude-cli:latest
+# Build Claude CLI with minimal profile (smallest, ~450MB)
+./scripts/build-agent-image.sh claude-cli --profile minimal
 
-# Build Aider image
-./scripts/build-agent-image.sh aider
-# Creates: kapsis-aider:latest
+# Build Claude CLI with Java 8 support (~1GB)
+./scripts/build-agent-image.sh claude-cli --profile java8-legacy
+
+# Build Claude CLI with full Java dev environment (~2.1GB)
+./scripts/build-agent-image.sh claude-cli --profile java-dev
+
+# Build Aider (requires Python, use full-stack profile)
+./scripts/build-agent-image.sh aider --profile full-stack
 
 # List available profiles
 ./scripts/build-agent-image.sh --help
 ```
+
+**Note:** Claude CLI uses a native installer and works with the `minimal` profile (no Node.js required). Other agents like Aider, Codex, and Gemini require specific language runtimes.
 
 ### Using Agent Images
 

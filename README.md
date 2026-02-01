@@ -288,6 +288,51 @@ See [docs/CONFIG-REFERENCE.md](docs/CONFIG-REFERENCE.md) for full configuration 
 
 Pre-built configs available in `configs/` directory.
 
+## Build Configuration
+
+Customize container images for your specific needs using build profiles:
+
+```bash
+# Build minimal image (~500MB) - base container only
+./scripts/build-image.sh --profile minimal
+
+# Build Java development image (~1.5GB)
+./scripts/build-image.sh --profile java-dev
+
+# Build full-stack image (~2.1GB) - Java, Node.js, Python
+./scripts/build-image.sh --profile full-stack
+
+# Preview build configuration
+./scripts/build-image.sh --profile java-dev --dry-run
+```
+
+### Available Profiles
+
+| Profile | Est. Size | Languages | Best For |
+|---------|-----------|-----------|----------|
+| `minimal` | ~500MB | None | Shell scripts, basic tasks |
+| `java-dev` | ~1.5GB | Java 17/8 | Taboola Java development |
+| `full-stack` | ~2.1GB | Java, Node.js, Python | Multi-language projects |
+| `backend-rust` | ~1.4GB | Rust, Python | Rust backend services |
+| `frontend` | ~1.2GB | Node.js, Rust | Frontend/WebAssembly |
+
+### Configure Dependencies
+
+Use the interactive CLI or flags:
+
+```bash
+# Interactive mode
+./scripts/configure-deps.sh
+
+# Non-interactive (for AI agents)
+./scripts/configure-deps.sh --profile java-dev --json
+
+# Custom configuration
+./scripts/configure-deps.sh --enable rust --disable nodejs
+```
+
+See [docs/BUILD-CONFIGURATION.md](docs/BUILD-CONFIGURATION.md) for full documentation.
+
 ## Isolation Guarantees
 
 | Resource | Isolation Method |
@@ -378,6 +423,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full logging configuration and te
 | Document | Description |
 |----------|-------------|
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System design, data flows, and component interactions |
+| [BUILD-CONFIGURATION.md](docs/BUILD-CONFIGURATION.md) | Customizing container images with build profiles |
 | [CONFIG-REFERENCE.md](docs/CONFIG-REFERENCE.md) | Complete configuration options for agent-sandbox.yaml |
 | [GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md) | Branch-based workflow, worktree vs overlay modes |
 | [STATUS-TRACKING.md](docs/STATUS-TRACKING.md) | Real-time progress monitoring and hook system |
@@ -403,6 +449,12 @@ kapsis/
 │   │   ├── claude-cli.yaml      # Claude Code CLI via npm
 │   │   ├── claude-api.yaml      # Anthropic Python SDK
 │   │   └── aider.yaml           # Aider AI pair programmer
+│   ├── build-profiles/          # Container build profiles
+│   │   ├── minimal.yaml         # Minimal image (~500MB)
+│   │   ├── java-dev.yaml        # Java development (~1.5GB)
+│   │   ├── full-stack.yaml      # Multi-language (~2.1GB)
+│   │   └── ...                  # Other profiles
+│   ├── build-config.yaml        # Default build configuration
 │   ├── claude.yaml              # User configs (reference profiles)
 │   ├── codex.yaml
 │   ├── aider.yaml
@@ -413,6 +465,7 @@ kapsis/
 │   ├── kapsis-cleanup.sh        # Cleanup and reclaim disk space
 │   ├── build-image.sh           # Build base container image
 │   ├── build-agent-image.sh     # Build agent-specific images
+│   ├── configure-deps.sh        # Configure container dependencies
 │   ├── worktree-manager.sh      # Git worktree management
 │   ├── post-container-git.sh    # Post-container git operations
 │   ├── merge-changes.sh         # Manual merge workflow
@@ -423,7 +476,8 @@ kapsis/
 │   └── lib/
 │       ├── logging.sh           # Shared logging library
 │       ├── status.sh            # Status reporting library
-│       └── json-utils.sh        # JSON parsing utilities
+│       ├── json-utils.sh        # JSON parsing utilities
+│       └── build-config.sh      # Build configuration parser
 ├── maven/
 │   └── isolated-settings.xml    # Maven isolation settings
 ├── docs/

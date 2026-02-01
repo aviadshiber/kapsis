@@ -1,0 +1,45 @@
+#===============================================================================
+# Kapsis Build Profile: Minimal
+#
+# Base container only - no language runtimes or build tools.
+# Estimated size: ~500MB
+#
+# Use case: Shell-only tasks, custom language installations
+#===============================================================================
+
+version: "1.0"
+
+languages:
+  java:
+    enabled: false
+  nodejs:
+    enabled: false
+  python:
+    enabled: false
+  rust:
+    enabled: false
+  go:
+    enabled: false
+
+build_tools:
+  maven:
+    enabled: false
+  gradle:
+    enabled: false
+  gradle_enterprise:
+    enabled: false
+  protoc:
+    enabled: false
+
+system_packages:
+  development:
+    enabled: false
+  shells:
+    enabled: true
+    packages:
+      - bash
+  utilities:
+    enabled: false
+  overlay:
+    enabled: true
+  custom: []

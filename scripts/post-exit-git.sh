@@ -6,11 +6,11 @@
 # Can be run standalone or is called by the container entrypoint via trap.
 #
 # Usage:
-#   ./post-exit-git.sh <branch> <commit-message> [remote] [--no-push]
+#   ./post-exit-git.sh <branch> <commit-message> [remote] [--push]
 #
 # Environment Variables:
 #   KAPSIS_AGENT_ID  - Agent identifier for commit message
-#   KAPSIS_NO_PUSH   - Set to "true" to skip push
+#   KAPSIS_DO_PUSH   - Set to "true" to enable push
 #===============================================================================
 
 set -euo pipefail
@@ -18,10 +18,10 @@ set -euo pipefail
 BRANCH="${1:?Branch name required}"
 COMMIT_MSG="${2:?Commit message required}"
 REMOTE="${3:-origin}"
-NO_PUSH="${4:-false}"
+DO_PUSH="${4:-false}"
 
 # Override with environment variable if set
-NO_PUSH="${KAPSIS_NO_PUSH:-$NO_PUSH}"
+DO_PUSH="${KAPSIS_DO_PUSH:-$DO_PUSH}"
 
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -79,8 +79,8 @@ git commit -m "$COMMIT_MSG" || {
     exit 0
 }
 
-# Push (unless --no-push)
-if [[ "$NO_PUSH" != "true" ]]; then
+# Push if enabled (--push flag)
+if [[ "$DO_PUSH" == "true" ]]; then
     echo ""
     echo "┌────────────────────────────────────────────────────────────────┐"
     echo "│ PUSHING TO REMOTE                                              │"
@@ -124,7 +124,7 @@ if [[ "$NO_PUSH" != "true" ]]; then
 else
     echo ""
     echo "┌────────────────────────────────────────────────────────────────┐"
-    echo "│ CHANGES COMMITTED LOCALLY (--no-push)                          │"
+    echo "│ CHANGES COMMITTED LOCALLY (use --push to enable)               │"
     echo "│                                                                │"
     echo "│ To push later:                                                 │"
     echo "│   git push $REMOTE $BRANCH                                     │"

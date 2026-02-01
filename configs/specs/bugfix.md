@@ -25,6 +25,19 @@ DEV-XXXXX
 - [ ] Add regression test to prevent recurrence
 - [ ] Verify fix doesn't break existing functionality
 
+## Git Workflow
+
+> **SSH Available**: You CAN commit and push from inside this container.
+> The container has verified SSH keys and sanitized git (hooks isolated).
+
+```bash
+# Commit your changes
+git add -A && git commit -m "fix: description"
+
+# Push to remote (if --push was specified at launch, this happens automatically)
+git push -u origin <branch>
+```
+
 ## Definition of Done
 - [ ] Root cause identified and documented
 - [ ] Bug fixed

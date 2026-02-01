@@ -702,6 +702,305 @@ test_legacy_log_functions() {
 }
 
 #===============================================================================
+# SECRET SANITIZATION TESTS
+#===============================================================================
+
+test_sanitize_secrets_masks_env_vars() {
+    log_test "sanitize_secrets: masks -e VAR=value format"
+
+    local result
+    result=$(run_logging_test '
+        local input="podman run -e API_KEY=secret123 -e NORMAL_VAR=ok -e MY_TOKEN=abc"
+        sanitize_secrets "$input"
+    ')
+
+    # Should mask API_KEY and MY_TOKEN but not NORMAL_VAR
+    assert_contains "$result" "API_KEY=***MASKED***" "API_KEY should be masked"
+    assert_contains "$result" "MY_TOKEN=***MASKED***" "MY_TOKEN should be masked"
+    assert_contains "$result" "NORMAL_VAR=ok" "NORMAL_VAR should NOT be masked"
+}
+
+test_sanitize_secrets_masks_secret_patterns() {
+    log_test "sanitize_secrets: masks various secret patterns"
+
+    local patterns=(
+        "-e MY_SECRET=hidden"
+        "-e DB_PASSWORD=pass123"
+        "-e CREDENTIALS_FILE=/path"
+        "-e AUTH_TOKEN=xyz"
+        "-e BEARER_TOKEN=abc"
+        "-e PRIVATE_KEY=key"
+    )
+
+    for pattern in "${patterns[@]}"; do
+        local result
+        result=$(run_logging_test "
+            sanitize_secrets '$pattern'
+        ")
+
+        # All of these should be masked
+        if [[ "$result" == *"=***MASKED***"* ]]; then
+            log_pass "Pattern '$pattern' was correctly masked"
+        else
+            log_fail "Pattern '$pattern' should be masked but got: $result"
+            return 1
+        fi
+    done
+}
+
+test_sanitize_secrets_case_insensitive() {
+    log_test "sanitize_secrets: case insensitive matching"
+
+    local result
+    result=$(run_logging_test '
+        local input="-e api_key=lower -e API_KEY=upper -e Api_Key=mixed"
+        sanitize_secrets "$input"
+    ')
+
+    # Count masked values - should be 3
+    local masked_count
+    masked_count=$(echo "$result" | grep -o '=\*\*\*MASKED\*\*\*' | wc -l | tr -d ' ')
+
+    assert_equals "3" "$masked_count" "All case variants should be masked"
+}
+
+test_sanitize_secrets_preserves_safe_vars() {
+    log_test "sanitize_secrets: preserves non-sensitive variables"
+
+    local result
+    result=$(run_logging_test '
+        local input="-e HOME=/home/user -e PATH=/bin -e KAPSIS_PROJECT=myproject"
+        sanitize_secrets "$input"
+    ')
+
+    assert_contains "$result" "HOME=/home/user" "HOME should NOT be masked"
+    assert_contains "$result" "PATH=/bin" "PATH should NOT be masked"
+    assert_contains "$result" "KAPSIS_PROJECT=myproject" "KAPSIS_PROJECT should NOT be masked"
+}
+
+test_is_secret_var_name() {
+    log_test "is_secret_var_name: correctly identifies secret names"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "secret-name-test"
+
+        # Should return true (0) for secret names
+        is_secret_var_name "API_KEY" || exit 1
+        is_secret_var_name "MY_TOKEN" || exit 2
+        is_secret_var_name "DB_PASSWORD" || exit 3
+        is_secret_var_name "AUTH_SECRET" || exit 4
+
+        # Should return false (1) for safe names
+        is_secret_var_name "HOME" && exit 5
+        is_secret_var_name "PATH" && exit 6
+        is_secret_var_name "KAPSIS_PROJECT" && exit 7
+
+        exit 0
+    )
+    local result=$?
+
+    case $result in
+        0) log_pass "is_secret_var_name works correctly" ;;
+        1) log_fail "API_KEY should be detected as secret"; return 1 ;;
+        2) log_fail "MY_TOKEN should be detected as secret"; return 1 ;;
+        3) log_fail "DB_PASSWORD should be detected as secret"; return 1 ;;
+        4) log_fail "AUTH_SECRET should be detected as secret"; return 1 ;;
+        5) log_fail "HOME should NOT be detected as secret"; return 1 ;;
+        6) log_fail "PATH should NOT be detected as secret"; return 1 ;;
+        7) log_fail "KAPSIS_PROJECT should NOT be detected as secret"; return 1 ;;
+        *) log_fail "Unexpected exit code: $result"; return 1 ;;
+    esac
+}
+
+test_sanitize_var_value_masks_secrets() {
+    log_test "sanitize_var_value: masks values for secret variable names"
+
+    local result
+    result=$(run_logging_test '
+        echo "$(sanitize_var_value "API_KEY" "super-secret-value")"
+    ')
+
+    assert_equals "***MASKED***" "$result" "Secret variable value should be masked"
+}
+
+test_sanitize_var_value_preserves_safe() {
+    log_test "sanitize_var_value: preserves values for non-secret names"
+
+    local result
+    result=$(run_logging_test '
+        echo "$(sanitize_var_value "HOME" "/home/user")"
+    ')
+
+    assert_equals "/home/user" "$result" "Non-secret variable value should NOT be masked"
+}
+
+test_log_var_masks_secrets() {
+    log_test "log_var: masks values of variables with secret names"
+
+    local log_file="$TEST_LOG_DIR/kapsis-var-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        export KAPSIS_LOG_LEVEL="DEBUG"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "var-secret"
+
+        # shellcheck disable=SC2034  # Variable used by log_var
+        API_KEY="super-secret-value"
+        log_var API_KEY
+    )
+
+    assert_file_contains "$log_file" "API_KEY=***MASKED***" "Secret variable should be masked in log_var"
+    assert_file_not_contains "$log_file" "super-secret-value" "Actual secret value should NOT appear"
+}
+
+test_log_cmd_sanitizes_command() {
+    log_test "log_cmd: sanitizes secrets in logged commands"
+
+    local log_file="$TEST_LOG_DIR/kapsis-cmd-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        export KAPSIS_LOG_LEVEL="DEBUG"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "cmd-secret"
+
+        # Run a command that includes what looks like a secret
+        log_cmd echo "-e API_KEY=secret123 test" >/dev/null 2>&1 || true
+    )
+
+    assert_file_not_contains "$log_file" "secret123" "Secret value should NOT appear in command log"
+    assert_file_contains "$log_file" "API_KEY=***MASKED***" "Secret should be masked in command log"
+}
+
+test_log_enter_sanitizes_args() {
+    log_test "log_enter: sanitizes secrets in function arguments"
+
+    local log_file="$TEST_LOG_DIR/kapsis-enter-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        export KAPSIS_LOG_LEVEL="DEBUG"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "enter-secret"
+
+        my_secret_function() {
+            log_enter "-e API_TOKEN=mysecret123"
+        }
+        my_secret_function
+    )
+
+    assert_file_not_contains "$log_file" "mysecret123" "Secret should NOT appear in log_enter"
+    assert_file_contains "$log_file" "API_TOKEN=***MASKED***" "Secret should be masked in log_enter"
+}
+
+test_log_info_sanitizes_secrets() {
+    log_test "log_info: sanitizes secrets in messages"
+
+    local log_file="$TEST_LOG_DIR/kapsis-info-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "info-secret"
+
+        log_info "Setting API_KEY=supersecret123 for user"
+    )
+
+    assert_file_not_contains "$log_file" "supersecret123" "Secret value should NOT appear in log_info"
+    assert_file_contains "$log_file" "API_KEY=***MASKED***" "Secret should be masked in log_info"
+}
+
+test_log_warn_sanitizes_secrets() {
+    log_test "log_warn: sanitizes secrets in messages"
+
+    local log_file="$TEST_LOG_DIR/kapsis-warn-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "warn-secret"
+
+        log_warn "Token expired: MY_TOKEN=abc123xyz"
+    )
+
+    assert_file_not_contains "$log_file" "abc123xyz" "Secret value should NOT appear in log_warn"
+    assert_file_contains "$log_file" "MY_TOKEN=***MASKED***" "Secret should be masked in log_warn"
+}
+
+test_log_error_sanitizes_secrets() {
+    log_test "log_error: sanitizes secrets in messages"
+
+    local log_file="$TEST_LOG_DIR/kapsis-error-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "error-secret"
+
+        log_error "Auth failed with DB_PASSWORD=mypassword123"
+    )
+
+    assert_file_not_contains "$log_file" "mypassword123" "Secret value should NOT appear in log_error"
+    assert_file_contains "$log_file" "DB_PASSWORD=***MASKED***" "Secret should be masked in log_error"
+}
+
+test_log_success_sanitizes_secrets() {
+    log_test "log_success: sanitizes secrets in messages"
+
+    local log_file="$TEST_LOG_DIR/kapsis-success-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "success-secret"
+
+        log_success "Connected with AUTH_SECRET=topsecret456"
+    )
+
+    assert_file_not_contains "$log_file" "topsecret456" "Secret value should NOT appear in log_success"
+    assert_file_contains "$log_file" "AUTH_SECRET=***MASKED***" "Secret should be masked in log_success"
+}
+
+test_log_debug_sanitizes_secrets() {
+    log_test "log_debug: sanitizes secrets in messages"
+
+    local log_file="$TEST_LOG_DIR/kapsis-debug-secret.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        export KAPSIS_LOG_LEVEL="DEBUG"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "debug-secret"
+
+        log_debug "Debug info: BEARER_TOKEN=secretbearer789"
+    )
+
+    assert_file_not_contains "$log_file" "secretbearer789" "Secret value should NOT appear in log_debug"
+    assert_file_contains "$log_file" "BEARER_TOKEN=***MASKED***" "Secret should be masked in log_debug"
+}
+
+#===============================================================================
 # LOG TAIL TEST
 #===============================================================================
 
@@ -795,6 +1094,23 @@ main() {
 
     # Tail test
     run_test test_log_tail
+
+    # Secret sanitization tests
+    run_test test_sanitize_secrets_masks_env_vars
+    run_test test_sanitize_secrets_masks_secret_patterns
+    run_test test_sanitize_secrets_case_insensitive
+    run_test test_sanitize_secrets_preserves_safe_vars
+    run_test test_is_secret_var_name
+    run_test test_sanitize_var_value_masks_secrets
+    run_test test_sanitize_var_value_preserves_safe
+    run_test test_log_var_masks_secrets
+    run_test test_log_cmd_sanitizes_command
+    run_test test_log_enter_sanitizes_args
+    run_test test_log_info_sanitizes_secrets
+    run_test test_log_warn_sanitizes_secrets
+    run_test test_log_error_sanitizes_secrets
+    run_test test_log_success_sanitizes_secrets
+    run_test test_log_debug_sanitizes_secrets
 
     # Summary
     print_summary
