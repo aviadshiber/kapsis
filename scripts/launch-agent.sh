@@ -1739,10 +1739,8 @@ main() {
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "DRY RUN - Command that would be executed:"
         echo ""
-        # Security: Use centralized sanitization to mask secrets
-        local sanitized_cmd
-        sanitized_cmd=$(sanitize_secrets "${CONTAINER_CMD[*]}")
-        echo "$sanitized_cmd"
+        # Secrets are passed via --env-file, not visible in command line
+        echo "${CONTAINER_CMD[*]}"
 
         # Show secrets env-file info if secrets were configured
         if [[ ${#SECRET_ENV_VARS[@]} -gt 0 ]]; then
