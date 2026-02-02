@@ -6,7 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.1.0] - 2026-02-01
+## [2.1.1] - 2026-02-02
+
+### Changed
+- Remove redundant sanitize_secrets from dry-run output
+
+### Fixed
+- Use --env-file for secrets to prevent bash -x exposure (#135)
+
+## [Unreleased]
+
+## [0.8.3] - 2025-12-28
 
 ### Added
 - Add animated progress display to terminal demo
@@ -35,9 +45,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add security warning about bash -x debug mode exposing secrets
 - Document progress display environment variables
 
-## [Unreleased]
-
-## [0.8.3] - 2025-12-28
 
 ### Changed
 - Bump the github-actions group with 2 updates
@@ -423,7 +430,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.1.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.1.1...HEAD
+[2.1.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.1.1
 [2.1.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.1.0
 [2.0.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.0.1
 [2.0.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.0.0
