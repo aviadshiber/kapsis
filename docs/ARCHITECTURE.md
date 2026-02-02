@@ -463,25 +463,25 @@ See the header comments in `scripts/lib/logging.sh` for full documentation.
 
 ## Troubleshooting
 
-### Security Warning: Never Use `bash -x`
+### Safe Debugging with `bash -x`
 
-**CRITICAL: Do NOT use `bash -x` or `set -x` to debug Kapsis scripts.**
+Kapsis uses `--env-file` to pass secrets to containers, making it safe to use
+`bash -x` or `set -x` for debugging. Secrets are stored in a temporary file
+(not command line arguments), so they won't appear in debug traces.
 
-Bash debug mode prints command arguments to stderr BEFORE sanitization, exposing:
-- API keys (ANTHROPIC_API_KEY, etc.)
-- OAuth tokens and refresh tokens
-- Passwords and credentials from keychain
+> **Note:** If `/tmp` is not writable, Kapsis falls back to inline `-e` flags
+> with a warning. In this case, avoid `bash -x` as secrets may be exposed.
 
-**Safe debugging alternatives:**
+**Debugging options:**
 ```bash
-# Enable debug logging (sanitized output to file)
+# Debug with bash -x (safe - secrets use env-file)
+bash -x ./scripts/launch-agent.sh ~/project --agent claude --task "test"
+
+# Enable debug logging to file
 KAPSIS_DEBUG=1 ./scripts/launch-agent.sh ...
 
 # Check logs
 tail -f ~/.kapsis/logs/kapsis-launch-agent.log
-
-# Targeted debug output
-echo "DEBUG: variable=$variable" >&2
 ```
 
 ### Common Issues

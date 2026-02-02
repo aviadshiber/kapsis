@@ -82,6 +82,21 @@ test_keys_not_in_dry_run() {
     assert_not_contains "$output" "$secret_key" "Secret key should not appear in dry-run output"
 }
 
+test_secrets_use_env_file_pattern() {
+    log_test "Testing secrets mention --env-file in dry-run"
+
+    export ANTHROPIC_API_KEY="sk-test-key"
+    export OPENAI_API_KEY="sk-openai-test"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+
+    unset ANTHROPIC_API_KEY OPENAI_API_KEY
+
+    # Should mention secrets will use env-file
+    assert_contains "$output" "via --env-file" "Should mention secrets use --env-file"
+}
+
 test_multiple_keys_passed() {
     log_test "Testing multiple API keys can be passed"
 
@@ -891,6 +906,7 @@ main() {
     run_test test_openai_key_passed
     run_test test_kapsis_env_vars_set
     run_test test_keys_not_in_dry_run
+    run_test test_secrets_use_env_file_pattern
     run_test test_multiple_keys_passed
     run_test test_empty_key_not_error
     run_test test_custom_env_vars

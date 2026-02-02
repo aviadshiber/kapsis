@@ -19,7 +19,7 @@ SSH_KEYCHAIN_SCRIPT="$KAPSIS_ROOT/scripts/lib/ssh-keychain.sh"
 #===============================================================================
 
 test_secrets_masked_in_dry_run() {
-    log_test "Testing secrets are masked in dry-run output"
+    log_test "Testing secrets are not shown in dry-run output (use --env-file)"
 
     local secret_key="sk-secret-value-12345"
 
@@ -41,11 +41,12 @@ EOF
     unset MY_API_KEY
     rm -f "$test_config"
 
-    # Actual secret value NOT visible (KEY in name triggers masking)
-    assert_not_contains "$output" "$secret_key" "Secret should be masked"
+    # Actual secret value NOT visible (secrets now use --env-file, not -e flags)
+    assert_not_contains "$output" "$secret_key" "Secret should not appear in command"
 
-    # Masking indicator shown
-    assert_contains "$output" "MASKED" "Should show masking indicator"
+    # Secrets are passed via --env-file (Fix #135: prevent secret exposure in bash -x)
+    assert_contains "$output" "--env-file" "Should use --env-file for secrets"
+    assert_contains "$output" "MY_API_KEY" "Should mention secret variable name"
 }
 
 test_keychain_lookup_function_exists() {
@@ -139,9 +140,10 @@ EOF
     unset SHARED_API_KEY
     rm -f "$test_config"
 
-    # Variable should be passed through (from env), not from keychain
-    # KEY in name triggers masking
-    assert_contains "$output" "SHARED_API_KEY=***MASKED***" "Should use passthrough value"
+    # Variable should be passed through (via --env-file), not from keychain
+    # Fix #135: secrets use --env-file, not inline flags
+    assert_contains "$output" "--env-file" "Should use --env-file for secrets"
+    assert_contains "$output" "SHARED_API_KEY" "Secret name should be mentioned"
 }
 
 test_keychain_inject_to_file_config() {

@@ -190,15 +190,16 @@ When completing a PR that will trigger a release, update version references in d
 - Copy `agent-sandbox.yaml.template` to `agent-sandbox.yaml` and keep secrets in keychain-backed fields.
 - Avoid committing API keys or local paths; prefer `environment.passthrough` for non-secret values.
 
-### CRITICAL: Never Use `bash -x` for Debugging
+### Safe Debugging with `bash -x`
 
-**Do NOT use `bash -x` or `set -x` when debugging Kapsis scripts.** Bash debug mode prints all command arguments to stderr BEFORE any sanitization functions process them, which will expose:
-- API keys and OAuth tokens (ANTHROPIC_API_KEY, etc.)
-- Refresh tokens and session credentials
-- Passwords and secrets from keychain
+Kapsis uses `--env-file` to pass secrets to containers, making it safe to use
+`bash -x` or `set -x` for debugging. Secrets are stored in a temporary file
+(not command line arguments), so they won't appear in debug traces.
 
-**Safe debugging alternatives:**
-1. Use `KAPSIS_DEBUG=1` which logs to file with sanitization
-2. Add targeted `echo` statements for specific variables
-3. Check log files at `~/.kapsis/logs/`
-4. Ask the user before enabling any form of trace output
+> **Note:** If `/tmp` is not writable, Kapsis falls back to inline `-e` flags
+> with a warning. In this case, avoid `bash -x` as secrets may be exposed.
+
+**Debugging options:**
+1. `bash -x ./scripts/launch-agent.sh ...` - Safe with env-file
+2. `KAPSIS_DEBUG=1` - Logs to file with sanitization
+3. Check logs at `~/.kapsis/logs/`

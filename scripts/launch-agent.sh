@@ -1138,15 +1138,28 @@ generate_ssh_known_hosts() {
 #===============================================================================
 # ENVIRONMENT VARIABLES GENERATION
 #===============================================================================
+
+# Global arrays for environment variables
+# ENV_VARS: non-secret variables (visible in dry-run, use -e flags)
+# SECRET_ENV_VARS: secret variables (written to temp file, use --env-file)
+declare -a ENV_VARS=()
+declare -a SECRET_ENV_VARS=()
+
 generate_env_vars() {
     ENV_VARS=()
+    SECRET_ENV_VARS=()
 
     # Pass through environment variables
+    # Classify based on variable name (secrets go to SECRET_ENV_VARS)
     if [[ -n "$ENV_PASSTHROUGH" ]]; then
         while IFS= read -r var; do
             [[ -z "$var" ]] && continue
             if [[ -n "${!var:-}" ]]; then
-                ENV_VARS+=("-e" "${var}=${!var}")
+                if is_secret_var_name "$var"; then
+                    SECRET_ENV_VARS+=("${var}=${!var}")
+                else
+                    ENV_VARS+=("-e" "${var}=${!var}")
+                fi
             fi
         done <<< "$ENV_PASSTHROUGH"
     fi
@@ -1172,10 +1185,18 @@ generate_env_vars() {
                 account="${account//\$LOGNAME/${LOGNAME:-$USER}}"
             fi
 
-            # Skip if already set via passthrough
+            # Skip if already set via passthrough (check both arrays)
             local already_set=false
             if [[ ${#ENV_VARS[@]} -gt 0 ]]; then
                 for existing in "${ENV_VARS[@]}"; do
+                    if [[ "$existing" == "${var_name}="* ]]; then
+                        already_set=true
+                        break
+                    fi
+                done
+            fi
+            if [[ "$already_set" != "true" && ${#SECRET_ENV_VARS[@]} -gt 0 ]]; then
+                for existing in "${SECRET_ENV_VARS[@]}"; do
                     if [[ "$existing" == "${var_name}="* ]]; then
                         already_set=true
                         break
@@ -1191,7 +1212,8 @@ generate_env_vars() {
             # Query secret store (keychain/secret-tool) with fallback account support
             local value
             if value=$(query_secret_store_with_fallbacks "$service" "$account" "$var_name"); then
-                ENV_VARS+=("-e" "${var_name}=${value}")
+                # Keychain values are always secrets - add to SECRET_ENV_VARS
+                SECRET_ENV_VARS+=("${var_name}=${value}")
                 log_success "Loaded $var_name from secret store (service: $service)"
 
                 # Track file injection if specified (agent-agnostic credential injection)
@@ -1211,11 +1233,12 @@ generate_env_vars() {
     fi
 
     # Pass credential file injection metadata to entrypoint (agent-agnostic)
+    # This is metadata about file paths, not the secrets themselves
     if [[ -n "$CREDENTIAL_FILES" ]]; then
         ENV_VARS+=("-e" "KAPSIS_CREDENTIAL_FILES=${CREDENTIAL_FILES}")
     fi
 
-    # Set explicit environment variables
+    # Set explicit environment variables (non-secrets)
     ENV_VARS+=("-e" "KAPSIS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_PROJECT=$(basename "$PROJECT_PATH")")
     ENV_VARS+=("-e" "KAPSIS_SANDBOX_MODE=${SANDBOX_MODE}")
@@ -1278,6 +1301,7 @@ generate_env_vars() {
     fi
 
     # Process explicit set environment variables from config
+    # Classify based on variable name (secrets go to SECRET_ENV_VARS)
     if [[ -n "$ENV_SET" ]] && [[ "$ENV_SET" != "{}" ]]; then
         log_debug "Processing environment.set variables..."
         # Parse set variables as key=value pairs (yq props format: "KEY = value")
@@ -1292,11 +1316,53 @@ generate_env_vars() {
                 key=$(echo "$line" | cut -d'=' -f1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
                 value=$(echo "$line" | cut -d'=' -f2- | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
                 if [[ -n "$key" ]]; then
-                    ENV_VARS+=("-e" "${key}=${value}")
+                    if is_secret_var_name "$key"; then
+                        SECRET_ENV_VARS+=("${key}=${value}")
+                    else
+                        ENV_VARS+=("-e" "${key}=${value}")
+                    fi
                 fi
             done <<< "$set_vars"
         fi
     fi
+}
+
+#===============================================================================
+# SECRETS ENV FILE GENERATION
+#===============================================================================
+# Global variable for secrets env file path (for cleanup trap)
+SECRETS_ENV_FILE=""
+
+# Write secrets to a temporary env file for use with --env-file flag
+# This prevents secrets from appearing in process listings or bash -x traces
+# Falls back to inline -e flags if temp file creation fails
+write_secrets_env_file() {
+    # Skip if no secrets to write
+    if [[ ${#SECRET_ENV_VARS[@]} -eq 0 ]]; then
+        log_debug "No secrets to write to env file"
+        return 0
+    fi
+
+    # Try to create temp file (may fail in restricted environments)
+    if ! SECRETS_ENV_FILE=$(mktemp /tmp/kapsis-secrets-XXXXXX.env 2>/dev/null); then
+        log_warn "Cannot create secrets env-file in /tmp - falling back to inline env vars"
+        log_warn "Secrets may be visible in debug traces (bash -x) or process listings"
+        # Fallback: add secrets as inline -e flags (current behavior)
+        for secret_entry in "${SECRET_ENV_VARS[@]}"; do
+            ENV_VARS+=("-e" "$secret_entry")
+        done
+        SECRET_ENV_VARS=()  # Clear to prevent double-adding
+        return 0
+    fi
+
+    # Set restrictive permissions (owner read/write only)
+    chmod 600 "$SECRETS_ENV_FILE"
+
+    # Write secrets to file (one VAR=value per line)
+    printf '%s\n' "${SECRET_ENV_VARS[@]}" > "$SECRETS_ENV_FILE"
+
+    log_info "Created secrets env-file with ${#SECRET_ENV_VARS[@]} variable(s)"
+    log_debug "Secrets env-file: $SECRETS_ENV_FILE"
 }
 
 #===============================================================================
@@ -1524,8 +1590,13 @@ build_container_command() {
         fi
     fi
 
-    # Add environment variables
+    # Add environment variables (non-secrets via -e flags)
     CONTAINER_CMD+=("${ENV_VARS[@]}")
+
+    # Add secrets via --env-file (prevents exposure in bash -x traces and process listings)
+    if [[ -n "${SECRETS_ENV_FILE:-}" && -f "$SECRETS_ENV_FILE" ]]; then
+        CONTAINER_CMD+=("--env-file" "$SECRETS_ENV_FILE")
+    fi
 
     # Add image
     CONTAINER_CMD+=("$IMAGE_NAME")
@@ -1556,8 +1627,10 @@ main() {
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
         local exit_code=$?
-        # Clean up temp file if it exists
+        # Clean up temp files if they exist
         [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
+        [[ -n "${SECRETS_ENV_FILE:-}" && -f "$SECRETS_ENV_FILE" ]] && rm -f "$SECRETS_ENV_FILE"
+        [[ -n "${INLINE_SPEC_FILE:-}" && -f "$INLINE_SPEC_FILE" ]] && rm -f "$INLINE_SPEC_FILE"
         # Show completion message if not already shown
         if [[ "$_DISPLAY_COMPLETE_SHOWN" != "true" ]]; then
             if [[ $exit_code -eq 0 ]]; then
@@ -1568,7 +1641,7 @@ main() {
         fi
         display_cleanup
         # CRITICAL: Preserve original exit code - EXIT trap's return value becomes script's exit status
-        return $exit_code
+        return "$exit_code"
     }
 
     # Cleanup display on exit (restore cursor visibility, etc.)
@@ -1635,6 +1708,7 @@ main() {
 
     generate_volume_mounts
     generate_env_vars
+    write_secrets_env_file
     build_container_command
     status_phase "preparing" 20 "Container configured"
 
@@ -1669,6 +1743,22 @@ main() {
         local sanitized_cmd
         sanitized_cmd=$(sanitize_secrets "${CONTAINER_CMD[*]}")
         echo "$sanitized_cmd"
+
+        # Show secrets env-file info if secrets were configured
+        if [[ ${#SECRET_ENV_VARS[@]} -gt 0 ]]; then
+            echo ""
+            # List secret variable names (not values) for visibility
+            local secret_names=""
+            for secret_entry in "${SECRET_ENV_VARS[@]}"; do
+                local name="${secret_entry%%=*}"
+                if [[ -n "$secret_names" ]]; then
+                    secret_names="${secret_names}, ${name}"
+                else
+                    secret_names="${name}"
+                fi
+            done
+            log_info "Secrets (${#SECRET_ENV_VARS[@]}) will be passed via --env-file: $secret_names"
+        fi
         echo ""
         exit 0
     fi

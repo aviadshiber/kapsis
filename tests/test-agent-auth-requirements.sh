@@ -44,7 +44,7 @@ test_present_auth_succeeds() {
 }
 
 test_auth_in_passthrough() {
-    log_test "Testing auth key appears in passthrough"
+    log_test "Testing auth key appears in passthrough via --env-file"
 
     # Create a custom config that uses passthrough for auth key
     local test_config="$TEST_PROJECT/.kapsis-auth-passthrough-test.yaml"
@@ -65,12 +65,13 @@ EOF
     unset ANTHROPIC_API_KEY
     rm -f "$test_config"
 
-    # Key should be passed through (masked in output because it contains KEY)
-    assert_contains "$output" "ANTHROPIC_API_KEY=***MASKED***" "Auth key should be passed through (masked)"
+    # Key should be passed through via --env-file (Fix #135: prevent secret exposure)
+    assert_contains "$output" "--env-file" "Auth key should use --env-file"
+    assert_contains "$output" "ANTHROPIC_API_KEY" "Auth key name should be mentioned"
 }
 
 test_multiple_auth_keys() {
-    log_test "Testing multiple auth keys can be configured"
+    log_test "Testing multiple auth keys can be configured via --env-file"
 
     local test_config="$TEST_PROJECT/.kapsis-multi-auth-test.yaml"
     cat > "$test_config" << 'EOF'
@@ -93,10 +94,11 @@ EOF
     unset ANTHROPIC_API_KEY OPENAI_API_KEY CUSTOM_TOKEN
     rm -f "$test_config"
 
-    # All keys should be passed through
-    assert_contains "$output" "ANTHROPIC_API_KEY=***MASKED***" "ANTHROPIC_API_KEY should be passed"
-    assert_contains "$output" "OPENAI_API_KEY=***MASKED***" "OPENAI_API_KEY should be passed"
-    assert_contains "$output" "CUSTOM_TOKEN=***MASKED***" "CUSTOM_TOKEN should be passed"
+    # All keys should be passed through via --env-file (Fix #135)
+    assert_contains "$output" "--env-file" "Should use --env-file for secrets"
+    assert_contains "$output" "ANTHROPIC_API_KEY" "ANTHROPIC_API_KEY should be mentioned"
+    assert_contains "$output" "OPENAI_API_KEY" "OPENAI_API_KEY should be mentioned"
+    assert_contains "$output" "CUSTOM_TOKEN" "CUSTOM_TOKEN should be mentioned"
 }
 
 test_env_priority_over_keychain() {
@@ -123,12 +125,13 @@ EOF
     unset MY_API_KEY
     rm -f "$test_config"
 
-    # Passthrough should be used, not keychain lookup
-    assert_contains "$output" "MY_API_KEY=***MASKED***" "Env var should be used from passthrough"
+    # Passthrough should be used (via --env-file), not keychain lookup
+    assert_contains "$output" "--env-file" "Should use --env-file for secrets"
+    assert_contains "$output" "MY_API_KEY" "Env var should be mentioned"
 }
 
 test_secrets_masked_in_output() {
-    log_test "Testing secrets are masked in dry-run output"
+    log_test "Testing secrets are not shown in dry-run output (use --env-file)"
 
     local secret_key="sk-secret-value-do-not-show"
 
@@ -150,11 +153,12 @@ EOF
     unset MY_SECRET_KEY
     rm -f "$test_config"
 
-    # Actual secret value should NOT be visible
-    assert_not_contains "$output" "$secret_key" "Secret value should be masked"
+    # Actual secret value should NOT be visible (Fix #135)
+    assert_not_contains "$output" "$secret_key" "Secret value should not appear in output"
 
-    # Masking indicator should be shown (KEY in the name triggers masking)
-    assert_contains "$output" "MASKED" "Should show masking indicator"
+    # Secrets use --env-file, so secret is mentioned but not visible in command
+    assert_contains "$output" "--env-file" "Should use --env-file for secrets"
+    assert_contains "$output" "MY_SECRET_KEY" "Secret name should be mentioned"
 }
 
 test_various_key_patterns_masked() {
