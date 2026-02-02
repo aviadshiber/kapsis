@@ -774,6 +774,118 @@ test_print_security_summary() {
 }
 
 #===============================================================================
+# SECRET ENV-FILE TESTS
+#===============================================================================
+
+test_secrets_use_env_file_not_command_line() {
+    log_test "Secrets: API keys use --env-file, not -e flags in command"
+
+    local launch_script="$KAPSIS_ROOT/scripts/launch-agent.sh"
+    local project_dir="$TEST_TEMP_DIR/test-env-file"
+    mkdir -p "$project_dir"
+
+    # Initialize a minimal git repo for the test
+    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test" && git config commit.gpgsign false)
+
+    # Create a test config that passes through API keys
+    local test_config="$project_dir/agent-sandbox.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  passthrough:
+    - ANTHROPIC_API_KEY
+    - OPENAI_API_KEY
+EOF
+
+    # Set test API keys
+    export ANTHROPIC_API_KEY="sk-ant-test-secret-key-12345"
+    export OPENAI_API_KEY="sk-openai-test-secret-67890"
+
+    local output
+    output=$("$launch_script" "$project_dir" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    unset ANTHROPIC_API_KEY OPENAI_API_KEY
+
+    # Command line should NOT contain the actual secret values
+    assert_not_contains "$output" "sk-ant-test-secret-key-12345" \
+        "ANTHROPIC_API_KEY value should NOT appear in command line"
+    assert_not_contains "$output" "sk-openai-test-secret-67890" \
+        "OPENAI_API_KEY value should NOT appear in command line"
+
+    # Dry-run should mention secrets will be passed via --env-file
+    assert_contains "$output" "via --env-file" \
+        "Should mention secrets use --env-file"
+    assert_contains "$output" "ANTHROPIC_API_KEY" \
+        "Should list ANTHROPIC_API_KEY as a secret"
+    assert_contains "$output" "OPENAI_API_KEY" \
+        "Should list OPENAI_API_KEY as a secret"
+}
+
+test_non_secret_vars_still_use_inline_flags() {
+    log_test "Secrets: Non-secret vars still use -e flags"
+
+    local launch_script="$KAPSIS_ROOT/scripts/launch-agent.sh"
+    local project_dir="$TEST_TEMP_DIR/test-non-secret"
+    mkdir -p "$project_dir"
+
+    # Initialize a minimal git repo for the test
+    (cd "$project_dir" && git init -q && git config user.email "test@test.com" && git config user.name "Test" && git config commit.gpgsign false)
+
+    # Create a test config with non-secret vars
+    local test_config="$project_dir/agent-sandbox.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  passthrough:
+    - HOME
+    - USER
+  set:
+    MAVEN_OPTS: "-Xmx4g"
+EOF
+
+    export HOME="${HOME:-/home/test}"
+    export USER="${USER:-testuser}"
+
+    local output
+    output=$("$launch_script" "$project_dir" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    # Non-secret variables should appear as -e flags
+    assert_contains "$output" "-e MAVEN_OPTS=-Xmx4g" \
+        "MAVEN_OPTS should use -e flag (not secret)"
+}
+
+test_secret_classification_patterns() {
+    log_test "Secrets: Variables matching secret patterns are classified correctly"
+
+    # Source logging library to get is_secret_var_name
+    source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+
+    # These should be classified as secrets
+    local secret_vars=("ANTHROPIC_API_KEY" "OPENAI_API_KEY" "GITHUB_TOKEN" "AWS_SECRET_ACCESS_KEY" "DB_PASSWORD" "AUTH_TOKEN" "BEARER_TOKEN" "PRIVATE_KEY")
+
+    for var in "${secret_vars[@]}"; do
+        if ! is_secret_var_name "$var"; then
+            log_fail "$var should be classified as a secret"
+            return 1
+        fi
+    done
+
+    # These should NOT be classified as secrets
+    local non_secret_vars=("HOME" "USER" "PATH" "MAVEN_OPTS" "JAVA_HOME" "KAPSIS_AGENT_ID")
+
+    for var in "${non_secret_vars[@]}"; do
+        if is_secret_var_name "$var"; then
+            log_fail "$var should NOT be classified as a secret"
+            return 1
+        fi
+    done
+
+    return 0
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -846,6 +958,11 @@ main() {
 
     # Summary test
     run_test test_print_security_summary
+
+    # Secret env-file tests (Fix #135: prevent secret exposure in bash -x)
+    run_test test_secrets_use_env_file_not_command_line
+    run_test test_non_secret_vars_still_use_inline_flags
+    run_test test_secret_classification_patterns
 
     # Summary
     print_summary
