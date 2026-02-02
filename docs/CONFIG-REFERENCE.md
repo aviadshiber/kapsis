@@ -1256,6 +1256,9 @@ kapsis-launch-agent.log.5    # Oldest (will be deleted on next rotation)
 ### Debug Examples
 
 ```bash
+# Debug with bash -x (safe - secrets use env-file, not command line)
+bash -x ./scripts/launch-agent.sh ~/project --task "test"
+
 # Enable debug logging for troubleshooting
 KAPSIS_DEBUG=1 ./scripts/launch-agent.sh ~/project --task "test"
 
@@ -1269,6 +1272,10 @@ KAPSIS_LOG_TO_FILE=false ./scripts/launch-agent.sh ~/project --task "test"
 # View logs in real-time
 tail -f ~/.kapsis/logs/kapsis-launch-agent.log
 ```
+
+> **Note:** Kapsis uses `--env-file` to pass secrets to containers, preventing
+> exposure in `bash -x` traces. If `/tmp` is not writable, secrets fall back
+> to inline `-e` flags and a warning is logged. Avoid `bash -x` in this case.
 
 ### Log Format
 
