@@ -124,3 +124,76 @@ expand_path_vars() {
 
     echo "$path"
 }
+
+#-------------------------------------------------------------------------------
+# resolve_domain_ips <domain> [timeout]
+#
+# Resolves a domain to IPv4 addresses using available DNS tools.
+# Returns: newline-separated IPv4 addresses, empty on failure
+#
+# Used for DNS IP pinning - resolves domains on the trusted host before
+# container launch to prevent DNS manipulation attacks inside containers.
+#
+# Fallback chain: dig > host > nslookup > python3
+# Skips wildcard domains (cannot be pre-resolved).
+#-------------------------------------------------------------------------------
+resolve_domain_ips() {
+    local domain="$1"
+    local timeout="${2:-5}"
+    local ips=""
+
+    # Validate domain is not empty
+    [[ -z "$domain" ]] && return 0
+
+    # Skip wildcard domains — cannot be pre-resolved
+    [[ "$domain" == "*."* ]] && return 0
+
+    # Skip domains that are already IP addresses
+    if [[ "$domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "$domain"
+        return 0
+    fi
+
+    # Try dig (available on macOS + most Linux)
+    if command -v dig &>/dev/null; then
+        ips=$(dig +short +time="$timeout" +tries=1 A "$domain" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -10)
+    fi
+
+    # Try host
+    if [[ -z "$ips" ]] && command -v host &>/dev/null; then
+        # host command doesn't have a timeout option on all platforms
+        if [[ "$_KAPSIS_OS" == "Darwin" ]]; then
+            ips=$(host -t A "$domain" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -10)
+        else
+            ips=$(timeout "$timeout" host -t A "$domain" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+' | head -10)
+        fi
+    fi
+
+    # Try nslookup
+    if [[ -z "$ips" ]] && command -v nslookup &>/dev/null; then
+        if [[ "$_KAPSIS_OS" == "Darwin" ]]; then
+            ips=$(nslookup "$domain" 2>/dev/null | awk '/^Address: / {print $2}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -10)
+        else
+            ips=$(timeout "$timeout" nslookup "$domain" 2>/dev/null | awk '/^Address: / {print $2}' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' | head -10)
+        fi
+    fi
+
+    # Try python3 (always available on modern systems)
+    if [[ -z "$ips" ]] && command -v python3 &>/dev/null; then
+        ips=$(python3 -c "
+import socket, sys
+try:
+    results = socket.getaddrinfo('$domain', None, socket.AF_INET)
+    seen = set()
+    for r in results:
+        ip = r[4][0]
+        if ip not in seen:
+            seen.add(ip)
+            print(ip)
+except Exception:
+    sys.exit(0)
+" 2>/dev/null | head -10)
+    fi
+
+    echo "$ips"
+}
