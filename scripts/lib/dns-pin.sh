@@ -236,6 +236,7 @@ generate_pinned_dnsmasq_entries() {
         [[ -z "$domain" || -z "$ips" ]] && continue
 
         # Generate address= directive for each IP
+        # shellcheck disable=SC2086  # Intentional word-split: $ips contains space-separated IPv4 addresses
         for ip in $ips; do
             echo "address=/${domain}/${ip}"
         done
@@ -300,6 +301,7 @@ validate_pinned_entry() {
     [[ -z "$ips" ]] && return 1
 
     # Validate each IP
+    # shellcheck disable=SC2086  # Intentional word-split: $ips contains space-separated IPv4 addresses
     for ip in $ips; do
         if [[ ! "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             return 1

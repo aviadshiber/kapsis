@@ -42,6 +42,7 @@ _DNS_FILTER_STARTED=false
 # Associative array to track pinned domains (avoid duplicate rules)
 # Use declare -gA for global associative array (bash 4.2+)
 # The -g flag makes it global even when sourced from a function
+# Note: runs inside container only (bash 5+), associative arrays require bash 4.0+
 declare -gA _KAPSIS_PINNED_DOMAINS 2>/dev/null || declare -A _KAPSIS_PINNED_DOMAINS 2>/dev/null || true
 
 #===============================================================================
@@ -188,6 +189,7 @@ EOF
             _KAPSIS_PINNED_DOMAINS["$pin_domain"]=1
 
             # Generate address= directive for each IP
+            # shellcheck disable=SC2086  # Intentional word-split: $pin_ips contains space-separated IPs
             for ip in $pin_ips; do
                 echo "address=/${pin_domain}/${ip}" >> "$config_file"
             done

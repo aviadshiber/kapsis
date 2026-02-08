@@ -1339,8 +1339,9 @@ generate_env_vars() {
 #===============================================================================
 # SECRETS ENV FILE GENERATION
 #===============================================================================
-# Global variable for secrets env file path (for cleanup trap)
+# Global variables for temp file paths (for cleanup trap)
 SECRETS_ENV_FILE=""
+DNS_PIN_FILE=""
 
 # Write secrets to a temporary env file for use with --env-file flag
 # This prevents secrets from appearing in process listings or bash -x traces
