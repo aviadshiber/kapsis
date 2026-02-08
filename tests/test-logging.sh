@@ -1036,6 +1036,204 @@ test_log_tail() {
 }
 
 #===============================================================================
+# PER-INSTANCE LOGGING TESTS
+#===============================================================================
+
+test_log_reinit_with_agent_id() {
+    log_test "log_reinit_with_agent_id: creates agent-specific log file"
+
+    local agent_id="abc123"
+    local expected_file="$TEST_LOG_DIR/kapsis-${agent_id}.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "launch-agent"
+        log_info "Before reinit"
+        log_reinit_with_agent_id "$agent_id"
+        log_info "After reinit"
+    )
+
+    assert_file_exists "$expected_file" "Agent-specific log file should be created"
+    assert_file_contains "$expected_file" "Log reinitialized for agent: $agent_id" \
+        "Should log reinit message to new file"
+    assert_file_contains "$expected_file" "After reinit" \
+        "Messages after reinit should go to new file"
+}
+
+test_log_reinit_creates_symlink() {
+    log_test "log_reinit_with_agent_id: creates latest symlink"
+
+    local agent_id="def456"
+    local symlink_path="$TEST_LOG_DIR/kapsis-latest.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "launch-agent"
+        log_reinit_with_agent_id "$agent_id" "true"
+    )
+
+    assert_true "[[ -L '$symlink_path' ]]" "Latest symlink should exist"
+
+    # Verify symlink points to correct file
+    local target
+    target=$(readlink "$symlink_path")
+    assert_equals "kapsis-${agent_id}.log" "$target" "Symlink should point to agent log"
+}
+
+test_log_reinit_symlink_disabled() {
+    log_test "log_reinit_with_agent_id: symlink can be disabled"
+
+    # Clean any existing symlink first
+    rm -f "$TEST_LOG_DIR/kapsis-latest.log"
+
+    local agent_id="ghi789"
+    local symlink_path="$TEST_LOG_DIR/kapsis-latest.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "launch-agent"
+        log_reinit_with_agent_id "$agent_id" "false"
+    )
+
+    assert_false "[[ -L '$symlink_path' ]]" "Symlink should not exist when disabled"
+}
+
+test_log_reinit_prunes_old_logs() {
+    log_test "log_reinit_with_agent_id: prunes old logs"
+
+    # Create fake old log files with old modification times
+    local old_log1="$TEST_LOG_DIR/kapsis-old111.log"
+    local old_log2="$TEST_LOG_DIR/kapsis-old222.log"
+    echo "old log 1" > "$old_log1"
+    echo "old log 2" > "$old_log2"
+
+    # Set modification time to 10 days ago
+    # macOS uses different touch syntax than Linux
+    if [[ "$(uname)" == "Darwin" ]]; then
+        touch -t "$(date -v-10d +%Y%m%d%H%M.%S)" "$old_log1" "$old_log2"
+    else
+        touch -d "10 days ago" "$old_log1" "$old_log2"
+    fi
+
+    local agent_id="new333"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "launch-agent"
+        log_reinit_with_agent_id "$agent_id" "true" "7"  # Prune logs older than 7 days
+    )
+
+    assert_file_not_exists "$old_log1" "Old log 1 should be pruned"
+    assert_file_not_exists "$old_log2" "Old log 2 should be pruned"
+    assert_file_exists "$TEST_LOG_DIR/kapsis-${agent_id}.log" "New log should still exist"
+}
+
+test_log_reinit_prune_disabled() {
+    log_test "log_reinit_with_agent_id: prune can be disabled"
+
+    # Create fake old log file
+    local old_log="$TEST_LOG_DIR/kapsis-keepme.log"
+    echo "should keep" > "$old_log"
+
+    # Set modification time to 10 days ago
+    if [[ "$(uname)" == "Darwin" ]]; then
+        touch -t "$(date -v-10d +%Y%m%d%H%M.%S)" "$old_log"
+    else
+        touch -d "10 days ago" "$old_log"
+    fi
+
+    local agent_id="xyz999"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "launch-agent"
+        log_reinit_with_agent_id "$agent_id" "true" "0"  # Disable pruning
+    )
+
+    assert_file_exists "$old_log" "Old log should NOT be pruned when disabled"
+}
+
+test_log_reinit_without_agent_id_warns() {
+    log_test "log_reinit_with_agent_id: warns when called without agent ID"
+
+    local log_file="$TEST_LOG_DIR/kapsis-reinit-warn.log"
+
+    local result
+    result=$(
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "reinit-warn"
+        log_reinit_with_agent_id ""
+        echo "exit_code=$?"
+    )
+
+    assert_contains "$result" "exit_code=1" "Should return error code when agent ID missing"
+}
+
+test_log_reinit_multiple_times() {
+    log_test "log_reinit_with_agent_id: can be called multiple times"
+
+    local agent_id1="agent1"
+    local agent_id2="agent2"
+    local log1="$TEST_LOG_DIR/kapsis-${agent_id1}.log"
+    local log2="$TEST_LOG_DIR/kapsis-${agent_id2}.log"
+
+    (
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "launch-agent"
+        log_reinit_with_agent_id "$agent_id1"
+        log_info "Message to agent1"
+        log_reinit_with_agent_id "$agent_id2"
+        log_info "Message to agent2"
+    )
+
+    assert_file_exists "$log1" "First agent log should exist"
+    assert_file_exists "$log2" "Second agent log should exist"
+    assert_file_contains "$log1" "Message to agent1" "First message in first log"
+    assert_file_contains "$log2" "Message to agent2" "Second message in second log"
+}
+
+test_log_reinit_updates_log_get_file() {
+    log_test "log_reinit_with_agent_id: updates log_get_file path"
+
+    local agent_id="pathtest"
+    local expected_path="$TEST_LOG_DIR/kapsis-${agent_id}.log"
+
+    local result
+    result=$(
+        unset _KAPSIS_LOGGING_LOADED
+        export KAPSIS_LOG_DIR="$TEST_LOG_DIR"
+        export KAPSIS_LOG_CONSOLE="false"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+        log_init "launch-agent"
+        log_reinit_with_agent_id "$agent_id"
+        log_get_file
+    )
+
+    assert_equals "$expected_path" "$result" "log_get_file should return new path"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -1111,6 +1309,16 @@ main() {
     run_test test_log_error_sanitizes_secrets
     run_test test_log_success_sanitizes_secrets
     run_test test_log_debug_sanitizes_secrets
+
+    # Per-instance logging tests
+    run_test test_log_reinit_with_agent_id
+    run_test test_log_reinit_creates_symlink
+    run_test test_log_reinit_symlink_disabled
+    run_test test_log_reinit_prunes_old_logs
+    run_test test_log_reinit_prune_disabled
+    run_test test_log_reinit_without_agent_id_warns
+    run_test test_log_reinit_multiple_times
+    run_test test_log_reinit_updates_log_get_file
 
     # Summary
     print_summary

@@ -1016,6 +1016,16 @@ main() {
     # Must happen early so all subsequent network operations go through the filter
     init_dns_filtering_or_fail
 
+    # Protect DNS configuration files from agent modification
+    # Must happen after DNS filtering is set up, but before agent starts
+    if [[ "${KAPSIS_DNS_PIN_PROTECT_FILES:-false}" == "true" ]]; then
+        # Source dns-filter.sh if not already sourced (for protect_dns_files function)
+        if ! type protect_dns_files &>/dev/null; then
+            source "$KAPSIS_HOME/lib/dns-filter.sh"
+        fi
+        protect_dns_files
+    fi
+
     if [[ "$sandbox_mode" == "worktree" ]] || setup_worktree_git; then
         # Worktree mode: git is already set up by host
         log_info "Sandbox mode: worktree"

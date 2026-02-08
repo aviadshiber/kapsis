@@ -542,6 +542,51 @@ log_get_file() {
     echo "$_KAPSIS_LOG_FILE_PATH"
 }
 
+# Reinitialize logging with a new agent ID
+# This is used when the agent ID is generated after initial log_init
+# Arguments:
+#   $1 - Agent ID to include in log filename
+#   $2 - Optional: Create symlink to latest log (true|false, default: true)
+#   $3 - Optional: Prune old logs older than N days (default: 7, 0 to disable)
+log_reinit_with_agent_id() {
+    local agent_id="${1:-}"
+    local create_symlink="${2:-true}"
+    local prune_days="${3:-7}"
+
+    if [[ -z "$agent_id" ]]; then
+        log_warn "log_reinit_with_agent_id called without agent ID"
+        return 1
+    fi
+
+    # Set the new log file path using agent ID
+    local new_log_file="${KAPSIS_LOG_DIR}/kapsis-${agent_id}.log"
+
+    # Update the internal log file path
+    _KAPSIS_LOG_FILE_PATH="$new_log_file"
+
+    # Log the transition (to new file)
+    _log_raw "INFO" "=========================================="
+    _log_raw "INFO" "Log reinitialized for agent: ${agent_id}"
+    _log_raw "INFO" "Session: ${_KAPSIS_LOG_SESSION_ID}"
+    _log_raw "INFO" "Log file: ${_KAPSIS_LOG_FILE_PATH}"
+    _log_raw "INFO" "=========================================="
+
+    # Create symlink to latest log for convenience
+    if [[ "$create_symlink" == "true" ]]; then
+        local symlink_path="${KAPSIS_LOG_DIR}/kapsis-latest.log"
+        # Use -f to force overwrite existing symlink
+        ln -sf "kapsis-${agent_id}.log" "$symlink_path" 2>/dev/null || true
+    fi
+
+    # Prune old per-instance logs
+    if [[ "$prune_days" -gt 0 ]]; then
+        # Find and delete logs older than N days, but preserve the latest symlink
+        # Only match per-instance logs (6+ char hex IDs), not generic script logs
+        find "$KAPSIS_LOG_DIR" -maxdepth 1 -name "kapsis-*.log" -type f -mtime +"$prune_days" \
+            ! -name "kapsis-latest.log" -delete 2>/dev/null || true
+    fi
+}
+
 # Get the current session ID
 log_get_session() {
     echo "$_KAPSIS_LOG_SESSION_ID"

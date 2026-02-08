@@ -139,6 +139,36 @@ network:
   # When true, all DNS queries are logged to /tmp/kapsis-dns.log
   log_dns_queries: false
 
+  # DNS IP Pinning Configuration
+  #
+  # Resolves allowed domains on the trusted HOST before container launch and
+  # pins IPs inside the container to prevent DNS manipulation attacks.
+  #
+  # Attack vectors mitigated:
+  #   1. Agent kills dnsmasq, rewrites /etc/resolv.conf to bypass filtering
+  #   2. Upstream DNS poisoning returns malicious IPs for allowed domains
+  #   3. Agent modifies /etc/hosts after dnsmasq is killed
+  #
+  # Limitations:
+  #   - Wildcard domains (*.github.com) cannot be pre-resolved
+  #   - CDN domains with rotating IPs may cause stale pinning
+  #   - Requires network on host during container launch
+  dns_pinning:
+    # Enable DNS IP pinning (default: true for filtered mode)
+    enabled: true
+
+    # Fallback behavior when resolution fails:
+    #   dynamic - Continue with dynamic upstream DNS (degrades to current behavior)
+    #   abort   - Fail container launch if resolution fails
+    fallback: dynamic
+
+    # Timeout for DNS resolution in seconds
+    resolve_timeout: 5
+
+    # Protect /etc/resolv.conf and /etc/hosts from modification inside container
+    # Sets chmod 444 after DNS setup (agent runs as non-root, cannot override)
+    protect_dns_files: true
+
   # Allowed ports (documented for reference)
   # Note: Port filtering is NOT enforced - only DNS filtering
   # These are the typical ports that allowed services use
