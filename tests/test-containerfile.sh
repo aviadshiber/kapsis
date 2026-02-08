@@ -47,15 +47,15 @@ test_sdkman_auto_answer_configured() {
         "Containerfile should set sdkman_auto_answer=true"
 }
 
-test_sdkman_auto_update_disabled() {
-    log_test "Testing SDKMAN auto_update is disabled"
+test_sdkman_selfupdate_disabled() {
+    log_test "Testing SDKMAN selfupdate is disabled"
 
     local content
     content=$(cat "$CONTAINERFILE")
 
-    # Should change sdkman_auto_update from true to false
-    assert_contains "$content" "s/sdkman_auto_update=true/sdkman_auto_update=false/" \
-        "Containerfile should disable sdkman_auto_update"
+    # Should change sdkman_selfupdate_feature from true to false
+    assert_contains "$content" "s/sdkman_selfupdate_feature=true/sdkman_selfupdate_feature=false/" \
+        "Containerfile should disable sdkman_selfupdate_feature"
 }
 
 test_sdkman_config_conditional_on_java_enabled() {
@@ -103,8 +103,8 @@ test_sdkman_config_uses_sed_in_place() {
     # Should use sed -i for in-place editing
     assert_contains "$content" "sed -i 's/sdkman_auto_answer" \
         "Should use sed -i for sdkman_auto_answer"
-    assert_contains "$content" "sed -i 's/sdkman_auto_update" \
-        "Should use sed -i for sdkman_auto_update"
+    assert_contains "$content" "sed -i 's/sdkman_selfupdate_feature" \
+        "Should use sed -i for sdkman_selfupdate_feature"
 }
 
 test_sdkman_offline_mode_appended() {
@@ -194,8 +194,8 @@ test_sdkman_config_in_built_image() {
     # Check all three settings
     assert_contains "$output" "sdkman_auto_answer=true" \
         "SDKMAN config should have auto_answer=true"
-    assert_contains "$output" "sdkman_auto_update=false" \
-        "SDKMAN config should have auto_update=false"
+    assert_contains "$output" "sdkman_selfupdate_feature=false" \
+        "SDKMAN config should have selfupdate_feature=false"
     assert_contains "$output" "sdkman_offline_mode=true" \
         "SDKMAN config should have offline_mode=true"
 }
@@ -288,7 +288,7 @@ main() {
     # Static Containerfile analysis tests (no container required)
     run_test test_sdkman_offline_mode_block_exists
     run_test test_sdkman_auto_answer_configured
-    run_test test_sdkman_auto_update_disabled
+    run_test test_sdkman_selfupdate_disabled
     run_test test_sdkman_config_conditional_on_java_enabled
     run_test test_sdkman_config_checks_file_exists
     run_test test_sdkman_config_uses_sed_in_place
