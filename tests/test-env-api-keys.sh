@@ -73,10 +73,21 @@ test_keys_not_in_dry_run() {
 
     local secret_key="sk-super-secret-key-dont-show-this"
 
+    # Create a config with passthrough (not keychain) so key is picked up in CI
+    local test_config="$TEST_PROJECT/.kapsis-dry-run-test.yaml"
+    cat > "$test_config" <<'YAML'
+agent:
+  command: "echo test"
+environment:
+  passthrough:
+    - ANTHROPIC_API_KEY
+YAML
+
     export ANTHROPIC_API_KEY="$secret_key"
     local output
-    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
     unset ANTHROPIC_API_KEY
+    rm -f "$test_config"
 
     # The actual key value should not appear in output
     assert_not_contains "$output" "$secret_key" "Secret key should not appear in dry-run output"
@@ -88,10 +99,26 @@ test_secrets_use_env_file_pattern() {
     export ANTHROPIC_API_KEY="sk-test-key"
     export OPENAI_API_KEY="sk-openai-test"
 
+    # Create a config with passthrough (not keychain) so keys are picked up in CI
+    local test_config="$TEST_PROJECT/.kapsis-env-file-test.yaml"
+    cat > "$test_config" <<'YAML'
+agent:
+  command: "echo test"
+  workdir: /workspace
+environment:
+  passthrough:
+    - ANTHROPIC_API_KEY
+    - OPENAI_API_KEY
+resources:
+  memory: 2g
+  cpus: 2
+YAML
+
     local output
-    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset ANTHROPIC_API_KEY OPENAI_API_KEY
+    rm -f "$test_config"
 
     # Should mention secrets will use env-file
     assert_contains "$output" "via --env-file" "Should mention secrets use --env-file"

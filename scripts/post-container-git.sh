@@ -35,6 +35,9 @@ source "$POST_GIT_SCRIPT_DIR/lib/constants.sh"
 # Source git remote utilities (provides generate_pr_url, is_github_repo, etc.)
 source "$POST_GIT_SCRIPT_DIR/lib/git-remote-utils.sh"
 
+# Source file sanitization library (provides sanitize_staged_files)
+source "$POST_GIT_SCRIPT_DIR/lib/sanitize-files.sh"
+
 # Note: logging functions are provided by lib/logging.sh
 # Note: status functions are provided by lib/status.sh
 # Note: constants are provided by lib/constants.sh
@@ -295,6 +298,10 @@ commit_changes() {
     # This catches literal ~ paths, .kapsis/ files, and accidental submodules
     validate_staged_files "$worktree_path"
 
+    # Sanitize staged files - strip dangerous invisible characters
+    # This prevents Trojan Source attacks (CVE-2021-42574) and similar exploits
+    sanitize_staged_files "$worktree_path"
+
     # Show what's being committed
     echo ""
     echo "┌────────────────────────────────────────────────────────────────────┐"
@@ -328,6 +335,11 @@ EOF
     # Append co-author trailers if present
     if [[ -n "$coauthor_trailers" ]]; then
         full_message+=$'\n\n'"${coauthor_trailers}"
+    fi
+
+    # Append sanitization trailer if files were cleaned
+    if [[ -n "${KAPSIS_SANITIZE_SUMMARY:-}" ]]; then
+        full_message+=$'\n\n'"${KAPSIS_SANITIZE_SUMMARY}"
     fi
 
     # Commit
