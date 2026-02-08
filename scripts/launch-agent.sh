@@ -443,6 +443,13 @@ parse_args() {
         AGENT_ID_AUTO_GENERATED=true
     fi
 
+    # Validate agent ID format before using it for log file paths
+    # (must happen before log_reinit_with_agent_id to avoid path traversal in filenames)
+    if [[ ! "$AGENT_ID" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log_error "Invalid agent ID format: $AGENT_ID (must match [a-zA-Z0-9_-]+)"
+        exit 1
+    fi
+
     # Reinitialize logging with agent-specific log file
     # This prevents log interleaving when running parallel agents
     log_reinit_with_agent_id "$AGENT_ID"
