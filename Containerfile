@@ -218,7 +218,7 @@ RUN if [ "$ENABLE_JAVA" = "true" ] && [ "$ENABLE_MAVEN" = "true" ]; then \
 # This eliminates "INTERNET NOT REACHABLE!" warnings at runtime
 RUN if [ "$ENABLE_JAVA" = "true" ] && [ -f "$SDKMAN_DIR/etc/config" ]; then \
         sed -i 's/sdkman_auto_answer=false/sdkman_auto_answer=true/' $SDKMAN_DIR/etc/config && \
-        sed -i 's/sdkman_auto_update=true/sdkman_auto_update=false/' $SDKMAN_DIR/etc/config && \
+        sed -i 's/sdkman_selfupdate_feature=true/sdkman_selfupdate_feature=false/' $SDKMAN_DIR/etc/config && \
         echo 'sdkman_offline_mode=true' >> $SDKMAN_DIR/etc/config; \
     fi
 
