@@ -6,6 +6,9 @@
 # where command syntax differs between platforms.
 #===============================================================================
 
+[[ -n "${_KAPSIS_COMPAT_LOADED:-}" ]] && return 0
+_KAPSIS_COMPAT_LOADED=1
+
 # Detect OS once at source time
 _KAPSIS_OS="$(uname)"
 
@@ -179,11 +182,12 @@ resolve_domain_ips() {
     fi
 
     # Try python3 (always available on modern systems)
+    # Security: pass domain as sys.argv[1] to prevent command injection
     if [[ -z "$ips" ]] && command -v python3 &>/dev/null; then
         ips=$(python3 -c "
 import socket, sys
 try:
-    results = socket.getaddrinfo('$domain', None, socket.AF_INET)
+    results = socket.getaddrinfo(sys.argv[1], None, socket.AF_INET)
     seen = set()
     for r in results:
         ip = r[4][0]
@@ -192,7 +196,7 @@ try:
             print(ip)
 except Exception:
     sys.exit(0)
-" 2>/dev/null | head -10)
+" "$domain" 2>/dev/null | head -10)
     fi
 
     echo "$ips"
