@@ -583,6 +583,16 @@ network:
     protect_dns_files: true
 ```
 
+### Defense-in-Depth Layers
+
+DNS filtering uses multiple reinforcing protections:
+
+1. **Host-mounted resolv.conf** (`/etc/resolv.conf:ro`) — Mounted read-only from the host, cannot be modified inside the container by any means
+2. **dnsmasq with pinned IPs** — Resolves allowlist domains on trusted host, pins IPs via `address=` directives
+3. **`--add-host` flags** — Belt-and-suspenders: pinned IPs also written to `/etc/hosts` by Podman at container creation
+4. **File protection** — `chmod 444` on `/etc/hosts`, `chmod 400` on dnsmasq PID/config files
+5. **dnsmasq watchdog** — Background process restarts dnsmasq if killed; provides audit trail of tampering
+
 ### Limitations
 
 | Limitation | Description | Mitigation |

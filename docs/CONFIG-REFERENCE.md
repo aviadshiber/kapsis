@@ -270,7 +270,7 @@ security:
     noexec_tmp: false
 
     # Make container root (/usr, /bin) read-only (/workspace remains writable)
-    # Default: true for paranoid only
+    # Default: true for strict/paranoid
     readonly_root: false
 
   # Linux Security Modules (AppArmor/SELinux)

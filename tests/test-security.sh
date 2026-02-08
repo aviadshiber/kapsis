@@ -476,6 +476,48 @@ test_readonly_root_args() {
         "Should mount writable /run"
 }
 
+test_dac_override_not_in_caps() {
+    log_test "Capabilities: DAC_OVERRIDE is not granted"
+
+    reset_security_env
+    export KAPSIS_SECURITY_PROFILE="standard"
+
+    local args
+    args=$(generate_capability_args)
+
+    assert_not_contains "$args" "DAC_OVERRIDE" \
+        "DAC_OVERRIDE should not be in capability list"
+}
+
+test_readonly_root_enabled_for_strict() {
+    log_test "Read-only root: enabled for strict profile"
+
+    reset_security_env
+    export KAPSIS_SECURITY_PROFILE="strict"
+
+    if ! should_use_readonly_root; then
+        log_fail "Strict profile should enable read-only root"
+        return 1
+    fi
+
+    return 0
+}
+
+test_readonly_root_args_include_home() {
+    log_test "Read-only root: generates writable /home/developer tmpfs"
+
+    reset_security_env
+    export KAPSIS_SECURITY_PROFILE="strict"
+
+    local args
+    args=$(generate_readonly_root_args)
+
+    assert_contains "$args" "--read-only" \
+        "Should include --read-only flag"
+    assert_contains "$args" "/home/developer:" \
+        "Should mount writable /home/developer"
+}
+
 #===============================================================================
 # LSM DETECTION TESTS
 #===============================================================================
@@ -933,6 +975,9 @@ main() {
     run_test test_readonly_root_enabled_for_paranoid
     run_test test_readonly_root_override
     run_test test_readonly_root_args
+    run_test test_dac_override_not_in_caps
+    run_test test_readonly_root_enabled_for_strict
+    run_test test_readonly_root_args_include_home
 
     # LSM tests
     run_test test_lsm_detection

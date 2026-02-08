@@ -392,7 +392,6 @@ Currently, Kapsis does not explicitly drop capabilities. Rootless Podman provide
 | Capability | Reason |
 |------------|--------|
 | `CAP_CHOWN` | File ownership (build artifacts) |
-| `CAP_DAC_OVERRIDE` | File permission bypass (limited) |
 | `CAP_FOWNER` | File owner operations |
 | `CAP_FSETID` | Set-ID bits on files |
 | `CAP_KILL` | Signal handling (process management) |
@@ -408,7 +407,6 @@ Currently, Kapsis does not explicitly drop capabilities. Rootless Podman provide
 CONTAINER_CMD+=(
     "--cap-drop=ALL"
     "--cap-add=CHOWN"
-    "--cap-add=DAC_OVERRIDE"
     "--cap-add=FOWNER"
     "--cap-add=FSETID"
     "--cap-add=KILL"
@@ -524,7 +522,7 @@ CONTAINER_CMD+=(
 security:
   filesystem:
     # Read-only root filesystem
-    # Default: false (enable when stable)
+    # Default: true for strict/paranoid profiles
     readonly_root: false
 
     # Temporary directory size limits
@@ -1108,8 +1106,8 @@ security:
   # Filesystem hardening
   filesystem:
     # Read-only root filesystem
-    # Default: false
-    readonly_root: false
+    # Default: true for strict/paranoid
+    readonly_root: true
 
     # Apply noexec to temporary directories
     # Default: true
@@ -1184,7 +1182,7 @@ Pre-defined security profiles for convenience:
 |---------|-------------|----------|
 | `minimal` | Only userns + basic limits | Development/testing |
 | `standard` | Capabilities + no-new-privs + limits | Production default |
-| `strict` | Standard + seccomp + noexec | High security |
+| `strict` | Standard + seccomp + noexec + readonly root | High security |
 | `paranoid` | Strict + readonly root + LSM | Maximum security |
 
 #### Profile Definitions
@@ -1209,6 +1207,7 @@ profiles:
     process.pids_limit: 500
     seccomp.enabled: true
     seccomp.profile: kapsis-agent-base
+    filesystem.readonly_root: true
     filesystem.noexec_tmp: true
     filesystem.noexec_configs: true
 
@@ -1523,7 +1522,7 @@ podman run \
     --rm -it \
     --userns=keep-id \
     --cap-drop=ALL \
-    --cap-add=CHOWN,DAC_OVERRIDE,FOWNER,FSETID,KILL,SETGID,SETUID,SYS_NICE \
+    --cap-add=CHOWN,FOWNER,FSETID,KILL,SETGID,SETUID,SYS_NICE \
     --security-opt no-new-privileges:true \
     --security-opt seccomp=/path/to/kapsis-agent-base.json \
     --pids-limit=1000 \

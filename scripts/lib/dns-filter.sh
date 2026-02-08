@@ -425,6 +425,12 @@ is_dns_filter_running() {
 setup_resolv_conf() {
     local resolv_conf="/etc/resolv.conf"
 
+    # Skip if resolv.conf is mounted read-only from host
+    if [[ "${KAPSIS_RESOLV_CONF_MOUNTED:-false}" == "true" ]]; then
+        log_info "DNS resolution: using host-mounted resolv.conf (read-only)"
+        return 0
+    fi
+
     log_info "Configuring DNS resolution to use local filter..."
 
     # Backup original resolv.conf
@@ -447,6 +453,11 @@ EOF
 restore_resolv_conf() {
     local resolv_conf="/etc/resolv.conf"
     local backup="${resolv_conf}.kapsis-backup"
+
+    # Nothing to restore if host manages the file
+    if [[ "${KAPSIS_RESOLV_CONF_MOUNTED:-false}" == "true" ]]; then
+        return 0
+    fi
 
     if [[ -f "$backup" ]]; then
         mv "$backup" "$resolv_conf" 2>/dev/null || true
@@ -625,11 +636,94 @@ protect_dns_files() {
         fi
     fi
 
+    # Protect dnsmasq PID file (prevents targeted signal attacks)
+    if [[ -f "${KAPSIS_DNS_PID_FILE}" ]]; then
+        if chmod 400 "${KAPSIS_DNS_PID_FILE}" 2>/dev/null; then
+            log_debug "Protected ${KAPSIS_DNS_PID_FILE} (owner read-only)"
+            ((protected++))
+        else
+            log_warn "Cannot protect ${KAPSIS_DNS_PID_FILE}"
+            ((failed++))
+        fi
+    fi
+
+    # Protect dnsmasq config file (prevents SIGHUP config reload attacks)
+    if [[ -f "${KAPSIS_DNS_CONFIG_FILE}" ]]; then
+        if chmod 400 "${KAPSIS_DNS_CONFIG_FILE}" 2>/dev/null; then
+            log_debug "Protected ${KAPSIS_DNS_CONFIG_FILE} (owner read-only)"
+            ((protected++))
+        else
+            log_warn "Cannot protect ${KAPSIS_DNS_CONFIG_FILE}"
+            ((failed++))
+        fi
+    fi
+
     if [[ "$protected" -gt 0 ]]; then
         log_success "DNS files protected ($protected file(s) set to read-only)"
     fi
 
     # Return success even if some files couldn't be protected
     # (the chmod failure is not fatal, just reduces security)
+    return 0
+}
+
+#===============================================================================
+# DNSMASQ WATCHDOG
+#===============================================================================
+
+# Start a background watchdog that monitors and restarts dnsmasq if killed.
+# Must be called AFTER start_dns_filter() and protect_dns_files().
+#
+# The watchdog runs as a background process. Since the agent shares the same
+# UID, it can theoretically kill the watchdog too. This is defense-in-depth:
+# it raises attack complexity and provides audit trail evidence.
+#
+# Arguments:
+#   $1 - Check interval in seconds (default: 10)
+#
+# Returns: 0 (watchdog started in background)
+start_dns_watchdog() {
+    local interval="${1:-10}"
+    local config_file="${KAPSIS_DNS_CONFIG_FILE}"
+    local pid_file="${KAPSIS_DNS_PID_FILE}"
+
+    log_info "Starting DNS watchdog (interval: ${interval}s)..."
+
+    (
+        while true; do
+            sleep "$interval"
+
+            # Check if dnsmasq is still running
+            if [[ -f "$pid_file" ]]; then
+                local pid
+                pid=$(cat "$pid_file" 2>/dev/null || echo "")
+                if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+                    continue  # Still running
+                fi
+            fi
+
+            # dnsmasq is NOT running - attempt restart
+            echo "[DNS-WATCHDOG] WARNING: dnsmasq not running - restarting..." >&2
+
+            if [[ ! -f "$config_file" ]]; then
+                echo "[DNS-WATCHDOG] ERROR: Config file missing: $config_file" >&2
+                continue
+            fi
+
+            if dnsmasq --conf-file="$config_file" --pid-file="$pid_file" 2>/dev/null; then
+                sleep 0.5
+                # Re-protect the PID file after restart
+                chmod 400 "$pid_file" 2>/dev/null || true
+                echo "[DNS-WATCHDOG] dnsmasq restarted successfully" >&2
+            else
+                echo "[DNS-WATCHDOG] ERROR: Failed to restart dnsmasq" >&2
+            fi
+        done
+    ) &
+
+    local watchdog_pid=$!
+    log_debug "DNS watchdog started (PID: $watchdog_pid)"
+    echo "$watchdog_pid" > /tmp/kapsis-dns-watchdog.pid 2>/dev/null || true
+
     return 0
 }

@@ -1342,6 +1342,7 @@ generate_env_vars() {
 # Global variables for temp file paths (for cleanup trap)
 SECRETS_ENV_FILE=""
 DNS_PIN_FILE=""
+RESOLV_CONF_FILE=""
 
 # Write secrets to a temporary env file for use with --env-file flag
 # This prevents secrets from appearing in process listings or bash -x traces
@@ -1611,6 +1612,17 @@ build_container_command() {
                 fi
             fi
 
+            # Mount resolv.conf from host as read-only (truly immutable from container)
+            # This prevents the agent from modifying DNS configuration even if dnsmasq is killed
+            RESOLV_CONF_FILE=$(mktemp "${TMPDIR:-/tmp}/kapsis-resolv-XXXXXX")
+            cat > "$RESOLV_CONF_FILE" <<'RESOLV_EOF'
+# Kapsis DNS Filter - managed by host (read-only mount)
+nameserver 127.0.0.1
+RESOLV_EOF
+            chmod 444 "$RESOLV_CONF_FILE"
+            CONTAINER_CMD+=("-v" "${RESOLV_CONF_FILE}:/etc/resolv.conf:ro")
+            CONTAINER_CMD+=("-e" "KAPSIS_RESOLV_CONF_MOUNTED=true")
+
             # Protect DNS files inside container
             if [[ "${NETWORK_DNS_PIN_PROTECT:-true}" == "true" ]]; then
                 CONTAINER_CMD+=("-e" "KAPSIS_DNS_PIN_PROTECT_FILES=true")
@@ -1685,6 +1697,7 @@ main() {
         [[ -n "${SECRETS_ENV_FILE:-}" && -f "$SECRETS_ENV_FILE" ]] && rm -f "$SECRETS_ENV_FILE"
         [[ -n "${INLINE_SPEC_FILE:-}" && -f "$INLINE_SPEC_FILE" ]] && rm -f "$INLINE_SPEC_FILE"
         [[ -n "${DNS_PIN_FILE:-}" && -f "$DNS_PIN_FILE" ]] && rm -f "$DNS_PIN_FILE"
+        [[ -n "${RESOLV_CONF_FILE:-}" && -f "$RESOLV_CONF_FILE" ]] && rm -f "$RESOLV_CONF_FILE"
         # Show completion message if not already shown
         if [[ "$_DISPLAY_COMPLETE_SHOWN" != "true" ]]; then
             if [[ $exit_code -eq 0 ]]; then

@@ -1078,6 +1078,14 @@ main() {
         setup_status_tracking
     fi
 
+    # Start DNS watchdog (restarts dnsmasq if killed by agent)
+    # Must happen after DNS setup and protection, before exec into agent
+    if [[ "${KAPSIS_NETWORK_MODE:-}" == "filtered" ]]; then
+        if type start_dns_watchdog &>/dev/null; then
+            start_dns_watchdog
+        fi
+    fi
+
     # Execute command
     log_debug "About to execute command: $*"
     if [[ $# -eq 0 ]]; then
