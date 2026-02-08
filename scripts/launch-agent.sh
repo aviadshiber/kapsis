@@ -103,8 +103,11 @@ source "$SCRIPT_DIR/lib/constants.sh"
 # Source security library (provides generate_security_args, validate_security_config, etc.)
 source "$SCRIPT_DIR/lib/security.sh"
 
-# Source cross-platform compatibility helpers (provides expand_path_vars, etc.)
+# Source cross-platform compatibility helpers (provides expand_path_vars, resolve_domain_ips, etc.)
 source "$SCRIPT_DIR/lib/compat.sh"
+
+# Source DNS pinning library (provides resolve_allowlist_domains, generate_add_host_args, etc.)
+source "$SCRIPT_DIR/lib/dns-pin.sh"
 
 # Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
 NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
@@ -775,6 +778,12 @@ parse_config() {
 
         # Parse DNS logging setting
         NETWORK_LOG_DNS=$(yq eval '.network.log_dns_queries // "false"' "$CONFIG_FILE" 2>/dev/null || echo "false")
+
+        # Parse DNS pinning settings
+        NETWORK_DNS_PIN_ENABLED=$(yq eval '.network.dns_pinning.enabled // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        NETWORK_DNS_PIN_FALLBACK=$(yq eval '.network.dns_pinning.fallback // "dynamic"' "$CONFIG_FILE" 2>/dev/null || echo "dynamic")
+        NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
+        NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
 
         # Parse security capabilities from config
         # These are added to KAPSIS_CAPS_ADD for the capability generation
@@ -1562,6 +1571,48 @@ build_container_command() {
             if [[ "${NETWORK_LOG_DNS:-false}" == "true" ]]; then
                 CONTAINER_CMD+=("-e" "KAPSIS_DNS_LOG_QUERIES=true")
             fi
+
+            # DNS IP Pinning: resolve domains on host and pin IPs in container
+            # This prevents DNS manipulation attacks inside the container
+            if [[ "${NETWORK_DNS_PIN_ENABLED:-true}" == "true" ]] && [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
+                log_info "DNS pinning: resolving allowlist domains on host..."
+                local resolved_data
+                if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
+                    if [[ -n "$resolved_data" ]]; then
+                        # Create temp file for pinned DNS (cleaned up in _cleanup_with_completion)
+                        DNS_PIN_FILE=$(mktemp)
+                        if write_pinned_dns_file "$DNS_PIN_FILE" "$resolved_data"; then
+                            local pinned_count
+                            pinned_count=$(count_pinned_domains "$DNS_PIN_FILE")
+                            log_success "DNS pinning: pinned $pinned_count domain(s)"
+
+                            # Mount pinned file read-only in container
+                            CONTAINER_CMD+=("-v" "${DNS_PIN_FILE}:/etc/kapsis/pinned-dns.conf:ro")
+
+                            # Generate --add-host flags for belt-and-suspenders protection
+                            local add_host_args
+                            mapfile -t add_host_args < <(generate_add_host_args "$DNS_PIN_FILE")
+                            if [[ ${#add_host_args[@]} -gt 0 ]]; then
+                                CONTAINER_CMD+=("${add_host_args[@]}")
+                            fi
+
+                            # Tell container that pinning is enabled
+                            CONTAINER_CMD+=("-e" "KAPSIS_DNS_PIN_ENABLED=true")
+                        fi
+                    fi
+                else
+                    if [[ "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" == "abort" ]]; then
+                        log_error "DNS pinning failed with fallback=abort - aborting container launch"
+                        exit 1
+                    fi
+                    log_warn "DNS pinning failed - continuing with dynamic DNS (degraded security)"
+                fi
+            fi
+
+            # Protect DNS files inside container
+            if [[ "${NETWORK_DNS_PIN_PROTECT:-true}" == "true" ]]; then
+                CONTAINER_CMD+=("-e" "KAPSIS_DNS_PIN_PROTECT_FILES=true")
+            fi
             ;;
         open)
             log_warn "Network: unrestricted (consider --network-mode=none for security)"
@@ -1631,6 +1682,7 @@ main() {
         [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
         [[ -n "${SECRETS_ENV_FILE:-}" && -f "$SECRETS_ENV_FILE" ]] && rm -f "$SECRETS_ENV_FILE"
         [[ -n "${INLINE_SPEC_FILE:-}" && -f "$INLINE_SPEC_FILE" ]] && rm -f "$INLINE_SPEC_FILE"
+        [[ -n "${DNS_PIN_FILE:-}" && -f "$DNS_PIN_FILE" ]] && rm -f "$DNS_PIN_FILE"
         # Show completion message if not already shown
         if [[ "$_DISPLAY_COMPLETE_SHOWN" != "true" ]]; then
             if [[ $exit_code -eq 0 ]]; then

@@ -475,6 +475,43 @@ network:
   # Default: false
   log_dns_queries: false
 
+  #=============================================================================
+  # DNS IP PINNING (security enhancement for filtered mode)
+  #=============================================================================
+  # Resolves allowed domains on the trusted HOST before container launch and
+  # pins those IPs inside the container via dnsmasq address=/ directives and
+  # Podman --add-host flags.
+  #
+  # Attack vectors mitigated:
+  #   1. Agent kills dnsmasq, rewrites /etc/resolv.conf to bypass filtering
+  #   2. Upstream DNS poisoning returns malicious IPs for allowed domains
+  #   3. Agent modifies /etc/hosts after dnsmasq is killed
+  #
+  # Limitations:
+  #   - Wildcard domains (*.github.com) cannot be pre-resolved - they fall
+  #     back to dynamic DNS and emit a security warning
+  #   - CDN domains with rotating IPs may cause stale pinning
+  #   - Requires network on host during container launch
+  #
+  dns_pinning:
+    # Enable DNS IP pinning (default: true for filtered mode)
+    enabled: true
+
+    # Fallback behavior when resolution fails:
+    #   dynamic - Continue with dynamic upstream DNS (degrades to current behavior)
+    #   abort   - Fail container launch if resolution fails
+    # Default: dynamic
+    fallback: dynamic
+
+    # Timeout for DNS resolution in seconds (1-60)
+    # Default: 5
+    resolve_timeout: 5
+
+    # Protect /etc/resolv.conf and /etc/hosts from modification inside container
+    # Sets chmod 444 after DNS setup (agent runs as non-root, cannot override)
+    # Default: true
+    protect_dns_files: true
+
 #===============================================================================
 # GIT HOOKS
 #===============================================================================
@@ -1067,6 +1104,8 @@ network:
 - **Fail-safe initialization**: Container aborts if DNS filtering fails to start
 - **Verification**: DNS filtering is verified before agent execution
 - **Query logging**: Enable `log_dns_queries: true` for debugging
+- **DNS IP pinning** (new): Resolves domains on the host before container launch and pins IPs to prevent DNS manipulation inside the container
+- **DNS file protection**: `/etc/resolv.conf` and `/etc/hosts` are set to read-only after DNS setup
 
 ### Debugging Network Issues
 
