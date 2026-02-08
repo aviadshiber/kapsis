@@ -73,9 +73,11 @@ test_keys_not_in_dry_run() {
 
     local secret_key="sk-super-secret-key-dont-show-this"
 
+    # Use test agent which has passthrough config (not keychain) so the key
+    # is actually picked up from the environment without requiring a keychain
     export ANTHROPIC_API_KEY="$secret_key"
     local output
-    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent test --task "test" --dry-run 2>&1) || true
     unset ANTHROPIC_API_KEY
 
     # The actual key value should not appear in output
@@ -85,11 +87,13 @@ test_keys_not_in_dry_run() {
 test_secrets_use_env_file_pattern() {
     log_test "Testing secrets mention --env-file in dry-run"
 
+    # Use test agent which has passthrough config for both keys (not keychain)
+    # so secrets are actually detected without requiring a keychain
     export ANTHROPIC_API_KEY="sk-test-key"
     export OPENAI_API_KEY="sk-openai-test"
 
     local output
-    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent test --task "test" --dry-run 2>&1) || true
 
     unset ANTHROPIC_API_KEY OPENAI_API_KEY
 
