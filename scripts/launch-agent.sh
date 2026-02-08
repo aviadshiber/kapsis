@@ -1354,7 +1354,8 @@ write_secrets_env_file() {
     fi
 
     # Try to create temp file (may fail in restricted environments)
-    if ! SECRETS_ENV_FILE=$(mktemp /tmp/kapsis-secrets-XXXXXX.env 2>/dev/null); then
+    # Note: BSD mktemp (macOS) requires X's at the end of the template - no suffix allowed
+    if ! SECRETS_ENV_FILE=$(mktemp "${TMPDIR:-/tmp}/kapsis-secrets-XXXXXX" 2>/dev/null); then
         log_warn "Cannot create secrets env-file in /tmp - falling back to inline env vars"
         log_warn "Secrets may be visible in debug traces (bash -x) or process listings"
         # Fallback: add secrets as inline -e flags (current behavior)
@@ -1792,8 +1793,9 @@ main() {
     if [[ "$DRY_RUN" == "true" ]]; then
         log_info "DRY RUN - Command that would be executed:"
         echo ""
-        # Secrets are passed via --env-file, not visible in command line
-        echo "${CONTAINER_CMD[*]}"
+        # Sanitize secrets as defense-in-depth (secrets normally go via --env-file,
+        # but fallback path may add them as inline -e flags)
+        echo "$(sanitize_secrets "${CONTAINER_CMD[*]}")"
 
         # Show secrets env-file info if secrets were configured
         if [[ ${#SECRET_ENV_VARS[@]} -gt 0 ]]; then
