@@ -483,9 +483,6 @@ _sanitize_scan_and_clean_file() {
         categories+=("${bom_count}x bom")
     fi
 
-    # Check for homoglyphs (warn only)
-    _sanitize_check_homoglyphs "$full_path" || true
-
     # Re-stage if file was modified
     if [[ $total_removed -gt 0 ]]; then
         local cat_str
@@ -646,7 +643,11 @@ sanitize_staged_files() {
                 total_chars=$((total_chars + count))
                 total_files=$((total_files + 1))
             fi
-            # Homoglyph check is done inside _sanitize_scan_and_clean_file
+
+            # Also count homoglyphs for status JSON reporting
+            if _sanitize_check_homoglyphs "$full_path"; then
+                homoglyph_count=$((homoglyph_count + 1))
+            fi
         else
             # Only check for homoglyphs (warn-only)
             if _sanitize_check_homoglyphs "$full_path"; then
