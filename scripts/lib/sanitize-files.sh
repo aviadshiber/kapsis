@@ -170,6 +170,7 @@ _sanitize_strip_bidi() {
     local count=0
     local temp_file
     temp_file=$(mktemp)
+    trap "rm -f '$temp_file'" RETURN
 
     # Define patterns as variables for sed substitution
     local p1=$'\xe2\x80\xaa' p2=$'\xe2\x80\xab' p3=$'\xe2\x80\xac'
@@ -179,7 +180,7 @@ _sanitize_strip_bidi() {
     # Count and strip each BiDi pattern
     for pattern in "$p1" "$p2" "$p3" "$p4" "$p5" "$p6" "$p7" "$p8" "$p9"; do
         local matches
-        matches=$(LC_ALL=C grep -c "$pattern" "$file" 2>/dev/null) || matches=0
+        matches=$(LC_ALL=C grep -o "$pattern" "$file" 2>/dev/null | wc -l) || matches=0
         count=$((count + matches))
     done
 
@@ -191,8 +192,6 @@ _sanitize_strip_bidi() {
             -e "s/$p7//g" -e "s/$p8//g" -e "s/$p9//g" \
             "$file" > "$temp_file"
         mv "$temp_file" "$file"
-    else
-        rm -f "$temp_file"
     fi
 
     echo "$count"
@@ -206,6 +205,7 @@ _sanitize_strip_zero_width() {
     local count=0
     local temp_file
     temp_file=$(mktemp)
+    trap "rm -f '$temp_file'" RETURN
 
     # Define patterns as variables
     local p1=$'\xe2\x80\x8b' p2=$'\xe2\x80\x8c' p3=$'\xe2\x80\x8d'
@@ -214,7 +214,7 @@ _sanitize_strip_zero_width() {
     # Count occurrences
     for pattern in "$p1" "$p2" "$p3" "$p4" "$p5"; do
         local matches
-        matches=$(LC_ALL=C grep -c "$pattern" "$file" 2>/dev/null) || matches=0
+        matches=$(LC_ALL=C grep -o "$pattern" "$file" 2>/dev/null | wc -l) || matches=0
         count=$((count + matches))
     done
 
@@ -225,8 +225,6 @@ _sanitize_strip_zero_width() {
             -e "s/$p4//g" -e "s/$p5//g" \
             "$file" > "$temp_file"
         mv "$temp_file" "$file"
-    else
-        rm -f "$temp_file"
     fi
 
     echo "$count"
@@ -240,6 +238,7 @@ _sanitize_strip_format() {
     local count=0
     local temp_file
     temp_file=$(mktemp)
+    trap "rm -f '$temp_file'" RETURN
 
     # Define patterns as variables
     local p1=$'\xc2\xad' p2=$'\xd8\x9c' p3=$'\xe1\xa0\x8e'
@@ -248,7 +247,7 @@ _sanitize_strip_format() {
     # Count occurrences
     for pattern in "$p1" "$p2" "$p3" "$p4" "$p5"; do
         local matches
-        matches=$(LC_ALL=C grep -c "$pattern" "$file" 2>/dev/null) || matches=0
+        matches=$(LC_ALL=C grep -o "$pattern" "$file" 2>/dev/null | wc -l) || matches=0
         count=$((count + matches))
     done
 
@@ -259,8 +258,6 @@ _sanitize_strip_format() {
             -e "s/$p4//g" -e "s/$p5//g" \
             "$file" > "$temp_file"
         mv "$temp_file" "$file"
-    else
-        rm -f "$temp_file"
     fi
 
     echo "$count"
@@ -274,17 +271,16 @@ _sanitize_strip_ansi() {
     local count
     local temp_file
     temp_file=$(mktemp)
+    trap "rm -f '$temp_file'" RETURN
 
     # Count ESC (0x1B) bytes
-    count=$(LC_ALL=C grep -c $'\x1b' "$file" 2>/dev/null) || count=0
+    count=$(LC_ALL=C grep -o $'\x1b' "$file" 2>/dev/null | wc -l) || count=0
 
     if [[ $count -gt 0 ]]; then
         # Strip ESC byte and common ANSI sequences
         # This handles both single ESC and full escape sequences like ESC[...m
         LC_ALL=C sed -e $'s/\x1b\\[[0-9;]*[a-zA-Z]//g' -e $'s/\x1b//g' "$file" > "$temp_file"
         mv "$temp_file" "$file"
-    else
-        rm -f "$temp_file"
     fi
 
     echo "$count"
@@ -298,12 +294,13 @@ _sanitize_strip_control() {
     local count=0
     local temp_file
     temp_file=$(mktemp)
+    trap "rm -f '$temp_file'" RETURN
 
     # Count control chars individually (regex char class doesn't work reliably)
     # Note: Skip 0x00 (NUL) as it can't be represented in bash strings
     for ctrl in $'\x01' $'\x02' $'\x03' $'\x04' $'\x05' $'\x06' $'\x07' $'\x08' $'\x0b' $'\x0c' $'\x0e' $'\x0f' $'\x10' $'\x11' $'\x12' $'\x13' $'\x14' $'\x15' $'\x16' $'\x17' $'\x18' $'\x19' $'\x1a' $'\x1c' $'\x1d' $'\x1e' $'\x1f' $'\x7f'; do
         local matches
-        matches=$(LC_ALL=C grep -cF "$ctrl" "$file" 2>/dev/null) || matches=0
+        matches=$(LC_ALL=C grep -oF "$ctrl" "$file" 2>/dev/null | wc -l) || matches=0
         count=$((count + matches))
     done
 
@@ -314,8 +311,6 @@ _sanitize_strip_control() {
         # Use octal escapes which work reliably with tr
         LC_ALL=C tr -d '\001\002\003\004\005\006\007\010\013\014\016\017\020\021\022\023\024\025\026\027\030\031\032\034\035\036\037\177' < "$file" > "$temp_file"
         mv "$temp_file" "$file"
-    else
-        rm -f "$temp_file"
     fi
 
     echo "$count"
@@ -330,6 +325,7 @@ _sanitize_strip_misplaced_bom() {
     local count=0
     local temp_file
     temp_file=$(mktemp)
+    trap "rm -f '$temp_file'" RETURN
 
     # Check if file starts with BOM (legitimate UTF-8 BOM at byte 0)
     local first_bytes
@@ -343,7 +339,7 @@ _sanitize_strip_misplaced_bom() {
 
     # Count all BOMs in file
     local total_boms
-    total_boms=$(LC_ALL=C grep -c "$bom" "$file" 2>/dev/null) || total_boms=0
+    total_boms=$(LC_ALL=C grep -o "$bom" "$file" 2>/dev/null | wc -l) || total_boms=0
 
     if [[ "$has_valid_bom" == "true" ]]; then
         # If valid BOM at start, we remove all but one
@@ -355,8 +351,6 @@ _sanitize_strip_misplaced_bom() {
                 tail -c +4 "$file" | LC_ALL=C sed "s/${bom}//g"
             } > "$temp_file"
             mv "$temp_file" "$file"
-        else
-            rm -f "$temp_file"
         fi
     else
         # No valid BOM at start, remove all BOMs
@@ -364,8 +358,6 @@ _sanitize_strip_misplaced_bom() {
         if [[ $count -gt 0 ]]; then
             LC_ALL=C sed "s/${bom}//g" "$file" > "$temp_file"
             mv "$temp_file" "$file"
-        else
-            rm -f "$temp_file"
         fi
     fi
 
@@ -501,7 +493,7 @@ _sanitize_scan_and_clean_file() {
         # Log to stderr so it doesn't get captured in subshell output
         log_info "Sanitized: $file (removed: $cat_str)" >&2
         cd "$worktree_path"
-        git add "$file" >&2 2>&1
+        git add "$file" >&2
 
         # Return summary to stdout (this is what caller captures)
         echo "${file}:${total_removed}:${cat_str}"
@@ -633,6 +625,7 @@ sanitize_staged_files() {
     # Process each file
     local total_chars=0
     local total_files=0
+    local homoglyph_count=0
     local file_summaries=()
 
     while IFS= read -r file; do
@@ -653,9 +646,12 @@ sanitize_staged_files() {
                 total_chars=$((total_chars + count))
                 total_files=$((total_files + 1))
             fi
+            # Homoglyph check is done inside _sanitize_scan_and_clean_file
         else
             # Only check for homoglyphs (warn-only)
-            _sanitize_check_homoglyphs "$full_path" || true
+            if _sanitize_check_homoglyphs "$full_path"; then
+                homoglyph_count=$((homoglyph_count + 1))
+            fi
         fi
     done <<< "$files"
 
@@ -680,6 +676,28 @@ sanitize_staged_files() {
         KAPSIS_SANITIZE_SUMMARY+=$'\n'"Sanitized-Files: $files_detail"
 
         log_success "✓ Staged files sanitized"
+
+        # Update status JSON if available
+        if [[ -n "${KAPSIS_STATUS_FILE:-}" ]] && [[ -f "${KAPSIS_STATUS_FILE}" ]] && command -v jq &>/dev/null; then
+            local sanitize_json
+            sanitize_json=$(jq -n \
+                --argjson cleaned true \
+                --argjson total_removed "$total_chars" \
+                --argjson files_cleaned "$total_files" \
+                --argjson homoglyph_warnings "$homoglyph_count" \
+                '{cleaned: $cleaned, total_removed: $total_removed, files_cleaned: $files_cleaned, homoglyph_warnings: $homoglyph_warnings}')
+
+            # Update status file with sanitization data
+            local tmp_status
+            tmp_status=$(mktemp)
+            if jq --argjson sanitization "$sanitize_json" '. + {sanitization: $sanitization}' "$KAPSIS_STATUS_FILE" > "$tmp_status" 2>/dev/null; then
+                mv "$tmp_status" "$KAPSIS_STATUS_FILE"
+                log_debug "Updated status JSON with sanitization data"
+            else
+                rm -f "$tmp_status"
+                log_debug "Failed to update status JSON (non-fatal)"
+            fi
+        fi
     else
         log_debug "All staged files are clean"
     fi

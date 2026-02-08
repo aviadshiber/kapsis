@@ -776,6 +776,78 @@ test_audit_jsonl_created() {
     cleanup_sanitize_test_repo
 }
 
+test_status_json_updated() {
+    log_test "Testing status JSON updated with sanitization data"
+
+    setup_sanitize_test_repo "status-json"
+    cd "$TEST_REPO"
+
+    # Skip if jq is not available
+    if ! command -v jq &>/dev/null; then
+        log_skip "jq not available"
+        cleanup_sanitize_test_repo
+        return 0
+    fi
+
+    # Create a temp status file with initial JSON
+    local status_file
+    status_file=$(mktemp)
+    echo '{"agent": "claude", "status": "running"}' > "$status_file"
+    export KAPSIS_STATUS_FILE="$status_file"
+
+    # Stage file with dangerous content
+    create_and_stage_file "dirty.txt" "test"$'\xe2\x80\xae'"bidi"$'\xe2\x80\x8b'"zwsp"
+
+    sanitize_staged_files "$TEST_REPO"
+
+    # Check status file was updated
+    if [[ ! -f "$status_file" ]]; then
+        log_fail "Status file should still exist"
+        unset KAPSIS_STATUS_FILE
+        cleanup_sanitize_test_repo
+        return 1
+    fi
+
+    local status_content
+    status_content=$(cat "$status_file")
+
+    # Verify sanitization field exists
+    if ! echo "$status_content" | jq -e '.sanitization' &>/dev/null; then
+        log_fail "Status JSON should have sanitization field"
+        rm -f "$status_file"
+        unset KAPSIS_STATUS_FILE
+        cleanup_sanitize_test_repo
+        return 1
+    fi
+
+    # Verify sanitization values
+    local cleaned files_cleaned total_removed
+    cleaned=$(echo "$status_content" | jq -r '.sanitization.cleaned')
+    files_cleaned=$(echo "$status_content" | jq -r '.sanitization.files_cleaned')
+    total_removed=$(echo "$status_content" | jq -r '.sanitization.total_removed')
+
+    assert_equals "true" "$cleaned" "sanitization.cleaned should be true"
+    assert_equals "1" "$files_cleaned" "sanitization.files_cleaned should be 1"
+
+    # total_removed should be > 0 (at least 2 chars: bidi + zwsp)
+    if [[ "$total_removed" -lt 2 ]]; then
+        log_fail "sanitization.total_removed should be >= 2, got $total_removed"
+        rm -f "$status_file"
+        unset KAPSIS_STATUS_FILE
+        cleanup_sanitize_test_repo
+        return 1
+    fi
+
+    # Verify original fields preserved
+    local agent
+    agent=$(echo "$status_content" | jq -r '.agent')
+    assert_equals "claude" "$agent" "Original agent field should be preserved"
+
+    rm -f "$status_file"
+    unset KAPSIS_STATUS_FILE
+    cleanup_sanitize_test_repo
+}
+
 #===============================================================================
 # REGRESSION TESTS (3 tests)
 #===============================================================================
@@ -915,7 +987,7 @@ main() {
     run_test test_homoglyph_pure_cyrillic_not_flagged
     run_test test_homoglyph_skip_config
 
-    # Integration tests (7)
+    # Integration tests (8)
     run_test test_clean_files_return_0
     run_test test_binary_files_skipped
     run_test test_empty_staging_returns_0
@@ -923,6 +995,7 @@ main() {
     run_test test_multiple_files_cleaned
     run_test test_sanitize_summary_set
     run_test test_audit_jsonl_created
+    run_test test_status_json_updated
 
     # Regression tests (3)
     run_test test_regression_cve_2021_42574
