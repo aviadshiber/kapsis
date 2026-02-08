@@ -170,6 +170,7 @@ _sanitize_strip_bidi() {
     local count=0
     local temp_file
     temp_file=$(mktemp)
+    # shellcheck disable=SC2064  # Intentional: capture temp_file path at definition time
     trap "rm -f '$temp_file'" RETURN
 
     # Define patterns as variables for sed substitution
@@ -205,6 +206,7 @@ _sanitize_strip_zero_width() {
     local count=0
     local temp_file
     temp_file=$(mktemp)
+    # shellcheck disable=SC2064  # Intentional: capture temp_file path at definition time
     trap "rm -f '$temp_file'" RETURN
 
     # Define patterns as variables
@@ -238,6 +240,7 @@ _sanitize_strip_format() {
     local count=0
     local temp_file
     temp_file=$(mktemp)
+    # shellcheck disable=SC2064  # Intentional: capture temp_file path at definition time
     trap "rm -f '$temp_file'" RETURN
 
     # Define patterns as variables
@@ -271,6 +274,7 @@ _sanitize_strip_ansi() {
     local count
     local temp_file
     temp_file=$(mktemp)
+    # shellcheck disable=SC2064  # Intentional: capture temp_file path at definition time
     trap "rm -f '$temp_file'" RETURN
 
     # Count ESC (0x1B) bytes
@@ -294,6 +298,7 @@ _sanitize_strip_control() {
     local count=0
     local temp_file
     temp_file=$(mktemp)
+    # shellcheck disable=SC2064  # Intentional: capture temp_file path at definition time
     trap "rm -f '$temp_file'" RETURN
 
     # Count control chars individually (regex char class doesn't work reliably)
@@ -325,6 +330,7 @@ _sanitize_strip_misplaced_bom() {
     local count=0
     local temp_file
     temp_file=$(mktemp)
+    # shellcheck disable=SC2064  # Intentional: capture temp_file path at definition time
     trap "rm -f '$temp_file'" RETURN
 
     # Check if file starts with BOM (legitimate UTF-8 BOM at byte 0)
