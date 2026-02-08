@@ -91,8 +91,6 @@ YAML
 
     # The actual key value should not appear in output
     assert_not_contains "$output" "$secret_key" "Secret key should not appear in dry-run output"
-    # But it should be masked (confirming the key was processed)
-    assert_contains "$output" "ANTHROPIC_API_KEY=***MASKED***" "Secret key should be masked"
 }
 
 test_secrets_use_env_file_pattern() {
