@@ -236,9 +236,8 @@ test_java_available_in_image() {
     setup_container_test "java-avail"
 
     local output
-    local exit_code=0
     output=$(run_named_container "$CONTAINER_TEST_ID" \
-        "java -version 2>&1 || echo 'JAVA_NOT_FOUND'") || exit_code=$?
+        "java -version 2>&1 || echo 'JAVA_NOT_FOUND'") || true
 
     cleanup_container_test
 
