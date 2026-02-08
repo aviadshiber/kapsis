@@ -511,18 +511,25 @@ sync_index_from_container() {
     local sanitized_git="$2"
 
     if [[ -f "$sanitized_git/index" ]]; then
-        # The container may have staged files - copy index back
         cd "$worktree_path"
 
-        # Read the worktree's gitdir
-        local gitdir_content
-        gitdir_content=$(cat "$worktree_path/.git")
-        local worktree_gitdir="${gitdir_content#gitdir: }"
-
-        if [[ -f "$sanitized_git/index" ]]; then
-            log_info "Syncing index from container..."
-            cp "$sanitized_git/index" "$worktree_gitdir/index" 2>/dev/null || true
+        # Determine the actual git directory
+        local worktree_gitdir
+        if [[ -f "$worktree_path/.git" ]]; then
+            # Worktree: .git is a file containing "gitdir: <path>"
+            local gitdir_content
+            gitdir_content=$(cat "$worktree_path/.git")
+            worktree_gitdir="${gitdir_content#gitdir: }"
+        elif [[ -d "$worktree_path/.git" ]]; then
+            # Regular repo or reused worktree: .git is a directory
+            worktree_gitdir="$worktree_path/.git"
+        else
+            log_warn "No .git file or directory found at $worktree_path"
+            return 0
         fi
+
+        log_info "Syncing index from container..."
+        cp "$sanitized_git/index" "$worktree_gitdir/index" 2>/dev/null || true
     fi
 }
 
