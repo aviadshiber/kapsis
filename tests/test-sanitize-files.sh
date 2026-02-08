@@ -449,7 +449,7 @@ test_file_restaged_after_stripping() {
     local content="test"$'\xe2\x80\x8b'"content"
     create_and_stage_file "dirty.txt" "$content"
 
-    # Get staged content hash before sanitization
+    # Get staged files before sanitization
     local staged_before
     staged_before=$(git diff --cached --name-only | sort)
 
@@ -459,6 +459,7 @@ test_file_restaged_after_stripping() {
     local staged_after
     staged_after=$(git diff --cached --name-only | sort)
 
+    assert_equals "$staged_before" "$staged_after" "Staged files should remain the same after sanitization"
     assert_contains "$staged_after" "dirty.txt" "Cleaned file should be re-staged"
 
     # Verify the staged version is clean
