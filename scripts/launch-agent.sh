@@ -442,6 +442,10 @@ parse_args() {
         AGENT_ID=$(generate_agent_id)
         AGENT_ID_AUTO_GENERATED=true
     fi
+
+    # Reinitialize logging with agent-specific log file
+    # This prevents log interleaving when running parallel agents
+    log_reinit_with_agent_id "$AGENT_ID"
 }
 
 #===============================================================================
