@@ -382,6 +382,47 @@ validate_network_config() {
         log_pass "Has $dns_count DNS server(s)"
     fi
 
+    # Validate dns_pinning section if present
+    local dns_pin_enabled
+    dns_pin_enabled=$(yq -r '.network.dns_pinning.enabled // "null"' "$config_file" 2>/dev/null)
+    if [[ "$dns_pin_enabled" != "null" ]]; then
+        if [[ "$dns_pin_enabled" == "true" || "$dns_pin_enabled" == "false" ]]; then
+            log_pass "Valid dns_pinning.enabled: $dns_pin_enabled"
+        else
+            log_error "Invalid dns_pinning.enabled: $dns_pin_enabled (must be true/false)"
+        fi
+    fi
+
+    local dns_pin_fallback
+    dns_pin_fallback=$(yq -r '.network.dns_pinning.fallback // "null"' "$config_file" 2>/dev/null)
+    if [[ "$dns_pin_fallback" != "null" ]]; then
+        if [[ "$dns_pin_fallback" =~ ^(dynamic|abort)$ ]]; then
+            log_pass "Valid dns_pinning.fallback: $dns_pin_fallback"
+        else
+            log_error "Invalid dns_pinning.fallback: $dns_pin_fallback (must be: dynamic, abort)"
+        fi
+    fi
+
+    local dns_pin_timeout
+    dns_pin_timeout=$(yq -r '.network.dns_pinning.resolve_timeout // "null"' "$config_file" 2>/dev/null)
+    if [[ "$dns_pin_timeout" != "null" ]]; then
+        if [[ "$dns_pin_timeout" =~ ^[0-9]+$ ]] && [[ "$dns_pin_timeout" -gt 0 ]] && [[ "$dns_pin_timeout" -le 60 ]]; then
+            log_pass "Valid dns_pinning.resolve_timeout: $dns_pin_timeout"
+        else
+            log_error "Invalid dns_pinning.resolve_timeout: $dns_pin_timeout (must be 1-60)"
+        fi
+    fi
+
+    local dns_pin_protect
+    dns_pin_protect=$(yq -r '.network.dns_pinning.protect_dns_files // "null"' "$config_file" 2>/dev/null)
+    if [[ "$dns_pin_protect" != "null" ]]; then
+        if [[ "$dns_pin_protect" == "true" || "$dns_pin_protect" == "false" ]]; then
+            log_pass "Valid dns_pinning.protect_dns_files: $dns_pin_protect"
+        else
+            log_error "Invalid dns_pinning.protect_dns_files: $dns_pin_protect (must be true/false)"
+        fi
+    fi
+
     return 0
 }
 

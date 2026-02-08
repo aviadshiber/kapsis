@@ -88,10 +88,26 @@ test_secrets_use_env_file_pattern() {
     export ANTHROPIC_API_KEY="sk-test-key"
     export OPENAI_API_KEY="sk-openai-test"
 
+    # Create a config with passthrough (not keychain) so keys are picked up in CI
+    local test_config="$TEST_PROJECT/.kapsis-env-file-test.yaml"
+    cat > "$test_config" <<'YAML'
+agent:
+  command: "echo test"
+  workdir: /workspace
+environment:
+  passthrough:
+    - ANTHROPIC_API_KEY
+    - OPENAI_API_KEY
+resources:
+  memory: 2g
+  cpus: 2
+YAML
+
     local output
-    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent claude --task "test" --dry-run 2>&1) || true
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
 
     unset ANTHROPIC_API_KEY OPENAI_API_KEY
+    rm -f "$test_config"
 
     # Should mention secrets will use env-file
     assert_contains "$output" "via --env-file" "Should mention secrets use --env-file"
