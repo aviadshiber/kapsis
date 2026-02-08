@@ -30,7 +30,7 @@ get_tests_for_category() {
     local category="$1"
     case "$category" in
         agent)
-            echo "test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-agent-config-mounts.sh test-agent-image-build.sh"
+            echo "test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-agent-config-mounts.sh test-agent-image-build.sh test-containerfile.sh"
             ;;
         validation)
             echo "test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-preflight-check.sh test-version-fetch.sh test-version-management.sh test-post-container-exit-code.sh"
@@ -72,7 +72,7 @@ ALL_CATEGORIES="libs agent validation status filesystem maven security git clean
 
 # Quick tests (no container required)
 # These tests either don't need a container or gracefully skip container-dependent tests
-QUICK_TESTS="test-compat.sh test-logging.sh test-json-utils.sh test-git-remote-utils.sh test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-status-reporting.sh test-status-hooks.sh test-preflight-check.sh test-push-verification.sh test-ssh-keychain.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-agent-config-mounts.sh test-gradle-cache-isolation.sh test-agent-image-build.sh test-version-fetch.sh test-version-management.sh test-git-excludes.sh test-validate-staged-files.sh test-coauthor-fork.sh test-config-security.sh test-post-container-exit-code.sh test-network-isolation.sh test-scope-validation.sh test-precommit-spellcheck.sh test-precommit-check-tests.sh test-prepush-orchestrator.sh"
+QUICK_TESTS="test-compat.sh test-logging.sh test-json-utils.sh test-git-remote-utils.sh test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-status-reporting.sh test-status-hooks.sh test-preflight-check.sh test-push-verification.sh test-ssh-keychain.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-agent-config-mounts.sh test-gradle-cache-isolation.sh test-agent-image-build.sh test-version-fetch.sh test-version-management.sh test-git-excludes.sh test-validate-staged-files.sh test-coauthor-fork.sh test-config-security.sh test-post-container-exit-code.sh test-network-isolation.sh test-scope-validation.sh test-precommit-spellcheck.sh test-precommit-check-tests.sh test-prepush-orchestrator.sh test-containerfile.sh"
 
 #===============================================================================
 # ARGUMENT PARSING
