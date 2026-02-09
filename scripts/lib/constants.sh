@@ -69,6 +69,15 @@ readonly KAPSIS_DEFAULT_COMMIT_EXCLUDE=".gitignore
 readonly KAPSIS_DEFAULT_NETWORK_MODE="filtered"
 
 #===============================================================================
+# CONTAINER REGISTRY
+#
+# Default registry for pre-built Kapsis images.
+# Used by build-image.sh --pull and build-agent-image.sh --pull.
+#===============================================================================
+
+readonly KAPSIS_REGISTRY="ghcr.io/aviadshiber"
+
+#===============================================================================
 # GIT EXCLUDE PATTERNS (Issue #89)
 #
 # These patterns are written to $GIT_DIR/info/exclude to prevent accidental

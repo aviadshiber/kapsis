@@ -430,13 +430,13 @@ check_container_image() {
     fi
 
     local image_exists
-    image_exists=$(podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E "^kapsis-sandbox:" || echo "")
+    image_exists=$(podman images --format '{{.Repository}}:{{.Tag}}' 2>/dev/null | grep -E "(^kapsis-sandbox:|ghcr\.io/aviadshiber/kapsis-sandbox:)" || echo "")
 
     if [[ -n "$image_exists" ]]; then
-        check_result pass "Container Image" "Built: $image_exists"
+        check_result pass "Container Image" "Available: $image_exists"
     else
-        check_result warn "Container Image" "Not built yet" \
-            "Run: ./scripts/build-image.sh"
+        check_result warn "Container Image" "Not found" \
+            "Run: ./scripts/build-image.sh --pull"
     fi
 }
 

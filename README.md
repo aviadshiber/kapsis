@@ -80,8 +80,9 @@ git clone https://github.com/aviadshiber/kapsis.git && cd kapsis
 ./setup.sh              # Check dependencies only
 ./setup.sh --install    # Auto-install missing dependencies (Podman, etc.)
 
-# 3. Build the container image
-kapsis-build  # or ./scripts/build-image.sh
+# 3. Pull pre-built container images
+./scripts/build-image.sh --pull
+./scripts/build-agent-image.sh claude-cli --pull
 
 # 4. Copy and customize config
 cp agent-sandbox.yaml.template agent-sandbox.yaml
@@ -91,6 +92,8 @@ cp agent-sandbox.yaml.template agent-sandbox.yaml
 kapsis 1 ~/project --task "fix failing tests"
 # or: ./scripts/launch-agent.sh ~/project --task "fix failing tests"
 ```
+
+> **Note:** Omit `--pull` to build images locally if you need custom configurations.
 
 ## Agent Profiles
 

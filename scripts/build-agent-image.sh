@@ -48,11 +48,13 @@ Arguments:
   agent-profile    Name of agent profile in configs/agents/ (e.g., claude-cli, aider)
 
 Options:
-  --build-config <file>  Build config file (default: configs/build-config.yaml)
-  --profile <name>       Build profile preset (e.g., java-dev, full-stack)
-  -h, --help             Show this help message
+  --pull                   Pull pre-built image from ghcr.io (recommended)
+  --build-config <file>    Build config file (default: configs/build-config.yaml)
+  --profile <name>         Build profile preset (e.g., java-dev, full-stack)
+  -h, --help               Show this help message
 
 Examples:
+  $(basename "$0") claude-cli --pull               # Pull pre-built image (recommended)
   $(basename "$0") claude-cli                      # Build with default config
   $(basename "$0") claude-cli --profile java-dev   # Build with java-dev profile
   $(basename "$0") aider --profile full-stack      # Build aider with full-stack
@@ -79,10 +81,15 @@ EOF
 AGENT_PROFILE=""
 BUILD_CONFIG=""
 BUILD_PROFILE=""
+PULL=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --pull)
+            PULL=true
+            shift
+            ;;
         --build-config)
             BUILD_CONFIG="$2"
             shift 2
@@ -131,6 +138,29 @@ if [[ ! -f "$PROFILE_PATH" ]]; then
         [[ -f "$profile" ]] && echo "  $(basename "$profile" .yaml)"
     done
     exit 1
+fi
+
+# Pull mode: pull pre-built image from registry instead of building
+if [[ "$PULL" == "true" ]]; then
+    # Source constants for KAPSIS_REGISTRY
+    if [[ -f "$SCRIPT_DIR/lib/constants.sh" ]]; then
+        source "$SCRIPT_DIR/lib/constants.sh"
+    else
+        KAPSIS_REGISTRY="ghcr.io/aviadshiber"
+    fi
+
+    IMAGE_NAME="kapsis-${AGENT_PROFILE}"
+    REMOTE_IMAGE="${KAPSIS_REGISTRY}/${IMAGE_NAME}:latest"
+    log_info "Pulling pre-built image: ${REMOTE_IMAGE}"
+    if podman pull "${REMOTE_IMAGE}"; then
+        podman tag "${REMOTE_IMAGE}" "${IMAGE_NAME}:latest"
+        log_success "Image ready: ${IMAGE_NAME}:latest"
+        podman images "${IMAGE_NAME}"
+    else
+        log_error "Failed to pull ${REMOTE_IMAGE}"
+        log_error "Check available images at: https://github.com/aviadshiber/kapsis/pkgs"
+    fi
+    exit $?
 fi
 
 log_info "Building agent image from profile: $AGENT_PROFILE"
@@ -374,6 +404,41 @@ fi
 [[ -n "$AGENT_NPM" ]] && BUILD_ARGS+=("--build-arg" "AGENT_NPM=$AGENT_NPM")
 [[ -n "$AGENT_PIP" ]] && BUILD_ARGS+=("--build-arg" "AGENT_PIP=$AGENT_PIP")
 [[ -n "$AGENT_SCRIPT" ]] && BUILD_ARGS+=("--build-arg" "AGENT_SCRIPT=$AGENT_SCRIPT")
+
+#===============================================================================
+# RESOLVE PLATFORM AND BASE IMAGE DIGEST
+#===============================================================================
+# Pinned base image digests per architecture (must match build-image.sh)
+# To update: podman manifest inspect docker.io/library/ubuntu:24.04
+declare -A BASE_IMAGE_DIGESTS=(
+    ["linux/amd64"]="sha256:4fdf0125919d24aec972544669dcd7d6a26a8ad7e6561c73d5549bd6db258ac2"
+    ["linux/arm64"]="sha256:955364933d0d91afa6e10fb045948c16d2b191114aa54bed3ab5430d8bbc58cc"
+)
+
+detect_platform() {
+    case "$(uname -m)" in
+        x86_64|amd64)  echo "linux/amd64" ;;
+        aarch64|arm64) echo "linux/arm64" ;;
+        *)
+            log_error "Unsupported architecture: $(uname -m)"
+            exit 1
+            ;;
+    esac
+}
+
+PLATFORM=$(detect_platform)
+BASE_IMAGE_DIGEST="${BASE_IMAGE_DIGESTS[$PLATFORM]:-}"
+
+if [[ -z "$BASE_IMAGE_DIGEST" ]]; then
+    log_error "No pinned digest for platform: $PLATFORM"
+    exit 1
+fi
+
+BUILD_ARGS+=("--platform" "$PLATFORM")
+BUILD_ARGS+=("--build-arg" "BASE_IMAGE_DIGEST=$BASE_IMAGE_DIGEST")
+
+log_info "Platform: $PLATFORM"
+log_info "Base image digest: $BASE_IMAGE_DIGEST"
 
 cd "$KAPSIS_ROOT"
 
