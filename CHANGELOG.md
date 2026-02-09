@@ -6,32 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [2.2.0] - 2026-02-09
 
 ### Added
-- DNS IP pinning for filtered network mode — resolves allowlist domains on trusted host and pins IPs inside container (#139)
-- Host-mounted read-only `/etc/resolv.conf` to prevent DNS config tampering
-- dnsmasq watchdog to restart DNS filter if killed, with audit trail
-- dnsmasq PID/config file protection (`chmod 400`)
-- `readonly_root` enabled by default for strict security profile
-- Wildcard domain handling with security warnings for DNS pinning
-
-### Changed
-- Remove `CAP_DAC_OVERRIDE` from minimal capability set (not needed with UID 1000)
+- Test-sdkman-offline-mode
+- Sdkman-offline-mode
 
 ### Fixed
-- Cross-platform `mktemp` template for DNS pin files (BSD/GNU compatible)
-- Defense-in-depth `sanitize_secrets()` applied to dry-run output
+- Update secret masking test for --env-file behavior
+- Add test agent config for env-file tests in CI
+- Use correct SDKMAN config key sdkman_selfupdate_feature
+- Resolve SC2034 shellcheck warning in test-containerfile.sh
+
+## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
-
-### Changed
-- Remove redundant sanitize_secrets from dry-run output
-
-### Fixed
-- Use --env-file for secrets to prevent bash -x exposure (#135)
-
-## [0.8.3] - 2025-12-28
 
 ### Added
 - Add animated progress display to terminal demo
@@ -445,7 +434,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.1.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.2.0...HEAD
+[2.2.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.2.0
 [2.1.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.1.1
 [2.1.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.1.0
 [2.0.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.0.1
