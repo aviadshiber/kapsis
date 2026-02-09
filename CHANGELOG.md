@@ -6,7 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.4.0] - 2026-02-09
+## [2.4.1] - 2026-02-09
+
+### Changed
+- Address PR review feedback for DNS filtering fix
+
+### Fixed
+- Check KAPSIS_RESOLV_CONF_MOUNTED before resolv.conf writability test
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Added
 - Fix-shellcheck-sc2064
@@ -17,9 +27,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Use staged_before in re-staging assertion
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Changed
 - Bump the github-actions group with 2 updates
@@ -448,7 +455,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.4.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.4.1...HEAD
+[2.4.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.4.1
 [2.4.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.4.0
 [2.3.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.3.1
 [2.2.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.2.0
