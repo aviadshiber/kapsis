@@ -33,10 +33,17 @@ _KAPSIS_DNS_FILTER_LOADED=1
 : "${KAPSIS_DNS_CONFIG_FILE:=/tmp/kapsis-dnsmasq.conf}"
 : "${KAPSIS_DNS_LOG_FILE:=/tmp/kapsis-dns.log}"
 : "${KAPSIS_DNS_PID_FILE:=/tmp/kapsis-dnsmasq.pid}"
+: "${KAPSIS_DNS_PINNED_FILE:=/etc/kapsis/pinned-dns.conf}"
 
 # Internal state
 _DNS_FILTER_ALLOWLIST=""
 _DNS_FILTER_STARTED=false
+
+# Associative array to track pinned domains (avoid duplicate rules)
+# Use declare -gA for global associative array (bash 4.2+)
+# The -g flag makes it global even when sourced from a function
+# Note: runs inside container only (bash 5+), associative arrays require bash 4.0+
+declare -gA _KAPSIS_PINNED_DOMAINS 2>/dev/null || declare -A _KAPSIS_PINNED_DOMAINS 2>/dev/null || true
 
 #===============================================================================
 # LOGGING HELPERS
@@ -101,12 +108,16 @@ validate_domain_pattern() {
 generate_dnsmasq_config() {
     local allowlist_file="${1:-}"
     local config_file="${KAPSIS_DNS_CONFIG_FILE}"
+    local pinned_file="${KAPSIS_DNS_PINNED_FILE}"
 
     log_info "Generating dnsmasq configuration..."
 
     # Get upstream DNS servers
     local dns_servers="${KAPSIS_DNS_SERVERS}"
     local primary_dns="${dns_servers%%,*}"
+
+    # Reset pinned domains tracking
+    _KAPSIS_PINNED_DOMAINS=()
 
     # Start configuration
     cat > "$config_file" << 'EOF'
@@ -145,6 +156,51 @@ log-queries
 log-facility=${KAPSIS_DNS_LOG_FILE}
 
 EOF
+    fi
+
+    #===========================================================================
+    # PINNED DNS ENTRIES (host-resolved IPs)
+    #
+    # If pinned DNS file exists (from host-side resolution), use static
+    # address=/ directives instead of dynamic server=/ forwarding.
+    # This prevents DNS manipulation attacks inside the container.
+    #===========================================================================
+    local pinned_count=0
+
+    if [[ -f "$pinned_file" ]]; then
+        log_info "Loading pinned DNS entries from host resolution..."
+        echo "" >> "$config_file"
+        echo "# Pinned domains (resolved on host - IP addresses fixed)" >> "$config_file"
+        echo "" >> "$config_file"
+
+        while IFS= read -r line; do
+            # Skip empty lines and comments
+            [[ -z "$line" || "$line" == "#"* ]] && continue
+
+            # Parse: domain IP1 IP2 ...
+            local pin_domain
+            pin_domain=$(echo "$line" | awk '{print $1}')
+            local pin_ips
+            pin_ips=$(echo "$line" | cut -d' ' -f2-)
+
+            [[ -z "$pin_domain" || -z "$pin_ips" ]] && continue
+
+            # Track this domain as pinned (skip in dynamic rules later)
+            _KAPSIS_PINNED_DOMAINS["$pin_domain"]=1
+
+            # Generate address= directive for each IP
+            # shellcheck disable=SC2086  # Intentional word-split: $pin_ips contains space-separated IPs
+            for ip in $pin_ips; do
+                echo "address=/${pin_domain}/${ip}" >> "$config_file"
+            done
+
+            log_debug "Pinned: $pin_domain -> $pin_ips"
+            ((pinned_count++))
+        done < "$pinned_file"
+
+        log_success "Loaded $pinned_count pinned domain(s) from host resolution"
+    else
+        log_debug "No pinned DNS file found at $pinned_file"
     fi
 
     # Block everything by default
@@ -195,12 +251,23 @@ EOF
                 domain="${domain#\"}"
                 domain="${domain%\"}"
 
+                # Skip if already pinned with static IP
+                if [[ -n "${_KAPSIS_PINNED_DOMAINS[$domain]:-}" ]]; then
+                    log_debug "Skipping $domain - already pinned with static IP"
+                    continue
+                fi
+
                 if validate_domain_pattern "$domain"; then
-                    # Handle wildcard domains
+                    # Handle wildcard domains (cannot be IP-pinned)
                     if [[ "$domain" == "*."* ]]; then
                         local base_domain="${domain#\*.}"
                         echo "server=/.${base_domain}/${primary_dns}" >> "$config_file"
                         log_debug "Added wildcard domain: *.${base_domain}"
+                        # Security warning: wildcards are vulnerable to DNS manipulation
+                        if [[ "${KAPSIS_DNS_PIN_ENABLED:-false}" == "true" ]]; then
+                            log_warn "SECURITY: Wildcard '$domain' cannot be IP-pinned - vulnerable to DNS manipulation"
+                            log_warn "  Consider using concrete subdomains for better security"
+                        fi
                     else
                         echo "server=/${domain}/${primary_dns}" >> "$config_file"
                         log_debug "Added domain: $domain"
@@ -224,10 +291,20 @@ EOF
             domain=$(echo "$domain" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
             [[ -z "$domain" ]] && continue
 
+            # Skip if already pinned with static IP
+            if [[ -n "${_KAPSIS_PINNED_DOMAINS[$domain]:-}" ]]; then
+                log_debug "Skipping $domain - already pinned with static IP"
+                continue
+            fi
+
             if validate_domain_pattern "$domain"; then
                 if [[ "$domain" == "*."* ]]; then
                     local base_domain="${domain#\*.}"
                     echo "server=/.${base_domain}/${primary_dns}" >> "$config_file"
+                    # Security warning for wildcards
+                    if [[ "${KAPSIS_DNS_PIN_ENABLED:-false}" == "true" ]]; then
+                        log_warn "SECURITY: Wildcard '$domain' cannot be IP-pinned - vulnerable to DNS manipulation"
+                    fi
                 else
                     echo "server=/${domain}/${primary_dns}" >> "$config_file"
                 fi
@@ -348,6 +425,12 @@ is_dns_filter_running() {
 setup_resolv_conf() {
     local resolv_conf="/etc/resolv.conf"
 
+    # Skip if resolv.conf is mounted read-only from host
+    if [[ "${KAPSIS_RESOLV_CONF_MOUNTED:-false}" == "true" ]]; then
+        log_info "DNS resolution: using host-mounted resolv.conf (read-only)"
+        return 0
+    fi
+
     log_info "Configuring DNS resolution to use local filter..."
 
     # Backup original resolv.conf
@@ -370,6 +453,11 @@ EOF
 restore_resolv_conf() {
     local resolv_conf="/etc/resolv.conf"
     local backup="${resolv_conf}.kapsis-backup"
+
+    # Nothing to restore if host manages the file
+    if [[ "${KAPSIS_RESOLV_CONF_MOUNTED:-false}" == "true" ]]; then
+        return 0
+    fi
 
     if [[ -f "$backup" ]]; then
         mv "$backup" "$resolv_conf" 2>/dev/null || true
@@ -495,5 +583,147 @@ verify_dns_filtering() {
     fi
 
     log_success "DNS filtering verified"
+    return 0
+}
+
+#===============================================================================
+# DNS FILE PROTECTION
+#===============================================================================
+
+# Protect DNS configuration files from modification inside the container.
+# Sets /etc/resolv.conf and /etc/hosts to read-only (chmod 444).
+# Agent runs as non-root and cannot override these permissions.
+#
+# This prevents attack vectors where the agent:
+#   1. Kills dnsmasq process
+#   2. Modifies /etc/resolv.conf to bypass filtering
+#   3. Adds entries to /etc/hosts to redirect domains
+#
+# Environment:
+#   KAPSIS_DNS_PIN_PROTECT_FILES - Set to "true" to enable protection
+#
+# Returns: 0 on success, 1 on failure (continues with warning)
+protect_dns_files() {
+    if [[ "${KAPSIS_DNS_PIN_PROTECT_FILES:-false}" != "true" ]]; then
+        log_debug "DNS file protection not enabled"
+        return 0
+    fi
+
+    log_info "Protecting DNS configuration files..."
+
+    local protected=0
+    local failed=0
+
+    # Protect /etc/resolv.conf
+    if [[ -f /etc/resolv.conf ]]; then
+        if chmod 444 /etc/resolv.conf 2>/dev/null; then
+            log_debug "Protected /etc/resolv.conf (read-only)"
+            ((protected++))
+        else
+            log_warn "Cannot protect /etc/resolv.conf - may require root"
+            ((failed++))
+        fi
+    fi
+
+    # Protect /etc/hosts
+    if [[ -f /etc/hosts ]]; then
+        if chmod 444 /etc/hosts 2>/dev/null; then
+            log_debug "Protected /etc/hosts (read-only)"
+            ((protected++))
+        else
+            log_warn "Cannot protect /etc/hosts - may require root"
+            ((failed++))
+        fi
+    fi
+
+    # Protect dnsmasq PID file (prevents targeted signal attacks)
+    if [[ -f "${KAPSIS_DNS_PID_FILE}" ]]; then
+        if chmod 400 "${KAPSIS_DNS_PID_FILE}" 2>/dev/null; then
+            log_debug "Protected ${KAPSIS_DNS_PID_FILE} (owner read-only)"
+            ((protected++))
+        else
+            log_warn "Cannot protect ${KAPSIS_DNS_PID_FILE}"
+            ((failed++))
+        fi
+    fi
+
+    # Protect dnsmasq config file (prevents SIGHUP config reload attacks)
+    if [[ -f "${KAPSIS_DNS_CONFIG_FILE}" ]]; then
+        if chmod 400 "${KAPSIS_DNS_CONFIG_FILE}" 2>/dev/null; then
+            log_debug "Protected ${KAPSIS_DNS_CONFIG_FILE} (owner read-only)"
+            ((protected++))
+        else
+            log_warn "Cannot protect ${KAPSIS_DNS_CONFIG_FILE}"
+            ((failed++))
+        fi
+    fi
+
+    if [[ "$protected" -gt 0 ]]; then
+        log_success "DNS files protected ($protected file(s) set to read-only)"
+    fi
+
+    # Return success even if some files couldn't be protected
+    # (the chmod failure is not fatal, just reduces security)
+    return 0
+}
+
+#===============================================================================
+# DNSMASQ WATCHDOG
+#===============================================================================
+
+# Start a background watchdog that monitors and restarts dnsmasq if killed.
+# Must be called AFTER start_dns_filter() and protect_dns_files().
+#
+# The watchdog runs as a background process. Since the agent shares the same
+# UID, it can theoretically kill the watchdog too. This is defense-in-depth:
+# it raises attack complexity and provides audit trail evidence.
+#
+# Arguments:
+#   $1 - Check interval in seconds (default: 10)
+#
+# Returns: 0 (watchdog started in background)
+start_dns_watchdog() {
+    local interval="${1:-10}"
+    local config_file="${KAPSIS_DNS_CONFIG_FILE}"
+    local pid_file="${KAPSIS_DNS_PID_FILE}"
+
+    log_info "Starting DNS watchdog (interval: ${interval}s)..."
+
+    (
+        while true; do
+            sleep "$interval"
+
+            # Check if dnsmasq is still running
+            if [[ -f "$pid_file" ]]; then
+                local pid
+                pid=$(cat "$pid_file" 2>/dev/null || echo "")
+                if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+                    continue  # Still running
+                fi
+            fi
+
+            # dnsmasq is NOT running - attempt restart
+            echo "[DNS-WATCHDOG] WARNING: dnsmasq not running - restarting..." >&2
+
+            if [[ ! -f "$config_file" ]]; then
+                echo "[DNS-WATCHDOG] ERROR: Config file missing: $config_file" >&2
+                continue
+            fi
+
+            if dnsmasq --conf-file="$config_file" --pid-file="$pid_file" 2>/dev/null; then
+                sleep 0.5
+                # Re-protect the PID file after restart
+                chmod 400 "$pid_file" 2>/dev/null || true
+                echo "[DNS-WATCHDOG] dnsmasq restarted successfully" >&2
+            else
+                echo "[DNS-WATCHDOG] ERROR: Failed to restart dnsmasq" >&2
+            fi
+        done
+    ) &
+
+    local watchdog_pid=$!
+    log_debug "DNS watchdog started (PID: $watchdog_pid)"
+    echo "$watchdog_pid" > /tmp/kapsis-dns-watchdog.pid 2>/dev/null || true
+
     return 0
 }

@@ -55,6 +55,7 @@ SECURITY_DEFAULTS=(
     [strict_seccomp]=true
     [strict_pids_limit]=500
     [strict_noexec_tmp]=true
+    [strict_readonly_root]=true
 
     [paranoid_caps_drop_all]=true
     [paranoid_no_new_privs]=true
@@ -73,7 +74,6 @@ SECURITY_DEFAULTS=(
 # These are added back after --cap-drop=ALL
 KAPSIS_CAPS_MINIMAL=(
     "CHOWN"          # File ownership for build artifacts
-    "DAC_OVERRIDE"   # File permission bypass (limited)
     "FOWNER"         # File owner operations
     "FSETID"         # Set-ID bits on files
     "KILL"           # Signal handling
@@ -254,6 +254,10 @@ generate_readonly_root_args() {
         echo "--read-only"
         echo "--tmpfs"
         echo "/run:rw,noexec,nosuid,nodev,size=100m"
+        # /home/developer must be writable for tool caches, staged configs, credentials
+        # Named volumes (m2, gradle, ge) mount on top so build caches survive
+        echo "--tmpfs"
+        echo "/home/developer:rw,nosuid,nodev,size=500m"
     fi
 }
 

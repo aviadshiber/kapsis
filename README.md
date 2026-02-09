@@ -22,7 +22,7 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 - **Agent Profiles** - Pre-built agent configurations with automatic container installation
 - **Config-Driven** - Single YAML file defines agent command and filesystem whitelist
 - **Copy-on-Write Filesystem** - Project files use overlay mounts (reads from host, writes isolated)
-- **Network Isolation** - DNS-based allowlist filtering (default), blocks unauthorized network access
+- **Network Isolation** - DNS-based allowlist filtering with IP pinning (default), blocks unauthorized network access
 - **Maven Isolation** - Per-agent `.m2/repository`, blocked remote SNAPSHOTs, blocked deploy
 - **Build Cache Isolation** - Gradle Enterprise remote cache disabled, per-agent local cache
 - **Git Workflow** - Optional branch-based workflow with PR review feedback loop

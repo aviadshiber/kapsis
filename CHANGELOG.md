@@ -6,6 +6,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
+## [Unreleased]
+
+### Added
+- DNS IP pinning for filtered network mode — resolves allowlist domains on trusted host and pins IPs inside container (#139)
+- Host-mounted read-only `/etc/resolv.conf` to prevent DNS config tampering
+- dnsmasq watchdog to restart DNS filter if killed, with audit trail
+- dnsmasq PID/config file protection (`chmod 400`)
+- `readonly_root` enabled by default for strict security profile
+- Wildcard domain handling with security warnings for DNS pinning
+
+### Changed
+- Remove `CAP_DAC_OVERRIDE` from minimal capability set (not needed with UID 1000)
+
+### Fixed
+- Cross-platform `mktemp` template for DNS pin files (BSD/GNU compatible)
+- Defense-in-depth `sanitize_secrets()` applied to dry-run output
+
 ## [2.1.1] - 2026-02-02
 
 ### Changed
@@ -13,8 +30,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 - Use --env-file for secrets to prevent bash -x exposure (#135)
-
-## [Unreleased]
 
 ## [0.8.3] - 2025-12-28
 

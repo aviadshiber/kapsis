@@ -487,6 +487,142 @@ ls -la ~/.kapsis/ssh-cache/
 | Key expired | Refresh from API |
 | Custom host, no fingerprint | Fail unless `StrictHostKeyChecking: no` |
 
+## DNS IP Pinning
+
+DNS IP pinning is a security enhancement that resolves allowlist domains on the **trusted host** before container launch and pins those IPs inside the container. This prevents DNS manipulation attacks.
+
+### Attack Vectors Mitigated
+
+1. **dnsmasq bypass**: Agent kills dnsmasq process and rewrites `/etc/resolv.conf` to use external DNS
+2. **DNS poisoning**: Upstream DNS (8.8.8.8) returns malicious IPs for allowed domains
+3. **hosts file manipulation**: Agent modifies `/etc/hosts` after dnsmasq is killed
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         DNS IP Pinning Flow                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  HOST (trusted)                                                              │
+│  ┌────────────────────────────────────────┐                                  │
+│  │ 1. Parse allowlist from config         │                                  │
+│  │    github.com, *.npmjs.org, gitlab.com │                                  │
+│  └────────────────┬───────────────────────┘                                  │
+│                   │                                                          │
+│                   ▼                                                          │
+│  ┌────────────────────────────────────────┐                                  │
+│  │ 2. Resolve concrete domains via DNS    │                                  │
+│  │    github.com → 140.82.121.4           │                                  │
+│  │    gitlab.com → 172.65.251.78          │                                  │
+│  │    *.npmjs.org → SKIP (wildcard)       │◄── Security warning emitted     │
+│  └────────────────┬───────────────────────┘                                  │
+│                   │                                                          │
+│                   ▼                                                          │
+│  ┌────────────────────────────────────────┐                                  │
+│  │ 3. Generate pinned DNS file            │                                  │
+│  │    /tmp/kapsis-pinned-XXXXX.conf       │                                  │
+│  └────────────────┬───────────────────────┘                                  │
+│                   │                                                          │
+│                   ▼                                                          │
+│  ┌────────────────────────────────────────┐                                  │
+│  │ 4. Launch container with:              │                                  │
+│  │    -v pinned.conf:/etc/kapsis/...:ro   │◄── Read-only mount              │
+│  │    -v resolv.conf:/etc/resolv.conf:ro  │◄── Host-managed DNS config     │
+│  │    --add-host github.com:140.82.121.4  │◄── Belt-and-suspenders          │
+│  │    --add-host gitlab.com:172.65.251.78 │                                  │
+│  └────────────────────────────────────────┘                                  │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  CONTAINER (untrusted agent environment)                                     │
+│  ┌────────────────────────────────────────┐                                  │
+│  │ 5. entrypoint.sh: Load pinned entries  │                                  │
+│  │    Generate dnsmasq config with:       │                                  │
+│  │    - address=/github.com/140.82.121.4  │◄── Static IP (pinned)           │
+│  │    - address=/gitlab.com/172.65.251.78 │◄── Static IP (pinned)           │
+│  │    - server=/.npmjs.org/8.8.8.8        │◄── Dynamic (wildcard)           │
+│  │    - address=/#/0.0.0.0                │◄── Block all else               │
+│  └────────────────┬───────────────────────┘                                  │
+│                   │                                                          │
+│                   ▼                                                          │
+│  ┌────────────────────────────────────────┐                                  │
+│  │ 6. Protect DNS files                   │                                  │
+│  │    /etc/resolv.conf → host-mounted :ro │◄── Immutable from container    │
+│  │    chmod 444 /etc/hosts                │                                  │
+│  │    chmod 400 dnsmasq PID/config files  │                                  │
+│  └────────────────┬───────────────────────┘                                  │
+│                   │                                                          │
+│                   ▼                                                          │
+│  ┌────────────────────────────────────────┐                                  │
+│  │ 7. Start DNS watchdog + run agent      │                                  │
+│  │    - Watchdog restarts dnsmasq if killed│                                  │
+│  │    - Pinned domains → static IPs       │                                  │
+│  │    - Wildcards → dynamic resolution    │                                  │
+│  │    - Unknown → 0.0.0.0 (blocked)       │                                  │
+│  └────────────────────────────────────────┘                                  │
+│                                                                              │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+### Configuration
+
+```yaml
+network:
+  mode: filtered
+  dns_pinning:
+    # Enable DNS IP pinning (default: true)
+    enabled: true
+
+    # Fallback when resolution fails:
+    #   dynamic - Use upstream DNS (degrades security)
+    #   abort   - Fail container launch
+    fallback: dynamic
+
+    # DNS resolution timeout in seconds
+    resolve_timeout: 5
+
+    # Protect /etc/resolv.conf and /etc/hosts
+    protect_dns_files: true
+```
+
+### Defense-in-Depth Layers
+
+DNS filtering uses multiple reinforcing protections:
+
+1. **Host-mounted resolv.conf** (`/etc/resolv.conf:ro`) — Mounted read-only from the host, cannot be modified inside the container by any means
+2. **dnsmasq with pinned IPs** — Resolves allowlist domains on trusted host, pins IPs via `address=` directives
+3. **`--add-host` flags** — Belt-and-suspenders: pinned IPs also written to `/etc/hosts` by Podman at container creation
+4. **File protection** — `chmod 444` on `/etc/hosts`, `chmod 400` on dnsmasq PID/config files
+5. **dnsmasq watchdog** — Background process restarts dnsmasq if killed; provides audit trail of tampering
+
+### Limitations
+
+| Limitation | Description | Mitigation |
+|------------|-------------|------------|
+| Wildcards | `*.github.com` cannot be pre-resolved | Security warning emitted; use concrete subdomains when possible |
+| CDN rotation | IPs may change during long sessions | Session typically short; restart to refresh |
+| Offline hosts | Host must have network at launch time | Graceful fallback with `fallback: dynamic` |
+| IPv6 | Only IPv4 addresses are pinned | IPv6 not typically used for package registries |
+
+### Security Trade-offs
+
+**Pinned (concrete domains)**:
+- Pro: Immune to DNS manipulation inside container
+- Con: Stale if IP changes during session
+
+**Dynamic (wildcards)**:
+- Pro: Always resolves current IP
+- Con: Vulnerable to DNS manipulation if dnsmasq bypassed
+
+### Files Involved
+
+| File | Location | Purpose |
+|------|----------|---------|
+| `dns-pin.sh` | Host: `scripts/lib/` | Resolves domains, generates pinned file |
+| `pinned-dns.conf` | Container: `/etc/kapsis/` | Mounted read-only, contains domain→IP mappings |
+| `dns-filter.sh` | Container: `/opt/kapsis/lib/` | Loads pinned entries into dnsmasq config |
+
 ## Future Enhancements
 
 - IP-based filtering (iptables/nftables)
