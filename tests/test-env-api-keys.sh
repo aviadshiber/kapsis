@@ -487,13 +487,14 @@ EOF
     unset CONTEXT7_API_KEY GRAFANA_READONLY_TOKEN
     rm -f "$test_config"
 
-    # Secret values should NOT appear in output (masked)
-    assert_not_contains "$output" "ctx7-secret-value" "CONTEXT7_API_KEY value should be masked"
-    assert_not_contains "$output" "graf-secret-value" "GRAFANA_READONLY_TOKEN value should be masked"
+    # Secret values should NOT appear in output (they go via --env-file, not inline)
+    assert_not_contains "$output" "ctx7-secret-value" "CONTEXT7_API_KEY value should not leak"
+    assert_not_contains "$output" "graf-secret-value" "GRAFANA_READONLY_TOKEN value should not leak"
 
-    # Variable names with ***MASKED*** should appear
-    assert_contains "$output" "CONTEXT7_API_KEY=***MASKED***" "CONTEXT7_API_KEY should be masked"
-    assert_contains "$output" "GRAFANA_READONLY_TOKEN=***MASKED***" "GRAFANA_READONLY_TOKEN should be masked"
+    # Secrets should be listed by name in the --env-file summary
+    assert_contains "$output" "via --env-file" "Secrets should use --env-file"
+    assert_contains "$output" "CONTEXT7_API_KEY" "CONTEXT7_API_KEY should be listed"
+    assert_contains "$output" "GRAFANA_READONLY_TOKEN" "GRAFANA_READONLY_TOKEN should be listed"
 }
 
 test_filesystem_mounts_home_paths_staged() {
