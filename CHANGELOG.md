@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.2.0] - 2026-02-09
+## [2.3.1] - 2026-02-09
+
+### Changed
+- Bump the github-actions group with 2 updates
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Added
 - Test-sdkman-offline-mode
@@ -18,9 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Use correct SDKMAN config key sdkman_selfupdate_feature
 - Resolve SC2034 shellcheck warning in test-containerfile.sh
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Added
 - Add animated progress display to terminal demo
@@ -434,7 +438,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.2.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.3.1...HEAD
+[2.3.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.3.1
 [2.2.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.2.0
 [2.1.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.1.1
 [2.1.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.1.0
