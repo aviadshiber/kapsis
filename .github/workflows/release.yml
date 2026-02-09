@@ -75,96 +75,77 @@ jobs:
           chmod +x ./tests/lib/*.sh ./scripts/lib/*.sh 2>/dev/null || true
           ./tests/run-all-tests.sh --quick
 
-  build:
-    name: Build Container Image
+  build-and-push:
+    name: Build & Push Container Images
     runs-on: ubuntu-latest
-    needs: validate  # Run in parallel with test job
+    needs: validate
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
-      - name: Install Podman
+      - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y podman
+          sudo apt-get install -y podman jq
+          # Install yq for agent image builds
+          YQ_VERSION="v4.50.1"
+          YQ_SHA256="c7a1278e6bbc4924f41b56db838086c39d13ee25dcb22089e7fbf16ac901f0d4"
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
+          sudo chmod +x /usr/local/bin/yq
 
-      - name: Generate cache key
-        id: cache-key
+      - name: Log in to ghcr.io
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: echo "${GITHUB_TOKEN}" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build sandbox image
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          # Cache key based on files that affect the container image
-          echo "key=kapsis-release-${{ hashFiles('Containerfile', 'scripts/build-image.sh', 'scripts/lib/**', 'scripts/entrypoint.sh') }}" >> $GITHUB_OUTPUT
+          chmod +x ./scripts/build-image.sh ./scripts/lib/*.sh
+          ./scripts/build-image.sh --name kapsis-sandbox --tag "${VERSION}"
 
-      - name: Restore cached container image
-        id: cache-restore
-        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306  # v5
-        with:
-          path: /tmp/kapsis-base-image.tar
-          key: ${{ steps.cache-key.outputs.key }}
-
-      - name: Load cached image or build fresh
+      - name: Build claude-cli agent image
         run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          chmod +x ./scripts/build-image.sh
+          chmod +x ./scripts/build-agent-image.sh
+          ./scripts/build-agent-image.sh claude-cli
 
-          if [[ -f /tmp/kapsis-base-image.tar ]]; then
-            echo "Loading cached base image..."
-            podman load -i /tmp/kapsis-base-image.tar
-            # Re-tag with current version
-            podman tag kapsis:cached "kapsis:${VERSION}"
-            podman tag kapsis:cached kapsis:latest
-            echo "✓ Loaded from cache"
-          else
-            echo "No cache found, building fresh image..."
-            ./scripts/build-image.sh --name kapsis --tag "$VERSION"
-            ./scripts/build-image.sh --name kapsis --tag latest
-          fi
-
-      - name: Save image to cache
-        if: steps.cache-restore.outputs.cache-hit != 'true'
+      - name: Tag and push images to ghcr.io
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
         run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          echo "Saving image to cache for future builds..."
-          podman tag "kapsis:${VERSION}" kapsis:cached
-          podman save kapsis:cached -o /tmp/kapsis-base-image.tar
+          for IMAGE in kapsis-sandbox kapsis-claude-cli; do
+            LOCAL_TAG="${IMAGE}:latest"
+            if [[ "${IMAGE}" == "kapsis-sandbox" ]]; then
+              LOCAL_TAG="${IMAGE}:${VERSION}"
+            fi
 
-      - name: Upload image cache
-        if: steps.cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306  # v5
-        with:
-          path: /tmp/kapsis-base-image.tar
-          key: ${{ steps.cache-key.outputs.key }}
+            # Tag with version and latest
+            podman tag "${LOCAL_TAG}" "${REGISTRY}/${IMAGE}:${VERSION}"
+            podman tag "${LOCAL_TAG}" "${REGISTRY}/${IMAGE}:latest"
 
-      - name: Export image for release
-        run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-          # Security: Quote variables to prevent word splitting and injection
-          # Use -image suffix to distinguish from source tarball
-          podman save "kapsis:${VERSION}" | gzip > "kapsis-image-${VERSION}.tar.gz"
+            # Push both tags
+            podman push "${REGISTRY}/${IMAGE}:${VERSION}"
+            podman push "${REGISTRY}/${IMAGE}:latest"
 
-      - name: Upload image artifact
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6
-        with:
-          name: container-image
-          path: kapsis-image-*.tar.gz
-          retention-days: 7
+            echo "Pushed ${REGISTRY}/${IMAGE}:${VERSION}"
+          done
 
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [validate, test, build]
+    needs: [validate, test, build-and-push]
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
 
-      - name: Download container image
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131  # v7
-        with:
-          name: container-image
-
       - name: Create source tarball
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-
           # Create a clean source tarball for the install script
           mkdir -p "kapsis-${VERSION}"
           cp -r scripts configs maven *.sh *.md *.yaml.template Containerfile LICENSE "kapsis-${VERSION}/"
@@ -172,12 +153,10 @@ jobs:
           rm -rf "kapsis-${VERSION}"
 
       - name: Generate checksums
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          VERSION="${{ needs.validate.outputs.version }}"
-
-          # Generate checksums for all release assets
           sha256sum "kapsis-${VERSION}.tar.gz" > checksums.sha256
-          sha256sum "kapsis-image-${VERSION}.tar.gz" >> checksums.sha256
 
           echo "Generated checksums:"
           cat checksums.sha256
@@ -263,6 +242,15 @@ jobs:
               echo ""
             fi
 
+            echo "### 📦 Container Images"
+            echo ""
+            echo "Pull pre-built images from GitHub Container Registry:"
+            echo '```bash'
+            echo "podman pull ghcr.io/${{ github.repository_owner }}/kapsis-sandbox:${VERSION}"
+            echo "podman pull ghcr.io/${{ github.repository_owner }}/kapsis-claude-cli:${VERSION}"
+            echo '```'
+            echo ""
+
             # Add compare link
             if [[ -n "$PREV_TAG" ]]; then
               echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...v${VERSION}"
@@ -284,7 +272,6 @@ jobs:
           prerelease: ${{ inputs.prerelease || false }}
           files: |
             kapsis-${{ needs.validate.outputs.version }}.tar.gz
-            kapsis-image-${{ needs.validate.outputs.version }}.tar.gz
             checksums.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -776,7 +763,7 @@ jobs:
           echo "## Release v$VERSION completed!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ GitHub Release created" >> $GITHUB_STEP_SUMMARY
-          echo "- ✅ Container image artifact uploaded" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Container images pushed to ghcr.io" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Checksums generated" >> $GITHUB_STEP_SUMMARY
 
           if [[ "$PACKAGES_STATUS" == "success" ]]; then
