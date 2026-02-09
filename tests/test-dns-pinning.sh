@@ -352,8 +352,8 @@ network:
 EOF
 
     local output
-    local exit_code=0
-    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || exit_code=$?
+
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
 
     # Check for validation passes - the verifier outputs [PASS] for valid settings
     if echo "$output" | grep -q "dns_pinning.enabled"; then
@@ -393,8 +393,8 @@ network:
 EOF
 
     local output
-    local exit_code=0
-    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || exit_code=$?
+
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
 
     # Check for validation errors
     if echo "$output" | grep -q "Invalid dns_pinning.enabled"; then
@@ -416,9 +416,9 @@ test_dry_run_shows_pinning() {
     fi
 
     local output
-    local exit_code=0
 
-    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --network-mode filtered --task "test" --dry-run 2>&1) || exit_code=$?
+
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --network-mode filtered --task "test" --dry-run 2>&1) || true
 
     # Check for DNS pinning output (may fail to resolve in some environments)
     if echo "$output" | grep -q "DNS pinning"; then
