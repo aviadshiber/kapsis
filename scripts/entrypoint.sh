@@ -892,7 +892,7 @@ can_run_dns_filtering() {
         return 0
     fi
 
-    # Check if we can write to resolv.conf (or if it's managed externally)
+    # Check if we can write to resolv.conf
     if [[ ! -w /etc/resolv.conf ]] && [[ ! -w /etc ]]; then
         log_debug "Cannot modify /etc/resolv.conf - DNS filtering unavailable"
         return 1

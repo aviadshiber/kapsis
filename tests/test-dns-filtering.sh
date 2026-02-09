@@ -278,8 +278,8 @@ test_can_run_dns_filtering_fails_without_dnsmasq() {
     assert_not_equals 0 "$exit_code" "Should fail when dnsmasq is missing even with pre-mounted resolv.conf"
 }
 
-test_can_run_dns_filtering_fails_readonly_without_env() {
-    log_test "Testing can_run_dns_filtering fails with read-only resolv.conf and no KAPSIS_RESOLV_CONF_MOUNTED"
+test_can_run_dns_filtering_without_env_evaluates() {
+    log_test "Testing can_run_dns_filtering evaluates without KAPSIS_RESOLV_CONF_MOUNTED (smoke test)"
 
     local exit_code=0
 
@@ -295,18 +295,13 @@ test_can_run_dns_filtering_fails_readonly_without_env() {
         # KAPSIS_RESOLV_CONF_MOUNTED is NOT set (default)
         unset KAPSIS_RESOLV_CONF_MOUNTED
 
-        # Create a read-only temp file to simulate resolv.conf
-        TMPRC=$(mktemp)
-        chmod 444 "$TMPRC"
-        # The function checks /etc/resolv.conf which we cannot easily mock,
-        # but we verify the logic path exists by testing with the env var unset
-        # In a real container /etc/resolv.conf would be read-only
         can_run_dns_filtering
     ' 2>/dev/null || exit_code=$?
 
-    # This may pass on host (where /etc/resolv.conf or /etc is writable)
-    # The important test is that KAPSIS_RESOLV_CONF_MOUNTED=true bypasses the check
-    log_pass "Function evaluated without error (writable /etc on host is expected)"
+    # On host, /etc/resolv.conf or /etc is typically writable so this passes.
+    # In a real container with :ro mount and no env var, it would fail.
+    # The critical assertion is in test_can_run_dns_filtering_passes_with_resolv_conf_mounted.
+    log_pass "Function evaluated without error (smoke test on host)"
 }
 
 test_filtered_mode_dry_run_sets_resolv_conf_mounted() {
@@ -574,7 +569,7 @@ main() {
     run_test test_dnsmasq_config_from_yaml
     run_test test_can_run_dns_filtering_passes_with_resolv_conf_mounted
     run_test test_can_run_dns_filtering_fails_without_dnsmasq
-    run_test test_can_run_dns_filtering_fails_readonly_without_env
+    run_test test_can_run_dns_filtering_without_env_evaluates
     run_test test_filtered_mode_dry_run_sets_resolv_conf_mounted
     run_test test_config_parsing_extracts_allowlist
 
