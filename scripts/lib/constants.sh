@@ -99,3 +99,14 @@ readonly KAPSIS_GIT_EXCLUDE_PATTERNS="# Kapsis internal files
 .claude/
 .codex/
 .aider/"
+
+#===============================================================================
+# FILE SANITIZATION CONSTANTS
+#===============================================================================
+
+# Default enabled state for file sanitization
+readonly KAPSIS_DEFAULT_SANITIZE_ENABLED="true"
+
+# File extensions considered "code files" for homoglyph detection
+# Homoglyph warnings only apply to code files where mixed scripts are suspicious
+readonly KAPSIS_CODE_FILE_EXTENSIONS='\.(jsx?|tsx?|py|java|go|rb|rs|[ch](pp)?|cs|sh|bash|zsh|pl|php|swift|kt|scala|lua|r|sql|proto|thrift|avdl)$'
