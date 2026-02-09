@@ -528,6 +528,7 @@ DNS IP pinning is a security enhancement that resolves allowlist domains on the 
 │  ┌────────────────────────────────────────┐                                  │
 │  │ 4. Launch container with:              │                                  │
 │  │    -v pinned.conf:/etc/kapsis/...:ro   │◄── Read-only mount              │
+│  │    -v resolv.conf:/etc/resolv.conf:ro  │◄── Host-managed DNS config     │
 │  │    --add-host github.com:140.82.121.4  │◄── Belt-and-suspenders          │
 │  │    --add-host gitlab.com:172.65.251.78 │                                  │
 │  └────────────────────────────────────────┘                                  │
@@ -547,13 +548,15 @@ DNS IP pinning is a security enhancement that resolves allowlist domains on the 
 │                   ▼                                                          │
 │  ┌────────────────────────────────────────┐                                  │
 │  │ 6. Protect DNS files                   │                                  │
-│  │    chmod 444 /etc/resolv.conf          │                                  │
+│  │    /etc/resolv.conf → host-mounted :ro │◄── Immutable from container    │
 │  │    chmod 444 /etc/hosts                │                                  │
+│  │    chmod 400 dnsmasq PID/config files  │                                  │
 │  └────────────────┬───────────────────────┘                                  │
 │                   │                                                          │
 │                   ▼                                                          │
 │  ┌────────────────────────────────────────┐                                  │
-│  │ 7. Agent runs with pinned DNS          │                                  │
+│  │ 7. Start DNS watchdog + run agent      │                                  │
+│  │    - Watchdog restarts dnsmasq if killed│                                  │
 │  │    - Pinned domains → static IPs       │                                  │
 │  │    - Wildcards → dynamic resolution    │                                  │
 │  │    - Unknown → 0.0.0.0 (blocked)       │                                  │

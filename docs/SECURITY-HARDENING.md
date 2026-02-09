@@ -522,7 +522,7 @@ CONTAINER_CMD+=(
 security:
   filesystem:
     # Read-only root filesystem
-    # Default: true for strict/paranoid profiles
+    # Default: false (true for strict/paranoid profiles)
     readonly_root: false
 
     # Temporary directory size limits
