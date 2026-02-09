@@ -8,6 +8,7 @@
 #   ./build-image.sh [options]
 #
 # Options:
+#   --pull                Pull pre-built image from ghcr.io (recommended)
 #   --name <name>         Image name (default: kapsis-sandbox)
 #   --tag <tag>           Image tag (default: latest)
 #   --platform <p>        Target platform (default: auto-detect, e.g., linux/amd64)
@@ -29,6 +30,8 @@
 #   frontend      Frontend development (~1.2GB) - Node.js, Rust
 #
 # Examples:
+#   ./build-image.sh --pull                    # Pull pre-built image (recommended)
+#   ./build-image.sh --pull --tag 2.4.0        # Pull specific version
 #   ./build-image.sh                           # Build with default config
 #   ./build-image.sh --profile minimal         # Build minimal image
 #   ./build-image.sh --profile java-dev        # Build for Java development
@@ -58,11 +61,15 @@ declare -A BASE_IMAGE_DIGESTS=(
     ["linux/arm64"]="sha256:955364933d0d91afa6e10fb045948c16d2b191114aa54bed3ab5430d8bbc58cc"
 )
 
+# Source shared constants for registry URL
+source "$SCRIPT_DIR/lib/constants.sh"
+
 # Defaults
 IMAGE_NAME="kapsis-sandbox"
 IMAGE_TAG="latest"
 NO_CACHE=""
 PUSH=false
+PULL=false
 PLATFORM=""
 BUILD_CONFIG=""
 PROFILE=""
@@ -176,6 +183,10 @@ while [[ $# -gt 0 ]]; do
             NO_CACHE="--no-cache"
             shift
             ;;
+        --pull)
+            PULL=true
+            shift
+            ;;
         --push)
             PUSH=true
             shift
@@ -195,6 +206,22 @@ done
 if [[ -n "$BUILD_CONFIG" ]] && [[ -n "$PROFILE" ]]; then
     log_error "--build-config and --profile are mutually exclusive"
     exit 1
+fi
+
+# Pull mode: pull pre-built image from registry instead of building
+if [[ "$PULL" == "true" ]]; then
+    REMOTE_IMAGE="${KAPSIS_REGISTRY}/${IMAGE_NAME}:${IMAGE_TAG}"
+    log_info "Pulling pre-built image: ${REMOTE_IMAGE}"
+    if podman pull "${REMOTE_IMAGE}"; then
+        # Tag locally so scripts can reference it without registry prefix
+        podman tag "${REMOTE_IMAGE}" "${IMAGE_NAME}:${IMAGE_TAG}"
+        log_success "Image ready: ${IMAGE_NAME}:${IMAGE_TAG}"
+        podman images "${IMAGE_NAME}"
+    else
+        log_error "Failed to pull ${REMOTE_IMAGE}"
+        log_error "Check available tags at: https://github.com/aviadshiber/kapsis/pkgs/container/${IMAGE_NAME}"
+    fi
+    exit $?
 fi
 
 # Resolve platform and digest

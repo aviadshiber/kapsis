@@ -48,11 +48,13 @@ Arguments:
   agent-profile    Name of agent profile in configs/agents/ (e.g., claude-cli, aider)
 
 Options:
-  --build-config <file>  Build config file (default: configs/build-config.yaml)
-  --profile <name>       Build profile preset (e.g., java-dev, full-stack)
-  -h, --help             Show this help message
+  --pull                   Pull pre-built image from ghcr.io (recommended)
+  --build-config <file>    Build config file (default: configs/build-config.yaml)
+  --profile <name>         Build profile preset (e.g., java-dev, full-stack)
+  -h, --help               Show this help message
 
 Examples:
+  $(basename "$0") claude-cli --pull               # Pull pre-built image (recommended)
   $(basename "$0") claude-cli                      # Build with default config
   $(basename "$0") claude-cli --profile java-dev   # Build with java-dev profile
   $(basename "$0") aider --profile full-stack      # Build aider with full-stack
@@ -79,10 +81,15 @@ EOF
 AGENT_PROFILE=""
 BUILD_CONFIG=""
 BUILD_PROFILE=""
+PULL=false
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --pull)
+            PULL=true
+            shift
+            ;;
         --build-config)
             BUILD_CONFIG="$2"
             shift 2
@@ -131,6 +138,29 @@ if [[ ! -f "$PROFILE_PATH" ]]; then
         [[ -f "$profile" ]] && echo "  $(basename "$profile" .yaml)"
     done
     exit 1
+fi
+
+# Pull mode: pull pre-built image from registry instead of building
+if [[ "$PULL" == "true" ]]; then
+    # Source constants for KAPSIS_REGISTRY
+    if [[ -f "$SCRIPT_DIR/lib/constants.sh" ]]; then
+        source "$SCRIPT_DIR/lib/constants.sh"
+    else
+        KAPSIS_REGISTRY="ghcr.io/aviadshiber"
+    fi
+
+    IMAGE_NAME="kapsis-${AGENT_PROFILE}"
+    REMOTE_IMAGE="${KAPSIS_REGISTRY}/${IMAGE_NAME}:latest"
+    log_info "Pulling pre-built image: ${REMOTE_IMAGE}"
+    if podman pull "${REMOTE_IMAGE}"; then
+        podman tag "${REMOTE_IMAGE}" "${IMAGE_NAME}:latest"
+        log_success "Image ready: ${IMAGE_NAME}:latest"
+        podman images "${IMAGE_NAME}"
+    else
+        log_error "Failed to pull ${REMOTE_IMAGE}"
+        log_error "Check available images at: https://github.com/aviadshiber/kapsis/pkgs"
+    fi
+    exit $?
 fi
 
 log_info "Building agent image from profile: $AGENT_PROFILE"
