@@ -268,11 +268,9 @@ ssh:
 # CONTAINER IMAGE
 #===============================================================================
 image:
-  # Pre-built images from GitHub Container Registry (recommended):
-  #   ghcr.io/aviadshiber/kapsis-sandbox
-  #   ghcr.io/aviadshiber/kapsis-claude-cli
-  # Or use a locally built image name (e.g., kapsis-sandbox)
-  name: ghcr.io/aviadshiber/kapsis-sandbox
+  # Pull pre-built images with: ./scripts/build-image.sh --pull
+  # Or build locally with:      ./scripts/build-image.sh
+  name: kapsis-sandbox
   tag: latest
 
   # Base image

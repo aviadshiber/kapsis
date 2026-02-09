@@ -80,9 +80,9 @@ git clone https://github.com/aviadshiber/kapsis.git && cd kapsis
 ./setup.sh              # Check dependencies only
 ./setup.sh --install    # Auto-install missing dependencies (Podman, etc.)
 
-# 3. Pull pre-built container images from GitHub Container Registry
-podman pull ghcr.io/aviadshiber/kapsis-sandbox:latest
-podman pull ghcr.io/aviadshiber/kapsis-claude-cli:latest
+# 3. Pull pre-built container images
+./scripts/build-image.sh --pull
+./scripts/build-agent-image.sh claude-cli --pull
 
 # 4. Copy and customize config
 cp agent-sandbox.yaml.template agent-sandbox.yaml
@@ -93,7 +93,7 @@ kapsis 1 ~/project --task "fix failing tests"
 # or: ./scripts/launch-agent.sh ~/project --task "fix failing tests"
 ```
 
-> **Note:** You can also build images locally with `./scripts/build-image.sh` if you need custom configurations.
+> **Note:** Omit `--pull` to build images locally if you need custom configurations.
 
 ## Agent Profiles
 
@@ -115,14 +115,14 @@ Kapsis includes pre-built agent profiles that install the agent directly into th
 ### Use the Agent Image
 
 ```bash
-# Use the pre-built agent image from ghcr.io
+# Use the pre-built agent image
 ./scripts/launch-agent.sh ~/project \
-    --image ghcr.io/aviadshiber/kapsis-claude-cli:latest \
+    --image kapsis-claude-cli:latest \
     --task "implement rate limiting"
 
 # Or specify in config
 # image:
-#   name: ghcr.io/aviadshiber/kapsis-claude-cli
+#   name: kapsis-claude-cli
 #   tag: latest
 ```
 

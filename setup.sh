@@ -436,7 +436,7 @@ check_container_image() {
         check_result pass "Container Image" "Available: $image_exists"
     else
         check_result warn "Container Image" "Not found" \
-            "Run: podman pull ghcr.io/aviadshiber/kapsis-sandbox:latest"
+            "Run: ./scripts/build-image.sh --pull"
     fi
 }
 

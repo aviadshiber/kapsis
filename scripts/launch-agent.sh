@@ -91,8 +91,8 @@ RESUME_MODE=false      # Fix #1: Auto-resume existing worktree
 FORCE_CLEAN=false      # Fix #1: Force remove existing worktree
 INTERACTIVE=false
 DRY_RUN=false
-# Use KAPSIS_IMAGE env var if set (for CI), otherwise default to ghcr.io
-IMAGE_NAME="${KAPSIS_IMAGE:-ghcr.io/aviadshiber/kapsis-sandbox:latest}"
+# Use KAPSIS_IMAGE env var if set (for CI), otherwise default
+IMAGE_NAME="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 SANDBOX_MODE=""  # auto-detect, worktree, or overlay
 WORKTREE_PATH=""
 SANITIZED_GIT_PATH=""
@@ -218,7 +218,7 @@ Options:
   --no-push             [DEPRECATED] Push is now off by default, use --push to enable
   --interactive         Force interactive shell mode (ignores agent.command)
   --dry-run             Show what would be executed without running
-  --image <name>        Container image to use (e.g., ghcr.io/aviadshiber/kapsis-claude-cli:latest)
+  --image <name>        Container image to use (e.g., kapsis-claude-cli:latest)
   --worktree-mode       Force worktree mode (requires git repo + branch)
   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
   --network-mode <mode> Network isolation: none (isolated),
