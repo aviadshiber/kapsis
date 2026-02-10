@@ -195,7 +195,7 @@ EOF
             done
 
             log_debug "Pinned: $pin_domain -> $pin_ips"
-            ((pinned_count++))
+            pinned_count=$((pinned_count + 1))
         done < "$pinned_file"
 
         log_success "Loaded $pinned_count pinned domain(s) from host resolution"
@@ -272,7 +272,7 @@ EOF
                         echo "server=/${domain}/${primary_dns}" >> "$config_file"
                         log_debug "Added domain: $domain"
                     fi
-                    ((domain_count++))
+                    domain_count=$((domain_count + 1))
                 else
                     log_warn "Skipping invalid domain: $domain"
                 fi
@@ -308,7 +308,7 @@ EOF
                 else
                     echo "server=/${domain}/${primary_dns}" >> "$config_file"
                 fi
-                ((domain_count++))
+                domain_count=$((domain_count + 1))
             fi
         done
     fi
@@ -618,10 +618,10 @@ protect_dns_files() {
     if [[ -f /etc/resolv.conf ]]; then
         if chmod 444 /etc/resolv.conf 2>/dev/null; then
             log_debug "Protected /etc/resolv.conf (read-only)"
-            ((protected++))
+            protected=$((protected + 1))
         else
             log_warn "Cannot protect /etc/resolv.conf - may require root"
-            ((failed++))
+            failed=$((failed + 1))
         fi
     fi
 
@@ -629,10 +629,10 @@ protect_dns_files() {
     if [[ -f /etc/hosts ]]; then
         if chmod 444 /etc/hosts 2>/dev/null; then
             log_debug "Protected /etc/hosts (read-only)"
-            ((protected++))
+            protected=$((protected + 1))
         else
             log_warn "Cannot protect /etc/hosts - may require root"
-            ((failed++))
+            failed=$((failed + 1))
         fi
     fi
 
@@ -640,10 +640,10 @@ protect_dns_files() {
     if [[ -f "${KAPSIS_DNS_PID_FILE}" ]]; then
         if chmod 400 "${KAPSIS_DNS_PID_FILE}" 2>/dev/null; then
             log_debug "Protected ${KAPSIS_DNS_PID_FILE} (owner read-only)"
-            ((protected++))
+            protected=$((protected + 1))
         else
             log_warn "Cannot protect ${KAPSIS_DNS_PID_FILE}"
-            ((failed++))
+            failed=$((failed + 1))
         fi
     fi
 
@@ -651,10 +651,10 @@ protect_dns_files() {
     if [[ -f "${KAPSIS_DNS_CONFIG_FILE}" ]]; then
         if chmod 400 "${KAPSIS_DNS_CONFIG_FILE}" 2>/dev/null; then
             log_debug "Protected ${KAPSIS_DNS_CONFIG_FILE} (owner read-only)"
-            ((protected++))
+            protected=$((protected + 1))
         else
             log_warn "Cannot protect ${KAPSIS_DNS_CONFIG_FILE}"
-            ((failed++))
+            failed=$((failed + 1))
         fi
     fi
 

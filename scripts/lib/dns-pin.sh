@@ -88,14 +88,14 @@ resolve_allowlist_domains() {
         if [[ "$domain" == "*."* ]]; then
             log_warn "SECURITY: Wildcard '$domain' cannot be IP-pinned - vulnerable to DNS manipulation"
             log_warn "  Consider using concrete subdomains instead of wildcards for better security"
-            ((wildcard_count++))
+            wildcard_count=$((wildcard_count + 1))
             continue
         fi
 
         # Skip if already an IP address (just echo it back)
         if [[ "$domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "$domain $domain"
-            ((resolved_count++))
+            resolved_count=$((resolved_count + 1))
             continue
         fi
 
@@ -109,10 +109,10 @@ resolve_allowlist_domains() {
             ip_list=$(echo "$ips" | tr '\n' ' ' | sed 's/ $//')
             echo "$domain $ip_list"
             log_debug "Resolved $domain -> $ip_list"
-            ((resolved_count++))
+            resolved_count=$((resolved_count + 1))
         else
             log_warn "Failed to resolve domain: $domain"
-            ((failed_count++))
+            failed_count=$((failed_count + 1))
         fi
     done
 
@@ -331,7 +331,7 @@ validate_pinned_file() {
     while IFS= read -r line; do
         if ! validate_pinned_entry "$line"; then
             log_warn "Invalid pinned DNS entry: $line"
-            ((invalid_count++))
+            invalid_count=$((invalid_count + 1))
         fi
     done < "$pinned_file"
 
