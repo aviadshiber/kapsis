@@ -444,6 +444,87 @@ EOF
     done
 }
 
+test_entry_point_filters_hooks_and_mcp_together() {
+    setup_test_home
+
+    # Create both settings.json (hooks) and .claude.json (MCP servers)
+    cat > "$TEST_HOME/.claude/settings.json" << 'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "/bin/block-secrets"}]},
+      {"matcher": "*", "hooks": [{"type": "command", "command": "/bin/unwanted-hook"}]}
+    ]
+  }
+}
+EOF
+
+    cat > "$TEST_HOME/.claude.json" << 'EOF'
+{
+  "mcpServers": {
+    "context7": {"command": "npx"},
+    "playwright": {"command": "npx"}
+  }
+}
+EOF
+
+    export HOME="$TEST_HOME"
+    export KAPSIS_AGENT_TYPE="claude-code"
+    export KAPSIS_CLAUDE_HOOKS_INCLUDE="block-secrets"
+    export KAPSIS_CLAUDE_MCP_INCLUDE="context7"
+
+    unset _KAPSIS_FILTER_AGENT_CONFIG_LOADED
+    source "$LIB_DIR/filter-agent-config.sh"
+    filter_claude_agent_config
+
+    # Verify hooks filtered
+    local hooks_result
+    hooks_result=$(cat "$TEST_HOME/.claude/settings.json")
+    assert_contains "$hooks_result" "block-secrets" "Hook should be kept"
+    assert_not_contains "$hooks_result" "unwanted-hook" "Hook should be removed"
+
+    # Verify MCP servers filtered
+    local mcp_result
+    mcp_result=$(cat "$TEST_HOME/.claude.json")
+    assert_contains "$mcp_result" "context7" "MCP server should be kept"
+    assert_not_contains "$mcp_result" "playwright" "MCP server should be removed"
+
+    cleanup_test_home
+}
+
+test_hook_removes_empty_event_types() {
+    setup_test_home
+
+    # PostToolUse has only a non-matching hook; Stop has a matching hook
+    cat > "$TEST_HOME/.claude/settings.json" << 'EOF'
+{
+  "hooks": {
+    "PostToolUse": [
+      {"matcher": "*", "hooks": [{"type": "command", "command": "/bin/unwanted"}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "/bin/cleanup-secrets"}]}
+    ]
+  }
+}
+EOF
+
+    export HOME="$TEST_HOME"
+    export KAPSIS_CLAUDE_HOOKS_INCLUDE="cleanup-secrets"
+
+    unset _KAPSIS_FILTER_AGENT_CONFIG_LOADED
+    source "$LIB_DIR/filter-agent-config.sh"
+    filter_claude_hooks
+
+    local result
+    result=$(cat "$TEST_HOME/.claude/settings.json")
+    assert_contains "$result" "cleanup-secrets" "Matching hook in Stop should be kept"
+    assert_not_contains "$result" "PostToolUse" "Empty event type should be pruned"
+    assert_not_contains "$result" "unwanted" "Non-matching hook should be removed"
+
+    cleanup_test_home
+}
+
 #===============================================================================
 # Test Runner
 #===============================================================================
@@ -470,6 +551,8 @@ run_tests() {
     run_test test_entry_point_skips_non_claude_agents
     run_test test_entry_point_skips_when_no_filters
     run_test test_entry_point_runs_for_claude_variants
+    run_test test_entry_point_filters_hooks_and_mcp_together
+    run_test test_hook_removes_empty_event_types
 
     print_summary
 }

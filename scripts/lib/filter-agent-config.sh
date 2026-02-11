@@ -14,6 +14,8 @@
 #   KAPSIS_CLAUDE_MCP_INCLUDE    - Comma-separated exact MCP server names to keep
 #   KAPSIS_AGENT_TYPE            - Agent type (only runs for claude-related types)
 #
+# Note: Include lists use comma as delimiter, so patterns/names must not contain commas.
+#
 # Usage: Called automatically by entrypoint.sh
 #        source filter-agent-config.sh && filter_claude_agent_config
 #===============================================================================
@@ -72,14 +74,16 @@ filter_claude_hooks() {
     # Convert comma-separated list to JSON array for jq
     local patterns_json
     patterns_json=$(echo "$include_list" | tr ',' '\n' | jq -R . | jq -s .)
+    log_debug "Hook whitelist patterns: $patterns_json"
 
     local tmp_file
     tmp_file=$(mktemp)
 
     # Keep only hooks where at least one command substring-matches the whitelist
+    # Empty event types (all hooks removed) are pruned from the output
     if jq --argjson patterns "$patterns_json" '
         if .hooks then
-            .hooks |= with_entries(
+            .hooks |= (with_entries(
                 .value |= map(
                     select(
                         [.hooks[]?.command // ""] |
@@ -88,7 +92,7 @@ filter_claude_hooks() {
                         )
                     )
                 )
-            )
+            ) | with_entries(select(.value | length > 0)))
         else . end
     ' "$settings_file" > "$tmp_file" 2>/dev/null; then
         mv "$tmp_file" "$settings_file"
@@ -139,6 +143,7 @@ filter_claude_mcp_servers() {
     # Convert comma-separated list to JSON array for jq
     local servers_json
     servers_json=$(echo "$include_list" | tr ',' '\n' | jq -R . | jq -s .)
+    log_debug "MCP server whitelist: $servers_json"
 
     local tmp_file
     tmp_file=$(mktemp)
