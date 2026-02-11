@@ -472,6 +472,7 @@ COPY scripts/lib/progress-monitor.sh /opt/kapsis/lib/progress-monitor.sh
 COPY scripts/lib/progress-instructions.md /opt/kapsis/lib/progress-instructions.md
 COPY scripts/lib/status.py /opt/kapsis/lib/status.py
 COPY scripts/lib/inject-status-hooks.sh /opt/kapsis/lib/inject-status-hooks.sh
+COPY scripts/lib/filter-agent-config.sh /opt/kapsis/lib/filter-agent-config.sh
 COPY scripts/lib/dns-filter.sh /opt/kapsis/lib/dns-filter.sh
 
 # Create hooks directory and copy status tracking hooks

@@ -1015,6 +1015,14 @@ main() {
     # This must happen before setup_environment so agent configs are available
     setup_staged_config_overlays
 
+    # Whitelist Claude agent config (hooks and MCP servers) based on YAML config
+    # Must happen after CoW (files writable) and before hook injection (settings.local.json)
+    local filter_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/filter-agent-config.sh"
+    if [[ -f "$filter_lib" ]]; then
+        source "$filter_lib"
+        filter_claude_agent_config
+    fi
+
     # Inject credentials to files (agent-agnostic)
     # Reads KAPSIS_CREDENTIAL_FILES env var set by launch-agent.sh
     inject_credential_files
