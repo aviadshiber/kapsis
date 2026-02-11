@@ -268,7 +268,8 @@ ssh:
 # CONTAINER IMAGE
 #===============================================================================
 image:
-  # Name for the built image
+  # Pull pre-built images with: ./scripts/build-image.sh --pull
+  # Or build locally with:      ./scripts/build-image.sh
   name: kapsis-sandbox
   tag: latest
 

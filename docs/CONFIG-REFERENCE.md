@@ -618,6 +618,28 @@ ssh:
     # - git.company.com  # Enterprise host (run add-host first!)
 
 #===============================================================================
+# CLAUDE - Agent-specific config filtering (whitelist mode)
+#
+# Controls which host hooks and MCP servers are available in the container.
+# Only whitelisted entries are kept; everything else is removed.
+# Omit a section entirely to pass everything through (no filtering).
+#===============================================================================
+claude:
+  hooks:
+    # Whitelist hooks by substring match on the command field
+    # Only hooks whose command contains one of these substrings are kept
+    include:
+      - block-secrets          # Security hook
+      - claudeignore           # File ignore patterns
+
+  mcp_servers:
+    # Whitelist MCP servers by exact key name match
+    # Only servers whose JSON key exactly matches are kept
+    include:
+      - context7               # Documentation lookup
+      - atlassian              # Jira/Confluence
+
+#===============================================================================
 # CONTAINER IMAGE
 #===============================================================================
 image:
