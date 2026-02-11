@@ -758,6 +758,11 @@ parse_config() {
         # Parse SSH host verification list
         SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
 
+        # Parse Claude agent config whitelisting (include-only)
+        # When set, only matching hooks/MCP servers are kept in the container
+        CLAUDE_HOOKS_INCLUDE=$(yq -r '.claude.hooks.include // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+        CLAUDE_MCP_INCLUDE=$(yq -r '.claude.mcp_servers.include // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+
         # Parse network mode from config (CLI flag takes precedence)
         # Only read from config if CLI didn't explicitly set the value
         if [[ -z "$CLI_NETWORK_MODE" ]]; then
@@ -1318,6 +1323,14 @@ generate_env_vars() {
     # Pass staged configs for entrypoint to copy to $HOME
     if [[ -n "$STAGED_CONFIGS" ]]; then
         ENV_VARS+=("-e" "KAPSIS_STAGED_CONFIGS=${STAGED_CONFIGS}")
+    fi
+
+    # Pass Claude config whitelist filters
+    if [[ -n "${CLAUDE_HOOKS_INCLUDE:-}" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_CLAUDE_HOOKS_INCLUDE=${CLAUDE_HOOKS_INCLUDE}")
+    fi
+    if [[ -n "${CLAUDE_MCP_INCLUDE:-}" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_CLAUDE_MCP_INCLUDE=${CLAUDE_MCP_INCLUDE}")
     fi
 
     # Process explicit set environment variables from config
