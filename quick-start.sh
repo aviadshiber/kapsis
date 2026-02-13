@@ -6,17 +6,17 @@
 # Agent IDs are automatically generated (6-character UUID).
 #
 # Usage:
-#   ./quick-start.sh <project> <branch> [spec-file]
+#   ./quick-start.sh <agent-id> <project> <branch> [spec-file]
 #
 # Examples:
-#   ./quick-start.sh products feature/DEV-123
-#   ./quick-start.sh products feature/DEV-123 my-task.md
-#   ./quick-start.sh daredevil-ui feature/DEV-456 configs/specs/feature.md
+#   ./quick-start.sh 1 products feature/DEV-123
+#   ./quick-start.sh 1 products feature/DEV-123 my-task.md
+#   ./quick-start.sh 1 daredevil-ui feature/DEV-456 configs/specs/feature.md
 #
-# For parallel agents on same project (each gets unique auto-generated ID):
-#   ./quick-start.sh products feature/DEV-123-auth &
-#   ./quick-start.sh products feature/DEV-123-api &
-#   ./quick-start.sh products feature/DEV-123-tests &
+# For parallel agents on same project:
+#   ./quick-start.sh 1 products feature/DEV-123-auth &
+#   ./quick-start.sh 2 products feature/DEV-123-api &
+#   ./quick-start.sh 3 products feature/DEV-123-tests &
 #===============================================================================
 
 set -euo pipefail
