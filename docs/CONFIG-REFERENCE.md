@@ -1069,6 +1069,7 @@ Some config values can be overridden via command line:
 | `agent.command` | `--interactive` |
 | `image.name:image.tag` | `--image <name:tag>` |
 | `sandbox.upper_dir_base` | Set via environment |
+| (none) | `--remote-branch <name>` (remote branch name when different from local) |
 
 ## Network Isolation
 
