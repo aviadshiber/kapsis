@@ -84,6 +84,7 @@ CONFIG_FILE=""
 TASK_INLINE=""
 SPEC_FILE=""
 BRANCH=""
+REMOTE_BRANCH=""  # Remote branch name (when different from local branch)
 BASE_BRANCH=""  # Fix #116: Base branch/tag for new feature branches
 AUTO_BRANCH=false
 DO_PUSH=false
@@ -212,6 +213,8 @@ Options:
   --task <description>  Inline task description (for simple tasks)
   --spec <file>         Task specification file (for complex tasks)
   --branch <name>       Git branch to work on (creates new or continues existing)
+  --remote-branch <name>
+                        Remote branch name when different from local branch
   --base-branch <ref>   Base branch/tag for new branches (e.g., main, stable/trunk)
   --auto-branch         Auto-generate branch name from task/spec
   --push                Push changes to remote after commit (default: off)
@@ -249,6 +252,9 @@ Examples:
 
   # Create branch from specific base (e.g., stable/trunk tag)
   $cmd_name ~/project --branch feature/DEV-123 --base-branch stable/trunk --spec ./task.md
+
+  # Push local branch to a different remote branch name
+  $cmd_name ~/project --branch my-work --remote-branch claude/my-work-abc --push --spec ./task.md
 
   # Continue a previous session (use same agent ID)
   $cmd_name ~/project --agent-id a3f2b1 --branch feature/DEV-123 --task "continue"
@@ -369,6 +375,10 @@ parse_args() {
                 BRANCH="$2"
                 shift 2
                 ;;
+            --remote-branch)
+                REMOTE_BRANCH="$2"
+                shift 2
+                ;;
             --base-branch)
                 # Fix #116: Specify base branch/tag for new feature branches
                 BASE_BRANCH="$2"
@@ -464,6 +474,7 @@ validate_inputs() {
     log_debug "  PROJECT_PATH=$PROJECT_PATH"
     log_debug "  AGENT_NAME=$AGENT_NAME"
     log_debug "  BRANCH=$BRANCH"
+    log_debug "  REMOTE_BRANCH=$REMOTE_BRANCH"
 
     # Validate project path
     PROJECT_PATH="$(cd "$PROJECT_PATH" 2>/dev/null && pwd)" || {
@@ -918,7 +929,7 @@ setup_worktree_sandbox() {
     fi
 
     # Create worktree on host (Fix #116: pass base branch for proper branching)
-    WORKTREE_PATH=$(create_worktree "$PROJECT_PATH" "$AGENT_ID" "$BRANCH" "$BASE_BRANCH")
+    WORKTREE_PATH=$(create_worktree "$PROJECT_PATH" "$AGENT_ID" "$BRANCH" "$BASE_BRANCH" "$REMOTE_BRANCH")
 
     # Prepare sanitized git for container
     SANITIZED_GIT_PATH=$(prepare_sanitized_git "$WORKTREE_PATH" "$AGENT_ID" "$PROJECT_PATH")
@@ -1310,6 +1321,10 @@ generate_env_vars() {
         ENV_VARS+=("-e" "KAPSIS_BRANCH=${BRANCH}")
         ENV_VARS+=("-e" "KAPSIS_GIT_REMOTE=${GIT_REMOTE}")
         ENV_VARS+=("-e" "KAPSIS_DO_PUSH=${DO_PUSH}")
+        # Pass remote branch name when different from local
+        if [[ -n "$REMOTE_BRANCH" ]]; then
+            ENV_VARS+=("-e" "KAPSIS_REMOTE_BRANCH=${REMOTE_BRANCH}")
+        fi
         # Fix #116: Pass base branch for proper branch creation
         if [[ -n "$BASE_BRANCH" ]]; then
             ENV_VARS+=("-e" "KAPSIS_BASE_BRANCH=${BASE_BRANCH}")
@@ -1817,6 +1832,7 @@ main() {
     echo "  Sandbox Mode:  $SANDBOX_MODE"
     echo "  Network Mode:  $NETWORK_MODE"
     [[ -n "$BRANCH" ]] && echo "  Branch:        $BRANCH"
+    [[ -n "$REMOTE_BRANCH" ]] && echo "  Remote Branch: $REMOTE_BRANCH"
     [[ -n "$BASE_BRANCH" ]] && echo "  Base Branch:   $BASE_BRANCH"
     [[ "$SANDBOX_MODE" == "worktree" ]] && echo "  Worktree:      $WORKTREE_PATH"
     [[ -n "$SPEC_FILE" ]] && echo "  Spec File:     $SPEC_FILE"
@@ -2062,7 +2078,8 @@ post_container_worktree() {
             "$SANITIZED_GIT_PATH" \
             "$GIT_CO_AUTHORS" \
             "$GIT_FORK_ENABLED" \
-            "$GIT_FORK_FALLBACK"
+            "$GIT_FORK_FALLBACK" \
+            "$REMOTE_BRANCH"
     else
         log_info "No file changes detected"
     fi

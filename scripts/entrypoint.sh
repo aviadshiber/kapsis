@@ -74,6 +74,13 @@ elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/git-remote-utils.sh" ]]; then
     source "$(dirname "${BASH_SOURCE[0]}")/lib/git-remote-utils.sh"
 fi
 
+# Source atomic copy library (race-condition-safe file staging, fixes #151)
+if [[ -f "$KAPSIS_HOME/lib/atomic-copy.sh" ]]; then
+    source "$KAPSIS_HOME/lib/atomic-copy.sh"
+elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/atomic-copy.sh" ]]; then
+    source "$(dirname "${BASH_SOURCE[0]}")/lib/atomic-copy.sh"
+fi
+
 #===============================================================================
 # CREDENTIAL FILE INJECTION (Agent-Agnostic)
 #
@@ -189,17 +196,17 @@ setup_staged_config_overlays() {
             if fuse-overlayfs -o "lowerdir=${src},upperdir=${upper},workdir=${work}" "$dst" 2>/dev/null; then
                 log_debug "CoW overlay: ${relative_path}"
             else
-                # Fallback: copy if overlay fails
-                # Use "$src/." to copy CONTENTS, not the directory itself (avoids nested structure)
-                log_warn "Overlay failed for ${relative_path}, falling back to copy"
-                cp -r "$src/." "$dst/" 2>/dev/null || true
-                chmod -R u+w "$dst" 2>/dev/null || true
+                # Fallback: atomic copy with validation (fixes race condition #151)
+                log_warn "Overlay failed for ${relative_path}, falling back to atomic copy"
+                atomic_copy_dir "$src" "$dst" || log_warn "Atomic copy validation failed for dir: ${relative_path}"
             fi
         else
-            # File: copy (no overlay for individual files)
-            cp "$src" "$dst" 2>/dev/null || true
-            chmod u+w "$dst" 2>/dev/null || true
-            log_debug "Copied file: ${relative_path}"
+            # File: atomic copy with validation (fixes race condition #151)
+            if atomic_copy_file "$src" "$dst"; then
+                log_debug "Copied file (atomic): ${relative_path}"
+            else
+                log_warn "Atomic copy validation failed for file: ${relative_path}"
+            fi
         fi
     done
 
@@ -442,25 +449,30 @@ init_git_branch() {
     cd /workspace
 
     local remote="${KAPSIS_GIT_REMOTE:-origin}"
+    # Remote branch name defaults to local branch name when not specified
+    local remote_branch="${KAPSIS_REMOTE_BRANCH:-$KAPSIS_BRANCH}"
 
     # Fetch latest refs
     git fetch "$remote" --prune 2>/dev/null || log_warn "Could not fetch from $remote"
 
-    # Check if remote branch exists
-    if git ls-remote --exit-code --heads "$remote" "$KAPSIS_BRANCH" >/dev/null 2>&1; then
+    # Check if remote branch exists (use remote branch name for lookup)
+    if git ls-remote --exit-code --heads "$remote" "$remote_branch" >/dev/null 2>&1; then
         echo ""
         echo "┌────────────────────────────────────────────────────────────────┐"
         echo "│ CONTINUING FROM EXISTING REMOTE BRANCH                        │"
-        echo "│ Branch: $KAPSIS_BRANCH"
+        echo "│ Local Branch:  $KAPSIS_BRANCH"
+        if [[ "$remote_branch" != "$KAPSIS_BRANCH" ]]; then
+        echo "│ Remote Branch: $remote_branch"
+        fi
         echo "│ Remote: $remote"
         echo "└────────────────────────────────────────────────────────────────┘"
 
-        # Checkout tracking the remote branch
-        git checkout -b "$KAPSIS_BRANCH" "${remote}/${KAPSIS_BRANCH}" 2>/dev/null || \
+        # Checkout local branch tracking the remote branch
+        git checkout -b "$KAPSIS_BRANCH" "${remote}/${remote_branch}" 2>/dev/null || \
             git checkout "$KAPSIS_BRANCH"
 
         # Ensure we're up to date
-        git pull "$remote" "$KAPSIS_BRANCH" --ff-only 2>/dev/null || true
+        git pull "$remote" "$remote_branch" --ff-only 2>/dev/null || true
 
         echo ""
         log_info "Recent commits on this branch:"
@@ -473,7 +485,10 @@ init_git_branch() {
         echo ""
         echo "┌────────────────────────────────────────────────────────────────┐"
         echo "│ CREATING NEW BRANCH                                            │"
-        echo "│ Branch: $KAPSIS_BRANCH"
+        echo "│ Local Branch:  $KAPSIS_BRANCH"
+        if [[ "$remote_branch" != "$KAPSIS_BRANCH" ]]; then
+        echo "│ Remote Branch: $remote_branch"
+        fi
         echo "│ Base: $base_ref"
         echo "└────────────────────────────────────────────────────────────────┘"
 
@@ -518,10 +533,12 @@ post_exit_git() {
 
     # Check for unpushed commits (compare with remote tracking branch)
     local remote="${KAPSIS_GIT_REMOTE:-origin}"
-    if git rev-parse --verify "${remote}/${KAPSIS_BRANCH}" >/dev/null 2>&1; then
+    # Remote branch name defaults to local branch name when not specified
+    local remote_branch="${KAPSIS_REMOTE_BRANCH:-$KAPSIS_BRANCH}"
+    if git rev-parse --verify "${remote}/${remote_branch}" >/dev/null 2>&1; then
         # Remote branch exists - check if we're ahead
         local ahead
-        ahead=$(git rev-list --count "${remote}/${KAPSIS_BRANCH}..HEAD" 2>/dev/null || echo "0")
+        ahead=$(git rev-list --count "${remote}/${remote_branch}..HEAD" 2>/dev/null || echo "0")
         if [[ "$ahead" -gt 0 ]]; then
             has_unpushed=true
         fi
@@ -585,7 +602,8 @@ Branch: ${KAPSIS_BRANCH}"
         local local_commit
         local_commit=$(git rev-parse HEAD 2>/dev/null || echo "")
 
-        git push --set-upstream "$remote" "$KAPSIS_BRANCH" || {
+        # Use refspec to push local branch to (potentially different) remote branch
+        git push --set-upstream "$remote" "${KAPSIS_BRANCH}:${remote_branch}" || {
             log_warn "Push failed. Changes are committed locally."
             if type status_set_push_info &>/dev/null; then
                 status_set_push_info "failed" "$local_commit" ""
@@ -595,14 +613,14 @@ Branch: ${KAPSIS_BRANCH}"
 
         # Verify push succeeded by comparing local and remote HEAD
         echo ""
-        log_info "Verifying push to ${remote}/${KAPSIS_BRANCH}..."
+        log_info "Verifying push to ${remote}/${remote_branch}..."
 
         # Fetch latest from remote to ensure we have current state
-        git fetch "$remote" "$KAPSIS_BRANCH" --quiet 2>/dev/null || true
+        git fetch "$remote" "$remote_branch" --quiet 2>/dev/null || true
 
         # Get remote HEAD commit after fetch
         local remote_commit
-        remote_commit=$(git rev-parse "${remote}/${KAPSIS_BRANCH}" 2>/dev/null || echo "")
+        remote_commit=$(git rev-parse "${remote}/${remote_branch}" 2>/dev/null || echo "")
 
         # Compare commits
         if [[ "$local_commit" == "$remote_commit" ]]; then
@@ -634,7 +652,7 @@ Branch: ${KAPSIS_BRANCH}"
 
         echo ""
         if [[ -n "$remote_url" ]]; then
-            pr_url=$(generate_pr_url "$remote_url" "$KAPSIS_BRANCH")
+            pr_url=$(generate_pr_url "$remote_url" "$remote_branch")
             pr_term=$(get_pr_term "$remote_url")
             if [[ -n "$pr_url" ]]; then
                 log_success "Create/View ${pr_term}: ${pr_url}"
@@ -649,7 +667,7 @@ Branch: ${KAPSIS_BRANCH}"
     else
         echo ""
         log_success "Changes committed locally (use --push to enable auto-push)"
-        echo "To push later: git push ${KAPSIS_GIT_REMOTE:-origin} ${KAPSIS_BRANCH}"
+        echo "To push later: git push ${KAPSIS_GIT_REMOTE:-origin} ${KAPSIS_BRANCH}:${remote_branch}"
         # Record that push was skipped with the local commit
         local local_commit
         local_commit=$(git rev-parse HEAD 2>/dev/null || echo "")
