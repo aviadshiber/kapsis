@@ -40,6 +40,14 @@ KAPSIS_ROOT="$(dirname "$TESTS_DIR")"
 # Add PID suffix to allow parallel test execution without conflicts
 TEST_PROJECT="$HOME/.kapsis-test-project-$$"
 
+# Ensure test project directory is cleaned up on exit, even if interrupted (fixes #157)
+_kapsis_test_cleanup() {
+    if [[ -n "${TEST_PROJECT:-}" && -d "$TEST_PROJECT" ]]; then
+        rm -rf "$TEST_PROJECT"
+    fi
+}
+trap _kapsis_test_cleanup EXIT
+
 # CRITICAL: Unset git environment variables that could leak from parent processes
 # When tests run via pre-commit hooks, git exports GIT_DIR, GIT_INDEX_FILE, and
 # GIT_WORK_TREE pointing to the repository being committed. If tests then run
