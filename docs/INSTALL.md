@@ -133,7 +133,7 @@ This will install Kapsis to `~/.local` and add it to your PATH.
 
 ```bash
 # Install specific version (check releases page for latest: https://github.com/aviadshiber/kapsis/releases)
-KAPSIS_VERSION=0.7.6 curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
+KAPSIS_VERSION=2.7.1 curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
 
 # Install to custom location
 KAPSIS_PREFIX=/opt/kapsis curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash
@@ -160,7 +160,7 @@ cd kapsis
 ```bash
 # Get latest version (or specify manually)
 VERSION=$(curl -s https://api.github.com/repos/aviadshiber/kapsis/releases/latest | grep -o '"tag_name": "v[^"]*' | cut -d'v' -f2)
-# Or specify manually: VERSION=0.7.6
+# Or specify manually: VERSION=2.7.1
 
 # Download release
 curl -LO "https://github.com/aviadshiber/kapsis/archive/refs/tags/v${VERSION}.tar.gz"
@@ -352,7 +352,7 @@ If you prefer not to install jq, you can set the version manually by checking th
 
 ```bash
 # Replace with the latest version from the releases page
-VERSION="0.7.6"  # Check https://github.com/aviadshiber/kapsis/releases for latest
+VERSION="2.7.1"  # Check https://github.com/aviadshiber/kapsis/releases for latest
 ```
 
 ## System Requirements
