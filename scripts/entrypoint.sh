@@ -74,6 +74,13 @@ elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/git-remote-utils.sh" ]]; then
     source "$(dirname "${BASH_SOURCE[0]}")/lib/git-remote-utils.sh"
 fi
 
+# Source atomic copy library (race-condition-safe file staging, fixes #151)
+if [[ -f "$KAPSIS_HOME/lib/atomic-copy.sh" ]]; then
+    source "$KAPSIS_HOME/lib/atomic-copy.sh"
+elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/atomic-copy.sh" ]]; then
+    source "$(dirname "${BASH_SOURCE[0]}")/lib/atomic-copy.sh"
+fi
+
 #===============================================================================
 # CREDENTIAL FILE INJECTION (Agent-Agnostic)
 #
@@ -189,17 +196,17 @@ setup_staged_config_overlays() {
             if fuse-overlayfs -o "lowerdir=${src},upperdir=${upper},workdir=${work}" "$dst" 2>/dev/null; then
                 log_debug "CoW overlay: ${relative_path}"
             else
-                # Fallback: copy if overlay fails
-                # Use "$src/." to copy CONTENTS, not the directory itself (avoids nested structure)
-                log_warn "Overlay failed for ${relative_path}, falling back to copy"
-                cp -r "$src/." "$dst/" 2>/dev/null || true
-                chmod -R u+w "$dst" 2>/dev/null || true
+                # Fallback: atomic copy with validation (fixes race condition #151)
+                log_warn "Overlay failed for ${relative_path}, falling back to atomic copy"
+                atomic_copy_dir "$src" "$dst" || log_warn "Atomic copy validation failed for dir: ${relative_path}"
             fi
         else
-            # File: copy (no overlay for individual files)
-            cp "$src" "$dst" 2>/dev/null || true
-            chmod u+w "$dst" 2>/dev/null || true
-            log_debug "Copied file: ${relative_path}"
+            # File: atomic copy with validation (fixes race condition #151)
+            if atomic_copy_file "$src" "$dst"; then
+                log_debug "Copied file (atomic): ${relative_path}"
+            else
+                log_warn "Atomic copy validation failed for file: ${relative_path}"
+            fi
         fi
     done
 
