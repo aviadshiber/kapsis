@@ -6,7 +6,7 @@ Essential context for AI assistants working on the Kapsis codebase.
 
 ## Project Overview
 
-Kapsis is a **hermetically isolated AI agent sandbox** (v2.7.0) for running multiple AI coding agents (Claude Code, Codex CLI, Aider, Gemini CLI) in parallel with complete isolation via Podman rootless containers, Copy-on-Write filesystems, and DNS-based network filtering.
+Kapsis is a **hermetically isolated AI agent sandbox** (v2.7.1) for running multiple AI coding agents (Claude Code, Codex CLI, Aider, Gemini CLI) in parallel with complete isolation via Podman rootless containers, Copy-on-Write filesystems, and DNS-based network filtering.
 
 ### Core Isolation Guarantees
 
@@ -29,6 +29,7 @@ kapsis/
 │   ├── entrypoint.sh           # Container startup script
 │   ├── worktree-manager.sh     # Git worktree creation and isolation
 │   ├── post-container-git.sh   # Post-exit commit/push operations
+│   ├── post-exit-git.sh        # Post-exit commit/push (host-side)
 │   ├── init-git-branch.sh      # Git branch initialization
 │   ├── kapsis-status.sh        # Query agent status
 │   ├── kapsis-cleanup.sh       # Reclaim disk space
@@ -37,9 +38,14 @@ kapsis/
 │   ├── configure-deps.sh       # Interactive dependency configuration
 │   ├── install.sh              # Distribution installer
 │   ├── switch-java.sh          # Java version switcher (in-container)
+│   ├── setup-github-protection.sh  # GitHub branch protection setup
+│   ├── setup-homebrew-tap-sync.sh  # Homebrew tap sync setup
+│   ├── setup-package-repos.sh  # Package repository setup
+│   ├── setup-release-app.sh    # Release app setup
 │   ├── lib/                    # Shared libraries (sourced, not executed)
 │   │   ├── logging.sh          # Centralized logging with file rotation
 │   │   ├── status.sh           # JSON status reporting to ~/.kapsis/status/
+│   │   ├── agent-types.sh      # Agent type definitions
 │   │   ├── constants.sh        # Central constants (paths, patterns, modes)
 │   │   ├── compat.sh           # Cross-platform macOS/Linux helpers
 │   │   ├── security.sh         # Security hardening & capability management
@@ -78,7 +84,7 @@ kapsis/
 ├── docs/                       # Extended documentation (14 guides)
 ├── security/                   # AppArmor & seccomp profiles
 ├── packaging/                  # Debian, Homebrew, RPM packages
-├── .github/workflows/          # CI/CD (ci, auto-release, release, security, packages, deploy-pages)
+├── .github/workflows/          # CI/CD (ci, auto-release, release, security, packages, deploy-pages, sync-homebrew-tap)
 ├── Containerfile               # Multi-stage container image definition
 ├── setup.sh                    # Initial system setup & dependency validation
 └── quick-start.sh              # Simplified one-line agent launcher
@@ -102,6 +108,7 @@ kapsis/
 | Logging & testing | `CONTRIBUTING.md` |
 | Cleanup operations | `docs/CLEANUP.md` |
 | Test coverage analysis | `docs/TEST-COVERAGE-ANALYSIS.md` |
+| Security vulnerability scan | `docs/SECURITY-VULNERABILITY-SCAN.md` |
 | Agent profiles | `configs/agents/*.yaml` |
 | Security policy | `SECURITY.md` |
 | AI agent guidelines | `AGENTS.md` |

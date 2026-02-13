@@ -12,13 +12,13 @@
 - `scripts/` holds the core Bash entrypoints (agent launch, image build, cleanup); shared helpers live in `scripts/lib/`.
 - `configs/` contains example config files and agent profiles; profile definitions are under `configs/agents/`.
 - `tests/` is the shell-based test suite; the shared framework is `tests/lib/test-framework.sh`.
-- `docs/` and `specs/` hold documentation and task specs used by agents.
+- `docs/` holds extended documentation; `configs/specs/` holds task spec templates used by agents.
 - `assets/` stores static artifacts (e.g., logos); `maven/isolated-settings.xml` configures isolated Maven behavior in containers.
 
 ## Build, Test, and Development Commands
 - `./scripts/build-image.sh` builds the base Podman image used by Kapsis.
 - `./scripts/build-agent-image.sh <profile>` builds an agent-specific image (see `configs/agents/`).
-- `./scripts/launch-agent.sh <id> <project_path> --task "..."` launches an agent in a sandboxed container.
+- `./scripts/launch-agent.sh <project_path> --agent <name> --task "..."` launches an agent in a sandboxed container.
 - `./scripts/kapsis-status.sh` shows running agent status; add `--json` for machine output.
 - `./tests/run-all-tests.sh` runs the full test suite (requires Podman).
 - `./tests/run-all-tests.sh --quick` runs fast, non-container tests.

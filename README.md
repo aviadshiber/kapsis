@@ -130,9 +130,11 @@ Kapsis includes pre-built agent profiles that install the agent directly into th
 
 | Profile | Agent | Installation |
 |---------|-------|--------------|
-| `claude-cli` | Claude Code CLI | `npm install -g @anthropic-ai/claude-code` |
+| `claude-cli` | Claude Code CLI | Native installer (`curl -fsSL https://claude.ai/install.sh`) |
 | `claude-api` | Anthropic Python SDK | `pip install anthropic` |
 | `aider` | Aider AI Pair Programmer | `pip install aider-chat` |
+| `codex-cli` | OpenAI Codex CLI | `npm install -g @openai/codex` |
+| `gemini-cli` | Google Gemini CLI | `npm install -g @google/gemini-cli` |
 
 Profiles are defined in `configs/agents/`. Create custom profiles by copying an existing one.
 
@@ -314,10 +316,13 @@ Customize container images for your specific needs using build profiles:
 | Profile | Est. Size | Languages | Best For |
 |---------|-----------|-----------|----------|
 | `minimal` | ~500MB | None | Shell scripts, basic tasks |
-| `java-dev` | ~1.5GB | Java 17/8 | Taboola Java development |
+| `java-dev` | ~1.5GB | Java 17/8 | Java development |
+| `java8-legacy` | ~1.4GB | Java 8 | Legacy Java projects |
 | `full-stack` | ~2.1GB | Java, Node.js, Python | Multi-language projects |
+| `backend-go` | ~1.3GB | Go, Python | Go backend services |
 | `backend-rust` | ~1.4GB | Rust, Python | Rust backend services |
 | `frontend` | ~1.2GB | Node.js, Rust | Frontend/WebAssembly |
+| `ml-python` | ~1.8GB | Python, Node.js, Rust | Machine learning projects |
 
 ### Configure Dependencies
 
@@ -436,6 +441,8 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full logging configuration and te
 | [SECURITY-HARDENING.md](docs/SECURITY-HARDENING.md) | Container security design and hardening options |
 | [NETWORK-ISOLATION.md](docs/NETWORK-ISOLATION.md) | Network security and isolation configuration |
 | [GITHUB-SETUP.md](docs/GITHUB-SETUP.md) | GitHub integration and authentication |
+| [TEST-COVERAGE-ANALYSIS.md](docs/TEST-COVERAGE-ANALYSIS.md) | Test coverage analysis and recommendations |
+| [SECURITY-VULNERABILITY-SCAN.md](docs/SECURITY-VULNERABILITY-SCAN.md) | Security vulnerability scan report |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development guide, testing, and logging |
 
 ## Project Structure
@@ -471,6 +478,7 @@ kapsis/
 │   ├── configure-deps.sh        # Configure container dependencies
 │   ├── worktree-manager.sh      # Git worktree management
 │   ├── post-container-git.sh    # Post-container git operations
+│   ├── post-exit-git.sh         # Post-exit commit/push
 │   ├── merge-changes.sh         # Manual merge workflow
 │   ├── entrypoint.sh            # Container entrypoint
 │   ├── init-git-branch.sh       # Git branch initialization
