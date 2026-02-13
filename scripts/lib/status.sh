@@ -258,18 +258,20 @@ status_set_push_info() {
 # Arguments:
 #   $1 - Worktree path
 #   $2 - Remote name
-#   $3 - Branch name
+#   $3 - Local branch name
+#   $4 - Remote branch name (optional, defaults to local branch name)
 status_set_push_fallback() {
     local worktree_path="$1"
     local remote="${2:-origin}"
     local branch="$3"
+    local remote_branch="${4:-$branch}"
 
     if [[ -z "$worktree_path" || -z "$branch" ]]; then
         _KAPSIS_PUSH_FALLBACK_CMD=""
         return
     fi
 
-    _KAPSIS_PUSH_FALLBACK_CMD="cd ${worktree_path} && git push -u ${remote} ${branch}"
+    _KAPSIS_PUSH_FALLBACK_CMD="cd ${worktree_path} && git push -u ${remote} ${branch}:${remote_branch}"
 
     # Output machine-parseable marker for agent grep
     echo ""

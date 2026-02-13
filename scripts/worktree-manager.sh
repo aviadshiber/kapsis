@@ -243,11 +243,14 @@ create_worktree() {
     local agent_id="$2"
     local branch="$3"
     local base_branch="${4:-}"  # Fix #116: Optional base branch/tag
+    # Remote branch name: defaults to local branch name when not specified
+    local remote_branch="${5:-$branch}"
 
     log_debug "create_worktree called with:"
     log_debug "  project_path=$project_path"
     log_debug "  agent_id=$agent_id"
     log_debug "  branch=$branch"
+    log_debug "  remote_branch=$remote_branch"
     log_debug "  base_branch=${base_branch:-<not specified>}"
 
     # Validate inputs
@@ -306,13 +309,13 @@ create_worktree() {
             return 1
         fi
 
-        # Check if branch exists remotely
-        log_debug "Checking if branch exists remotely..."
-        if git ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-            # Branch exists remotely - track it
-            log_info "Tracking existing remote branch: origin/$branch"
-            log_debug "Running: git worktree add $worktree_path -b $branch origin/$branch"
-            run_git git worktree add "$worktree_path" -b "$branch" "origin/$branch" ||
+        # Check if branch exists remotely (use remote branch name for lookup)
+        log_debug "Checking if remote branch exists: $remote_branch..."
+        if git ls-remote --exit-code --heads origin "$remote_branch" >/dev/null 2>&1; then
+            # Branch exists remotely - track it (local branch may differ from remote)
+            log_info "Tracking existing remote branch: origin/$remote_branch as local $branch"
+            log_debug "Running: git worktree add $worktree_path -b $branch origin/$remote_branch"
+            run_git git worktree add "$worktree_path" -b "$branch" "origin/$remote_branch" ||
                 run_git git worktree add "$worktree_path" "$branch" || true
         elif git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
             # Branch exists locally

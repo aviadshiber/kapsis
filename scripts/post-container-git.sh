@@ -425,45 +425,52 @@ verify_push() {
 push_changes() {
     local worktree_path="$1"
     local remote="${2:-origin}"
+    local remote_branch="${3:-}"
 
     cd "$worktree_path"
 
     local branch
     branch=$(git rev-parse --abbrev-ref HEAD)
+    # Default remote branch to local branch name
+    remote_branch="${remote_branch:-$branch}"
 
     echo ""
     echo "┌────────────────────────────────────────────────────────────────────┐"
     echo "│ PUSHING TO REMOTE                                                  │"
     echo "└────────────────────────────────────────────────────────────────────┘"
     echo "  Remote: $remote"
-    echo "  Branch: $branch"
+    echo "  Local Branch:  $branch"
+    if [[ "$remote_branch" != "$branch" ]]; then
+        echo "  Remote Branch: $remote_branch"
+    fi
     echo ""
 
     # Capture local commit before push for verification
     local local_commit
     local_commit=$(git rev-parse HEAD 2>/dev/null)
 
-    if git push --set-upstream "$remote" "$branch"; then
+    # Use refspec to push local branch to (potentially different) remote branch
+    if git push --set-upstream "$remote" "${branch}:${remote_branch}"; then
         log_success "Push command completed"
 
         # Verify the push actually succeeded
         echo ""
-        if verify_push "$worktree_path" "$remote" "$branch"; then
+        if verify_push "$worktree_path" "$remote" "$remote_branch"; then
             # Show PR instructions only after verified push
-            show_pr_instructions "$worktree_path" "$branch"
+            show_pr_instructions "$worktree_path" "$remote_branch"
             return 0
         else
             log_error "Push reported success but verification failed!"
             log_error "Commits may not have been pushed to remote."
             # Set fallback command for agent recovery
-            status_set_push_fallback "$worktree_path" "$remote" "$branch"
+            status_set_push_fallback "$worktree_path" "$remote" "$branch" "$remote_branch"
             return 2  # Distinct exit code for verification failure
         fi
     else
         log_error "Push failed"
         status_set_push_info "failed" "$local_commit" ""
         # Set fallback command for agent recovery
-        status_set_push_fallback "$worktree_path" "$remote" "$branch"
+        status_set_push_fallback "$worktree_path" "$remote" "$branch" "$remote_branch"
         return 1
     fi
 }
@@ -667,10 +674,13 @@ post_container_git() {
     local co_authors="${8:-}"
     local fork_enabled="${9:-false}"
     local fork_fallback="${10:-fork}"
+    # Remote branch name: defaults to local branch name when not specified
+    local remote_branch="${11:-$branch}"
 
     log_debug "post_container_git called with:"
     log_debug "  worktree_path=$worktree_path"
     log_debug "  branch=$branch"
+    log_debug "  remote_branch=$remote_branch"
     log_debug "  commit_message=$commit_message"
     log_debug "  remote=$remote"
     log_debug "  do_push=$do_push"
@@ -686,6 +696,9 @@ post_container_git() {
     echo "└────────────────────────────────────────────────────────────────────┘"
     echo "  Worktree: $worktree_path"
     echo "  Branch:   $branch"
+    if [[ "$remote_branch" != "$branch" ]]; then
+        echo "  Remote:   $remote_branch"
+    fi
     echo ""
 
     # Sync index if sanitized git provided
@@ -739,7 +752,7 @@ post_container_git() {
 
         log_debug "Pushing changes to remote..."
         local push_result
-        push_changes "$worktree_path" "$remote"
+        push_changes "$worktree_path" "$remote" "$remote_branch"
         push_result=$?
 
         if [[ $push_result -eq 0 ]]; then
@@ -747,7 +760,7 @@ post_container_git() {
         elif [[ $push_result -eq 2 ]]; then
             # Push command succeeded but verification failed
             log_error "Push verification failed! Commits may not be on remote."
-            log_info "To check: cd $worktree_path && git fetch && git log --oneline HEAD ^origin/$branch"
+            log_info "To check: cd $worktree_path && git fetch && git log --oneline HEAD ^origin/$remote_branch"
             return 2
         else
             log_warn "Push failed. Changes are committed locally."
@@ -782,13 +795,13 @@ post_container_git() {
                     fi
                 fi
             else
-                log_info "To push manually: cd $worktree_path && git push -u $remote $branch"
+                log_info "To push manually: cd $worktree_path && git push -u $remote ${branch}:${remote_branch}"
             fi
             return 1
         fi
     else
         log_info "Skipping push (use --push to enable)"
-        log_info "To push manually: cd $worktree_path && git push -u $remote $branch"
+        log_info "To push manually: cd $worktree_path && git push -u $remote ${branch}:${remote_branch}"
         # Record that push was skipped with the local commit
         local local_commit
         local_commit=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "")
@@ -802,7 +815,11 @@ post_container_git() {
     echo "  cd $worktree_path"
     echo ""
     echo "Or re-run agent with same branch to continue:"
-    echo "  ./launch-agent.sh <id> <project> --branch $branch"
+    if [[ "$remote_branch" != "$branch" ]]; then
+        echo "  ./launch-agent.sh <id> <project> --branch $branch --remote-branch $remote_branch"
+    else
+        echo "  ./launch-agent.sh <id> <project> --branch $branch"
+    fi
     echo ""
 
     return 0
@@ -813,15 +830,16 @@ post_container_git() {
 #===============================================================================
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     if [[ $# -lt 2 ]]; then
-        echo "Usage: $0 <worktree-path> <branch> [commit-message] [remote] [no-push] [agent-id]"
+        echo "Usage: $0 <worktree-path> <branch> [commit-message] [remote] [no-push] [agent-id] [sanitized-git] [co-authors] [fork-enabled] [fork-fallback] [remote-branch]"
         echo ""
         echo "Arguments:"
         echo "  worktree-path   Path to the git worktree"
-        echo "  branch          Branch name"
+        echo "  branch          Local branch name"
         echo "  commit-message  Commit message (default: 'feat: AI agent changes')"
         echo "  remote          Git remote (default: 'origin')"
         echo "  no-push         Set to 'true' to skip push (default: 'false')"
         echo "  agent-id        Agent identifier for commit metadata"
+        echo "  remote-branch   Remote branch name (default: same as local branch)"
         echo ""
         echo "Example:"
         echo "  $0 ~/.kapsis/worktrees/myproject-1 feature/DEV-123 'fix: resolve auth bug'"

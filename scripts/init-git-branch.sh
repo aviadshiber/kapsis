@@ -6,13 +6,14 @@
 # or is called by the container entrypoint.
 #
 # Usage:
-#   ./init-git-branch.sh <branch-name> [remote] [base-branch]
+#   ./init-git-branch.sh <branch-name> [remote] [base-branch] [remote-branch]
 #
 # Arguments:
-#   branch-name  - Target branch to create or checkout
-#   remote       - Git remote name (default: origin)
-#   base-branch  - Base branch/tag for new branches (default: current HEAD)
-#                  Fix #116: Ensures branches are created from correct base
+#   branch-name   - Local branch to create or checkout
+#   remote        - Git remote name (default: origin)
+#   base-branch   - Base branch/tag for new branches (default: current HEAD)
+#                   Fix #116: Ensures branches are created from correct base
+#   remote-branch - Remote branch name when different from local (default: same as branch-name)
 #
 # Behavior:
 #   - If remote branch exists: checkout and track it (continue from previous work)
@@ -24,6 +25,8 @@ set -euo pipefail
 BRANCH="${1:?Branch name required}"
 REMOTE="${2:-origin}"
 BASE_BRANCH="${3:-}"  # Fix #116: Optional base branch/tag
+# Remote branch name defaults to local branch name when not specified
+REMOTE_BRANCH="${4:-$BRANCH}"
 
 CYAN='\033[0;36m'
 GREEN='\033[0;32m'
@@ -38,21 +41,24 @@ cd "${WORKSPACE:-/workspace}"
 log_info "Fetching from $REMOTE..."
 git fetch "$REMOTE" --prune 2>/dev/null || log_info "Warning: Could not fetch from $REMOTE"
 
-# Check if remote branch exists
-if git ls-remote --exit-code --heads "$REMOTE" "$BRANCH" >/dev/null 2>&1; then
+# Check if remote branch exists (use remote branch name for lookup)
+if git ls-remote --exit-code --heads "$REMOTE" "$REMOTE_BRANCH" >/dev/null 2>&1; then
     echo ""
     echo "┌────────────────────────────────────────────────────────────────┐"
     echo "│ CONTINUING FROM EXISTING REMOTE BRANCH                        │"
-    echo "│ Branch: $BRANCH"
+    echo "│ Local Branch:  $BRANCH"
+    if [[ "$REMOTE_BRANCH" != "$BRANCH" ]]; then
+    echo "│ Remote Branch: $REMOTE_BRANCH"
+    fi
     echo "│ Remote: $REMOTE"
     echo "└────────────────────────────────────────────────────────────────┘"
 
-    # Checkout tracking the remote branch
-    git checkout -b "$BRANCH" "${REMOTE}/${BRANCH}" 2>/dev/null || \
+    # Checkout local branch tracking the remote branch
+    git checkout -b "$BRANCH" "${REMOTE}/${REMOTE_BRANCH}" 2>/dev/null || \
         git checkout "$BRANCH"
 
     # Ensure we're up to date
-    git pull "$REMOTE" "$BRANCH" --ff-only 2>/dev/null || true
+    git pull "$REMOTE" "$REMOTE_BRANCH" --ff-only 2>/dev/null || true
 
     echo ""
     log_info "Recent commits on this branch:"
@@ -65,7 +71,10 @@ else
     echo ""
     echo "┌────────────────────────────────────────────────────────────────┐"
     echo "│ CREATING NEW BRANCH                                            │"
-    echo "│ Branch: $BRANCH"
+    echo "│ Local Branch:  $BRANCH"
+    if [[ "$REMOTE_BRANCH" != "$BRANCH" ]]; then
+    echo "│ Remote Branch: $REMOTE_BRANCH"
+    fi
     echo "│ Base: $base_ref"
     echo "└────────────────────────────────────────────────────────────────┘"
 

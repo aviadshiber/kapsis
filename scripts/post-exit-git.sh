@@ -6,11 +6,12 @@
 # Can be run standalone or is called by the container entrypoint via trap.
 #
 # Usage:
-#   ./post-exit-git.sh <branch> <commit-message> [remote] [--push]
+#   ./post-exit-git.sh <branch> <commit-message> [remote] [--push] [remote-branch]
 #
 # Environment Variables:
-#   KAPSIS_AGENT_ID  - Agent identifier for commit message
-#   KAPSIS_DO_PUSH   - Set to "true" to enable push
+#   KAPSIS_AGENT_ID      - Agent identifier for commit message
+#   KAPSIS_DO_PUSH       - Set to "true" to enable push
+#   KAPSIS_REMOTE_BRANCH - Remote branch name (when different from local)
 #===============================================================================
 
 set -euo pipefail
@@ -19,6 +20,9 @@ BRANCH="${1:?Branch name required}"
 COMMIT_MSG="${2:?Commit message required}"
 REMOTE="${3:-origin}"
 DO_PUSH="${4:-false}"
+# Remote branch name: use arg $5, then env var, then fall back to local branch name
+REMOTE_BRANCH_ARG="${5:-}"
+REMOTE_BRANCH="${REMOTE_BRANCH_ARG:-${KAPSIS_REMOTE_BRANCH:-$BRANCH}}"
 
 # Override with environment variable if set
 DO_PUSH="${KAPSIS_DO_PUSH:-$DO_PUSH}"
@@ -86,13 +90,14 @@ if [[ "$DO_PUSH" == "true" ]]; then
     echo "│ PUSHING TO REMOTE                                              │"
     echo "└────────────────────────────────────────────────────────────────┘"
 
-    git push --set-upstream "$REMOTE" "$BRANCH" || {
+    # Use refspec to push local branch to (potentially different) remote branch
+    git push --set-upstream "$REMOTE" "${BRANCH}:${REMOTE_BRANCH}" || {
         log_warn "Push failed. Changes are committed locally."
         echo ""
         echo "┌────────────────────────────────────────────────────────────────┐"
         echo "│ PUSH FALLBACK (for agent recovery)                             │"
         echo "└────────────────────────────────────────────────────────────────┘"
-        echo "KAPSIS_PUSH_FALLBACK: git push $REMOTE $BRANCH"
+        echo "KAPSIS_PUSH_FALLBACK: git push $REMOTE ${BRANCH}:${REMOTE_BRANCH}"
         echo ""
         echo "The orchestrating agent can run this command from the host where"
         echo "git credentials are available."
@@ -105,7 +110,7 @@ if [[ "$DO_PUSH" == "true" ]]; then
 
     echo ""
     if [[ -n "$REMOTE_URL" ]] && type generate_pr_url &>/dev/null; then
-        PR_URL=$(generate_pr_url "$REMOTE_URL" "$BRANCH")
+        PR_URL=$(generate_pr_url "$REMOTE_URL" "$REMOTE_BRANCH")
         PR_TERM=$(get_pr_term "$REMOTE_URL")
         if [[ -n "$PR_URL" ]]; then
             echo "Create/View ${PR_TERM}: ${PR_URL}"
@@ -127,6 +132,6 @@ else
     echo "│ CHANGES COMMITTED LOCALLY (use --push to enable)               │"
     echo "│                                                                │"
     echo "│ To push later:                                                 │"
-    echo "│   git push $REMOTE $BRANCH                                     │"
+    echo "│   git push $REMOTE ${BRANCH}:${REMOTE_BRANCH}                  │"
     echo "└────────────────────────────────────────────────────────────────┘"
 fi

@@ -191,6 +191,27 @@ When your repository uses a specific tag or branch as the stable base (e.g., `st
 
 Without `--base-branch`, new branches are created from the current HEAD of the main repository, which may not be the intended base. This can cause PRs to show incorrect diffs.
 
+### Different Local and Remote Branch Names
+
+When the remote branch has a different name than your local branch (e.g., CI systems or naming conventions that differ), use `--remote-branch`:
+
+```bash
+# Local branch "my-feature" pushes to remote branch "claude/my-feature-abc123"
+./scripts/launch-agent.sh ~/project \
+    --branch my-feature \
+    --remote-branch claude/my-feature-abc123 \
+    --spec ./specs/task.md
+
+# Continue working on an existing remote branch with a different local name
+./scripts/launch-agent.sh ~/project \
+    --branch dev-work \
+    --remote-branch feature/DEV-456-api-refactor \
+    --push \
+    --spec ./specs/refactor.md
+```
+
+Without `--remote-branch`, the local branch name is used for both local and remote operations (default behavior).
+
 ### Continue Existing Branch
 
 ```bash
