@@ -34,6 +34,28 @@ get_file_size() {
 }
 
 #-------------------------------------------------------------------------------
+# get_file_mode <file>
+#
+# Returns file permission mode as octal string (e.g., "644", "600", "755").
+# Works on both macOS and Linux.
+# Returns empty string if file doesn't exist or on error.
+#-------------------------------------------------------------------------------
+get_file_mode() {
+    local file="$1"
+
+    if [[ ! -e "$file" ]]; then
+        echo ""
+        return 1
+    fi
+
+    if [[ "$_KAPSIS_OS" == "Darwin" ]]; then
+        stat -f "%Lp" "$file" 2>/dev/null || echo ""
+    else
+        stat -c "%a" "$file" 2>/dev/null || echo ""
+    fi
+}
+
+#-------------------------------------------------------------------------------
 # get_file_mtime <file>
 #
 # Returns file modification time as Unix epoch (seconds since 1970).

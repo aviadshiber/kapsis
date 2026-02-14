@@ -122,13 +122,13 @@ atomic_copy_file() {
     tmp_file=$(mktemp "$(dirname "$dst")/.atomic-copy-XXXXXX") || {
         log_warn "atomic_copy_file: mktemp failed for $(basename "$dst")"
         # Fallback to direct copy
-        cp "$src" "$dst" 2>/dev/null || true
+        cp -p "$src" "$dst" 2>/dev/null || true
         chmod u+w "$dst" 2>/dev/null || true
         return 1
     }
 
     # Copy to temp file
-    if cp "$src" "$tmp_file" 2>/dev/null; then
+    if cp -p "$src" "$tmp_file" 2>/dev/null; then
         # Atomic rename to destination
         mv "$tmp_file" "$dst"
         chmod u+w "$dst" 2>/dev/null || true
@@ -174,14 +174,14 @@ atomic_copy_dir() {
         log_warn "atomic_copy_dir: mktemp failed for $(basename "$dst")"
         # Fallback to direct copy
         mkdir -p "$dst" 2>/dev/null || true
-        cp -r "$src/." "$dst/" 2>/dev/null || true
-        chmod -R u+w "$dst" 2>/dev/null || true
+        cp -rp "$src/." "$dst/" 2>/dev/null || true
+        find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
         return 1
     }
 
-    # Copy contents to temp directory
-    if cp -r "$src/." "$tmp_dir/" 2>/dev/null; then
-        chmod -R u+w "$tmp_dir" 2>/dev/null || true
+    # Copy contents to temp directory (preserve permissions)
+    if cp -rp "$src/." "$tmp_dir/" 2>/dev/null; then
+        find "$tmp_dir" -type d -exec chmod u+w {} + 2>/dev/null || true
 
         # Validate: compare file counts
         local src_count tmp_count
@@ -205,7 +205,7 @@ atomic_copy_dir() {
     # Fallback: copy directly (better to have potentially incomplete files than none)
     log_warn "atomic_copy_dir: using fallback copy for $(basename "$dst")"
     mkdir -p "$dst" 2>/dev/null || true
-    cp -r "$src/." "$dst/" 2>/dev/null || true
-    chmod -R u+w "$dst" 2>/dev/null || true
+    cp -rp "$src/." "$dst/" 2>/dev/null || true
+    find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
     return 1
 }

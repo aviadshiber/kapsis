@@ -370,6 +370,97 @@ test_atomic_copy_dir_writable() {
 }
 
 #===============================================================================
+# PERMISSION PRESERVATION TESTS (Issue #159)
+#===============================================================================
+
+test_atomic_copy_file_preserves_permissions() {
+    log_test "atomic_copy_file: preserves original file permissions"
+
+    local src="$TEST_TEMP_DIR/src/restricted.txt"
+    local dst="$TEST_TEMP_DIR/dst/restricted.txt"
+
+    mkdir -p "$(dirname "$src")"
+    echo "secret content" > "$src"
+    chmod 600 "$src"
+
+    atomic_copy_file "$src" "$dst"
+
+    local dst_mode
+    dst_mode=$(get_file_mode "$dst")
+
+    assert_equals "600" "$dst_mode" "Destination should preserve mode 600"
+}
+
+test_atomic_copy_file_readonly_gets_write() {
+    log_test "atomic_copy_file: read-only source becomes writable"
+
+    local src="$TEST_TEMP_DIR/src/readonly.txt"
+    local dst="$TEST_TEMP_DIR/dst/readonly.txt"
+
+    mkdir -p "$(dirname "$src")"
+    echo "read-only content" > "$src"
+    chmod 400 "$src"
+
+    atomic_copy_file "$src" "$dst"
+
+    if [[ -w "$dst" ]]; then
+        log_pass "Read-only source file is writable at destination"
+    else
+        log_fail "Destination should be user-writable"
+    fi
+}
+
+test_atomic_copy_dir_preserves_file_permissions() {
+    log_test "atomic_copy_dir: preserves file permissions in directory"
+
+    local src="$TEST_TEMP_DIR/src/ssh_dir"
+    local dst="$TEST_TEMP_DIR/dst/ssh_dir"
+
+    mkdir -p "$src"
+    echo "private key" > "$src/id_rsa"
+    echo "public key" > "$src/id_rsa.pub"
+    echo "config" > "$src/config"
+    chmod 600 "$src/id_rsa"
+    chmod 644 "$src/id_rsa.pub"
+    chmod 600 "$src/config"
+
+    atomic_copy_dir "$src" "$dst"
+
+    local mode_key mode_pub mode_config
+    mode_key=$(get_file_mode "$dst/id_rsa")
+    mode_pub=$(get_file_mode "$dst/id_rsa.pub")
+    mode_config=$(get_file_mode "$dst/config")
+
+    assert_equals "600" "$mode_key" "id_rsa should keep mode 600"
+    assert_equals "644" "$mode_pub" "id_rsa.pub should keep mode 644"
+    assert_equals "600" "$mode_config" "config should keep mode 600"
+}
+
+test_atomic_copy_dir_directories_writable() {
+    log_test "atomic_copy_dir: directories are user-writable after copy"
+
+    local src="$TEST_TEMP_DIR/src/dir_perms"
+    local dst="$TEST_TEMP_DIR/dst/dir_perms"
+
+    mkdir -p "$src/subdir"
+    echo "test" > "$src/subdir/file.txt"
+
+    atomic_copy_dir "$src" "$dst"
+
+    if [[ -w "$dst" ]]; then
+        log_pass "Top-level directory is writable"
+    else
+        log_fail "Top-level directory should be writable"
+    fi
+
+    if [[ -w "$dst/subdir" ]]; then
+        log_pass "Subdirectory is writable"
+    else
+        log_fail "Subdirectory should be writable"
+    fi
+}
+
+#===============================================================================
 # TEST RUNNER
 #===============================================================================
 
@@ -396,12 +487,20 @@ main() {
     run_test test_atomic_copy_file_spaces_in_path
     run_test test_atomic_copy_file_writable
 
+    # Permission preservation tests (issue #159)
+    run_test test_atomic_copy_file_preserves_permissions
+    run_test test_atomic_copy_file_readonly_gets_write
+
     # atomic_copy_dir() tests
     run_test test_atomic_copy_dir_basic
     run_test test_atomic_copy_dir_preserves_structure
     run_test test_atomic_copy_dir_missing_source
     run_test test_atomic_copy_dir_no_temp_dirs_on_success
     run_test test_atomic_copy_dir_writable
+
+    # Permission preservation tests for directories (issue #159)
+    run_test test_atomic_copy_dir_preserves_file_permissions
+    run_test test_atomic_copy_dir_directories_writable
 
     # Summary
     print_summary
