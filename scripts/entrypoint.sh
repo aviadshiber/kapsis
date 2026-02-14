@@ -147,6 +147,53 @@ inject_credential_files() {
 }
 
 #===============================================================================
+# SSH PERMISSION FIXUP (Issue #159)
+#
+# Safety net: after atomic-copy stages files, ensure SSH directories and keys
+# have correct permissions. SSH refuses keys with overly permissive modes.
+#===============================================================================
+fix_ssh_permissions() {
+    local ssh_dir="$1"
+
+    if [[ ! -d "$ssh_dir" ]]; then
+        return 0
+    fi
+
+    log_debug "Fixing SSH permissions: $ssh_dir"
+
+    # Directory itself must be 0700
+    chmod 700 "$ssh_dir" 2>/dev/null || true
+
+    # Fix permissions on known SSH file patterns
+    local file file_basename
+    for file in "$ssh_dir"/*; do
+        [[ -f "$file" ]] || continue
+        file_basename=$(basename "$file")
+
+        case "$file_basename" in
+            # Public keys — slightly more permissive is OK
+            id_*.pub|*.pub)
+                chmod 644 "$file" 2>/dev/null || true
+                ;;
+            # Private keys (id_rsa, id_ed25519, id_ecdsa, etc.)
+            id_*)
+                chmod 600 "$file" 2>/dev/null || true
+                ;;
+            # Certificate and PEM key files
+            *.pem|*.key)
+                chmod 600 "$file" 2>/dev/null || true
+                ;;
+            # SSH config, authorized_keys, known_hosts
+            config|authorized_keys|known_hosts)
+                chmod 600 "$file" 2>/dev/null || true
+                ;;
+        esac
+    done
+
+    log_debug "SSH permissions fixed"
+}
+
+#===============================================================================
 # STAGED CONFIG OVERLAY
 #
 # Host config files are mounted to /kapsis-staging/ (read-only).
@@ -209,6 +256,11 @@ setup_staged_config_overlays() {
             fi
         fi
     done
+
+    # Fix SSH permissions if .ssh was staged (safety net, issue #159)
+    if [[ -d "${HOME}/.ssh" ]]; then
+        fix_ssh_permissions "${HOME}/.ssh"
+    fi
 
     log_success "Staged configs ready (CoW where possible)"
 }
