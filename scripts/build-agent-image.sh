@@ -35,6 +35,11 @@ if [[ -f "$SCRIPT_DIR/lib/build-config.sh" ]]; then
     source "$SCRIPT_DIR/lib/build-config.sh"
 fi
 
+# Source config resolver (provides resolve_build_config_file)
+if [[ -f "$SCRIPT_DIR/lib/config-resolver.sh" ]]; then
+    source "$SCRIPT_DIR/lib/config-resolver.sh"
+fi
+
 #===============================================================================
 # PARSE ARGUMENTS
 #===============================================================================
@@ -190,24 +195,21 @@ log_info "Agent: $AGENT_NAME"
 [[ -n "$AGENT_SCRIPT" ]] && log_info "Install script: $AGENT_SCRIPT"
 
 #===============================================================================
-# RESOLVE BUILD CONFIGURATION
+# RESOLVE BUILD CONFIGURATION (delegates to config-resolver.sh)
 #===============================================================================
-resolve_build_config() {
-    local config_file=""
-
-    # Priority: --build-config > --profile > default
+CONFIG_FILE=""
+if type resolve_build_config_file &>/dev/null; then
+    resolve_build_config_file "$BUILD_CONFIG" "$BUILD_PROFILE" "$KAPSIS_ROOT" CONFIG_FILE
+else
+    # Fallback: inline resolution if config-resolver.sh not available
     if [[ -n "$BUILD_CONFIG" ]]; then
-        config_file="$BUILD_CONFIG"
+        CONFIG_FILE="$BUILD_CONFIG"
     elif [[ -n "$BUILD_PROFILE" ]]; then
-        config_file="$KAPSIS_ROOT/configs/build-profiles/${BUILD_PROFILE}.yaml"
+        CONFIG_FILE="$KAPSIS_ROOT/configs/build-profiles/${BUILD_PROFILE}.yaml"
     elif [[ -f "$KAPSIS_ROOT/configs/build-config.yaml" ]]; then
-        config_file="$KAPSIS_ROOT/configs/build-config.yaml"
+        CONFIG_FILE="$KAPSIS_ROOT/configs/build-config.yaml"
     fi
-
-    echo "$config_file"
-}
-
-CONFIG_FILE=$(resolve_build_config)
+fi
 
 if [[ -n "$CONFIG_FILE" ]] && [[ ! -f "$CONFIG_FILE" ]]; then
     log_error "Build config not found: $CONFIG_FILE"
