@@ -51,6 +51,9 @@ log_init "build-image"
 # Source build configuration library
 source "$SCRIPT_DIR/lib/build-config.sh"
 
+# Source config resolver (provides resolve_build_config_file)
+source "$SCRIPT_DIR/lib/config-resolver.sh"
+
 #===============================================================================
 # Security: Pinned base image digests per architecture
 # These are SHA256 digests of ubuntu:24.04 for each supported platform
@@ -87,36 +90,12 @@ show_help() {
 }
 
 #===============================================================================
-# resolve_config_file - Resolve the configuration file to use
+# resolve_config_file - Delegates to config-resolver.sh
 #===============================================================================
 resolve_config_file() {
-    local config_file=""
-
-    # Priority: --build-config > --profile > default config
-    if [[ -n "$BUILD_CONFIG" ]]; then
-        config_file="$BUILD_CONFIG"
-    elif [[ -n "$PROFILE" ]]; then
-        config_file="$KAPSIS_ROOT/configs/build-profiles/${PROFILE}.yaml"
-    else
-        config_file="$KAPSIS_ROOT/configs/build-config.yaml"
-    fi
-
-    # Validate file exists (build-config.sh will use defaults if missing)
-    if [[ ! -f "$config_file" ]]; then
-        if [[ -n "$BUILD_CONFIG" ]]; then
-            log_error "Build config file not found: $BUILD_CONFIG"
-            exit 2
-        elif [[ -n "$PROFILE" ]]; then
-            log_error "Unknown profile: $PROFILE"
-            log_error "Available profiles: minimal, java-dev, java8-legacy, full-stack, backend-go, backend-rust, ml-python, frontend"
-            exit 2
-        fi
-        # Default config missing is OK - will use built-in defaults
-        log_warn "Default config not found, using built-in defaults"
-        config_file=""
-    fi
-
-    echo "$config_file"
+    local resolved=""
+    resolve_build_config_file "$BUILD_CONFIG" "$PROFILE" "$KAPSIS_ROOT" resolved
+    echo "$resolved"
 }
 
 #===============================================================================

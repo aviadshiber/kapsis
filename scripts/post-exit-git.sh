@@ -45,10 +45,17 @@ elif [[ -f "$SCRIPT_DIR/lib/git-remote-utils.sh" ]]; then
     source "$SCRIPT_DIR/lib/git-remote-utils.sh"
 fi
 
+# Source shared git operations (provides has_git_changes, git_push_refspec)
+if [[ -f "$KAPSIS_HOME/lib/git-operations.sh" ]]; then
+    source "$KAPSIS_HOME/lib/git-operations.sh"
+elif [[ -f "$SCRIPT_DIR/lib/git-operations.sh" ]]; then
+    source "$SCRIPT_DIR/lib/git-operations.sh"
+fi
+
 cd "${WORKSPACE:-/workspace}"
 
-# Check if there are changes
-if git diff --quiet && git diff --cached --quiet && [[ -z "$(git status --porcelain)" ]]; then
+# Check if there are changes (delegates to git-operations.sh)
+if ! has_git_changes; then
     echo ""
     echo "┌────────────────────────────────────────────────────────────────┐"
     echo "│ NO CHANGES TO COMMIT                                           │"
@@ -90,8 +97,8 @@ if [[ "$DO_PUSH" == "true" ]]; then
     echo "│ PUSHING TO REMOTE                                              │"
     echo "└────────────────────────────────────────────────────────────────┘"
 
-    # Use refspec to push local branch to (potentially different) remote branch
-    git push --set-upstream "$REMOTE" "${BRANCH}:${REMOTE_BRANCH}" || {
+    # Delegate push to git-operations.sh
+    git_push_refspec "$REMOTE" "$BRANCH" "$REMOTE_BRANCH" || {
         log_warn "Push failed. Changes are committed locally."
         echo ""
         echo "┌────────────────────────────────────────────────────────────────┐"

@@ -38,10 +38,9 @@ source "$POST_GIT_SCRIPT_DIR/lib/git-remote-utils.sh"
 # Source file sanitization library (provides sanitize_staged_files)
 source "$POST_GIT_SCRIPT_DIR/lib/sanitize-files.sh"
 
-# Note: logging functions are provided by lib/logging.sh
-# Note: status functions are provided by lib/status.sh
-# Note: constants are provided by lib/constants.sh
-# Note: git remote utilities are provided by lib/git-remote-utils.sh
+# Source shared git operations (provides has_git_changes, has_unpushed_commits,
+# git_push_refspec, verify_git_push — eliminates duplication)
+source "$POST_GIT_SCRIPT_DIR/lib/git-operations.sh"
 
 #===============================================================================
 # VALIDATE AND CLEAN STAGED FILES
@@ -174,18 +173,14 @@ validate_staged_files() {
 #===============================================================================
 # CHECK FOR CHANGES
 #
+# Thin wrapper around has_git_changes() from git-operations.sh.
+# Adds worktree cd before delegating.
 # Returns 0 if there are uncommitted changes, 1 otherwise.
 #===============================================================================
 has_changes() {
     local worktree_path="$1"
-
     cd "$worktree_path"
-
-    # Check for any changes (staged, unstaged, or untracked)
-    if git diff --quiet && git diff --cached --quiet && [[ -z "$(git status --porcelain)" ]]; then
-        return 1
-    fi
-    return 0
+    has_git_changes
 }
 
 #===============================================================================
@@ -359,11 +354,10 @@ EOF
 #===============================================================================
 # VERIFY PUSH
 #
-# Verifies that the push actually succeeded by comparing local and remote HEAD.
-# This addresses the issue where push may report success but commits aren't
-# actually on the remote (network issues, partial failures, etc.).
-#
-# Returns: 0 if verified, 1 if verification failed
+# Thin wrapper around verify_git_push() from git-operations.sh.
+# Adds worktree cd and preserves original API contract:
+#   Returns 0 if verified or unverifiable (network), 1 if failed.
+# The underlying verify_git_push returns: 0=verified, 1=failed, 2=unverifiable.
 #===============================================================================
 verify_push() {
     local worktree_path="$1"
@@ -372,49 +366,18 @@ verify_push() {
 
     cd "$worktree_path"
 
-    # Get current branch if not specified
     if [[ -z "$branch" ]]; then
         branch=$(git rev-parse --abbrev-ref HEAD)
     fi
 
-    log_info "Verifying push to ${remote}/${branch}..."
+    local result=0
+    verify_git_push "$remote" "$branch" || result=$?
 
-    # Get local HEAD commit
-    local local_commit
-    local_commit=$(git rev-parse HEAD 2>/dev/null)
-    if [[ -z "$local_commit" ]]; then
-        log_error "Could not determine local HEAD commit"
-        status_set_push_info "failed" "" ""
+    # Map: 0 (verified) → 0, 2 (unverifiable) → 0 (don't fail on network issues), 1 (failed) → 1
+    if [[ $result -eq 1 ]]; then
         return 1
     fi
-    log_debug "Local commit: $local_commit"
-
-    # Fetch latest from remote to ensure we have current state
-    if ! git fetch "$remote" "$branch" --quiet 2>/dev/null; then
-        log_warn "Could not fetch from remote for verification"
-        # Don't fail - the push might have worked even if fetch fails
-        status_set_push_info "unverified" "$local_commit" ""
-        return 0
-    fi
-
-    # Get remote HEAD commit after fetch
-    local remote_commit
-    remote_commit=$(git rev-parse "${remote}/${branch}" 2>/dev/null)
-    log_debug "Remote commit: ${remote_commit:-unknown}"
-
-    # Compare commits
-    if [[ "$local_commit" == "$remote_commit" ]]; then
-        log_success "Push verified: local and remote HEAD match"
-        log_info "  Commit: ${local_commit:0:12}"
-        status_set_push_info "success" "$local_commit" "$remote_commit"
-        return 0
-    else
-        log_error "Push verification FAILED: commits do not match!"
-        log_error "  Local:  $local_commit"
-        log_error "  Remote: ${remote_commit:-not found}"
-        status_set_push_info "failed" "$local_commit" "${remote_commit:-unknown}"
-        return 1
-    fi
+    return 0
 }
 
 #===============================================================================
@@ -449,8 +412,8 @@ push_changes() {
     local local_commit
     local_commit=$(git rev-parse HEAD 2>/dev/null)
 
-    # Use refspec to push local branch to (potentially different) remote branch
-    if git push --set-upstream "$remote" "${branch}:${remote_branch}"; then
+    # Delegate push to git-operations.sh
+    if git_push_refspec "$remote" "$branch" "$remote_branch"; then
         log_success "Push command completed"
 
         # Verify the push actually succeeded
