@@ -103,7 +103,7 @@ _atomic_count_files() {
 #   2. Atomic rename (mv) to final location
 #   3. Validate size match and JSON integrity
 #
-# Returns: 0 = success, 1 = failed (file still copied but validation failed)
+# Returns: 0 = success, 1 = failed (corrupt destination removed on validation failure)
 #-------------------------------------------------------------------------------
 atomic_copy_file() {
     local src="$1"
@@ -138,7 +138,9 @@ atomic_copy_file() {
             return 0
         fi
 
-        log_warn "atomic_copy_file: validation failed for $(basename "$dst") (size or JSON mismatch)"
+        # Rollback: remove corrupt destination to prevent use of bad data (issue #164)
+        log_warn "atomic_copy_file: validation failed for $(basename "$dst") — removing corrupt copy"
+        rm -f "$dst" 2>/dev/null || true
         return 1
     else
         rm -f "$tmp_file" 2>/dev/null || true

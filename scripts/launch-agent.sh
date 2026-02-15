@@ -1062,11 +1062,66 @@ generate_volume_mounts_overlay() {
 #===============================================================================
 STAGED_CONFIGS=""  # Comma-separated list of relative paths staged for copying
 
+#-------------------------------------------------------------------------------
+# _snapshot_file <host_path> <relative_name>
+#
+# Creates a point-in-time snapshot of a host file for race-free bind mounting.
+# Prevents torn reads when host processes (e.g., Claude Code) actively write to
+# files listed in filesystem.include. The container mounts the static snapshot
+# instead of the live host file, eliminating the race condition.
+#
+# Returns: path to snapshot (or original path on failure as fallback)
+# See: GitHub issue #164
+#-------------------------------------------------------------------------------
+_snapshot_file() {
+    local host_path="$1"
+    local relative_name="$2"
+
+    # SNAPSHOT_DIR must be initialized by the caller (generate_filesystem_includes)
+    # before calling this function. This function is called via $() subshell, so
+    # any variable assignments here would be lost in the parent shell.
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "$host_path"
+        return 0
+    fi
+
+    local snapshot_path="${SNAPSHOT_DIR}/${relative_name}"
+
+    # Ensure parent directory exists (for paths like .claude/settings.json)
+    mkdir -p "$(dirname "$snapshot_path")" 2>/dev/null || true
+
+    # Host-local cp — source is on the local filesystem (not a bind mount), so
+    # there is no concurrent-writer torn-read risk at this point
+    if cp -p "$host_path" "$snapshot_path" 2>/dev/null; then
+        echo "$snapshot_path"
+    else
+        log_warn "Snapshot failed for ${host_path}, falling back to live mount"
+        echo "$host_path"
+    fi
+}
+
 generate_filesystem_includes() {
     local staging_dir="/kapsis-staging"
     STAGED_CONFIGS=""
 
     if [[ -n "$FILESYSTEM_INCLUDES" ]]; then
+        # Initialize snapshot directory in parent shell scope (issue #164)
+        # Must be done here — NOT inside _snapshot_file() — because _snapshot_file
+        # is called via $() subshell, and variable assignments in subshells don't
+        # propagate back to the parent. Without this, cleanup would never fire.
+        # Placed under $HOME/.kapsis/ (NOT /tmp) because macOS /tmp resolves to
+        # /private/tmp which is inaccessible from the Podman VM's virtio-fs mount.
+        if [[ -z "$SNAPSHOT_DIR" ]]; then
+            SNAPSHOT_DIR="${HOME}/.kapsis/snapshots/${AGENT_ID}"
+            if [[ "$DRY_RUN" != "true" ]]; then
+                mkdir -p "$SNAPSHOT_DIR"
+                log_debug "Created snapshot directory: $SNAPSHOT_DIR"
+            else
+                log_debug "[DRY-RUN] Would create snapshot dir: $SNAPSHOT_DIR"
+            fi
+        fi
+
         while IFS= read -r path; do
             [[ -z "$path" ]] && continue
             # Expand environment variables in path (fixes #104)
@@ -1085,9 +1140,17 @@ generate_filesystem_includes() {
                 relative_path="${expanded_path#"$HOME"/}"
                 staging_path="${staging_dir}/${relative_path}"
 
+                # Snapshot regular files to prevent torn reads (issue #164)
+                # Directories are left as-is — they use fuse-overlayfs CoW inside the container
+                local mount_source="$expanded_path"
+                if [[ -f "$expanded_path" ]]; then
+                    mount_source=$(_snapshot_file "$expanded_path" "$relative_path")
+                    log_debug "Snapshot: ${expanded_path} -> ${mount_source}"
+                fi
+
                 # Mount to staging directory (read-only)
-                VOLUME_MOUNTS+=("-v" "${expanded_path}:${staging_path}:ro")
-                log_debug "Staged for copy: ${expanded_path} -> ${staging_path}"
+                VOLUME_MOUNTS+=("-v" "${mount_source}:${staging_path}:ro")
+                log_debug "Staged for copy: ${mount_source} -> ${staging_path}"
 
                 # Track for entrypoint to copy
                 if [[ -n "$STAGED_CONFIGS" ]]; then
@@ -1096,9 +1159,14 @@ generate_filesystem_includes() {
                     STAGED_CONFIGS="${relative_path}"
                 fi
             else
-                # Non-home absolute paths: mount directly (read-only)
-                VOLUME_MOUNTS+=("-v" "${expanded_path}:${expanded_path}:ro")
-                log_debug "Direct mount (ro): ${expanded_path}"
+                # Non-home absolute paths: snapshot files, mount directly (read-only)
+                local mount_source="$expanded_path"
+                if [[ -f "$expanded_path" ]]; then
+                    mount_source=$(_snapshot_file "$expanded_path" "absolute${expanded_path}")
+                    log_debug "Snapshot: ${expanded_path} -> ${mount_source}"
+                fi
+                VOLUME_MOUNTS+=("-v" "${mount_source}:${expanded_path}:ro")
+                log_debug "Direct mount (ro): ${mount_source} -> ${expanded_path}"
             fi
         done <<< "$FILESYSTEM_INCLUDES"
     fi
@@ -1413,6 +1481,7 @@ generate_env_vars() {
 SECRETS_ENV_FILE=""
 DNS_PIN_FILE=""
 RESOLV_CONF_FILE=""
+SNAPSHOT_DIR=""  # Host-side snapshot dir for filesystem includes (issue #164)
 
 # Write secrets to a temporary env file for use with --env-file flag
 # This prevents secrets from appearing in process listings or bash -x traces
@@ -1768,6 +1837,8 @@ main() {
         [[ -n "${INLINE_SPEC_FILE:-}" && -f "$INLINE_SPEC_FILE" ]] && rm -f "$INLINE_SPEC_FILE"
         [[ -n "${DNS_PIN_FILE:-}" && -f "$DNS_PIN_FILE" ]] && rm -f "$DNS_PIN_FILE"
         [[ -n "${RESOLV_CONF_FILE:-}" && -f "$RESOLV_CONF_FILE" ]] && rm -f "$RESOLV_CONF_FILE"
+        # Clean up snapshot directory for filesystem includes (issue #164)
+        [[ -n "${SNAPSHOT_DIR:-}" && -d "$SNAPSHOT_DIR" ]] && rm -rf "$SNAPSHOT_DIR"
         # Show completion message if not already shown
         if [[ "$_DISPLAY_COMPLETE_SHOWN" != "true" ]]; then
             if [[ $exit_code -eq 0 ]]; then
