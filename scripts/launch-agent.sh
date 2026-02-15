@@ -1077,19 +1077,9 @@ _snapshot_file() {
     local host_path="$1"
     local relative_name="$2"
 
-    # Lazy-init snapshot directory (once per launch)
-    # Placed under $HOME/.kapsis/ — NOT /tmp — because macOS /tmp resolves to
-    # /private/tmp which is inaccessible from the Podman VM's virtio-fs mount
-    if [[ -z "$SNAPSHOT_DIR" ]]; then
-        SNAPSHOT_DIR="${HOME}/.kapsis/snapshots/${AGENT_ID}"
-        if [[ "$DRY_RUN" == "true" ]]; then
-            log_debug "[DRY-RUN] Would create snapshot dir: $SNAPSHOT_DIR"
-            echo "$host_path"
-            return 0
-        fi
-        mkdir -p "$SNAPSHOT_DIR"
-        log_debug "Created snapshot directory: $SNAPSHOT_DIR"
-    fi
+    # SNAPSHOT_DIR must be initialized by the caller (generate_filesystem_includes)
+    # before calling this function. This function is called via $() subshell, so
+    # any variable assignments here would be lost in the parent shell.
 
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "$host_path"
@@ -1101,7 +1091,8 @@ _snapshot_file() {
     # Ensure parent directory exists (for paths like .claude/settings.json)
     mkdir -p "$(dirname "$snapshot_path")" 2>/dev/null || true
 
-    # Host-local copy — no torn-read risk since both paths are on host filesystem
+    # Host-local cp — source is on the local filesystem (not a bind mount), so
+    # there is no concurrent-writer torn-read risk at this point
     if cp -p "$host_path" "$snapshot_path" 2>/dev/null; then
         echo "$snapshot_path"
     else
@@ -1115,6 +1106,22 @@ generate_filesystem_includes() {
     STAGED_CONFIGS=""
 
     if [[ -n "$FILESYSTEM_INCLUDES" ]]; then
+        # Initialize snapshot directory in parent shell scope (issue #164)
+        # Must be done here — NOT inside _snapshot_file() — because _snapshot_file
+        # is called via $() subshell, and variable assignments in subshells don't
+        # propagate back to the parent. Without this, cleanup would never fire.
+        # Placed under $HOME/.kapsis/ (NOT /tmp) because macOS /tmp resolves to
+        # /private/tmp which is inaccessible from the Podman VM's virtio-fs mount.
+        if [[ -z "$SNAPSHOT_DIR" ]]; then
+            SNAPSHOT_DIR="${HOME}/.kapsis/snapshots/${AGENT_ID}"
+            if [[ "$DRY_RUN" != "true" ]]; then
+                mkdir -p "$SNAPSHOT_DIR"
+                log_debug "Created snapshot directory: $SNAPSHOT_DIR"
+            else
+                log_debug "[DRY-RUN] Would create snapshot dir: $SNAPSHOT_DIR"
+            fi
+        fi
+
         while IFS= read -r path; do
             [[ -z "$path" ]] && continue
             # Expand environment variables in path (fixes #104)
@@ -1155,7 +1162,7 @@ generate_filesystem_includes() {
                 # Non-home absolute paths: snapshot files, mount directly (read-only)
                 local mount_source="$expanded_path"
                 if [[ -f "$expanded_path" ]]; then
-                    mount_source=$(_snapshot_file "$expanded_path" "absolute/$(basename "$expanded_path")")
+                    mount_source=$(_snapshot_file "$expanded_path" "absolute${expanded_path}")
                     log_debug "Snapshot: ${expanded_path} -> ${mount_source}"
                 fi
                 VOLUME_MOUNTS+=("-v" "${mount_source}:${expanded_path}:ro")

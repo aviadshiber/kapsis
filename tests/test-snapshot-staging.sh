@@ -3,9 +3,11 @@
 # Test: Snapshot Staging for Filesystem Includes (issue #164)
 #
 # Tests verify:
+#   - _init_snapshot_dir() creates the snapshot directory
+#   - _init_snapshot_dir() sets SNAPSHOT_DIR in parent shell scope
+#   - _init_snapshot_dir() skips mkdir in DRY_RUN mode
 #   - _snapshot_file() creates a byte-identical copy
 #   - _snapshot_file() preserves file permissions
-#   - _snapshot_file() lazily initializes SNAPSHOT_DIR
 #   - _snapshot_file() falls back to original path on failure
 #   - _snapshot_file() handles nested relative paths
 #   - _snapshot_file() respects DRY_RUN mode
@@ -51,7 +53,7 @@ cleanup_snapshot_tests() {
     fi
 }
 
-# Reset SNAPSHOT_DIR between tests to ensure lazy-init is tested properly
+# Reset SNAPSHOT_DIR between tests
 reset_snapshot_state() {
     if [[ -n "${SNAPSHOT_DIR:-}" && -d "$SNAPSHOT_DIR" ]]; then
         rm -rf "$SNAPSHOT_DIR"
@@ -61,23 +63,25 @@ reset_snapshot_state() {
 }
 
 #-------------------------------------------------------------------------------
-# Inline _snapshot_file for testing (extracted from launch-agent.sh)
-# This avoids sourcing the full launch-agent.sh which has many side effects
+# Inline helpers extracted from launch-agent.sh for testing.
+# This avoids sourcing the full launch-agent.sh which has many side effects.
+#
+# IMPORTANT: _init_snapshot_dir() must be called in the PARENT shell (not via
+# $() subshell) so that SNAPSHOT_DIR propagates. _snapshot_file() is safe to
+# call via $() since it only reads SNAPSHOT_DIR, never sets it.
 #-------------------------------------------------------------------------------
+_init_snapshot_dir() {
+    if [[ -z "$SNAPSHOT_DIR" ]]; then
+        SNAPSHOT_DIR="${HOME}/.kapsis/snapshots/${AGENT_ID}"
+        if [[ "$DRY_RUN" != "true" ]]; then
+            mkdir -p "$SNAPSHOT_DIR"
+        fi
+    fi
+}
+
 _snapshot_file() {
     local host_path="$1"
     local relative_name="$2"
-
-    if [[ -z "$SNAPSHOT_DIR" ]]; then
-        SNAPSHOT_DIR="${HOME}/.kapsis/snapshots/${AGENT_ID}"
-        if [[ "$DRY_RUN" == "true" ]]; then
-            log_debug "[DRY-RUN] Would create snapshot dir: $SNAPSHOT_DIR"
-            echo "$host_path"
-            return 0
-        fi
-        mkdir -p "$SNAPSHOT_DIR"
-        log_debug "Created snapshot directory: $SNAPSHOT_DIR"
-    fi
 
     if [[ "$DRY_RUN" == "true" ]]; then
         echo "$host_path"
@@ -99,9 +103,48 @@ _snapshot_file() {
 # TESTS
 #===============================================================================
 
+test_init_snapshot_dir_creates_dir() {
+    log_test "_init_snapshot_dir: creates snapshot directory"
+    reset_snapshot_state
+
+    assert_equals "" "$SNAPSHOT_DIR" "SNAPSHOT_DIR should be empty before init"
+
+    _init_snapshot_dir
+
+    assert_not_equals "" "$SNAPSHOT_DIR" "SNAPSHOT_DIR should be set after init"
+    assert_dir_exists "$SNAPSHOT_DIR" "SNAPSHOT_DIR should exist on disk"
+    assert_contains "$SNAPSHOT_DIR" ".kapsis/snapshots/" "Path should be under .kapsis/snapshots/"
+    assert_contains "$SNAPSHOT_DIR" "$AGENT_ID" "Path should contain AGENT_ID"
+}
+
+test_init_snapshot_dir_dry_run_no_mkdir() {
+    log_test "_init_snapshot_dir: sets SNAPSHOT_DIR but skips mkdir in DRY_RUN"
+    reset_snapshot_state
+    DRY_RUN=true
+
+    _init_snapshot_dir
+
+    assert_not_equals "" "$SNAPSHOT_DIR" "SNAPSHOT_DIR should be set even in dry-run"
+    assert_dir_not_exists "$SNAPSHOT_DIR" "Directory should NOT be created in dry-run"
+
+    DRY_RUN=false
+}
+
+test_init_snapshot_dir_idempotent() {
+    log_test "_init_snapshot_dir: idempotent — second call is no-op"
+    reset_snapshot_state
+
+    _init_snapshot_dir
+    local first_dir="$SNAPSHOT_DIR"
+
+    _init_snapshot_dir
+    assert_equals "$first_dir" "$SNAPSHOT_DIR" "Second call should not change SNAPSHOT_DIR"
+}
+
 test_snapshot_file_creates_copy() {
     log_test "_snapshot_file: creates byte-identical copy"
     reset_snapshot_state
+    _init_snapshot_dir
 
     local src="$TEST_TEMP_DIR/source/config.json"
     mkdir -p "$(dirname "$src")"
@@ -123,6 +166,7 @@ test_snapshot_file_creates_copy() {
 test_snapshot_file_preserves_permissions() {
     log_test "_snapshot_file: preserves file permissions"
     reset_snapshot_state
+    _init_snapshot_dir
 
     local src="$TEST_TEMP_DIR/source/secret.key"
     mkdir -p "$(dirname "$src")"
@@ -146,26 +190,10 @@ test_snapshot_file_preserves_permissions() {
     assert_equals "$src_perms" "$dst_perms" "Permissions should be preserved"
 }
 
-test_snapshot_file_lazy_init() {
-    log_test "_snapshot_file: lazily initializes SNAPSHOT_DIR"
-    reset_snapshot_state
-
-    assert_equals "" "$SNAPSHOT_DIR" "SNAPSHOT_DIR should be empty before first call"
-
-    local src="$TEST_TEMP_DIR/source/init.txt"
-    mkdir -p "$(dirname "$src")"
-    echo "init test" > "$src"
-
-    _snapshot_file "$src" "init.txt" > /dev/null
-
-    assert_not_equals "" "$SNAPSHOT_DIR" "SNAPSHOT_DIR should be set after first call"
-    assert_dir_exists "$SNAPSHOT_DIR" "SNAPSHOT_DIR should exist"
-    assert_contains "$SNAPSHOT_DIR" ".kapsis/snapshots/" "SNAPSHOT_DIR should be under .kapsis/snapshots/"
-}
-
 test_snapshot_file_fallback_on_failure() {
     log_test "_snapshot_file: falls back to original path when cp fails"
     reset_snapshot_state
+    _init_snapshot_dir
 
     local src="$TEST_TEMP_DIR/source/noperm.txt"
     mkdir -p "$(dirname "$src")"
@@ -187,6 +215,7 @@ test_snapshot_file_fallback_on_failure() {
 test_snapshot_file_nested_path() {
     log_test "_snapshot_file: handles nested relative paths"
     reset_snapshot_state
+    _init_snapshot_dir
 
     local src="$TEST_TEMP_DIR/source/nested/deep/settings.json"
     mkdir -p "$(dirname "$src")"
@@ -209,6 +238,7 @@ test_snapshot_file_dry_run() {
     log_test "_snapshot_file: returns original path in DRY_RUN mode"
     reset_snapshot_state
     DRY_RUN=true
+    _init_snapshot_dir  # Sets SNAPSHOT_DIR but does not mkdir
 
     local src="$TEST_TEMP_DIR/source/dryrun.txt"
     mkdir -p "$(dirname "$src")"
@@ -219,15 +249,13 @@ test_snapshot_file_dry_run() {
 
     assert_equals "$src" "$result" "Should return original path in dry-run mode"
 
-    # SNAPSHOT_DIR should remain empty in dry-run (no directory created)
-    assert_equals "" "$SNAPSHOT_DIR" "SNAPSHOT_DIR should remain empty in dry-run"
-
     DRY_RUN=false
 }
 
 test_snapshot_dir_cleanup() {
     log_test "Snapshot directory cleanup removes all snapshots"
     reset_snapshot_state
+    _init_snapshot_dir
 
     # Create several snapshots
     local src1="$TEST_TEMP_DIR/source/file1.txt"
@@ -256,11 +284,13 @@ test_snapshot_file_parallel_agent_isolation() {
     echo "parallel test" > "$src"
 
     AGENT_ID="agent-alpha"
+    _init_snapshot_dir
     _snapshot_file "$src" "parallel.txt" > /dev/null
     local dir_alpha="$SNAPSHOT_DIR"
 
     reset_snapshot_state
     AGENT_ID="agent-beta"
+    _init_snapshot_dir
     _snapshot_file "$src" "parallel.txt" > /dev/null
     local dir_beta="$SNAPSHOT_DIR"
 
@@ -271,6 +301,34 @@ test_snapshot_file_parallel_agent_isolation() {
     # Cleanup both
     rm -rf "$dir_alpha" "$dir_beta"
     AGENT_ID="test-snapshot-$$"
+}
+
+test_snapshot_file_absolute_path_no_collision() {
+    log_test "_snapshot_file: absolute paths use full path to prevent collisions"
+    reset_snapshot_state
+    _init_snapshot_dir
+
+    # Two files with same basename but different directories
+    local src1="$TEST_TEMP_DIR/source/dir1/config.yaml"
+    local src2="$TEST_TEMP_DIR/source/dir2/config.yaml"
+    mkdir -p "$(dirname "$src1")" "$(dirname "$src2")"
+    echo "config1" > "$src1"
+    echo "config2-different" > "$src2"
+
+    local result1 result2
+    result1=$(_snapshot_file "$src1" "absolute${src1}")
+    result2=$(_snapshot_file "$src2" "absolute${src2}")
+
+    assert_not_equals "$result1" "$result2" "Different source paths should produce different snapshots"
+    assert_file_exists "$result1" "First snapshot should exist"
+    assert_file_exists "$result2" "Second snapshot should exist"
+
+    # Verify content matches respective sources
+    if cmp -s "$src1" "$result1" && cmp -s "$src2" "$result2"; then
+        log_pass "Both snapshots match their respective sources"
+    else
+        log_fail "Snapshot content mismatch"
+    fi
 }
 
 #===============================================================================
@@ -286,15 +344,20 @@ main() {
     # Ensure cleanup on exit
     trap cleanup_snapshot_tests EXIT
 
+    # Init tests
+    run_test test_init_snapshot_dir_creates_dir
+    run_test test_init_snapshot_dir_dry_run_no_mkdir
+    run_test test_init_snapshot_dir_idempotent
+
     # Snapshot file tests
     run_test test_snapshot_file_creates_copy
     run_test test_snapshot_file_preserves_permissions
-    run_test test_snapshot_file_lazy_init
     run_test test_snapshot_file_fallback_on_failure
     run_test test_snapshot_file_nested_path
     run_test test_snapshot_file_dry_run
     run_test test_snapshot_dir_cleanup
     run_test test_snapshot_file_parallel_agent_isolation
+    run_test test_snapshot_file_absolute_path_no_collision
 
     # Summary
     print_summary

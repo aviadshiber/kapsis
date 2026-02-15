@@ -530,6 +530,32 @@ test_atomic_copy_file_rollback_validation_detects_mismatch() {
     fi
 }
 
+test_atomic_copy_file_rollback_removes_dst_on_validation_failure() {
+    log_test "atomic_copy_file: removes destination on validation failure (issue #164)"
+
+    local src="$TEST_TEMP_DIR/src/rollback-val.txt"
+    local dst="$TEST_TEMP_DIR/dst/rollback-val.txt"
+
+    mkdir -p "$(dirname "$src")" "$(dirname "$dst")"
+    echo "content for validation rollback test" > "$src"
+
+    # Override _atomic_validate_file to always fail (simulates torn read / size mismatch)
+    _atomic_validate_file() { return 1; }
+
+    # Copy should succeed (cp + mv) but validation should fail → rollback
+    atomic_copy_file "$src" "$dst" 2>/dev/null
+    local rc=$?
+
+    assert_not_equals "0" "$rc" "Should return non-zero when validation fails"
+
+    # Key assertion: dst must NOT exist (issue #164 rollback removes corrupt file)
+    assert_file_not_exists "$dst" "Corrupt destination should be removed after validation failure"
+
+    # Restore original _atomic_validate_file by re-sourcing
+    unset _KAPSIS_ATOMIC_COPY_LOADED
+    source "$KAPSIS_ROOT/scripts/lib/atomic-copy.sh"
+}
+
 #===============================================================================
 # TEST RUNNER
 #===============================================================================
@@ -575,6 +601,7 @@ main() {
     # Rollback tests (issue #164)
     run_test test_atomic_copy_file_rollback_removes_corrupt_dst
     run_test test_atomic_copy_file_rollback_validation_detects_mismatch
+    run_test test_atomic_copy_file_rollback_removes_dst_on_validation_failure
 
     # Summary
     print_summary
