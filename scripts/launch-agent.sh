@@ -769,8 +769,8 @@ parse_config() {
         # inject_to: where to inject in container - "secret_store" (default) or "env"
         # account: can be string or array (array joined with comma for fallback support)
         # KAPSIS_INJECT_DEFAULT is read by yq via strenv()
-        # shellcheck disable=SC2016
-        ENV_KEYCHAIN=$(KAPSIS_INJECT_DEFAULT="$GLOBAL_INJECT_TO" yq '.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600") + "|" + (.value.inject_to // strenv(KAPSIS_INJECT_DEFAULT))' "$CONFIG_FILE" 2>/dev/null || echo "")
+        # KAPSIS_YQ_KEYCHAIN_EXPR is defined in scripts/lib/constants.sh
+        ENV_KEYCHAIN=$(KAPSIS_INJECT_DEFAULT="$GLOBAL_INJECT_TO" yq "$KAPSIS_YQ_KEYCHAIN_EXPR" "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse SSH host verification list
         SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
@@ -1251,6 +1251,12 @@ generate_env_vars() {
             if [[ "$already_set" == "true" ]]; then
                 log_debug "Skipping $var_name - already set via passthrough"
                 continue
+            fi
+
+            # Validate inject_to value before proceeding
+            if [[ -n "${inject_to:-}" ]] && [[ "$inject_to" != "secret_store" ]] && [[ "$inject_to" != "env" ]]; then
+                log_warn "Unknown inject_to value '$inject_to' for $var_name — defaulting to env"
+                inject_to="env"
             fi
 
             # Query secret store (keychain/secret-tool) with fallback account support

@@ -123,6 +123,13 @@ readonly KAPSIS_SECRET_STORE_INJECT_TO_VALUES=("secret_store" "env")
 # Default injection target (secret_store preferred for security)
 readonly KAPSIS_SECRET_STORE_DEFAULT_INJECT_TO="secret_store"
 
+# YQ expression for parsing keychain config with inject_to support.
+# Used by scripts/launch-agent.sh and tests/lib/test-framework.sh.
+# Output format: VAR_NAME|service|account|inject_to_file|mode|inject_to
+# Requires KAPSIS_INJECT_DEFAULT env var to be set before calling yq.
+# shellcheck disable=SC2016
+readonly KAPSIS_YQ_KEYCHAIN_EXPR='.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600") + "|" + (.value.inject_to // strenv(KAPSIS_INJECT_DEFAULT))'
+
 #===============================================================================
 # FILE SANITIZATION CONSTANTS
 #===============================================================================

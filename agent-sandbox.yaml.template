@@ -116,7 +116,9 @@ environment:
   #   inject_to: (optional) Where to inject in container: "secret_store" | "env" (default: "secret_store")
   #              "secret_store" = Linux Secret Service (gnome-keyring) — default, preferred for security
   #              "env" = environment variable (legacy, less secure — visible via /proc/PID/environ)
+  #              Unrecognized values produce a warning and default to "env".
   #   inject_to_file: (optional) Also write credential to file path in container
+  #              Can be combined with inject_to — both receive the secret value.
   #   mode: (optional) File permissions for inject_to_file (default: 0600)
   #
   # Global default for inject_to (applies to all keychain entries unless overridden):

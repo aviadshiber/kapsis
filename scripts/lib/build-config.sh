@@ -334,7 +334,7 @@ print_config_summary() {
     echo "  Shells:    ${ENABLE_SHELLS}"
     echo "  Utilities: ${ENABLE_UTILITIES}"
     echo "  Overlay:   ${ENABLE_OVERLAY}"
-    echo "  Sec Store: ${ENABLE_SECRET_STORE}"
+    echo "  Secret Store: ${ENABLE_SECRET_STORE}"
     if [[ -n "$CUSTOM_PACKAGES" ]]; then
         echo "  Custom:    ${CUSTOM_PACKAGES}"
     fi

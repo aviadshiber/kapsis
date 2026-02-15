@@ -6,7 +6,7 @@
 # Service (gnome-keyring) instead of remaining as environment variables.
 #
 # Category: security
-# Container required: Yes (for full tests), No (for config parsing tests)
+# Container required: No (config parsing and validation tests only)
 #===============================================================================
 
 set -euo pipefail
@@ -161,6 +161,45 @@ test_constants_secret_store_defaults() {
         "Second value should be env"
 }
 
+test_credential_files_preserves_env_for_secret_store() {
+    log_test "Testing inject_credential_files preserves env vars for secret store entries"
+
+    local entrypoint_script="$KAPSIS_ROOT/scripts/entrypoint.sh"
+
+    # Verify the entrypoint checks KAPSIS_SECRET_STORE_ENTRIES before unsetting
+    assert_contains "$(cat "$entrypoint_script")" "KAPSIS_SECRET_STORE_ENTRIES" \
+        "inject_credential_files should reference KAPSIS_SECRET_STORE_ENTRIES"
+    assert_contains "$(cat "$entrypoint_script")" "env var for secret store injection" \
+        "Should log when keeping env var for secret store injection"
+}
+
+test_inject_to_validation_in_launch_script() {
+    log_test "Testing inject_to validation is present in launch-agent.sh"
+
+    local launch_script="$KAPSIS_ROOT/scripts/launch-agent.sh"
+
+    # Verify validation logic exists
+    assert_contains "$(cat "$launch_script")" "Unknown inject_to value" \
+        "Should validate unknown inject_to values"
+    assert_contains "$(cat "$launch_script")" "defaulting to env" \
+        "Should default invalid values to env"
+}
+
+test_yq_expr_shared_between_launch_and_tests() {
+    log_test "Testing KAPSIS_YQ_KEYCHAIN_EXPR is sourced from constants.sh"
+
+    # Verify constants.sh defines the expression
+    local constants_file="$KAPSIS_ROOT/scripts/lib/constants.sh"
+    assert_contains "$(cat "$constants_file")" "KAPSIS_YQ_KEYCHAIN_EXPR" \
+        "constants.sh should define KAPSIS_YQ_KEYCHAIN_EXPR"
+
+    # Verify launch-agent.sh references the constant (not inline expression)
+    local launch_script="$KAPSIS_ROOT/scripts/launch-agent.sh"
+    # shellcheck disable=SC2016
+    assert_contains "$(cat "$launch_script")" 'yq "$KAPSIS_YQ_KEYCHAIN_EXPR"' \
+        "launch-agent.sh should use the shared constant"
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -178,6 +217,11 @@ main() {
     run_test test_build_config_secret_store_toggle
     run_test test_build_config_minimal_no_secret_store
     run_test test_constants_secret_store_defaults
+
+    # Review fix verification tests
+    run_test test_credential_files_preserves_env_for_secret_store
+    run_test test_inject_to_validation_in_launch_script
+    run_test test_yq_expr_shared_between_launch_and_tests
 
     # Cleanup
     cleanup_test_project

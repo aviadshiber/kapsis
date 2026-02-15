@@ -568,6 +568,29 @@ EOF
     assert_contains "$parsed" "MY_TOKEN|my-service|||0600|secret_store" "Default inject_to should be secret_store"
 }
 
+test_inject_to_invalid_value_warning() {
+    log_test "Testing invalid inject_to value triggers warning in dry-run"
+
+    local test_config="$TEST_PROJECT/.kapsis-inject-to-invalid-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    MY_TOKEN:
+      service: "nonexistent-service"
+      inject_to: "keyring"
+EOF
+
+    local output
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    rm -f "$test_config"
+
+    # Should warn about the unrecognized inject_to value
+    assert_contains "$output" "Unknown inject_to" "Should warn about invalid inject_to value"
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -601,6 +624,7 @@ main() {
     run_test test_inject_to_env_config_parsing
     run_test test_inject_to_global_default
     run_test test_inject_to_default_is_secret_store
+    run_test test_inject_to_invalid_value_warning
 
     # Cleanup
     cleanup_test_project

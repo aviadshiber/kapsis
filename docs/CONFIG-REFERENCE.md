@@ -186,7 +186,10 @@ environment:
   #              "secret_store" = Linux Secret Service (gnome-keyring) — preferred, not visible in /proc
   #              "env" = environment variable (legacy, visible via /proc/PID/environ)
   #              Falls back to "env" if gnome-keyring is unavailable in the container.
+  #              Unrecognized values produce a warning and default to "env".
   #   inject_to_file: (optional) Also write credential to file path in container
+  #              Can be combined with inject_to — file injection happens first,
+  #              then secret store injection (both receive the secret value).
   #   mode: (optional) File permissions for inject_to_file (default: 0600)
   keychain:
     # Example: Token stored in container secret store (default behavior)
@@ -832,10 +835,11 @@ environment:
       service: "my-service"
       account: ["primary@example.com", "fallback@example.com", "${USER}@example.com"]
 
-    # Additionally write to file (works with both inject_to values)
+    # Both file injection AND secret store (can coexist)
     AGENT_CREDENTIALS:
       service: "my-agent-creds"            # Required: keychain service name
-      inject_to_file: "~/.agent/creds"     # Optional: also write to this file in container
+      inject_to: "secret_store"            # Store in keyring (also the default)
+      inject_to_file: "~/.agent/creds"     # Additionally write to this file in container
       mode: "0600"                         # Optional: file permissions (default: 0600)
 ```
 
@@ -849,6 +853,10 @@ By default, keychain secrets are stored in the container's Linux Secret Service 
 - No per-tool workarounds needed (e.g., `BKT_ALLOW_INSECURE_STORE`)
 
 **Requirements:** The container image must include `gnome-keyring`, `libsecret-tools`, and `dbus` (installed by default when `ENABLE_SECRET_STORE=true` in the build profile). If these packages are unavailable, Kapsis falls back to environment variable injection with a warning.
+
+**Validation:** Unrecognized `inject_to` values (e.g., typos like `"keyring"`) produce a warning and default to `"env"`.
+
+**Combining `inject_to_file` and `inject_to`:** These are orthogonal — both can be specified on the same entry. File injection writes the secret to disk first, then secret store injection stores it in the keyring and unsets the env var. The file and the keyring entry both receive the secret value.
 
 To globally use environment variables instead: set `environment.inject_to: "env"` in your config.
 

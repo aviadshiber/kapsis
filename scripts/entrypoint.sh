@@ -140,7 +140,13 @@ inject_credential_files() {
         log_debug "Injected $var_name to $file_path (mode: ${file_mode:-0600})"
 
         # Unset the env var so it's not visible to child processes
-        unset "$var_name"
+        # BUT: if this secret is also targeted for secret store injection,
+        # keep the env var so inject_secret_store() can read it later
+        if [[ -n "${KAPSIS_SECRET_STORE_ENTRIES:-}" ]] && [[ "$KAPSIS_SECRET_STORE_ENTRIES" == *"$var_name|"* ]]; then
+            log_debug "Keeping $var_name env var for secret store injection"
+        else
+            unset "$var_name"
+        fi
     done
 
     log_success "Credential files injected"
@@ -180,12 +186,14 @@ inject_secret_store() {
             log_warn "Failed to start dbus — secrets will remain as env vars"
             return 0
         }
+        # dbus-launch --sh-syntax outputs deterministic DBUS_SESSION_BUS_ADDRESS and
+        # DBUS_SESSION_BUS_PID assignments. Safe to eval inside the isolated container.
         eval "$dbus_output"
         export DBUS_SESSION_BUS_ADDRESS
     fi
 
     # Start gnome-keyring-daemon (secrets component only, headless)
-    if ! pgrep -x gnome-keyring-d &>/dev/null; then
+    if ! pgrep -f gnome-keyring-daemon &>/dev/null; then
         if ! command -v gnome-keyring-daemon &>/dev/null; then
             log_warn "gnome-keyring-daemon not found — secrets will remain as env vars"
             return 0
@@ -210,7 +218,8 @@ inject_secret_store() {
         [[ -z "$value" ]] && continue
 
         # Store in Secret Service via secret-tool
-        if echo "$value" | secret-tool store --label="$var_name" \
+        # Use printf to avoid echo interpreting -n/-e flags in secret values
+        if printf '%s' "$value" | secret-tool store --label="$var_name" \
             service "$service" account "${account:-kapsis}" 2>/dev/null; then
             log_debug "Stored $var_name in secret store (service: $service)"
             # Unset env var — secret is now only in the keyring
