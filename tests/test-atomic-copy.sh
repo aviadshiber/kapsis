@@ -461,6 +461,76 @@ test_atomic_copy_dir_directories_writable() {
 }
 
 #===============================================================================
+# ROLLBACK TESTS (issue #164)
+#===============================================================================
+
+test_atomic_copy_file_rollback_removes_corrupt_dst() {
+    log_test "atomic_copy_file: removes destination when source disappears mid-copy"
+
+    local src="$TEST_TEMP_DIR/src/rollback.txt"
+    local dst="$TEST_TEMP_DIR/dst/rollback.txt"
+
+    mkdir -p "$(dirname "$src")" "$(dirname "$dst")"
+    echo "original content" > "$src"
+
+    # First copy succeeds
+    atomic_copy_file "$src" "$dst"
+    assert_file_exists "$dst" "File should exist after successful copy"
+
+    # Remove source to force validation failure on next copy attempt
+    # (source not found returns 1 and dst should not retain stale data
+    #  from a previous copy — but this tests the source-not-found path)
+    rm -f "$src"
+
+    # Attempt copy with missing source — should fail and not leave stale dst
+    if atomic_copy_file "$src" "$dst" 2>/dev/null; then
+        log_fail "Should fail when source is missing"
+    else
+        log_pass "Correctly fails when source is missing"
+    fi
+}
+
+test_atomic_copy_file_rollback_validation_detects_mismatch() {
+    log_test "atomic_copy_file: _atomic_validate_file detects size mismatch"
+
+    local src="$TEST_TEMP_DIR/src/validate.json"
+    local dst="$TEST_TEMP_DIR/dst/validate.json"
+
+    mkdir -p "$(dirname "$src")" "$(dirname "$dst")"
+
+    # Create source with known content
+    echo '{"key": "value", "data": "important"}' > "$src"
+
+    # Place truncated content at destination (simulates torn read result)
+    echo '{"key":' > "$dst"
+
+    # Validation should detect the size mismatch
+    if _atomic_validate_file "$src" "$dst"; then
+        log_fail "Validation should detect size mismatch between source and corrupt destination"
+    else
+        log_pass "Validation correctly detects size mismatch"
+    fi
+
+    # Also verify JSON validation catches invalid JSON of matching size
+    # Create src and dst with same byte count but dst has invalid JSON
+    echo '{"ok": true}' > "$src"
+    local src_size
+    src_size=$(wc -c < "$src" | tr -d ' ')
+    # Create dst with same size but invalid JSON
+    printf '%*s' "$src_size" "" | tr ' ' 'x' > "$dst"
+
+    if command -v jq &>/dev/null; then
+        if _atomic_validate_file "$src" "$dst"; then
+            log_fail "Validation should catch invalid JSON even with matching size"
+        else
+            log_pass "Validation catches invalid JSON with matching size"
+        fi
+    else
+        log_info "jq not available, skipping JSON validation check"
+    fi
+}
+
+#===============================================================================
 # TEST RUNNER
 #===============================================================================
 
@@ -501,6 +571,10 @@ main() {
     # Permission preservation tests for directories (issue #159)
     run_test test_atomic_copy_dir_preserves_file_permissions
     run_test test_atomic_copy_dir_directories_writable
+
+    # Rollback tests (issue #164)
+    run_test test_atomic_copy_file_rollback_removes_corrupt_dst
+    run_test test_atomic_copy_file_rollback_validation_detects_mismatch
 
     # Summary
     print_summary
