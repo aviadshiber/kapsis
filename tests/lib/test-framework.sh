@@ -525,6 +525,42 @@ assert_matches() {
 }
 
 #===============================================================================
+# SHARED TEST HELPERS
+#===============================================================================
+
+# YQ expression for parsing keychain config with inject_to support.
+# Matches the pipeline used in scripts/launch-agent.sh.
+# Output format: VAR_NAME|service|account|inject_to_file|mode|inject_to
+# shellcheck disable=SC2016
+readonly KAPSIS_YQ_KEYCHAIN_EXPR='.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600") + "|" + (.value.inject_to // strenv(KAPSIS_INJECT_DEFAULT))'
+
+# parse_keychain_config <config_file> [inject_default]
+#
+# Parse keychain entries from a YAML config file using the same yq pipeline
+# as launch-agent.sh. Returns pipe-delimited entries, one per line.
+#
+# Args:
+#   config_file      - Path to YAML config file
+#   inject_default   - Default inject_to value (default: parsed from config or "secret_store")
+#
+# Output format per line: VAR_NAME|service|account|inject_to_file|mode|inject_to
+parse_keychain_config() {
+    local config_file="$1"
+    local inject_default="${2:-}"
+
+    if ! command -v yq &> /dev/null; then
+        return 1
+    fi
+
+    if [[ -z "$inject_default" ]]; then
+        inject_default=$(yq -r '.environment.inject_to // "secret_store"' "$config_file")
+    fi
+
+    # shellcheck disable=SC2016
+    KAPSIS_INJECT_DEFAULT="$inject_default" yq "$KAPSIS_YQ_KEYCHAIN_EXPR" "$config_file" 2>/dev/null
+}
+
+#===============================================================================
 # TEST EXECUTION
 #===============================================================================
 

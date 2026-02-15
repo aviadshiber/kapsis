@@ -110,6 +110,20 @@ readonly KAPSIS_GIT_EXCLUDE_PATTERNS="# Kapsis internal files
 .aider/"
 
 #===============================================================================
+# SECRET STORE INJECTION
+#
+# Controls how keychain secrets are injected into containers.
+# "secret_store" = Linux Secret Service (gnome-keyring) — preferred, default
+# "env" = environment variable (legacy, less secure)
+#===============================================================================
+
+# Valid inject_to values for keychain entries
+readonly KAPSIS_SECRET_STORE_INJECT_TO_VALUES=("secret_store" "env")
+
+# Default injection target (secret_store preferred for security)
+readonly KAPSIS_SECRET_STORE_DEFAULT_INJECT_TO="secret_store"
+
+#===============================================================================
 # FILE SANITIZATION CONSTANTS
 #===============================================================================
 
