@@ -430,6 +430,168 @@ EOF
 }
 
 #===============================================================================
+# inject_to TESTS (Issue #162)
+#===============================================================================
+
+test_inject_to_secret_store_config_parsing() {
+    log_test "Testing inject_to: secret_store is parsed from config"
+
+    local test_config="$TEST_PROJECT/.kapsis-inject-to-ss-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    MY_TOKEN:
+      service: "my-service"
+      inject_to: "secret_store"
+EOF
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        rm -f "$test_config"
+        return 0
+    fi
+
+    local inject_to
+    inject_to=$(yq -r '.environment.keychain.MY_TOKEN.inject_to' "$test_config")
+
+    rm -f "$test_config"
+
+    assert_equals "secret_store" "$inject_to" "inject_to should be parsed as secret_store"
+}
+
+test_inject_to_env_config_parsing() {
+    log_test "Testing inject_to: env is parsed from config"
+
+    local test_config="$TEST_PROJECT/.kapsis-inject-to-env-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    MY_KEY:
+      service: "my-service"
+      inject_to: "env"
+EOF
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        rm -f "$test_config"
+        return 0
+    fi
+
+    local inject_to
+    inject_to=$(yq -r '.environment.keychain.MY_KEY.inject_to' "$test_config")
+
+    rm -f "$test_config"
+
+    assert_equals "env" "$inject_to" "inject_to should be parsed as env"
+}
+
+test_inject_to_global_default() {
+    log_test "Testing environment.inject_to sets global default"
+
+    local test_config="$TEST_PROJECT/.kapsis-inject-to-global-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  inject_to: "env"
+  keychain:
+    TOKEN_A:
+      service: "service-a"
+    TOKEN_B:
+      service: "service-b"
+      inject_to: "secret_store"
+EOF
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        rm -f "$test_config"
+        return 0
+    fi
+
+    # Parse global default
+    local global_default
+    global_default=$(yq -r '.environment.inject_to // "secret_store"' "$test_config")
+    assert_equals "env" "$global_default" "Global inject_to should be env"
+
+    # TOKEN_A has no inject_to — should use global default
+    local token_a_inject
+    token_a_inject=$(yq -r '.environment.keychain.TOKEN_A.inject_to // "UNSET"' "$test_config")
+    assert_equals "UNSET" "$token_a_inject" "TOKEN_A should not have inject_to (inherits global)"
+
+    # TOKEN_B overrides global
+    local token_b_inject
+    token_b_inject=$(yq -r '.environment.keychain.TOKEN_B.inject_to' "$test_config")
+    assert_equals "secret_store" "$token_b_inject" "TOKEN_B should override to secret_store"
+
+    # Test the yq pipeline that launch-agent.sh uses (via shared helper)
+    local parsed
+    parsed=$(parse_keychain_config "$test_config" "$global_default")
+
+    rm -f "$test_config"
+
+    # TOKEN_A should get the global default "env"
+    assert_contains "$parsed" "TOKEN_A|service-a|||0600|env" "TOKEN_A should inherit global inject_to"
+    # TOKEN_B should keep its own "secret_store"
+    assert_contains "$parsed" "TOKEN_B|service-b|||0600|secret_store" "TOKEN_B should have its own inject_to"
+}
+
+test_inject_to_default_is_secret_store() {
+    log_test "Testing inject_to defaults to secret_store when unset"
+
+    local test_config="$TEST_PROJECT/.kapsis-inject-to-default-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    MY_TOKEN:
+      service: "my-service"
+EOF
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        rm -f "$test_config"
+        return 0
+    fi
+
+    # When neither global nor per-secret inject_to is set, default is "secret_store"
+    # parse_keychain_config auto-detects the global default from the config
+    local parsed
+    parsed=$(parse_keychain_config "$test_config")
+
+    rm -f "$test_config"
+
+    assert_contains "$parsed" "MY_TOKEN|my-service|||0600|secret_store" "Default inject_to should be secret_store"
+}
+
+test_inject_to_invalid_value_warning() {
+    log_test "Testing invalid inject_to value triggers warning in dry-run"
+
+    local test_config="$TEST_PROJECT/.kapsis-inject-to-invalid-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    MY_TOKEN:
+      service: "nonexistent-service"
+      inject_to: "keyring"
+EOF
+
+    local output
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --config "$test_config" --task "test" --dry-run 2>&1) || true
+
+    rm -f "$test_config"
+
+    # Should warn about the unrecognized inject_to value
+    assert_contains "$output" "Unknown inject_to" "Should warn about invalid inject_to value"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -456,6 +618,13 @@ main() {
     run_test test_keychain_string_account_backward_compat
     run_test test_keychain_mixed_account_types
     run_test test_keychain_empty_array_account
+
+    # inject_to tests (Issue #162)
+    run_test test_inject_to_secret_store_config_parsing
+    run_test test_inject_to_env_config_parsing
+    run_test test_inject_to_global_default
+    run_test test_inject_to_default_is_secret_store
+    run_test test_inject_to_invalid_value_warning
 
     # Cleanup
     cleanup_test_project

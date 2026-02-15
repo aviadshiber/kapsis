@@ -169,6 +169,10 @@ filesystem:
 # ENVIRONMENT VARIABLES
 #===============================================================================
 environment:
+  # Global default for inject_to (applies to all keychain entries unless overridden)
+  # Valid values: "secret_store" (default, preferred) | "env" (legacy)
+  # inject_to: "secret_store"
+
   # Secrets retrieved from system keychain (macOS Keychain / Linux secret-tool)
   # These are queried automatically at launch - no manual 'export' needed!
   # Priority: passthrough > keychain (passthrough wins if both configured)
@@ -178,23 +182,31 @@ environment:
   #   account: (optional) Keychain account - can be string or array for fallback
   #            Supports ${VAR} expansion (e.g., ${USER})
   #            Array example: ["primary@example.com", "fallback@example.com"]
+  #   inject_to: (optional) Where to inject in container (default: "secret_store")
+  #              "secret_store" = Linux Secret Service (gnome-keyring) — preferred, not visible in /proc
+  #              "env" = environment variable (legacy, visible via /proc/PID/environ)
+  #              Falls back to "env" if gnome-keyring is unavailable in the container.
+  #              Unrecognized values produce a warning and default to "env".
   #   inject_to_file: (optional) Also write credential to file path in container
+  #              Can be combined with inject_to — file injection happens first,
+  #              then secret store injection (both receive the secret value).
   #   mode: (optional) File permissions for inject_to_file (default: 0600)
   keychain:
-    # Example: API key as environment variable only
+    # Example: Token stored in container secret store (default behavior)
+    BITBUCKET_TOKEN:
+      service: "my-bitbucket-token"
+      account: "${USER}"  # Supports variable expansion
+
+    # Example: API key kept as environment variable (opt-in legacy behavior)
     ANTHROPIC_API_KEY:
       service: "anthropic-api"
+      inject_to: "env"
 
     # Example: OAuth credentials written to file (agent-agnostic)
     AGENT_OAUTH_CREDENTIALS:
       service: "my-agent-credentials"
       inject_to_file: "~/.config/my-agent/credentials.json"
       mode: "0600"
-
-    # Example: Service token with account name
-    BITBUCKET_TOKEN:
-      service: "my-bitbucket-token"
-      account: "${USER}"  # Supports variable expansion
 
     # Example: Fallback accounts (tries each in order until one succeeds)
     JIRA_TOKEN:
@@ -794,30 +806,59 @@ Kapsis can automatically retrieve secrets from your system's native secret store
 
 1. At launch, Kapsis parses the `keychain` section of your config
 2. For each entry, it queries the system secret store using the service name (and optional account)
-3. Retrieved secrets are passed to the container as environment variables
-4. Secrets are **never logged** - dry-run output shows `***MASKED***`
+3. Retrieved secrets are temporarily passed to the container via `--env-file`
+4. The container entrypoint stores secrets in the target location based on `inject_to`:
+   - `"secret_store"` (default): Stored in Linux Secret Service (gnome-keyring), env var unset
+   - `"env"`: Kept as environment variable (legacy behavior)
+5. Secrets are **never logged** - dry-run output shows `***MASKED***`
 
 ### Configuration Schema
 
 ```yaml
 environment:
+  # Global default for inject_to (optional, default: "secret_store")
+  inject_to: "secret_store"
+
   keychain:
-    # Environment variable only
-    ENV_VAR_NAME:
-      service: "keychain-service-name"  # Required: exact service name
-      account: "optional-account"        # Optional: keychain account (supports ${VAR} expansion)
+    # Secret stored in container's Linux secret store (default)
+    BITBUCKET_TOKEN:
+      service: "my-bitbucket-token"       # Required: exact service name
+      account: "optional-account"          # Optional: keychain account (supports ${VAR} expansion)
+
+    # Secret kept as environment variable (legacy opt-in)
+    ANTHROPIC_API_KEY:
+      service: "anthropic-api"
+      inject_to: "env"                    # Override: keep as env var
 
     # Fallback accounts - tries each in order until one succeeds
     MY_TOKEN:
       service: "my-service"
       account: ["primary@example.com", "fallback@example.com", "${USER}@example.com"]
 
-    # Environment variable + file injection (agent-agnostic)
+    # Both file injection AND secret store (can coexist)
     AGENT_CREDENTIALS:
-      service: "my-agent-creds"          # Required: keychain service name
-      inject_to_file: "~/.agent/creds"   # Optional: also write to this file in container
-      mode: "0600"                        # Optional: file permissions (default: 0600)
+      service: "my-agent-creds"            # Required: keychain service name
+      inject_to: "secret_store"            # Store in keyring (also the default)
+      inject_to_file: "~/.agent/creds"     # Additionally write to this file in container
+      mode: "0600"                         # Optional: file permissions (default: 0600)
 ```
+
+### Secret Store Injection (Default)
+
+By default, keychain secrets are stored in the container's Linux Secret Service (gnome-keyring) instead of remaining as environment variables. This provides:
+
+- Secrets **not visible** via `/proc/PID/environ`
+- Secrets **not inherited** by child processes
+- CLI tools using keyring libraries (e.g., `bkt`) work natively
+- No per-tool workarounds needed (e.g., `BKT_ALLOW_INSECURE_STORE`)
+
+**Requirements:** The container image must include `gnome-keyring`, `libsecret-tools`, and `dbus` (installed by default when `ENABLE_SECRET_STORE=true` in the build profile). If these packages are unavailable, Kapsis falls back to environment variable injection with a warning.
+
+**Validation:** Unrecognized `inject_to` values (e.g., typos like `"keyring"`) produce a warning and default to `"env"`.
+
+**Combining `inject_to_file` and `inject_to`:** These are orthogonal — both can be specified on the same entry. File injection writes the secret to disk first, then secret store injection stores it in the keyring and unsets the env var. The file and the keyring entry both receive the secret value.
+
+To globally use environment variables instead: set `environment.inject_to: "env"` in your config.
 
 ### Account Fallback
 

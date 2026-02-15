@@ -49,6 +49,7 @@ declare -g DEFAULT_DEV_TOOLS_ENABLED="true"
 declare -g DEFAULT_SHELLS_ENABLED="true"
 declare -g DEFAULT_UTILITIES_ENABLED="true"
 declare -g DEFAULT_OVERLAY_ENABLED="true"
+declare -g DEFAULT_SECRET_STORE_ENABLED="true"
 
 # yq defaults
 declare -g DEFAULT_YQ_VERSION="4.44.3"
@@ -82,6 +83,7 @@ declare -g ENABLE_DEV_TOOLS=""
 declare -g ENABLE_SHELLS=""
 declare -g ENABLE_UTILITIES=""
 declare -g ENABLE_OVERLAY=""
+declare -g ENABLE_SECRET_STORE=""
 declare -g CUSTOM_PACKAGES=""
 
 declare -g YQ_VERSION=""
@@ -189,6 +191,7 @@ parse_build_config() {
     ENABLE_SHELLS=$(_yq_bool '.system_packages.shells.enabled' "true" "$config_file")
     ENABLE_UTILITIES=$(_yq_bool '.system_packages.utilities.enabled' "true" "$config_file")
     ENABLE_OVERLAY=$(_yq_bool '.system_packages.overlay.enabled' "true" "$config_file")
+    ENABLE_SECRET_STORE=$(_yq_bool '.system_packages.secret_store.enabled' "true" "$config_file")
 
     # Parse custom packages as space-separated list
     CUSTOM_PACKAGES=$(yq -r '.system_packages.custom // [] | join(" ")' "$config_file")
@@ -236,6 +239,7 @@ _apply_defaults() {
     ENABLE_SHELLS="$DEFAULT_SHELLS_ENABLED"
     ENABLE_UTILITIES="$DEFAULT_UTILITIES_ENABLED"
     ENABLE_OVERLAY="$DEFAULT_OVERLAY_ENABLED"
+    ENABLE_SECRET_STORE="$DEFAULT_SECRET_STORE_ENABLED"
     CUSTOM_PACKAGES=""
 
     YQ_VERSION="$DEFAULT_YQ_VERSION"
@@ -285,6 +289,7 @@ _generate_build_args() {
         "--build-arg" "ENABLE_SHELLS=$ENABLE_SHELLS"
         "--build-arg" "ENABLE_UTILITIES=$ENABLE_UTILITIES"
         "--build-arg" "ENABLE_OVERLAY=$ENABLE_OVERLAY"
+        "--build-arg" "ENABLE_SECRET_STORE=$ENABLE_SECRET_STORE"
         "--build-arg" "CUSTOM_PACKAGES=$CUSTOM_PACKAGES"
 
         # yq configuration
@@ -329,6 +334,7 @@ print_config_summary() {
     echo "  Shells:    ${ENABLE_SHELLS}"
     echo "  Utilities: ${ENABLE_UTILITIES}"
     echo "  Overlay:   ${ENABLE_OVERLAY}"
+    echo "  Secret Store: ${ENABLE_SECRET_STORE}"
     if [[ -n "$CUSTOM_PACKAGES" ]]; then
         echo "  Custom:    ${CUSTOM_PACKAGES}"
     fi
@@ -356,6 +362,7 @@ estimate_image_size() {
     [[ "$ENABLE_SHELLS" == "true" ]] && size_mb=$((size_mb + 20))
     [[ "$ENABLE_UTILITIES" == "true" ]] && size_mb=$((size_mb + 30))
     [[ "$ENABLE_OVERLAY" == "true" ]] && size_mb=$((size_mb + 10))
+    [[ "$ENABLE_SECRET_STORE" == "true" ]] && size_mb=$((size_mb + 6))
 
     # Convert to GB if over 1000MB
     if [[ $size_mb -ge 1000 ]]; then
@@ -390,7 +397,8 @@ export_config_json() {
     "development": {"enabled": $ENABLE_DEV_TOOLS},
     "shells": {"enabled": $ENABLE_SHELLS},
     "utilities": {"enabled": $ENABLE_UTILITIES},
-    "overlay": {"enabled": $ENABLE_OVERLAY}
+    "overlay": {"enabled": $ENABLE_OVERLAY},
+    "secret_store": {"enabled": $ENABLE_SECRET_STORE}
   },
   "estimated_size": "$(estimate_image_size)"
 }

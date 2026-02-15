@@ -759,12 +759,18 @@ parse_config() {
         # Parse environment set
         ENV_SET=$(yq -r '.environment.set // {}' "$CONFIG_FILE" 2>/dev/null || echo "{}")
 
+        # Parse global inject_to default (secret_store is preferred/default)
+        GLOBAL_INJECT_TO=$(yq -r '.environment.inject_to // "secret_store"' "$CONFIG_FILE" 2>/dev/null || echo "secret_store")
+
         # Parse keychain mappings for secret store lookups
-        # Output format: VAR_NAME|service|account|inject_to_file|mode per line
+        # Output format: VAR_NAME|service|account|inject_to_file|mode|inject_to per line
         # inject_to_file: optional file path to write the secret to (agent-agnostic)
         # mode: optional file permissions (default 0600)
+        # inject_to: where to inject in container - "secret_store" (default) or "env"
         # account: can be string or array (array joined with comma for fallback support)
-        ENV_KEYCHAIN=$(yq '.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600")' "$CONFIG_FILE" 2>/dev/null || echo "")
+        # KAPSIS_INJECT_DEFAULT is read by yq via strenv()
+        # KAPSIS_YQ_KEYCHAIN_EXPR is defined in scripts/lib/constants.sh
+        ENV_KEYCHAIN=$(KAPSIS_INJECT_DEFAULT="$GLOBAL_INJECT_TO" yq "$KAPSIS_YQ_KEYCHAIN_EXPR" "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse SSH host verification list
         SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
@@ -1203,10 +1209,12 @@ generate_env_vars() {
     # Process keychain-backed environment variables
     # Track credentials that need file injection (agent-agnostic)
     local CREDENTIAL_FILES=""
+    # Track secrets that should be stored in container's Linux secret store
+    local SECRET_STORE_ENTRIES=""
 
     if [[ -n "$ENV_KEYCHAIN" ]]; then
         log_info "Resolving secrets from system keychain..."
-        while IFS='|' read -r var_name service account inject_to_file file_mode; do
+        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to; do
             [[ -z "$var_name" || -z "$service" ]] && continue
 
             # Expand variables in account (e.g., ${USER})
@@ -1245,6 +1253,12 @@ generate_env_vars() {
                 continue
             fi
 
+            # Validate inject_to value before proceeding
+            if [[ -n "${inject_to:-}" ]] && [[ "$inject_to" != "secret_store" ]] && [[ "$inject_to" != "env" ]]; then
+                log_warn "Unknown inject_to value '$inject_to' for $var_name — defaulting to env"
+                inject_to="env"
+            fi
+
             # Query secret store (keychain/secret-tool) with fallback account support
             local value
             if value=$(query_secret_store_with_fallbacks "$service" "$account" "$var_name"); then
@@ -1252,7 +1266,18 @@ generate_env_vars() {
                 SECRET_ENV_VARS+=("${var_name}=${value}")
                 log_success "Loaded $var_name from secret store (service: $service)"
 
-                # Track file injection if specified (agent-agnostic credential injection)
+                # Track secret store injection if requested (default: secret_store)
+                if [[ "${inject_to:-secret_store}" == "secret_store" ]]; then
+                    local ss_entry="${var_name}|${service}|${account:-kapsis}"
+                    if [[ -n "$SECRET_STORE_ENTRIES" ]]; then
+                        SECRET_STORE_ENTRIES="${SECRET_STORE_ENTRIES},${ss_entry}"
+                    else
+                        SECRET_STORE_ENTRIES="${ss_entry}"
+                    fi
+                    log_debug "Will inject $var_name to container secret store"
+                fi
+
+                # Track file injection if specified (orthogonal to inject_to)
                 if [[ -n "$inject_to_file" ]]; then
                     # Format: VAR_NAME|file_path|mode (comma-separated list)
                     if [[ -n "$CREDENTIAL_FILES" ]]; then
@@ -1272,6 +1297,12 @@ generate_env_vars() {
     # This is metadata about file paths, not the secrets themselves
     if [[ -n "$CREDENTIAL_FILES" ]]; then
         ENV_VARS+=("-e" "KAPSIS_CREDENTIAL_FILES=${CREDENTIAL_FILES}")
+    fi
+
+    # Pass secret store injection metadata to entrypoint
+    # Secrets with inject_to: "secret_store" will be moved from env vars to Linux keyring
+    if [[ -n "$SECRET_STORE_ENTRIES" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_SECRET_STORE_ENTRIES=${SECRET_STORE_ENTRIES}")
     fi
 
     # Set explicit environment variables (non-secrets)

@@ -65,4 +65,6 @@ system_packages:
     enabled: true
   overlay:
     enabled: true
+  secret_store:
+    enabled: true
   custom: []

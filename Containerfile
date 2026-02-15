@@ -55,6 +55,7 @@ ARG ENABLE_DEV_TOOLS=true
 ARG ENABLE_SHELLS=true
 ARG ENABLE_UTILITIES=true
 ARG ENABLE_OVERLAY=true
+ARG ENABLE_SECRET_STORE=true
 ARG CUSTOM_PACKAGES=""
 
 # yq configuration (required for Kapsis)
@@ -104,6 +105,7 @@ ARG ENABLE_DEV_TOOLS
 ARG ENABLE_SHELLS
 ARG ENABLE_UTILITIES
 ARG ENABLE_OVERLAY
+ARG ENABLE_SECRET_STORE
 ARG ENABLE_PYTHON
 ARG CUSTOM_PACKAGES
 
@@ -143,6 +145,16 @@ RUN if [ "$ENABLE_OVERLAY" = "true" ]; then \
         apt-get update && apt-get install -y --no-install-recommends \
             fuse-overlayfs \
             fuse3 && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Secret store (gnome-keyring + secret-tool for Secret Service D-Bus API)
+# Enables CLI tools using keyring libraries to store/retrieve secrets natively
+RUN if [ "$ENABLE_SECRET_STORE" = "true" ]; then \
+        apt-get update && apt-get install -y --no-install-recommends \
+            dbus \
+            gnome-keyring \
+            libsecret-tools && \
         rm -rf /var/lib/apt/lists/*; \
     fi
 

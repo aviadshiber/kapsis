@@ -140,10 +140,102 @@ inject_credential_files() {
         log_debug "Injected $var_name to $file_path (mode: ${file_mode:-0600})"
 
         # Unset the env var so it's not visible to child processes
-        unset "$var_name"
+        # BUT: if this secret is also targeted for secret store injection,
+        # keep the env var so inject_secret_store() can read it later
+        if [[ -n "${KAPSIS_SECRET_STORE_ENTRIES:-}" ]] && [[ "$KAPSIS_SECRET_STORE_ENTRIES" == *"$var_name|"* ]]; then
+            log_debug "Keeping $var_name env var for secret store injection"
+        else
+            unset "$var_name"
+        fi
     done
 
     log_success "Credential files injected"
+}
+
+#===============================================================================
+# SECRET STORE INJECTION (Issue #162)
+#
+# Stores secrets in Linux Secret Service (gnome-keyring) instead of leaving
+# them as environment variables. This prevents exposure via /proc/PID/environ
+# and enables CLI tools that use keyring libraries (e.g., bkt).
+#
+# Format: VAR_NAME|service|account (comma-separated for multiple)
+# Example: BITBUCKET_TOKEN|bitbucket-token|aviad.s,GIT_TOKEN|git-service|kapsis
+#===============================================================================
+inject_secret_store() {
+    if [[ -z "${KAPSIS_SECRET_STORE_ENTRIES:-}" ]]; then
+        log_debug "No secret store entries to inject"
+        return 0
+    fi
+
+    # Check if secret-tool is available
+    if ! command -v secret-tool &>/dev/null; then
+        log_warn "secret-tool not found — secrets will remain as env vars"
+        log_warn "Rebuild image with ENABLE_SECRET_STORE=true or set inject_to: env"
+        return 0
+    fi
+
+    # Start dbus session bus if not already running
+    if [[ -z "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
+        if ! command -v dbus-launch &>/dev/null; then
+            log_warn "dbus-launch not found — secrets will remain as env vars"
+            return 0
+        fi
+        local dbus_output
+        dbus_output=$(dbus-launch --sh-syntax 2>/dev/null) || {
+            log_warn "Failed to start dbus — secrets will remain as env vars"
+            return 0
+        }
+        # dbus-launch --sh-syntax outputs deterministic DBUS_SESSION_BUS_ADDRESS and
+        # DBUS_SESSION_BUS_PID assignments. Safe to eval inside the isolated container.
+        eval "$dbus_output"
+        export DBUS_SESSION_BUS_ADDRESS
+    fi
+
+    # Start gnome-keyring-daemon (secrets component only, headless)
+    if ! pgrep -f gnome-keyring-daemon &>/dev/null; then
+        if ! command -v gnome-keyring-daemon &>/dev/null; then
+            log_warn "gnome-keyring-daemon not found — secrets will remain as env vars"
+            return 0
+        fi
+        # Unlock with empty password (container is already isolated)
+        echo "" | gnome-keyring-daemon --unlock --components=secrets &>/dev/null || {
+            log_warn "Failed to start gnome-keyring — secrets will remain as env vars"
+            return 0
+        }
+    fi
+
+    log_info "Injecting secrets into container secret store..."
+
+    IFS=',' read -ra entries <<< "$KAPSIS_SECRET_STORE_ENTRIES"
+    local injected=0
+
+    for entry in "${entries[@]}"; do
+        IFS='|' read -r var_name service account <<< "$entry"
+        [[ -z "$var_name" || -z "$service" ]] && continue
+
+        local value="${!var_name:-}"
+        [[ -z "$value" ]] && continue
+
+        # Store in Secret Service via secret-tool
+        # Use printf to avoid echo interpreting -n/-e flags in secret values
+        if printf '%s' "$value" | secret-tool store --label="$var_name" \
+            service "$service" account "${account:-kapsis}" 2>/dev/null; then
+            log_debug "Stored $var_name in secret store (service: $service)"
+            # Unset env var — secret is now only in the keyring
+            unset "$var_name"
+            ((injected++)) || true
+        else
+            log_warn "Failed to store $var_name in secret store — keeping as env var"
+        fi
+    done
+
+    if [[ $injected -gt 0 ]]; then
+        log_success "Injected $injected secret(s) into container secret store"
+    fi
+
+    # Clean up metadata env var
+    unset KAPSIS_SECRET_STORE_ENTRIES
 }
 
 #===============================================================================
@@ -1096,6 +1188,11 @@ main() {
     # Inject credentials to files (agent-agnostic)
     # Reads KAPSIS_CREDENTIAL_FILES env var set by launch-agent.sh
     inject_credential_files
+
+    # Inject secrets into container's Linux secret store (Issue #162)
+    # Must run AFTER inject_credential_files (both read from env vars;
+    # file injection needs the values before secret store injection unsets them)
+    inject_secret_store
 
     # Set up DNS filtering if in filtered network mode
     # Must happen early so all subsequent network operations go through the filter

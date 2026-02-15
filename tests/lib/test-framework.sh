@@ -525,6 +525,36 @@ assert_matches() {
 }
 
 #===============================================================================
+# SHARED TEST HELPERS
+#===============================================================================
+
+# parse_keychain_config <config_file> [inject_default]
+#
+# Parse keychain entries from a YAML config file using KAPSIS_YQ_KEYCHAIN_EXPR
+# (defined in scripts/lib/constants.sh, shared with launch-agent.sh).
+# Returns pipe-delimited entries, one per line.
+#
+# Args:
+#   config_file      - Path to YAML config file
+#   inject_default   - Default inject_to value (default: parsed from config or "secret_store")
+#
+# Output format per line: VAR_NAME|service|account|inject_to_file|mode|inject_to
+parse_keychain_config() {
+    local config_file="$1"
+    local inject_default="${2:-}"
+
+    if ! command -v yq &> /dev/null; then
+        return 1
+    fi
+
+    if [[ -z "$inject_default" ]]; then
+        inject_default=$(yq -r '.environment.inject_to // "secret_store"' "$config_file")
+    fi
+
+    KAPSIS_INJECT_DEFAULT="$inject_default" yq "$KAPSIS_YQ_KEYCHAIN_EXPR" "$config_file" 2>/dev/null
+}
+
+#===============================================================================
 # TEST EXECUTION
 #===============================================================================
 

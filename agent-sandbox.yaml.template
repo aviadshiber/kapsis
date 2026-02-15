@@ -113,8 +113,17 @@ environment:
   # Options:
   #   service: (required) Exact keychain service name
   #   account: (optional) Keychain account (supports ${USER} expansion)
+  #   inject_to: (optional) Where to inject in container: "secret_store" | "env" (default: "secret_store")
+  #              "secret_store" = Linux Secret Service (gnome-keyring) — default, preferred for security
+  #              "env" = environment variable (legacy, less secure — visible via /proc/PID/environ)
+  #              Unrecognized values produce a warning and default to "env".
   #   inject_to_file: (optional) Also write credential to file path in container
+  #              Can be combined with inject_to — both receive the secret value.
   #   mode: (optional) File permissions for inject_to_file (default: 0600)
+  #
+  # Global default for inject_to (applies to all keychain entries unless overridden):
+  # inject_to: "secret_store"
+
   keychain:
     # REQUIRED for corporate Maven mirrors: Artifactory PASSWORD only
     # NOTE: Only store PASSWORD in keychain - USERNAME should be in environment.set
@@ -123,9 +132,15 @@ environment:
     #   service: "my-artifactory"
     #   account: "${USER}"
 
-    # Example: API key as environment variable only
+    # Example: Token stored in container's Linux secret store (default, preferred)
+    # BITBUCKET_TOKEN:
+    #   service: "bitbucket-token"
+    #   account: "${USER}"
+    #
+    # Example: API key kept as environment variable (legacy)
     # ANTHROPIC_API_KEY:
     #   service: "anthropic-api"
+    #   inject_to: "env"
     #
     # Example: OAuth credentials written to file (agent-agnostic pattern)
     # AGENT_OAUTH_CREDENTIALS:
