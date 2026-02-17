@@ -110,6 +110,11 @@ source "$SCRIPT_DIR/lib/compat.sh"
 # Source DNS pinning library (provides resolve_allowlist_domains, generate_add_host_args, etc.)
 source "$SCRIPT_DIR/lib/dns-pin.sh"
 
+# Source extracted SOLID-compliant libraries
+source "$SCRIPT_DIR/lib/config-resolver.sh"
+source "$SCRIPT_DIR/lib/env-builder.sh"
+source "$SCRIPT_DIR/lib/volume-mounts.sh"
+
 # Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
 NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
 CLI_NETWORK_MODE=""  # Track if CLI explicitly set network mode
@@ -660,63 +665,7 @@ validate_config_security() {
 
 resolve_config() {
     log_debug "Resolving configuration..."
-
-    # --config takes precedence
-    if [[ -n "$CONFIG_FILE" ]]; then
-        log_debug "Using explicit config file: $CONFIG_FILE"
-        if [[ ! -f "$CONFIG_FILE" ]]; then
-            log_error "Config file not found: $CONFIG_FILE"
-            exit 1
-        fi
-        # Extract agent name from config filename
-        if [[ -z "$AGENT_NAME" ]]; then
-            AGENT_NAME=$(basename "$CONFIG_FILE" .yaml)
-            log_debug "Extracted agent name from config: $AGENT_NAME"
-        fi
-        return
-    fi
-
-    # --agent shortcut: look for configs/<agent>.yaml
-    if [[ -n "$AGENT_NAME" ]]; then
-        local agent_config="$KAPSIS_ROOT/configs/${AGENT_NAME}.yaml"
-        if [[ -f "$agent_config" ]]; then
-            CONFIG_FILE="$agent_config"
-            log_info "Using agent: ${AGENT_NAME}"
-            return
-        else
-            log_error "Unknown agent: $AGENT_NAME"
-            log_error "Available agents: claude, codex, aider, interactive"
-            log_error "Or use --config for custom config file"
-            exit 1
-        fi
-    fi
-
-    # Resolution order (when no --agent or --config specified)
-    local config_locations=(
-        "./agent-sandbox.yaml"
-        "./.kapsis/config.yaml"
-        "$PROJECT_PATH/agent-sandbox.yaml"
-        "$PROJECT_PATH/.kapsis/config.yaml"
-        "$HOME/.config/kapsis/default.yaml"
-        "$KAPSIS_ROOT/configs/claude.yaml"
-    )
-
-    for loc in "${config_locations[@]}"; do
-        if [[ -f "$loc" ]]; then
-            CONFIG_FILE="$loc"
-            # Extract agent name from config path
-            if [[ -z "$AGENT_NAME" ]]; then
-                AGENT_NAME=$(basename "$CONFIG_FILE" .yaml)
-            fi
-            log_info "Using agent: ${AGENT_NAME} (${CONFIG_FILE})"
-            return
-        fi
-    done
-
-    log_error "No config file found."
-    log_error "Use --agent <name> or --config <file>"
-    log_error "Available agents: claude, codex, aider, interactive"
-    exit 1
+    resolve_agent_config "$CONFIG_FILE" "$AGENT_NAME" "$PROJECT_PATH" "$KAPSIS_ROOT" CONFIG_FILE AGENT_NAME
 }
 
 #===============================================================================
@@ -725,147 +674,19 @@ resolve_config() {
 parse_config() {
     log_debug "Parsing config file: $CONFIG_FILE"
 
-    # Check if yq is available
-    if command -v yq &> /dev/null; then
-        log_debug "Using yq for config parsing"
-        AGENT_COMMAND=$(yq -r '.agent.command // "bash"' "$CONFIG_FILE")
-        export AGENT_WORKDIR
-        AGENT_WORKDIR=$(yq -r '.agent.workdir // "/workspace"' "$CONFIG_FILE")
-        # Gist instruction injection (default: false for safe rollout)
-        INJECT_GIST=$(yq -r '.agent.inject_gist // "false"' "$CONFIG_FILE")
-        RESOURCE_MEMORY=$(yq -r '.resources.memory // "8g"' "$CONFIG_FILE")
-        RESOURCE_CPUS=$(yq -r '.resources.cpus // "4"' "$CONFIG_FILE")
-        SANDBOX_UPPER_BASE=$(yq -r '.sandbox.upper_dir_base // "~/.ai-sandboxes"' "$CONFIG_FILE")
-        # Only override image if not set via --image flag
-        if [[ "$IMAGE_NAME" == "kapsis-sandbox:latest" ]]; then
-            IMAGE_NAME=$(yq -r '.image.name // "kapsis-sandbox"' "$CONFIG_FILE"):$(yq -r '.image.tag // "latest"' "$CONFIG_FILE")
-        fi
-        GIT_REMOTE=$(yq -r '.git.auto_push.remote // "origin"' "$CONFIG_FILE")
-        GIT_COMMIT_MSG=$(yq -r '.git.auto_push.commit_message // "feat: AI agent changes"' "$CONFIG_FILE")
-
-        # Parse co-authors (newline-separated list)
-        GIT_CO_AUTHORS=$(yq -r '.git.co_authors[]' "$CONFIG_FILE" 2>/dev/null | tr '\n' '|' | sed 's/|$//' || echo "")
-
-        # Parse fork workflow settings
-        GIT_FORK_ENABLED=$(yq -r '.git.fork_workflow.enabled // "false"' "$CONFIG_FILE")
-        GIT_FORK_FALLBACK=$(yq -r '.git.fork_workflow.fallback // "fork"' "$CONFIG_FILE")
-
-        # Parse filesystem includes
-        FILESYSTEM_INCLUDES=$(yq -r '.filesystem.include[]' "$CONFIG_FILE" 2>/dev/null || echo "")
-
-        # Parse environment passthrough
-        ENV_PASSTHROUGH=$(yq -r '.environment.passthrough[]' "$CONFIG_FILE" 2>/dev/null || echo "")
-
-        # Parse environment set
-        ENV_SET=$(yq -r '.environment.set // {}' "$CONFIG_FILE" 2>/dev/null || echo "{}")
-
-        # Parse global inject_to default (secret_store is preferred/default)
-        GLOBAL_INJECT_TO=$(yq -r '.environment.inject_to // "secret_store"' "$CONFIG_FILE" 2>/dev/null || echo "secret_store")
-
-        # Parse keychain mappings for secret store lookups
-        # Output format: VAR_NAME|service|account|inject_to_file|mode|inject_to per line
-        # inject_to_file: optional file path to write the secret to (agent-agnostic)
-        # mode: optional file permissions (default 0600)
-        # inject_to: where to inject in container - "secret_store" (default) or "env"
-        # account: can be string or array (array joined with comma for fallback support)
-        # KAPSIS_INJECT_DEFAULT is read by yq via strenv()
-        # KAPSIS_YQ_KEYCHAIN_EXPR is defined in scripts/lib/constants.sh
-        ENV_KEYCHAIN=$(KAPSIS_INJECT_DEFAULT="$GLOBAL_INJECT_TO" yq "$KAPSIS_YQ_KEYCHAIN_EXPR" "$CONFIG_FILE" 2>/dev/null || echo "")
-
-        # Parse SSH host verification list
-        SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
-
-        # Parse Claude agent config whitelisting (include-only)
-        # When set, only matching hooks/MCP servers are kept in the container
-        CLAUDE_HOOKS_INCLUDE=$(yq -r '.claude.hooks.include // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
-        CLAUDE_MCP_INCLUDE=$(yq -r '.claude.mcp_servers.include // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
-
-        # Parse network mode from config (CLI flag takes precedence)
-        # Only read from config if CLI didn't explicitly set the value
-        if [[ -z "$CLI_NETWORK_MODE" ]]; then
-            local config_network_mode
-            config_network_mode=$(yq -r '.network.mode // ""' "$CONFIG_FILE")
-            if [[ "$config_network_mode" =~ ^(none|filtered|open)$ ]]; then
-                NETWORK_MODE="$config_network_mode"
-                log_debug "Network mode from config: $config_network_mode"
-            fi
-        else
-            log_debug "Network mode from CLI: $CLI_NETWORK_MODE (overrides config)"
-        fi
-
-        # Parse DNS allowlist from config (for filtered mode)
-        # Extract all domains into a comma-separated list for passing to container
-        # Uses yq v4 (mikefarah/yq) syntax
-        NETWORK_ALLOWLIST_DOMAINS=$(yq eval '
-            [
-                ((.network.allowlist.hosts // [])[] // ""),
-                ((.network.allowlist.registries // [])[] // ""),
-                ((.network.allowlist.containers // [])[] // ""),
-                ((.network.allowlist.ai // [])[] // ""),
-                ((.network.allowlist.custom // [])[] // "")
-            ] | map(select(. != "")) | unique | join(",")
-        ' "$CONFIG_FILE" 2>/dev/null || echo "")
-
-        # Parse DNS servers from config
-        NETWORK_DNS_SERVERS=$(yq eval '.network.dns_servers // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
-
-        # Parse DNS logging setting
-        NETWORK_LOG_DNS=$(yq eval '.network.log_dns_queries // "false"' "$CONFIG_FILE" 2>/dev/null || echo "false")
-
-        # Parse DNS pinning settings
-        NETWORK_DNS_PIN_ENABLED=$(yq eval '.network.dns_pinning.enabled // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
-        NETWORK_DNS_PIN_FALLBACK=$(yq eval '.network.dns_pinning.fallback // "dynamic"' "$CONFIG_FILE" 2>/dev/null || echo "dynamic")
-        NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
-        NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
-
-        # Parse security capabilities from config
-        # These are added to KAPSIS_CAPS_ADD for the capability generation
-        local config_caps_add
-        config_caps_add=$(yq eval '.security.capabilities.add // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
-        if [[ -n "$config_caps_add" ]]; then
-            # Merge with existing KAPSIS_CAPS_ADD (env var takes precedence for overrides)
-            if [[ -n "${KAPSIS_CAPS_ADD:-}" ]]; then
-                KAPSIS_CAPS_ADD="${KAPSIS_CAPS_ADD},${config_caps_add}"
-            else
-                KAPSIS_CAPS_ADD="$config_caps_add"
-            fi
-            export KAPSIS_CAPS_ADD
-        fi
-
-        # Parse security section (lower priority than env vars and CLI)
-        # Only set if not already set by env var or CLI flag
-        local cfg_security_profile
-        cfg_security_profile=$(yq -r '.security.profile // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
-        if [[ -n "$cfg_security_profile" ]] && [[ -z "${KAPSIS_SECURITY_PROFILE:-}" ]]; then
-            export KAPSIS_SECURITY_PROFILE="$cfg_security_profile"
-            log_debug "Security profile from config: $cfg_security_profile"
-        fi
-
-        # Parse individual security settings (can override profile defaults)
-        local cfg_val
-        cfg_val=$(yq -r '.security.process.pids_limit // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
-        [[ -n "$cfg_val" ]] && [[ -z "${KAPSIS_PIDS_LIMIT:-}" ]] && export KAPSIS_PIDS_LIMIT="$cfg_val"
-
-        cfg_val=$(yq -r '.security.seccomp.enabled // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
-        [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_SECCOMP_ENABLED:-}" ]] && export KAPSIS_SECCOMP_ENABLED="true"
-
-        cfg_val=$(yq -r '.security.filesystem.noexec_tmp // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
-        [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_NOEXEC_TMP:-}" ]] && export KAPSIS_NOEXEC_TMP="true"
-
-        cfg_val=$(yq -r '.security.filesystem.readonly_root // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
-        [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_READONLY_ROOT:-}" ]] && export KAPSIS_READONLY_ROOT="true"
-
-        cfg_val=$(yq -r '.security.lsm.required // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
-        [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_REQUIRE_LSM:-}" ]] && export KAPSIS_REQUIRE_LSM="true"
-
-        cfg_val=$(yq -r '.security.process.no_new_privileges // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
-        [[ "$cfg_val" == "false" ]] && [[ -z "${KAPSIS_NO_NEW_PRIVILEGES:-}" ]] && export KAPSIS_NO_NEW_PRIVILEGES="false"
-    else
+    if ! command -v yq &> /dev/null; then
         log_error "yq is required but not installed."
         log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
         log_error "Or run: ./setup.sh --install"
         exit 1
     fi
+
+    log_debug "Using yq for config parsing"
+    _parse_core_config
+    _parse_git_config
+    _parse_env_and_fs_config
+    _parse_network_config
+    _parse_security_config
 
     # Expand environment variables in paths (fixes #104)
     SANDBOX_UPPER_BASE=$(expand_path_vars "$SANDBOX_UPPER_BASE")
@@ -875,6 +696,145 @@ parse_config() {
     log_debug "  RESOURCE_MEMORY=$RESOURCE_MEMORY"
     log_debug "  RESOURCE_CPUS=$RESOURCE_CPUS"
     log_debug "  IMAGE_NAME=$IMAGE_NAME"
+}
+
+# Parse agent, resource, sandbox, and image settings
+# Writes globals: AGENT_COMMAND, AGENT_WORKDIR, INJECT_GIST, RESOURCE_MEMORY,
+#   RESOURCE_CPUS, SANDBOX_UPPER_BASE, IMAGE_NAME
+_parse_core_config() {
+    AGENT_COMMAND=$(yq -r '.agent.command // "bash"' "$CONFIG_FILE")
+    export AGENT_WORKDIR
+    AGENT_WORKDIR=$(yq -r '.agent.workdir // "/workspace"' "$CONFIG_FILE")
+    # Used by env-builder.sh:_env_add_kapsis_core()
+    # shellcheck disable=SC2034
+    INJECT_GIST=$(yq -r '.agent.inject_gist // "false"' "$CONFIG_FILE")
+    RESOURCE_MEMORY=$(yq -r '.resources.memory // "8g"' "$CONFIG_FILE")
+    RESOURCE_CPUS=$(yq -r '.resources.cpus // "4"' "$CONFIG_FILE")
+    SANDBOX_UPPER_BASE=$(yq -r '.sandbox.upper_dir_base // "~/.ai-sandboxes"' "$CONFIG_FILE")
+    # Only override image if not set via --image flag
+    if [[ "$IMAGE_NAME" == "kapsis-sandbox:latest" ]]; then
+        IMAGE_NAME=$(yq -r '.image.name // "kapsis-sandbox"' "$CONFIG_FILE"):$(yq -r '.image.tag // "latest"' "$CONFIG_FILE")
+    fi
+}
+
+# Parse git workflow settings (remote, commit message, co-authors, fork)
+# Writes globals: GIT_REMOTE, GIT_COMMIT_MSG, GIT_CO_AUTHORS, GIT_FORK_ENABLED, GIT_FORK_FALLBACK
+_parse_git_config() {
+    GIT_REMOTE=$(yq -r '.git.auto_push.remote // "origin"' "$CONFIG_FILE")
+    GIT_COMMIT_MSG=$(yq -r '.git.auto_push.commit_message // "feat: AI agent changes"' "$CONFIG_FILE")
+    GIT_CO_AUTHORS=$(yq -r '.git.co_authors[]' "$CONFIG_FILE" 2>/dev/null | tr '\n' '|' | sed 's/|$//' || echo "")
+    GIT_FORK_ENABLED=$(yq -r '.git.fork_workflow.enabled // "false"' "$CONFIG_FILE")
+    GIT_FORK_FALLBACK=$(yq -r '.git.fork_workflow.fallback // "fork"' "$CONFIG_FILE")
+}
+
+# Parse environment, filesystem, SSH, and Claude-specific config
+# Writes globals consumed by sourced libraries (env-builder.sh, volume-mounts.sh):
+#   FILESYSTEM_INCLUDES, ENV_PASSTHROUGH, ENV_SET, GLOBAL_INJECT_TO,
+#   ENV_KEYCHAIN, SSH_VERIFY_HOSTS, CLAUDE_HOOKS_INCLUDE, CLAUDE_MCP_INCLUDE
+# shellcheck disable=SC2034
+_parse_env_and_fs_config() {
+    FILESYSTEM_INCLUDES=$(yq -r '.filesystem.include[]' "$CONFIG_FILE" 2>/dev/null || echo "")
+    ENV_PASSTHROUGH=$(yq -r '.environment.passthrough[]' "$CONFIG_FILE" 2>/dev/null || echo "")
+    ENV_SET=$(yq -r '.environment.set // {}' "$CONFIG_FILE" 2>/dev/null || echo "{}")
+
+    # Global inject_to default (secret_store is preferred/default)
+    GLOBAL_INJECT_TO=$(yq -r '.environment.inject_to // "secret_store"' "$CONFIG_FILE" 2>/dev/null || echo "secret_store")
+
+    # Keychain mappings for secret store lookups
+    # Output format: VAR_NAME|service|account|inject_to_file|mode|inject_to per line
+    # KAPSIS_INJECT_DEFAULT is read by yq via strenv()
+    # KAPSIS_YQ_KEYCHAIN_EXPR is defined in scripts/lib/constants.sh
+    ENV_KEYCHAIN=$(KAPSIS_INJECT_DEFAULT="$GLOBAL_INJECT_TO" yq "$KAPSIS_YQ_KEYCHAIN_EXPR" "$CONFIG_FILE" 2>/dev/null || echo "")
+
+    SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+    # Claude agent config whitelisting (include-only)
+    CLAUDE_HOOKS_INCLUDE=$(yq -r '.claude.hooks.include // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+    CLAUDE_MCP_INCLUDE=$(yq -r '.claude.mcp_servers.include // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+}
+
+# Parse network mode, DNS allowlist, DNS servers, and DNS pinning settings
+# Reads globals: CLI_NETWORK_MODE
+# Writes globals: NETWORK_MODE, NETWORK_ALLOWLIST_DOMAINS, NETWORK_DNS_SERVERS,
+#   NETWORK_LOG_DNS, NETWORK_DNS_PIN_ENABLED, NETWORK_DNS_PIN_FALLBACK,
+#   NETWORK_DNS_PIN_TIMEOUT, NETWORK_DNS_PIN_PROTECT
+_parse_network_config() {
+    # Network mode from config (CLI flag takes precedence)
+    if [[ -z "$CLI_NETWORK_MODE" ]]; then
+        local config_network_mode
+        config_network_mode=$(yq -r '.network.mode // ""' "$CONFIG_FILE")
+        if [[ "$config_network_mode" =~ ^(none|filtered|open)$ ]]; then
+            NETWORK_MODE="$config_network_mode"
+            log_debug "Network mode from config: $config_network_mode"
+        fi
+    else
+        log_debug "Network mode from CLI: $CLI_NETWORK_MODE (overrides config)"
+    fi
+
+    # DNS allowlist: extract all domains into comma-separated list
+    NETWORK_ALLOWLIST_DOMAINS=$(yq eval '
+        [
+            ((.network.allowlist.hosts // [])[] // ""),
+            ((.network.allowlist.registries // [])[] // ""),
+            ((.network.allowlist.containers // [])[] // ""),
+            ((.network.allowlist.ai // [])[] // ""),
+            ((.network.allowlist.custom // [])[] // "")
+        ] | map(select(. != "")) | unique | join(",")
+    ' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+    NETWORK_DNS_SERVERS=$(yq eval '.network.dns_servers // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+    NETWORK_LOG_DNS=$(yq eval '.network.log_dns_queries // "false"' "$CONFIG_FILE" 2>/dev/null || echo "false")
+
+    # DNS pinning settings
+    NETWORK_DNS_PIN_ENABLED=$(yq eval '.network.dns_pinning.enabled // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+    NETWORK_DNS_PIN_FALLBACK=$(yq eval '.network.dns_pinning.fallback // "dynamic"' "$CONFIG_FILE" 2>/dev/null || echo "dynamic")
+    NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
+    NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+}
+
+# Parse security capabilities, profile, and individual settings
+# Writes globals: KAPSIS_CAPS_ADD, KAPSIS_SECURITY_PROFILE, KAPSIS_PIDS_LIMIT, etc.
+_parse_security_config() {
+    # Capabilities from config (merged with env var)
+    local config_caps_add
+    config_caps_add=$(yq eval '.security.capabilities.add // [] | join(",")' "$CONFIG_FILE" 2>/dev/null || echo "")
+    if [[ -n "$config_caps_add" ]]; then
+        if [[ -n "${KAPSIS_CAPS_ADD:-}" ]]; then
+            KAPSIS_CAPS_ADD="${KAPSIS_CAPS_ADD},${config_caps_add}"
+        else
+            KAPSIS_CAPS_ADD="$config_caps_add"
+        fi
+        export KAPSIS_CAPS_ADD
+    fi
+
+    # Security profile (lower priority than env vars and CLI)
+    local cfg_security_profile
+    cfg_security_profile=$(yq -r '.security.profile // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+    if [[ -n "$cfg_security_profile" ]] && [[ -z "${KAPSIS_SECURITY_PROFILE:-}" ]]; then
+        export KAPSIS_SECURITY_PROFILE="$cfg_security_profile"
+        log_debug "Security profile from config: $cfg_security_profile"
+    fi
+
+    # Individual security settings (can override profile defaults)
+    # Use if-then-fi instead of && chains to avoid set -e failures
+    local cfg_val
+    cfg_val=$(yq -r '.security.process.pids_limit // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+    if [[ -n "$cfg_val" ]] && [[ -z "${KAPSIS_PIDS_LIMIT:-}" ]]; then export KAPSIS_PIDS_LIMIT="$cfg_val"; fi
+
+    cfg_val=$(yq -r '.security.seccomp.enabled // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+    if [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_SECCOMP_ENABLED:-}" ]]; then export KAPSIS_SECCOMP_ENABLED="true"; fi
+
+    cfg_val=$(yq -r '.security.filesystem.noexec_tmp // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+    if [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_NOEXEC_TMP:-}" ]]; then export KAPSIS_NOEXEC_TMP="true"; fi
+
+    cfg_val=$(yq -r '.security.filesystem.readonly_root // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+    if [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_READONLY_ROOT:-}" ]]; then export KAPSIS_READONLY_ROOT="true"; fi
+
+    cfg_val=$(yq -r '.security.lsm.required // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+    if [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_REQUIRE_LSM:-}" ]]; then export KAPSIS_REQUIRE_LSM="true"; fi
+
+    cfg_val=$(yq -r '.security.process.no_new_privileges // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+    if [[ "$cfg_val" == "false" ]] && [[ -z "${KAPSIS_NO_NEW_PRIVILEGES:-}" ]]; then export KAPSIS_NO_NEW_PRIVILEGES="false"; fi
 }
 
 #===============================================================================
@@ -898,16 +858,30 @@ detect_sandbox_mode() {
 }
 
 #===============================================================================
-# SANDBOX SETUP (dispatches to mode-specific setup)
+# SANDBOX DISPATCH TABLE (Open/Closed Principle)
+# Adding a new sandbox mode requires only registering handlers here.
 #===============================================================================
+declare -A SANDBOX_HANDLERS=(
+    ["worktree:setup"]="setup_worktree_sandbox"
+    ["worktree:post"]="post_container_worktree"
+    ["overlay:setup"]="setup_overlay_sandbox"
+    ["overlay:post"]="post_container_overlay"
+)
+
+# Dispatch to the appropriate handler for a given sandbox mode and phase
+sandbox_dispatch() {
+    local handler="${SANDBOX_HANDLERS["${1}:${2}"]:-}"
+    if [[ -n "$handler" ]]; then
+        "$handler" "${@:3}"
+    else
+        log_error "Unknown sandbox handler: ${1}:${2}"
+        exit 1
+    fi
+}
+
 setup_sandbox() {
     detect_sandbox_mode
-
-    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
-        setup_worktree_sandbox
-    else
-        setup_overlay_sandbox
-    fi
+    sandbox_dispatch "$SANDBOX_MODE" "setup"
 }
 
 #===============================================================================
@@ -977,502 +951,15 @@ setup_overlay_sandbox() {
 # VOLUME MOUNTS GENERATION
 #===============================================================================
 
-# Add common volume mounts shared by all sandbox modes
-# These include: status dir, build caches, spec file, filesystem includes, SSH
-add_common_volume_mounts() {
-    # Status reporting directory (shared between host and container)
-    local status_dir="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
-    ensure_dir "$status_dir"
-    VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
-
-    # Maven repository (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")
-
-    # Gradle cache (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-gradle:/home/developer/.gradle")
-
-    # GE workspace (isolated per agent)
-    VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-ge:/home/developer/.m2/.gradle-enterprise")
-
-    # Spec file (if provided)
-    if [[ -n "$SPEC_FILE" ]]; then
-        SPEC_FILE_ABS="$(cd "$(dirname "$SPEC_FILE")" && pwd)/$(basename "$SPEC_FILE")"
-        VOLUME_MOUNTS+=("-v" "${SPEC_FILE_ABS}:/task-spec.md:ro")
-    fi
-
-    # Filesystem whitelist from config
-    generate_filesystem_includes
-
-    # SSH known_hosts for verified git remotes
-    generate_ssh_known_hosts
-    if [[ -n "$SSH_KNOWN_HOSTS_FILE" ]]; then
-        VOLUME_MOUNTS+=("-v" "${SSH_KNOWN_HOSTS_FILE}:/etc/ssh/ssh_known_hosts:ro")
-    fi
-}
-
-# Main dispatcher for volume mount generation
-generate_volume_mounts() {
-    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
-        generate_volume_mounts_worktree
-    else
-        generate_volume_mounts_overlay
-    fi
-}
-
-#===============================================================================
-# WORKTREE VOLUME MOUNTS
-#===============================================================================
-generate_volume_mounts_worktree() {
-    VOLUME_MOUNTS=()
-
-    # Mount worktree directly (no overlay needed!)
-    VOLUME_MOUNTS+=("-v" "${WORKTREE_PATH}:/workspace")
-
-    # Mount sanitized git at $CONTAINER_GIT_PATH, replacing the worktree's .git file
-    # This makes git work without needing GIT_DIR environment variable
-    VOLUME_MOUNTS+=("-v" "${SANITIZED_GIT_PATH}:${CONTAINER_GIT_PATH}:ro")
-
-    # Mount objects directory read-only
-    VOLUME_MOUNTS+=("-v" "${OBJECTS_PATH}:${CONTAINER_OBJECTS_PATH}:ro")
-
-    # Add common mounts (status, caches, spec, filesystem includes, SSH)
-    add_common_volume_mounts
-}
-
-#===============================================================================
-# OVERLAY VOLUME MOUNTS (legacy)
-#===============================================================================
-generate_volume_mounts_overlay() {
-    VOLUME_MOUNTS=()
-
-    # Project with CoW overlay
-    VOLUME_MOUNTS+=("-v" "${PROJECT_PATH}:/workspace:O,upperdir=${UPPER_DIR},workdir=${WORK_DIR}")
-
-    # Add common mounts (status, caches, spec, filesystem includes, SSH)
-    add_common_volume_mounts
-}
-
-#===============================================================================
-# FILESYSTEM INCLUDES (common to both modes)
-#===============================================================================
-# Uses staging-and-copy pattern for home directory files:
-# 1. Mount host files to /kapsis-staging/<name> (read-only)
-# 2. Entrypoint copies to container $HOME (writable)
-# This avoids overlay permission issues with restrictive host directories.
-#===============================================================================
-STAGED_CONFIGS=""  # Comma-separated list of relative paths staged for copying
-
-#-------------------------------------------------------------------------------
-# _snapshot_file <host_path> <relative_name>
-#
-# Creates a point-in-time snapshot of a host file for race-free bind mounting.
-# Prevents torn reads when host processes (e.g., Claude Code) actively write to
-# files listed in filesystem.include. The container mounts the static snapshot
-# instead of the live host file, eliminating the race condition.
-#
-# Returns: path to snapshot (or original path on failure as fallback)
-# See: GitHub issue #164
-#-------------------------------------------------------------------------------
-_snapshot_file() {
-    local host_path="$1"
-    local relative_name="$2"
-
-    # SNAPSHOT_DIR must be initialized by the caller (generate_filesystem_includes)
-    # before calling this function. This function is called via $() subshell, so
-    # any variable assignments here would be lost in the parent shell.
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        echo "$host_path"
-        return 0
-    fi
-
-    local snapshot_path="${SNAPSHOT_DIR}/${relative_name}"
-
-    # Ensure parent directory exists (for paths like .claude/settings.json)
-    mkdir -p "$(dirname "$snapshot_path")" 2>/dev/null || true
-
-    # Host-local cp — source is on the local filesystem (not a bind mount), so
-    # there is no concurrent-writer torn-read risk at this point
-    if cp -p "$host_path" "$snapshot_path" 2>/dev/null; then
-        echo "$snapshot_path"
-    else
-        log_warn "Snapshot failed for ${host_path}, falling back to live mount"
-        echo "$host_path"
-    fi
-}
-
-generate_filesystem_includes() {
-    local staging_dir="/kapsis-staging"
-    STAGED_CONFIGS=""
-
-    if [[ -n "$FILESYSTEM_INCLUDES" ]]; then
-        # Initialize snapshot directory in parent shell scope (issue #164)
-        # Must be done here — NOT inside _snapshot_file() — because _snapshot_file
-        # is called via $() subshell, and variable assignments in subshells don't
-        # propagate back to the parent. Without this, cleanup would never fire.
-        # Placed under $HOME/.kapsis/ (NOT /tmp) because macOS /tmp resolves to
-        # /private/tmp which is inaccessible from the Podman VM's virtio-fs mount.
-        if [[ -z "$SNAPSHOT_DIR" ]]; then
-            SNAPSHOT_DIR="${HOME}/.kapsis/snapshots/${AGENT_ID}"
-            if [[ "$DRY_RUN" != "true" ]]; then
-                mkdir -p "$SNAPSHOT_DIR"
-                log_debug "Created snapshot directory: $SNAPSHOT_DIR"
-            else
-                log_debug "[DRY-RUN] Would create snapshot dir: $SNAPSHOT_DIR"
-            fi
-        fi
-
-        while IFS= read -r path; do
-            [[ -z "$path" ]] && continue
-            # Expand environment variables in path (fixes #104)
-            expanded_path=$(expand_path_vars "$path")
-
-            if [[ ! -e "$expanded_path" ]]; then
-                log_debug "Skipping non-existent path: ${expanded_path}"
-                continue
-            fi
-
-            # Home directory paths: use staging-and-copy pattern
-            # Check original path for ~, $HOME, or ${HOME} patterns
-            # shellcheck disable=SC2016  # Intentional: matching literal $HOME text, not expanded value
-            if [[ "$path" == "~"* ]] || [[ "$path" == *'$HOME'* ]] || [[ "$path" == *'${HOME}'* ]] || [[ "$expanded_path" == "$HOME"* ]]; then
-                # Extract relative path (e.g., .claude, .gitconfig)
-                relative_path="${expanded_path#"$HOME"/}"
-                staging_path="${staging_dir}/${relative_path}"
-
-                # Snapshot regular files to prevent torn reads (issue #164)
-                # Directories are left as-is — they use fuse-overlayfs CoW inside the container
-                local mount_source="$expanded_path"
-                if [[ -f "$expanded_path" ]]; then
-                    mount_source=$(_snapshot_file "$expanded_path" "$relative_path")
-                    log_debug "Snapshot: ${expanded_path} -> ${mount_source}"
-                fi
-
-                # Mount to staging directory (read-only)
-                VOLUME_MOUNTS+=("-v" "${mount_source}:${staging_path}:ro")
-                log_debug "Staged for copy: ${mount_source} -> ${staging_path}"
-
-                # Track for entrypoint to copy
-                if [[ -n "$STAGED_CONFIGS" ]]; then
-                    STAGED_CONFIGS="${STAGED_CONFIGS},${relative_path}"
-                else
-                    STAGED_CONFIGS="${relative_path}"
-                fi
-            else
-                # Non-home absolute paths: snapshot files, mount directly (read-only)
-                local mount_source="$expanded_path"
-                if [[ -f "$expanded_path" ]]; then
-                    mount_source=$(_snapshot_file "$expanded_path" "absolute${expanded_path}")
-                    log_debug "Snapshot: ${expanded_path} -> ${mount_source}"
-                fi
-                VOLUME_MOUNTS+=("-v" "${mount_source}:${expanded_path}:ro")
-                log_debug "Direct mount (ro): ${mount_source} -> ${expanded_path}"
-            fi
-        done <<< "$FILESYSTEM_INCLUDES"
-    fi
-
-    # Export staged configs for entrypoint
-    if [[ -n "$STAGED_CONFIGS" ]]; then
-        log_debug "Staged configs for copy: ${STAGED_CONFIGS}"
-    fi
-}
-
-#===============================================================================
-# SSH KNOWN_HOSTS GENERATION
-# Generates verified known_hosts for container SSH operations (git push, etc.)
-#===============================================================================
-SSH_KNOWN_HOSTS_FILE=""  # Path to generated known_hosts file
-
-generate_ssh_known_hosts() {
-    SSH_KNOWN_HOSTS_FILE=""
-
-    # Skip if no hosts to verify
-    if [[ -z "$SSH_VERIFY_HOSTS" ]]; then
-        log_debug "No SSH hosts to verify (ssh.verify_hosts not configured)"
-        return 0
-    fi
-
-    # Skip file creation in dry-run mode
-    if [[ "$DRY_RUN" == "true" ]]; then
-        log_debug "[DRY-RUN] Would generate SSH known_hosts for: $SSH_VERIFY_HOSTS"
-        return 0
-    fi
-
-    local ssh_keychain_script="$SCRIPT_DIR/lib/ssh-keychain.sh"
-    if [[ ! -x "$ssh_keychain_script" ]]; then
-        log_warn "SSH keychain script not found: $ssh_keychain_script"
-        log_warn "SSH host verification skipped - container will use host's known_hosts"
-        return 0
-    fi
-
-    # Create temp file for known_hosts
-    local known_hosts_file
-    known_hosts_file=$(mktemp -t kapsis-known-hosts.XXXXXX)
-
-    log_info "Generating verified SSH known_hosts..."
-
-    # Process each host
-    local failed_hosts=()
-    while IFS= read -r host; do
-        [[ -z "$host" ]] && continue
-
-        log_debug "Verifying SSH host key: $host"
-        if "$ssh_keychain_script" generate "$known_hosts_file" "$host" 2>/dev/null; then
-            log_debug "  ✓ $host verified"
-        else
-            log_warn "  ✗ $host verification failed (run: ssh-keychain.sh add-host $host)"
-            failed_hosts+=("$host")
-        fi
-    done <<< "$SSH_VERIFY_HOSTS"
-
-    # Check if any hosts were verified
-    if [[ -s "$known_hosts_file" ]]; then
-        SSH_KNOWN_HOSTS_FILE="$known_hosts_file"
-        local host_count
-        host_count=$(wc -l < "$known_hosts_file" | tr -d ' ')
-        log_success "SSH known_hosts ready ($host_count keys verified)"
-    else
-        rm -f "$known_hosts_file"
-        log_warn "No SSH hosts could be verified"
-    fi
-
-    # Report failed hosts
-    if [[ ${#failed_hosts[@]} -gt 0 ]]; then
-        log_warn "Failed hosts (git push may fail):"
-        for host in "${failed_hosts[@]}"; do
-            log_warn "  - $host (run: ./scripts/lib/ssh-keychain.sh add-host $host)"
-        done
-    fi
-}
-
-#===============================================================================
-# ENVIRONMENT VARIABLES GENERATION
-#===============================================================================
-
-# Global arrays for environment variables
-# ENV_VARS: non-secret variables (visible in dry-run, use -e flags)
-# SECRET_ENV_VARS: secret variables (written to temp file, use --env-file)
-declare -a ENV_VARS=()
-declare -a SECRET_ENV_VARS=()
-
-generate_env_vars() {
-    ENV_VARS=()
-    SECRET_ENV_VARS=()
-
-    # Pass through environment variables
-    # Classify based on variable name (secrets go to SECRET_ENV_VARS)
-    if [[ -n "$ENV_PASSTHROUGH" ]]; then
-        while IFS= read -r var; do
-            [[ -z "$var" ]] && continue
-            if [[ -n "${!var:-}" ]]; then
-                if is_secret_var_name "$var"; then
-                    SECRET_ENV_VARS+=("${var}=${!var}")
-                else
-                    ENV_VARS+=("-e" "${var}=${!var}")
-                fi
-            fi
-        done <<< "$ENV_PASSTHROUGH"
-    fi
-
-    # Process keychain-backed environment variables
-    # Track credentials that need file injection (agent-agnostic)
-    local CREDENTIAL_FILES=""
-    # Track secrets that should be stored in container's Linux secret store
-    local SECRET_STORE_ENTRIES=""
-
-    if [[ -n "$ENV_KEYCHAIN" ]]; then
-        log_info "Resolving secrets from system keychain..."
-        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to; do
-            [[ -z "$var_name" || -z "$service" ]] && continue
-
-            # Expand variables in account (e.g., ${USER})
-            # Security: Use parameter expansion instead of eval to prevent injection
-            if [[ -n "$account" ]]; then
-                # Safe variable substitution without eval
-                account="${account//\$\{USER\}/${USER}}"
-                account="${account//\$USER/${USER}}"
-                account="${account//\$\{HOME\}/${HOME}}"
-                account="${account//\$HOME/${HOME}}"
-                account="${account//\$\{LOGNAME\}/${LOGNAME:-$USER}}"
-                account="${account//\$LOGNAME/${LOGNAME:-$USER}}"
-            fi
-
-            # Skip if already set via passthrough (check both arrays)
-            local already_set=false
-            if [[ ${#ENV_VARS[@]} -gt 0 ]]; then
-                for existing in "${ENV_VARS[@]}"; do
-                    if [[ "$existing" == "${var_name}="* ]]; then
-                        already_set=true
-                        break
-                    fi
-                done
-            fi
-            if [[ "$already_set" != "true" && ${#SECRET_ENV_VARS[@]} -gt 0 ]]; then
-                for existing in "${SECRET_ENV_VARS[@]}"; do
-                    if [[ "$existing" == "${var_name}="* ]]; then
-                        already_set=true
-                        break
-                    fi
-                done
-            fi
-
-            if [[ "$already_set" == "true" ]]; then
-                log_debug "Skipping $var_name - already set via passthrough"
-                continue
-            fi
-
-            # Validate inject_to value before proceeding
-            if [[ -n "${inject_to:-}" ]] && [[ "$inject_to" != "secret_store" ]] && [[ "$inject_to" != "env" ]]; then
-                log_warn "Unknown inject_to value '$inject_to' for $var_name — defaulting to env"
-                inject_to="env"
-            fi
-
-            # Query secret store (keychain/secret-tool) with fallback account support
-            local value
-            if value=$(query_secret_store_with_fallbacks "$service" "$account" "$var_name"); then
-                # Keychain values are always secrets - add to SECRET_ENV_VARS
-                SECRET_ENV_VARS+=("${var_name}=${value}")
-                log_success "Loaded $var_name from secret store (service: $service)"
-
-                # Track secret store injection if requested (default: secret_store)
-                if [[ "${inject_to:-secret_store}" == "secret_store" ]]; then
-                    local ss_entry="${var_name}|${service}|${account:-kapsis}"
-                    if [[ -n "$SECRET_STORE_ENTRIES" ]]; then
-                        SECRET_STORE_ENTRIES="${SECRET_STORE_ENTRIES},${ss_entry}"
-                    else
-                        SECRET_STORE_ENTRIES="${ss_entry}"
-                    fi
-                    log_debug "Will inject $var_name to container secret store"
-                fi
-
-                # Track file injection if specified (orthogonal to inject_to)
-                if [[ -n "$inject_to_file" ]]; then
-                    # Format: VAR_NAME|file_path|mode (comma-separated list)
-                    if [[ -n "$CREDENTIAL_FILES" ]]; then
-                        CREDENTIAL_FILES="${CREDENTIAL_FILES},${var_name}|${inject_to_file}|${file_mode:-0600}"
-                    else
-                        CREDENTIAL_FILES="${var_name}|${inject_to_file}|${file_mode:-0600}"
-                    fi
-                    log_debug "Will inject $var_name to file: $inject_to_file"
-                fi
-            else
-                log_warn "Secret not found: $service (for $var_name)"
-            fi
-        done <<< "$ENV_KEYCHAIN"
-    fi
-
-    # Pass credential file injection metadata to entrypoint (agent-agnostic)
-    # This is metadata about file paths, not the secrets themselves
-    if [[ -n "$CREDENTIAL_FILES" ]]; then
-        ENV_VARS+=("-e" "KAPSIS_CREDENTIAL_FILES=${CREDENTIAL_FILES}")
-    fi
-
-    # Pass secret store injection metadata to entrypoint
-    # Secrets with inject_to: "secret_store" will be moved from env vars to Linux keyring
-    if [[ -n "$SECRET_STORE_ENTRIES" ]]; then
-        ENV_VARS+=("-e" "KAPSIS_SECRET_STORE_ENTRIES=${SECRET_STORE_ENTRIES}")
-    fi
-
-    # Set explicit environment variables (non-secrets)
-    ENV_VARS+=("-e" "KAPSIS_AGENT_ID=${AGENT_ID}")
-    ENV_VARS+=("-e" "KAPSIS_PROJECT=$(basename "$PROJECT_PATH")")
-    ENV_VARS+=("-e" "KAPSIS_SANDBOX_MODE=${SANDBOX_MODE}")
-
-    # Status reporting environment variables (for container to update status)
-    ENV_VARS+=("-e" "KAPSIS_STATUS_PROJECT=$(basename "$PROJECT_PATH")")
-    ENV_VARS+=("-e" "KAPSIS_STATUS_AGENT_ID=${AGENT_ID}")
-    ENV_VARS+=("-e" "KAPSIS_STATUS_BRANCH=${BRANCH:-}")
-    ENV_VARS+=("-e" "KAPSIS_INJECT_GIST=${INJECT_GIST:-false}")
-
-    # Agent type for status tracking hooks
-    # Maps to hook mechanism: claude-cli, codex-cli, gemini-cli use hooks; others use monitor
-    # Try multiple sources: AGENT_NAME, then infer from image name
-    local agent_type="${AGENT_NAME:-unknown}"
-    local agent_types_lib="$KAPSIS_ROOT/scripts/lib/agent-types.sh"
-    if [[ -f "$agent_types_lib" ]]; then
-        # shellcheck source=lib/agent-types.sh
-        source "$agent_types_lib"
-        agent_type=$(normalize_agent_type "$agent_type")
-    fi
-
-    # If agent_type is still unknown, try to infer from image name
-    # E.g., kapsis-claude-cli -> claude-cli, kapsis-codex-cli -> codex-cli
-    if [[ "$agent_type" == "unknown" && -n "$IMAGE_NAME" ]]; then
-        case "$IMAGE_NAME" in
-            *claude-cli*)  agent_type="claude-cli" ;;
-            *codex-cli*)   agent_type="codex-cli" ;;
-            *gemini-cli*)  agent_type="gemini-cli" ;;
-            *aider*)       agent_type="aider" ;;
-        esac
-        log_debug "Inferred agent type from image name: $agent_type"
-    fi
-    ENV_VARS+=("-e" "KAPSIS_AGENT_TYPE=${agent_type}")
-    log_debug "Agent type for status tracking: $agent_type"
-
-    # Mode-specific variables
-    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
-        ENV_VARS+=("-e" "KAPSIS_WORKTREE_MODE=true")
-    else
-        ENV_VARS+=("-e" "KAPSIS_SANDBOX_DIR=${SANDBOX_DIR}")
-    fi
-
-    if [[ -n "$BRANCH" ]]; then
-        ENV_VARS+=("-e" "KAPSIS_BRANCH=${BRANCH}")
-        ENV_VARS+=("-e" "KAPSIS_GIT_REMOTE=${GIT_REMOTE}")
-        ENV_VARS+=("-e" "KAPSIS_DO_PUSH=${DO_PUSH}")
-        # Pass remote branch name when different from local
-        if [[ -n "$REMOTE_BRANCH" ]]; then
-            ENV_VARS+=("-e" "KAPSIS_REMOTE_BRANCH=${REMOTE_BRANCH}")
-        fi
-        # Fix #116: Pass base branch for proper branch creation
-        if [[ -n "$BASE_BRANCH" ]]; then
-            ENV_VARS+=("-e" "KAPSIS_BASE_BRANCH=${BASE_BRANCH}")
-        fi
-    fi
-
-    if [[ -n "$TASK_INLINE" ]]; then
-        ENV_VARS+=("-e" "KAPSIS_TASK=${TASK_INLINE}")
-    fi
-
-    # Pass staged configs for entrypoint to copy to $HOME
-    if [[ -n "$STAGED_CONFIGS" ]]; then
-        ENV_VARS+=("-e" "KAPSIS_STAGED_CONFIGS=${STAGED_CONFIGS}")
-    fi
-
-    # Pass Claude config whitelist filters
-    if [[ -n "${CLAUDE_HOOKS_INCLUDE:-}" ]]; then
-        ENV_VARS+=("-e" "KAPSIS_CLAUDE_HOOKS_INCLUDE=${CLAUDE_HOOKS_INCLUDE}")
-    fi
-    if [[ -n "${CLAUDE_MCP_INCLUDE:-}" ]]; then
-        ENV_VARS+=("-e" "KAPSIS_CLAUDE_MCP_INCLUDE=${CLAUDE_MCP_INCLUDE}")
-    fi
-
-    # Process explicit set environment variables from config
-    # Classify based on variable name (secrets go to SECRET_ENV_VARS)
-    if [[ -n "$ENV_SET" ]] && [[ "$ENV_SET" != "{}" ]]; then
-        log_debug "Processing environment.set variables..."
-        # Parse set variables as key=value pairs (yq props format: "KEY = value")
-        local set_vars
-        set_vars=$(yq -o=props '.environment.set' "$CONFIG_FILE" 2>/dev/null | grep -v '^#' || echo "")
-        if [[ -n "$set_vars" ]]; then
-            while IFS= read -r line; do
-                [[ -z "$line" ]] && continue
-                # Parse "KEY = value" format
-                # Security: Use sed for whitespace trimming instead of xargs (safer with special chars)
-                local key value
-                key=$(echo "$line" | cut -d'=' -f1 | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-                value=$(echo "$line" | cut -d'=' -f2- | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
-                if [[ -n "$key" ]]; then
-                    if is_secret_var_name "$key"; then
-                        SECRET_ENV_VARS+=("${key}=${value}")
-                    else
-                        ENV_VARS+=("-e" "${key}=${value}")
-                    fi
-                fi
-            done <<< "$set_vars"
-        fi
-    fi
-}
+# Volume mount generation is provided by scripts/lib/volume-mounts.sh
+# (generate_volume_mounts, generate_volume_mounts_worktree,
+#  generate_volume_mounts_overlay, add_common_volume_mounts,
+#  generate_filesystem_includes, _snapshot_file, generate_ssh_known_hosts)
+
+# Environment variable generation is provided by scripts/lib/env-builder.sh
+# (generate_env_vars, _env_process_passthrough, _env_process_keychain,
+#  _env_add_kapsis_core, _env_resolve_agent_type, _env_add_mode_specific,
+#  _env_add_git_vars, _env_add_task_and_config, _env_process_explicit_set)
 
 #===============================================================================
 # SECRETS ENV FILE GENERATION
@@ -1663,7 +1150,6 @@ handle_existing_worktree() {
 # BUILD CONTAINER COMMAND
 #===============================================================================
 build_container_command() {
-    # Validate security configuration before building command
     if ! validate_security_config; then
         log_error "Security configuration validation failed"
         exit 1
@@ -1676,8 +1162,13 @@ build_container_command() {
         "--hostname" "kapsis-${AGENT_ID}"
     )
 
-    # Add TTY flags only for interactive mode
-    # -i (stdin open) causes hangs when piping through tee for non-interactive runs
+    _build_tty_and_security_args
+    _build_network_args
+    _build_mounts_env_and_image
+}
+
+# Add TTY flags and security arguments
+_build_tty_and_security_args() {
     if [[ "$INTERACTIVE" == "true" ]]; then
         if [[ -t 0 ]] && [[ -t 1 ]]; then
             CONTAINER_CMD+=("-it")
@@ -1685,15 +1176,14 @@ build_container_command() {
             CONTAINER_CMD+=("-i")
         fi
     fi
-    # Non-interactive: no -i or -t flags needed, container runs detached from stdin
 
-    # Generate security arguments from security.sh library
-    # This includes: capabilities, seccomp, process isolation, LSM, resource limits
     local security_args
     mapfile -t security_args < <(generate_security_args "$AGENT_NAME" "$RESOURCE_MEMORY" "$RESOURCE_CPUS")
     CONTAINER_CMD+=("${security_args[@]}")
+}
 
-    # Network isolation mode
+# Add network mode arguments
+_build_network_args() {
     case "$NETWORK_MODE" in
         none)
             log_info "Network: isolated (no network access)"
@@ -1701,71 +1191,7 @@ build_container_command() {
             CONTAINER_CMD+=("-e" "KAPSIS_NETWORK_MODE=none")
             ;;
         filtered)
-            log_info "Network: filtered (DNS-based allowlist)"
-            # Pass environment variables to container for DNS filtering
-            CONTAINER_CMD+=("-e" "KAPSIS_NETWORK_MODE=filtered")
-            if [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
-                CONTAINER_CMD+=("-e" "KAPSIS_DNS_ALLOWLIST=${NETWORK_ALLOWLIST_DOMAINS}")
-            fi
-            if [[ -n "${NETWORK_DNS_SERVERS:-}" ]]; then
-                CONTAINER_CMD+=("-e" "KAPSIS_DNS_SERVERS=${NETWORK_DNS_SERVERS}")
-            fi
-            if [[ "${NETWORK_LOG_DNS:-false}" == "true" ]]; then
-                CONTAINER_CMD+=("-e" "KAPSIS_DNS_LOG_QUERIES=true")
-            fi
-
-            # DNS IP Pinning: resolve domains on host and pin IPs in container
-            # This prevents DNS manipulation attacks inside the container
-            if [[ "${NETWORK_DNS_PIN_ENABLED:-true}" == "true" ]] && [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
-                log_info "DNS pinning: resolving allowlist domains on host..."
-                local resolved_data
-                if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
-                    if [[ -n "$resolved_data" ]]; then
-                        # Create temp file for pinned DNS (cleaned up in _cleanup_with_completion)
-                        DNS_PIN_FILE=$(mktemp)
-                        if write_pinned_dns_file "$DNS_PIN_FILE" "$resolved_data"; then
-                            local pinned_count
-                            pinned_count=$(count_pinned_domains "$DNS_PIN_FILE")
-                            log_success "DNS pinning: pinned $pinned_count domain(s)"
-
-                            # Mount pinned file read-only in container
-                            CONTAINER_CMD+=("-v" "${DNS_PIN_FILE}:/etc/kapsis/pinned-dns.conf:ro")
-
-                            # Generate --add-host flags for belt-and-suspenders protection
-                            local add_host_args
-                            mapfile -t add_host_args < <(generate_add_host_args "$DNS_PIN_FILE")
-                            if [[ ${#add_host_args[@]} -gt 0 ]]; then
-                                CONTAINER_CMD+=("${add_host_args[@]}")
-                            fi
-
-                            # Tell container that pinning is enabled
-                            CONTAINER_CMD+=("-e" "KAPSIS_DNS_PIN_ENABLED=true")
-                        fi
-                    fi
-                else
-                    if [[ "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" == "abort" ]]; then
-                        log_error "DNS pinning failed with fallback=abort - aborting container launch"
-                        exit 1
-                    fi
-                    log_warn "DNS pinning failed - continuing with dynamic DNS (degraded security)"
-                fi
-            fi
-
-            # Mount resolv.conf from host as read-only (truly immutable from container)
-            # This prevents the agent from modifying DNS configuration even if dnsmasq is killed
-            RESOLV_CONF_FILE=$(mktemp "${TMPDIR:-/tmp}/kapsis-resolv-XXXXXX")
-            cat > "$RESOLV_CONF_FILE" <<'RESOLV_EOF'
-# Kapsis DNS Filter - managed by host (read-only mount)
-nameserver 127.0.0.1
-RESOLV_EOF
-            chmod 444 "$RESOLV_CONF_FILE"
-            CONTAINER_CMD+=("-v" "${RESOLV_CONF_FILE}:/etc/resolv.conf:ro")
-            CONTAINER_CMD+=("-e" "KAPSIS_RESOLV_CONF_MOUNTED=true")
-
-            # Protect DNS files inside container
-            if [[ "${NETWORK_DNS_PIN_PROTECT:-true}" == "true" ]]; then
-                CONTAINER_CMD+=("-e" "KAPSIS_DNS_PIN_PROTECT_FILES=true")
-            fi
+            _build_filtered_network_args
             ;;
         open)
             log_warn "Network: unrestricted (consider --network-mode=none for security)"
@@ -1773,19 +1199,83 @@ RESOLV_EOF
             ;;
     esac
 
-    # Suppress verbose logs inside container when progress display is enabled
-    # This prevents entrypoint logs from overwhelming the in-place progress updates
     if [[ "${KAPSIS_PROGRESS_DISPLAY:-0}" == "1" ]]; then
         CONTAINER_CMD+=("-e" "KAPSIS_LOG_LEVEL=WARN")
     fi
+}
 
-    # Add volume mounts
+# Build filtered network mode arguments (DNS allowlist, pinning, resolv.conf)
+_build_filtered_network_args() {
+    log_info "Network: filtered (DNS-based allowlist)"
+    CONTAINER_CMD+=("-e" "KAPSIS_NETWORK_MODE=filtered")
+    if [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
+        CONTAINER_CMD+=("-e" "KAPSIS_DNS_ALLOWLIST=${NETWORK_ALLOWLIST_DOMAINS}")
+    fi
+    if [[ -n "${NETWORK_DNS_SERVERS:-}" ]]; then
+        CONTAINER_CMD+=("-e" "KAPSIS_DNS_SERVERS=${NETWORK_DNS_SERVERS}")
+    fi
+    if [[ "${NETWORK_LOG_DNS:-false}" == "true" ]]; then
+        CONTAINER_CMD+=("-e" "KAPSIS_DNS_LOG_QUERIES=true")
+    fi
+
+    _build_dns_pinning_args
+
+    # Mount resolv.conf as read-only (prevents agent from modifying DNS)
+    RESOLV_CONF_FILE=$(mktemp "${TMPDIR:-/tmp}/kapsis-resolv-XXXXXX")
+    cat > "$RESOLV_CONF_FILE" <<'RESOLV_EOF'
+# Kapsis DNS Filter - managed by host (read-only mount)
+nameserver 127.0.0.1
+RESOLV_EOF
+    chmod 444 "$RESOLV_CONF_FILE"
+    CONTAINER_CMD+=("-v" "${RESOLV_CONF_FILE}:/etc/resolv.conf:ro")
+    CONTAINER_CMD+=("-e" "KAPSIS_RESOLV_CONF_MOUNTED=true")
+
+    if [[ "${NETWORK_DNS_PIN_PROTECT:-true}" == "true" ]]; then
+        CONTAINER_CMD+=("-e" "KAPSIS_DNS_PIN_PROTECT_FILES=true")
+    fi
+}
+
+# Build DNS pinning arguments (resolve domains on host, pin IPs in container)
+_build_dns_pinning_args() {
+    if [[ "${NETWORK_DNS_PIN_ENABLED:-true}" != "true" ]] || [[ -z "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
+        return 0
+    fi
+
+    log_info "DNS pinning: resolving allowlist domains on host..."
+    local resolved_data
+    if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
+        if [[ -n "$resolved_data" ]]; then
+            DNS_PIN_FILE=$(mktemp)
+            if write_pinned_dns_file "$DNS_PIN_FILE" "$resolved_data"; then
+                local pinned_count
+                pinned_count=$(count_pinned_domains "$DNS_PIN_FILE")
+                log_success "DNS pinning: pinned $pinned_count domain(s)"
+                CONTAINER_CMD+=("-v" "${DNS_PIN_FILE}:/etc/kapsis/pinned-dns.conf:ro")
+
+                local add_host_args
+                mapfile -t add_host_args < <(generate_add_host_args "$DNS_PIN_FILE")
+                if [[ ${#add_host_args[@]} -gt 0 ]]; then
+                    CONTAINER_CMD+=("${add_host_args[@]}")
+                fi
+                CONTAINER_CMD+=("-e" "KAPSIS_DNS_PIN_ENABLED=true")
+            fi
+        fi
+    else
+        if [[ "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" == "abort" ]]; then
+            log_error "DNS pinning failed with fallback=abort - aborting container launch"
+            exit 1
+        fi
+        log_warn "DNS pinning failed - continuing with dynamic DNS (degraded security)"
+    fi
+}
+
+# Add volume mounts, env vars, secrets, image, and command
+_build_mounts_env_and_image() {
     CONTAINER_CMD+=("${VOLUME_MOUNTS[@]}")
 
-    # Add inline task spec mount if needed (must be before image name)
+    # Inline task spec mount
     if [[ -n "$TASK_INLINE" ]] && [[ "$INTERACTIVE" != "true" ]]; then
         if [[ "$DRY_RUN" == "true" ]]; then
-            # Use placeholder path in dry-run mode
             CONTAINER_CMD+=("-v" "/tmp/kapsis-inline-spec.XXXXXX:/task-spec.md:ro")
         else
             INLINE_SPEC_FILE=$(mktemp)
@@ -1794,22 +1284,17 @@ RESOLV_EOF
         fi
     fi
 
-    # Add environment variables (non-secrets via -e flags)
+    # Environment variables
     CONTAINER_CMD+=("${ENV_VARS[@]}")
-
-    # Add secrets via --env-file (prevents exposure in bash -x traces and process listings)
     if [[ -n "${SECRETS_ENV_FILE:-}" && -f "$SECRETS_ENV_FILE" ]]; then
         CONTAINER_CMD+=("--env-file" "$SECRETS_ENV_FILE")
     fi
 
-    # Add image
+    # Image and command
     CONTAINER_CMD+=("$IMAGE_NAME")
-
-    # Add agent command
     if [[ "$INTERACTIVE" == "true" ]]; then
         CONTAINER_CMD+=("bash")
     elif [[ -n "$AGENT_COMMAND" ]] && [[ "$AGENT_COMMAND" != "bash" ]]; then
-        # Pass agent command to container (use bash -c for complex commands)
         CONTAINER_CMD+=("bash" "-c" "$AGENT_COMMAND")
     fi
 }
@@ -1817,50 +1302,45 @@ RESOLV_EOF
 #===============================================================================
 # MAIN EXECUTION
 #===============================================================================
-main() {
-    # Initialize progress display (must be early for trap registration)
-    display_init
-
-    # Track if we've shown completion message (to avoid duplicate on normal exit)
-    _DISPLAY_COMPLETE_SHOWN=false
-
-    # Track temp file for cleanup on signal (set later when container runs)
-    _CONTAINER_OUTPUT_TMP=""
-
-    # Cleanup function that ensures completion message is shown
-    # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
-    _cleanup_with_completion() {
-        local exit_code=$?
-        # Clean up temp files if they exist
-        [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
-        [[ -n "${SECRETS_ENV_FILE:-}" && -f "$SECRETS_ENV_FILE" ]] && rm -f "$SECRETS_ENV_FILE"
-        [[ -n "${INLINE_SPEC_FILE:-}" && -f "$INLINE_SPEC_FILE" ]] && rm -f "$INLINE_SPEC_FILE"
-        [[ -n "${DNS_PIN_FILE:-}" && -f "$DNS_PIN_FILE" ]] && rm -f "$DNS_PIN_FILE"
-        [[ -n "${RESOLV_CONF_FILE:-}" && -f "$RESOLV_CONF_FILE" ]] && rm -f "$RESOLV_CONF_FILE"
-        # Clean up snapshot directory for filesystem includes (issue #164)
-        [[ -n "${SNAPSHOT_DIR:-}" && -d "$SNAPSHOT_DIR" ]] && rm -rf "$SNAPSHOT_DIR"
-        # Show completion message if not already shown
-        if [[ "$_DISPLAY_COMPLETE_SHOWN" != "true" ]]; then
-            if [[ $exit_code -eq 0 ]]; then
-                display_complete 0
-            else
-                display_complete "$exit_code" "" "Exited with code $exit_code"
-            fi
+# Cleanup function — must be at top level for trap accessibility
+# shellcheck disable=SC2329  # Function is invoked via trap
+_cleanup_with_completion() {
+    local exit_code=$?
+    [[ -n "${_CONTAINER_OUTPUT_TMP:-}" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
+    [[ -n "${SECRETS_ENV_FILE:-}" && -f "$SECRETS_ENV_FILE" ]] && rm -f "$SECRETS_ENV_FILE"
+    [[ -n "${INLINE_SPEC_FILE:-}" && -f "$INLINE_SPEC_FILE" ]] && rm -f "$INLINE_SPEC_FILE"
+    [[ -n "${DNS_PIN_FILE:-}" && -f "$DNS_PIN_FILE" ]] && rm -f "$DNS_PIN_FILE"
+    [[ -n "${RESOLV_CONF_FILE:-}" && -f "$RESOLV_CONF_FILE" ]] && rm -f "$RESOLV_CONF_FILE"
+    [[ -n "${SNAPSHOT_DIR:-}" && -d "$SNAPSHOT_DIR" ]] && rm -rf "$SNAPSHOT_DIR"
+    if [[ "${_DISPLAY_COMPLETE_SHOWN:-}" != "true" ]]; then
+        if [[ $exit_code -eq 0 ]]; then
+            display_complete 0
+        else
+            display_complete "$exit_code" "" "Exited with code $exit_code"
         fi
-        display_cleanup
-        # CRITICAL: Preserve original exit code - EXIT trap's return value becomes script's exit status
-        return "$exit_code"
-    }
+    fi
+    display_cleanup
+    return "$exit_code"
+}
 
-    # Cleanup display on exit (restore cursor visibility, etc.)
+#-----------------------------------------------------------------------
+# Phase functions for main() orchestrator
+#-----------------------------------------------------------------------
+
+# Phase: Initialize display, traps, and banner
+phase_init() {
+    display_init
+    _DISPLAY_COMPLETE_SHOWN=false
+    _CONTAINER_OUTPUT_TMP=""
     trap '_cleanup_with_completion' EXIT
     trap 'display_cleanup' INT TERM
-
     log_timer_start "total"
     log_section "Starting Kapsis Agent Launch"
-
     print_banner
+}
 
+# Phase: Parse args, validate, resolve config, preflight
+phase_parse_and_validate() {
     log_debug "Parsing command line arguments..."
     parse_args "$@"
 
@@ -1868,7 +1348,6 @@ main() {
     validate_inputs
     log_timer_end "validation"
 
-    # Initialize status reporting (after we have PROJECT_PATH and AGENT_ID)
     local project_name
     project_name=$(basename "$PROJECT_PATH")
     status_init "$project_name" "$AGENT_ID" "$BRANCH" "" ""
@@ -1882,19 +1361,15 @@ main() {
     status_phase "initializing" 10 "Configuration loaded"
 
     generate_branch_name
-
-    # Substitute placeholders in commit message template
     if [[ -n "${GIT_COMMIT_MSG:-}" ]]; then
         GIT_COMMIT_MSG=$(substitute_commit_placeholders "$GIT_COMMIT_MSG")
         log_debug "Commit message after substitution: $GIT_COMMIT_MSG"
     fi
 
-    # Handle existing worktree for branch (Fix #1: resume/force-clean)
     if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]] && [[ "$DRY_RUN" != "true" ]]; then
         handle_existing_worktree
     fi
 
-    # Run pre-flight validation for worktree mode (skip in dry-run)
     if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]] && [[ "$DRY_RUN" != "true" ]]; then
         log_timer_start "preflight"
         source "$SCRIPT_DIR/preflight-check.sh"
@@ -1905,12 +1380,16 @@ main() {
         log_timer_end "preflight"
         status_phase "initializing" 15 "Pre-flight check passed"
     fi
+}
 
+# Phase: Setup sandbox, generate volumes/env, build container command
+phase_prepare_container() {
     log_timer_start "sandbox_setup"
     setup_sandbox
     log_timer_end "sandbox_setup"
 
-    # Update status with sandbox mode and worktree path now that we know them
+    local project_name
+    project_name=$(basename "$PROJECT_PATH")
     status_init "$project_name" "$AGENT_ID" "$BRANCH" "$SANDBOX_MODE" "${WORKTREE_PATH:-}"
     status_phase "preparing" 18 "Sandbox ready"
 
@@ -1920,6 +1399,11 @@ main() {
     build_container_command
     status_phase "preparing" 20 "Container configured"
 
+    _display_config_summary
+}
+
+# Display agent configuration summary
+_display_config_summary() {
     echo ""
     log_info "Agent Configuration:"
     echo "  Agent:         $(to_upper "$AGENT_NAME") (${CONFIG_FILE})"
@@ -1944,81 +1428,81 @@ main() {
         echo -e "  ${CYAN}To continue this session:${NC} --agent-id $AGENT_ID"
     fi
     echo ""
+}
 
-    if [[ "$DRY_RUN" == "true" ]]; then
-        log_info "DRY RUN - Command that would be executed:"
-        echo ""
-        # Sanitize secrets as defense-in-depth (secrets normally go via --env-file,
-        # but fallback path may add them as inline -e flags)
-        echo "$(sanitize_secrets "${CONTAINER_CMD[*]}")"
-
-        # Show secrets env-file info if secrets were configured
-        if [[ ${#SECRET_ENV_VARS[@]} -gt 0 ]]; then
-            echo ""
-            # List secret variable names (not values) for visibility
-            local secret_names=""
-            for secret_entry in "${SECRET_ENV_VARS[@]}"; do
-                local name="${secret_entry%%=*}"
-                if [[ -n "$secret_names" ]]; then
-                    secret_names="${secret_names}, ${name}"
-                else
-                    secret_names="${name}"
-                fi
-            done
-            log_info "Secrets (${#SECRET_ENV_VARS[@]}) will be passed via --env-file: $secret_names"
-        fi
-        echo ""
-        exit 0
+# Phase: Handle dry-run display and exit
+phase_dry_run_exit() {
+    if [[ "$DRY_RUN" != "true" ]]; then
+        return 0
     fi
 
+    log_info "DRY RUN - Command that would be executed:"
+    echo ""
+    echo "$(sanitize_secrets "${CONTAINER_CMD[*]}")"
+
+    if [[ ${#SECRET_ENV_VARS[@]} -gt 0 ]]; then
+        echo ""
+        local secret_names=""
+        for secret_entry in "${SECRET_ENV_VARS[@]}"; do
+            local name="${secret_entry%%=*}"
+            if [[ -n "$secret_names" ]]; then
+                secret_names="${secret_names}, ${name}"
+            else
+                secret_names="${name}"
+            fi
+        done
+        log_info "Secrets (${#SECRET_ENV_VARS[@]}) will be passed via --env-file: $secret_names"
+    fi
+    echo ""
+    exit 0
+}
+
+# Phase: Launch container and capture output
+phase_run_container() {
     echo "┌────────────────────────────────────────────────────────────────────┐"
     printf "│ LAUNCHING %-56s │\n" "$(to_upper "$AGENT_NAME")"
     echo "└────────────────────────────────────────────────────────────────────┘"
     echo ""
 
-    # Display progress header (shows sandbox ready status with timer)
     display_header "$AGENT_ID" "$BRANCH" "$NETWORK_MODE"
 
     log_info "Starting container..."
-    # Note: Secret sanitization is handled by _log()
     log_debug "Container command: ${CONTAINER_CMD[*]}"
     log_timer_start "container"
     status_phase "starting" 22 "Launching container"
 
-    # Create temp file to capture output for error reporting and logging
-    # Store in global for cleanup on signal (see _cleanup_with_completion)
     local container_output
     container_output=$(mktemp)
     _CONTAINER_OUTPUT_TMP="$container_output"
     CONTAINER_ERROR_OUTPUT=""
 
-    # Run the container with real-time output display AND capture
-    # Use stdbuf to disable buffering on tee (if available), otherwise fall back to regular tee
-    # Note: On macOS, stdbuf requires coreutils (brew install coreutils provides gstdbuf)
     set +e
     if command -v stdbuf &>/dev/null; then
-        # Linux: use stdbuf for line-buffered output
         "${CONTAINER_CMD[@]}" 2>&1 | stdbuf -oL tee "$container_output"
     elif command -v gstdbuf &>/dev/null; then
-        # macOS with coreutils: use gstdbuf
         "${CONTAINER_CMD[@]}" 2>&1 | gstdbuf -oL tee "$container_output"
     else
-        # Fallback: regular tee (may buffer, but still works)
         "${CONTAINER_CMD[@]}" 2>&1 | tee "$container_output"
     fi
-    # CRITICAL: PIPESTATUS must be captured immediately after pipeline
-    # Any intervening command (even echo) will overwrite it
     EXIT_CODE=${PIPESTATUS[0]}
     set -e
 
     log_timer_end "container"
     log_info "Container exited with code: $EXIT_CODE"
 
-    # Log full container output to log file for debugging
+    _log_container_output "$container_output"
+    _extract_container_errors "$container_output"
+    rm -f "$container_output"
+
+    status_phase "post_processing" 85 "Processing agent output (exit code: $EXIT_CODE)"
+}
+
+# Log full container output to log file
+_log_container_output() {
+    local container_output="$1"
     if [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
         log_debug "=== Container output start ==="
         while IFS= read -r line; do
-            # Strip ANSI codes for log file (sed required for ANSI escape regex)
             local clean_line
             # shellcheck disable=SC2001
             clean_line=$(echo "$line" | sed 's/\x1b\[[0-9;]*m//g')
@@ -2026,17 +1510,15 @@ main() {
         done < "$container_output"
         log_debug "=== Container output end ==="
     fi
+}
 
-    # On error, capture specific error lines for display
+# Extract error lines from container output for display
+_extract_container_errors() {
+    local container_output="$1"
     if [[ "$EXIT_CODE" -ne 0 ]] && [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
-        # Strip ANSI codes and get relevant error lines
         local stripped_output
         stripped_output=$(sed 's/\x1b\[[0-9;]*m//g' "$container_output")
-
-        # Try to find ERROR lines or common error patterns (grep returns 1 if no matches)
         CONTAINER_ERROR_OUTPUT=$(echo "$stripped_output" | grep -E '\[ERROR\]|SECURITY:|unbound variable|command not found|Permission denied' | head -10 || true)
-
-        # If no specific error lines, get the last 10 lines
         if [[ -z "$CONTAINER_ERROR_OUTPUT" ]]; then
             CONTAINER_ERROR_OUTPUT=$(echo "$stripped_output" | tail -10)
             log_debug "No specific error patterns found, using last 10 lines"
@@ -2045,49 +1527,35 @@ main() {
         fi
         log_debug "CONTAINER_ERROR_OUTPUT: $CONTAINER_ERROR_OUTPUT"
     fi
-    rm -f "$container_output"
-    # Update status to post_processing (Fix #3: don't report "completed" until commit verified)
-    status_phase "post_processing" 85 "Processing agent output (exit code: $EXIT_CODE)"
+}
 
+# Phase: Run post-container operations (uses sandbox dispatch table)
+phase_post_container() {
     echo ""
     echo "┌────────────────────────────────────────────────────────────────────┐"
     echo "│ AGENT EXITED                                                       │"
     echo "└────────────────────────────────────────────────────────────────────┘"
     echo ""
 
-    # Handle post-container operations based on sandbox mode
     log_debug "Running post-container operations (mode: $SANDBOX_MODE)"
     log_timer_start "post_container"
-    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
-        post_container_worktree
-        POST_EXIT_CODE=$?
-    else
-        post_container_overlay
-        POST_EXIT_CODE=$?
-    fi
+    sandbox_dispatch "$SANDBOX_MODE" "post"
+    POST_EXIT_CODE=$?
     log_timer_end "post_container"
+}
 
+# Phase: Resolve final exit code and report status
+phase_finalize() {
     log_timer_end "total"
 
-    # Combine exit codes - fail if either container or post-container operations failed
-    # Exit codes (Fix #3):
-    #   0 = Success (changes committed or no changes)
-    #   1 = Agent failure (container exit code non-zero)
-    #   2 = Push failed
-    #   3 = Uncommitted changes remain
     if [[ "$EXIT_CODE" -ne 0 ]]; then
         FINAL_EXIT_CODE=$EXIT_CODE
         log_finalize "$EXIT_CODE"
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
-        # Include captured container error in the failure message
         local error_msg="Agent exited with error code $EXIT_CODE"
         if [[ -n "$CONTAINER_ERROR_OUTPUT" ]]; then
             error_msg="$CONTAINER_ERROR_OUTPUT"
-            log_debug "Using CONTAINER_ERROR_OUTPUT for display"
-        else
-            log_debug "CONTAINER_ERROR_OUTPUT is empty, using default message"
         fi
-        log_debug "Calling display_complete with error_msg: $error_msg"
         display_complete "$EXIT_CODE" "" "$error_msg"
         _DISPLAY_COMPLETE_SHOWN=true
     elif [[ "$POST_EXIT_CODE" -ne 0 ]]; then
@@ -2097,30 +1565,44 @@ main() {
         display_complete "$POST_EXIT_CODE" "" "Post-container operations failed"
         _DISPLAY_COMPLETE_SHOWN=true
     else
-        # Check commit status before reporting success (Fix #3)
-        local commit_status
-        commit_status=$(status_get_commit_status 2>/dev/null || echo "unknown")
-        log_debug "Commit status: $commit_status"
-
-        if [[ "$commit_status" == "uncommitted" ]]; then
-            # Exit code 3: changes exist but weren't fully committed
-            FINAL_EXIT_CODE=3
-            log_finalize 3
-            log_warn "Uncommitted changes remain in worktree!"
-            status_complete 3 "Uncommitted changes remain"
-            display_complete 3 "" "Uncommitted changes remain"
-            _DISPLAY_COMPLETE_SHOWN=true
-        else
-            # Success: no changes, or changes were committed
-            FINAL_EXIT_CODE=0
-            log_finalize 0
-            status_complete 0 "" "${PR_URL:-}"
-            display_complete 0 "${PR_URL:-}"
-            _DISPLAY_COMPLETE_SHOWN=true
-        fi
+        _finalize_success
     fi
 
     exit "$FINAL_EXIT_CODE"
+}
+
+# Handle success case with commit status check
+_finalize_success() {
+    local commit_status
+    commit_status=$(status_get_commit_status 2>/dev/null || echo "unknown")
+    log_debug "Commit status: $commit_status"
+
+    if [[ "$commit_status" == "uncommitted" ]]; then
+        FINAL_EXIT_CODE=3
+        log_finalize 3
+        log_warn "Uncommitted changes remain in worktree!"
+        status_complete 3 "Uncommitted changes remain"
+        display_complete 3 "" "Uncommitted changes remain"
+    else
+        FINAL_EXIT_CODE=0
+        log_finalize 0
+        status_complete 0 "" "${PR_URL:-}"
+        display_complete 0 "${PR_URL:-}"
+    fi
+    _DISPLAY_COMPLETE_SHOWN=true
+}
+
+#-----------------------------------------------------------------------
+# Main orchestrator — thin function calling phase functions
+#-----------------------------------------------------------------------
+main() {
+    phase_init
+    phase_parse_and_validate "$@"
+    phase_prepare_container
+    phase_dry_run_exit
+    phase_run_container
+    phase_post_container
+    phase_finalize
 }
 
 #===============================================================================
