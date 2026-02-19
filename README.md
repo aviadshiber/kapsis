@@ -18,7 +18,7 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 
 ## Features
 
-- **Agent Agnostic** - Works with Claude Code, Codex CLI, Aider, Gemini CLI, or any CLI-based agent
+- **Agent Agnostic** - Pre-built profiles for Claude Code, Codex CLI, Aider, and Gemini CLI — or any CLI-based agent
 - **Agent Profiles** - Pre-built agent configurations with automatic container installation
 - **Config-Driven** - Single YAML file defines agent command and filesystem whitelist
 - **Copy-on-Write Filesystem** - Project files use overlay mounts (reads from host, writes isolated)
@@ -27,9 +27,10 @@ Kapsis enables running multiple AI coding agents in parallel on the same Maven p
 - **Build Cache Isolation** - Gradle Enterprise remote cache disabled, per-agent local cache
 - **Git Workflow** - Optional branch-based workflow with PR review feedback loop
 - **SSH Security** - Automatic SSH host key verification for GitHub/GitLab/Bitbucket (enterprise servers supported)
-- **Keychain Integration** - Automatic secret retrieval from macOS Keychain / Linux secret-tool
+- **Keychain Integration** - Automatic secret retrieval and injection from macOS Keychain / Linux secret-tool
 - **Status Reporting** - JSON-based progress tracking for external monitoring
-- **Rootless Containers** - Security-hardened Podman rootless mode
+- **Rootless Containers** - Security-hardened Podman rootless mode with seccomp and capability dropping
+- **File Sanitization** - Homoglyph detection and binary filtering for mounted files
 
 ## Installation
 
@@ -283,13 +284,13 @@ See [docs/CONFIG-REFERENCE.md](docs/CONFIG-REFERENCE.md) for full configuration 
 
 ## Supported Agents
 
-| Agent | Command Example |
-|-------|-----------------|
-| Claude Code | `claude --dangerously-skip-permissions -p "$(cat /task-spec.md)"` |
-| Codex CLI | `codex --approval-mode full-auto "$(cat /task-spec.md)"` |
-| Aider | `aider --yes-always --message-file /task-spec.md` |
-| Gemini CLI | `gemini -s docker "$(cat /task-spec.md)"` |
-| Custom | Any CLI command |
+| Agent | Profile | Command Example |
+|-------|---------|-----------------|
+| Claude Code | `claude-cli` | `claude --dangerously-skip-permissions -p "$(cat /task-spec.md)"` |
+| Codex CLI | `codex-cli` | `codex --approval-mode full-auto "$(cat /task-spec.md)"` |
+| Aider | `aider` | `aider --yes-always --message-file /task-spec.md` |
+| Gemini CLI | `gemini-cli` | `gemini -s docker "$(cat /task-spec.md)"` |
+| Custom | — | Any CLI command |
 
 Pre-built configs available in `configs/` directory.
 
@@ -456,8 +457,10 @@ kapsis/
 ├── quick-start.sh               # Simplified agent launcher
 ├── configs/
 │   ├── agents/                  # Agent profile definitions
-│   │   ├── claude-cli.yaml      # Claude Code CLI via npm
+│   │   ├── claude-cli.yaml      # Claude Code CLI
 │   │   ├── claude-api.yaml      # Anthropic Python SDK
+│   │   ├── codex-cli.yaml       # OpenAI Codex CLI
+│   │   ├── gemini-cli.yaml      # Google Gemini CLI
 │   │   └── aider.yaml           # Aider AI pair programmer
 │   ├── build-profiles/          # Container build profiles
 │   │   ├── minimal.yaml         # Minimal image (~500MB)
@@ -487,7 +490,14 @@ kapsis/
 │   └── lib/
 │       ├── logging.sh           # Shared logging library
 │       ├── status.sh            # Status reporting library
+│       ├── constants.sh         # Central constants
+│       ├── compat.sh            # Cross-platform helpers
+│       ├── security.sh          # Security hardening
+│       ├── dns-filter.sh        # DNS-based network filtering
+│       ├── secret-store.sh      # OS keychain integration
 │       ├── json-utils.sh        # JSON parsing utilities
+│       ├── sanitize-files.sh    # File sanitization
+│       ├── validate-scope.sh    # Filesystem scope validation
 │       └── build-config.sh      # Build configuration parser
 ├── maven/
 │   └── isolated-settings.xml    # Maven isolation settings
