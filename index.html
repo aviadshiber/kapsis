@@ -237,7 +237,26 @@
                 <br>The safest way to let LLMs edit your code.
             </p>
 
-            <div class="mt-10 flex justify-center gap-4">
+            <!-- Supported Agents Strip -->
+            <div class="mt-8 flex justify-center flex-wrap gap-3">
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-sm text-slate-300">
+                    <i class="fa-solid fa-robot text-emerald-400"></i> Claude Code
+                </span>
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-sm text-slate-300">
+                    <i class="fa-solid fa-code text-orange-400"></i> Codex CLI
+                </span>
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-sm text-slate-300">
+                    <i class="fa-solid fa-terminal text-blue-400"></i> Aider
+                </span>
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-sm text-slate-300">
+                    <i class="fa-solid fa-gem text-cyan-400"></i> Gemini CLI
+                </span>
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-600 text-sm text-slate-500">
+                    <i class="fa-solid fa-plus"></i> Any CLI agent
+                </span>
+            </div>
+
+            <div class="mt-8 flex justify-center gap-4">
                 <a href="#install" class="px-8 py-3 rounded-lg bg-kapsis-neon hover:bg-emerald-400 text-slate-900 font-bold text-lg transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]">
                     Install Now
                 </a>
@@ -353,6 +372,38 @@
                     <p class="text-white font-medium text-sm mb-1">Agent conflicts</p>
                     <p class="text-emerald-400 text-sm font-medium">Parallel sandboxes</p>
                     <p class="text-slate-500 text-xs mt-2">Each agent fully isolated</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- What's New Section -->
+    <section class="py-12">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-2xl font-bold text-white mb-6 text-center">
+                <i class="fa-solid fa-sparkles text-yellow-400 mr-2"></i> What's New
+            </h2>
+            <div class="grid md:grid-cols-3 gap-4">
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-bold">v2.8.0</span>
+                    </div>
+                    <h4 class="text-white font-medium text-sm mb-2">Secret Store Injection</h4>
+                    <p class="text-slate-400 text-xs">Secrets from your OS keychain are now injected directly into the container environment at runtime. No manual <code class="bg-slate-700 px-1 rounded">export</code> needed.</p>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-bold">v2.8.1</span>
+                    </div>
+                    <h4 class="text-white font-medium text-sm mb-2">Atomic Staging</h4>
+                    <p class="text-slate-400 text-xs">Bind-mount staging now uses host-side snapshots to prevent torn reads and race conditions during container launch.</p>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded font-bold">5 Agents</span>
+                    </div>
+                    <h4 class="text-white font-medium text-sm mb-2">Gemini CLI Support</h4>
+                    <p class="text-slate-400 text-xs">Full agent profile for Google Gemini CLI joins Claude Code, Codex CLI, and Aider as supported agents out of the box.</p>
                 </div>
             </div>
         </div>
@@ -792,8 +843,8 @@ Implement rate limiting for all public API endpoints to prevent abuse.
   <span class="text-cyan-400">"phase"</span>: <span class="text-yellow-400">"implementing"</span>,
   <span class="text-cyan-400">"progress"</span>: <span class="text-yellow-400">52</span>,
   <span class="text-cyan-400">"message"</span>: <span class="text-green-400">"Writing src/middleware/RateLimiter.ts"</span>,
-  <span class="text-cyan-400">"started_at"</span>: <span class="text-green-400">"2025-01-15T10:30:00Z"</span>,
-  <span class="text-cyan-400">"updated_at"</span>: <span class="text-green-400">"2025-01-15T10:34:22Z"</span>
+  <span class="text-cyan-400">"started_at"</span>: <span class="text-green-400">"2026-02-19T10:30:00Z"</span>,
+  <span class="text-cyan-400">"updated_at"</span>: <span class="text-green-400">"2026-02-19T10:34:22Z"</span>
 }</pre>
                         </div>
                     </div>
@@ -899,7 +950,7 @@ Implement rate limiting for all public API endpoints to prevent abuse.
                         <i class="fa-solid fa-tower-broadcast text-blue-400 text-2xl"></i>
                     </div>
                     <div>
-                        <span class="text-xs font-bold text-blue-400 uppercase tracking-wider">New Feature</span>
+                        <span class="text-xs font-bold text-blue-400 uppercase tracking-wider">Core Feature</span>
                         <h3 class="text-white font-bold text-xl">Three Network Isolation Modes</h3>
                     </div>
                 </div>
@@ -1068,8 +1119,10 @@ Implement rate limiting for all public API endpoints to prevent abuse.
                     <!-- Interactive Profile Viewer -->
                     <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
                         <div class="flex border-b border-slate-700">
-                            <button onclick="switchDocTab('claude')" id="doc-tab-claude" class="flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white border-r border-slate-700">configs/claude.yaml</button>
-                            <button onclick="switchDocTab('aider')" id="doc-tab-aider" class="flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500">configs/aider.yaml</button>
+                            <button onclick="switchDocTab('claude')" id="doc-tab-claude" class="flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white border-r border-slate-700">claude.yaml</button>
+                            <button onclick="switchDocTab('aider')" id="doc-tab-aider" class="flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 border-r border-slate-700">aider.yaml</button>
+                            <button onclick="switchDocTab('codex')" id="doc-tab-codex" class="flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 border-r border-slate-700">codex.yaml</button>
+                            <button onclick="switchDocTab('gemini')" id="doc-tab-gemini" class="flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500">gemini.yaml</button>
                         </div>
                         <div class="p-4 bg-[#0d1117] overflow-x-auto h-64">
                             <!-- Claude Code -->
@@ -1110,6 +1163,43 @@ filesystem:
   include:
     - ~/.gitconfig
     - ~/.ssh</pre>
+
+                            <!-- Codex CLI -->
+                            <pre id="doc-content-codex" class="text-xs font-mono text-orange-400 hidden">
+agent:
+  command: "codex --approval-mode full-auto \"$(cat /task-spec.md)\""
+  workdir: /workspace
+
+# OpenAI API key from host keychain
+environment:
+  keychain:
+    OPENAI_API_KEY:
+      service: "openai-api-key"
+
+# Codex config mount
+filesystem:
+  include:
+    - ~/.codex
+    - ~/.gitconfig</pre>
+
+                            <!-- Gemini CLI -->
+                            <pre id="doc-content-gemini" class="text-xs font-mono text-cyan-400 hidden">
+agent:
+  command: "gemini -s docker \"$(cat /task-spec.md)\""
+  workdir: /workspace
+
+# Google API key from host keychain
+environment:
+  keychain:
+    GOOGLE_API_KEY:
+      service: "google-api-key"
+
+# Gemini & GCloud config mounts
+filesystem:
+  include:
+    - ~/.gemini
+    - ~/.config/gcloud
+    - ~/.gitconfig</pre>
                         </div>
                     </div>
                 </div>
@@ -1323,6 +1413,99 @@ filesystem:
                     </details>
                 </div>
             </div>
+
+            <!-- Documentation Links Grid -->
+            <div class="mt-16">
+                <h3 class="text-xl font-bold text-white mb-6 text-center">
+                    <i class="fa-solid fa-book text-kapsis-neon mr-2"></i> Documentation
+                </h3>
+                <div class="grid md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/ARCHITECTURE.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-sitemap text-cyan-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Architecture</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">System design, isolation layers, and data flows</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/CONFIG-REFERENCE.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-sliders text-orange-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Config Reference</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Complete YAML configuration options</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/BUILD-CONFIGURATION.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-cubes text-purple-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Build Profiles</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Container build profiles and customization</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/GIT-WORKFLOW.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-code-branch text-green-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Git Workflow</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Branch lifecycle, worktree vs overlay modes</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/SECURITY-HARDENING.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-shield-halved text-red-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Security Hardening</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">AppArmor, seccomp, and container hardening</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/NETWORK-ISOLATION.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-tower-broadcast text-blue-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Network Isolation</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">DNS filtering, IP pinning, and allowlists</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/STATUS-TRACKING.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-chart-line text-yellow-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Status Tracking</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Real-time JSON progress monitoring</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/INSTALL.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-download text-emerald-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Installation</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Detailed setup for all platforms</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/GITHUB-SETUP.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-brands fa-github text-slate-300 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">GitHub Setup</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">GitHub integration and authentication</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/CLEANUP.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-broom text-red-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Cleanup</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Disk space management and reclamation</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/SETUP.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-gear text-slate-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Setup Guide</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Initial setup and dependency configuration</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/CONTRIBUTING.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-code-pull-request text-indigo-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Contributing</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Development guide, testing, and logging</p>
+                    </a>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -1460,27 +1643,37 @@ logging in with email+password
             <div class="space-y-4">
                 <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
                     <h4 class="text-white font-medium mb-2">Does this work with my agent?</h4>
-                    <p class="text-slate-400 text-sm">Yes! Kapsis works with any CLI-based agent: Claude Code, Aider, Codex, or any custom agent that runs in a terminal.</p>
+                    <p class="text-slate-400 text-sm">Yes! Kapsis ships with pre-built profiles for Claude Code, Codex CLI, Aider, and Gemini CLI. Any CLI-based agent that runs in a terminal can be used with a custom profile.</p>
                 </div>
 
                 <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
                     <h4 class="text-white font-medium mb-2">What about API keys and credentials?</h4>
-                    <p class="text-slate-400 text-sm">Credentials are securely injected from your macOS Keychain or SSH agent. They're never written to disk inside the container.</p>
+                    <p class="text-slate-400 text-sm">Credentials are securely injected at runtime from your macOS Keychain or Linux secret-tool via the secret store integration. They're never written to disk inside the container.</p>
                 </div>
 
                 <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
                     <h4 class="text-white font-medium mb-2">Can I use my IDE while the agent works?</h4>
-                    <p class="text-slate-400 text-sm">Yes! Changes sync to a git worktree on your host. Open it in your favorite IDE and watch the agent's progress in real-time.</p>
+                    <p class="text-slate-400 text-sm">Yes! In worktree mode, changes are written to a real git worktree on your host. Open it in your favorite IDE and watch the agent's progress in real-time.</p>
                 </div>
 
                 <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
                     <h4 class="text-white font-medium mb-2">Is Kapsis production ready?</h4>
-                    <p class="text-slate-400 text-sm">Yes! Version <span class="version-placeholder">...</span> is a stable release. We use it daily for production development at scale.</p>
+                    <p class="text-slate-400 text-sm">Yes! Version <span class="version-placeholder">...</span> is a stable release used daily for production development at scale.</p>
                 </div>
 
                 <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
                     <h4 class="text-white font-medium mb-2">What platforms are supported?</h4>
-                    <p class="text-slate-400 text-sm">macOS and Linux.</p>
+                    <p class="text-slate-400 text-sm">macOS (Apple Silicon and Intel) and Linux. Podman is the only container runtime dependency and is auto-installed by <code class="bg-slate-700 px-1 rounded text-xs">./setup.sh --install</code>.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">Can I run multiple agents in parallel on the same project?</h4>
+                    <p class="text-slate-400 text-sm">Yes! Each agent gets its own isolated container with a separate git worktree and filesystem. Run as many agents as your machine can handle — they cannot interfere with each other.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">How does network isolation work?</h4>
+                    <p class="text-slate-400 text-sm">Kapsis runs a dnsmasq instance inside each container that only resolves domains on the allowlist. Unknown hosts return NXDOMAIN. You can choose between <code class="bg-slate-700 px-1 rounded text-xs">filtered</code> (default), <code class="bg-slate-700 px-1 rounded text-xs">none</code> (air-gapped), or <code class="bg-slate-700 px-1 rounded text-xs">open</code> modes.</p>
                 </div>
             </div>
         </div>
@@ -1611,15 +1804,18 @@ logging in with email+password
 
         // Doc tab switching
         function switchDocTab(tabName) {
-            document.getElementById('doc-content-claude').classList.add('hidden');
-            document.getElementById('doc-content-aider').classList.add('hidden');
-
-            document.getElementById('doc-tab-claude').className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 border-r border-slate-700 transition-colors";
-            document.getElementById('doc-tab-aider').className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 transition-colors";
+            const docTabs = ['claude', 'aider', 'codex', 'gemini'];
+            docTabs.forEach(tab => {
+                document.getElementById('doc-content-' + tab).classList.add('hidden');
+                document.getElementById('doc-tab-' + tab).className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 border-r border-slate-700 transition-colors";
+            });
+            // Last tab has no right border
+            document.getElementById('doc-tab-gemini').className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 transition-colors";
 
             document.getElementById('doc-content-' + tabName).classList.remove('hidden');
             const activeBtn = document.getElementById('doc-tab-' + tabName);
-            activeBtn.className = "flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white " + (tabName === 'claude' ? "border-r border-slate-700" : "");
+            const hasBorderR = tabName !== 'gemini' ? " border-r border-slate-700" : "";
+            activeBtn.className = "flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white" + hasBorderR;
         }
 
         // Security profile selection
