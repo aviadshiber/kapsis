@@ -6,15 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.8.1] - 2026-02-15
+## [2.8.2] - 2026-02-19
+
+### Documentation
+- Update landing page and README with latest features and agent profiles
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Address code review feedback on staging race condition
 - Prevent torn reads in bind-mount staging with host-side snapshots
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Added
 - Add secret store injection for container keychain secrets (#162)
@@ -506,7 +510,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.8.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.8.2...HEAD
+[2.8.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.8.2
 [2.8.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.8.1
 [2.8.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.8.0
 [2.7.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.7.5
