@@ -90,6 +90,7 @@ AUTO_BRANCH=false
 DO_PUSH=false
 RESUME_MODE=false      # Fix #1: Auto-resume existing worktree
 FORCE_CLEAN=false      # Fix #1: Force remove existing worktree
+KEEP_WORKTREE="${KAPSIS_KEEP_WORKTREE:-false}"  # Fix #169: Preserve worktree after completion
 INTERACTIVE=false
 DRY_RUN=false
 # Use KAPSIS_IMAGE env var if set (for CI), otherwise default
@@ -219,6 +220,7 @@ Options:
   --auto-branch         Auto-generate branch name from task/spec
   --push                Push changes to remote after commit (default: off)
   --no-push             [DEPRECATED] Push is now off by default, use --push to enable
+  --keep-worktree       Preserve worktree after agent completion (default: auto-cleanup)
   --interactive         Force interactive shell mode (ignores agent.command)
   --dry-run             Show what would be executed without running
   --image <name>        Container image to use (e.g., kapsis-claude-cli:latest)
@@ -406,6 +408,11 @@ parse_args() {
             --force-clean)
                 # Force clean start, remove existing worktree (Fix #1)
                 FORCE_CLEAN=true
+                shift
+                ;;
+            --keep-worktree)
+                # Preserve worktree after agent completion (Fix #169)
+                KEEP_WORKTREE=true
                 shift
                 ;;
             --interactive)
@@ -933,6 +940,9 @@ setup_worktree_sandbox() {
         log_info "  [DRY-RUN] Objects path: $OBJECTS_PATH"
         return
     fi
+
+    # Opportunistic GC: clean stale worktrees from previous completed agents (Fix #169)
+    gc_stale_worktrees "$PROJECT_PATH" || log_warn "Opportunistic GC failed (non-fatal)"
 
     # Create worktree on host (Fix #116: pass base branch for proper branching)
     WORKTREE_PATH=$(create_worktree "$PROJECT_PATH" "$AGENT_ID" "$BRANCH" "$BASE_BRANCH" "$REMOTE_BRANCH")
@@ -2186,14 +2196,26 @@ post_container_worktree() {
         log_info "No file changes detected"
     fi
 
-    echo ""
-    echo "Worktree location: $WORKTREE_PATH"
-    echo ""
-    echo "To continue working:"
-    echo "  cd $WORKTREE_PATH"
-    echo ""
-    echo "To cleanup worktree:"
-    echo "  cd $PROJECT_PATH && git worktree remove $WORKTREE_PATH"
+    # Auto-cleanup worktree after completion (Fix #169)
+    # Only cleanup when: KEEP_WORKTREE is false AND agent didn't fail with uncommitted work
+    if [[ "$KEEP_WORKTREE" == "true" ]] || [[ "$EXIT_CODE" -ne 0 ]]; then
+        # Preserve worktree: user requested --keep-worktree, or agent failed (may have partial work)
+        if [[ "$EXIT_CODE" -ne 0 ]]; then
+            log_warn "Preserving worktree (agent exited with code $EXIT_CODE, partial work may exist)"
+        fi
+        echo ""
+        echo "Worktree location: $WORKTREE_PATH"
+        echo ""
+        echo "To continue working:"
+        echo "  cd $WORKTREE_PATH"
+        echo ""
+        echo "To cleanup worktree:"
+        echo "  cd $PROJECT_PATH && git worktree remove $WORKTREE_PATH"
+    else
+        log_info "Auto-cleaning worktree (use --keep-worktree or KAPSIS_KEEP_WORKTREE=true to preserve)..."
+        cleanup_worktree "$PROJECT_PATH" "$AGENT_ID"
+        prune_worktrees "$PROJECT_PATH"
+    fi
 }
 
 #===============================================================================

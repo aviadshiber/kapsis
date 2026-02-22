@@ -710,6 +710,65 @@ prune_worktrees() {
 }
 
 #===============================================================================
+# GC STALE WORKTREES
+#
+# Opportunistic garbage collection: scans status files for completed agents
+# and removes their leftover worktrees. Called at startup to clean up after
+# crashes or runs before auto-cleanup existed (Fix #169).
+#===============================================================================
+gc_stale_worktrees() {
+    local project_path="$1"
+    local project_name
+    project_name=$(basename "$project_path")
+    local status_dir="${HOME}/.kapsis/status"
+    local cleaned=0
+
+    [[ -d "$status_dir" ]] || return 0
+
+    if ! command -v jq &>/dev/null; then
+        log_debug "GC skipped: jq not installed (needed to parse status files)"
+        return 0
+    fi
+
+    log_debug "Running opportunistic GC for stale worktrees..."
+
+    for status_file in "$status_dir"/kapsis-"${project_name}"-*.json; do
+        [[ -f "$status_file" ]] || continue
+
+        # Extract agent_id from filename: kapsis-{project}-{agent_id}.json
+        local basename_file
+        basename_file=$(basename "$status_file" .json)
+        # Use literal prefix stripping (safe from regex injection, handles hyphens)
+        local prefix="kapsis-${project_name}-"
+        local agent_id="${basename_file#"$prefix"}"
+
+        # Validate agent_id (defense-in-depth against path traversal)
+        if [[ ! "$agent_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            log_warn "GC: Skipping invalid agent_id from status file: $status_file"
+            continue
+        fi
+
+        # Skip if no worktree exists
+        local worktree_path="${KAPSIS_WORKTREE_BASE}/${project_name}-${agent_id}"
+        [[ -d "$worktree_path" ]] || continue
+
+        # Only clean completed agents
+        local phase
+        phase=$(jq -r '.phase // empty' "$status_file" 2>/dev/null) || continue
+        if [[ "$phase" == "complete" ]]; then
+            log_info "GC: Cleaning stale worktree for completed agent $agent_id"
+            cleanup_worktree "$project_path" "$agent_id"
+            ((cleaned++)) || true
+        fi
+    done
+
+    if [[ "$cleaned" -gt 0 ]]; then
+        log_info "GC: Cleaned $cleaned stale worktree(s)"
+        prune_worktrees "$project_path"
+    fi
+}
+
+#===============================================================================
 # MAIN (for standalone testing)
 #===============================================================================
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
@@ -729,8 +788,11 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         prune)
             prune_worktrees "${2:-.}"
             ;;
+        gc)
+            gc_stale_worktrees "${2:-.}"
+            ;;
         *)
-            echo "Usage: $0 {create|sanitize|cleanup|list|prune} [args...]"
+            echo "Usage: $0 {create|sanitize|cleanup|list|prune|gc} [args...]"
             echo ""
             echo "Commands:"
             echo "  create <project> <agent-id> <branch>  Create worktree"
@@ -738,6 +800,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             echo "  cleanup <project> <agent-id>          Remove worktree"
             echo "  list <project>                        List worktrees"
             echo "  prune <project>                       Remove stale worktrees"
+            echo "  gc <project>                          GC stale completed worktrees"
             exit 1
             ;;
     esac
