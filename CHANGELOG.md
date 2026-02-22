@@ -6,14 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.8.2] - 2026-02-19
+## [2.9.0] - 2026-02-22
 
-### Documentation
-- Update landing page and README with latest features and agent profiles
+### Added
+- 169-auto-worktree-cleanup
+
+### Fixed
+- Security hardening for gc_stale_worktrees
+- Address PR review issues for worktree auto-cleanup
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Documentation
+- Update landing page and README with latest features and agent profiles
+
 
 ### Fixed
 - Address code review feedback on staging race condition
@@ -510,7 +518,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.8.2...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.9.0...HEAD
+[2.9.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.9.0
 [2.8.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.8.2
 [2.8.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.8.1
 [2.8.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.8.0
