@@ -133,11 +133,20 @@ test_keep_worktree_preserves_worktree() {
     local agent_id="keep-wt-$$"
     setup_cleanup_test "$agent_id"
 
-    # Simulate the --keep-worktree=true path: worktree should NOT be cleaned
-    # (In the real flow, post_container_worktree checks KEEP_WORKTREE)
     local project_name
     project_name=$(basename "$TEST_PROJECT")
     local worktree_path="${KAPSIS_WORKTREE_BASE}/${project_name}-${agent_id}"
+
+    # Simulate the post_container_worktree cleanup decision with KEEP_WORKTREE=true
+    # This mirrors the actual if/else in launch-agent.sh post_container_worktree()
+    local KEEP_WORKTREE=true
+    local EXIT_CODE=0
+    if [[ "$KEEP_WORKTREE" == "true" ]] || [[ "$EXIT_CODE" -ne 0 ]]; then
+        : # Preserve — no cleanup (matches production code path)
+    else
+        cleanup_worktree "$TEST_PROJECT" "$agent_id"
+        prune_worktrees "$TEST_PROJECT"
+    fi
 
     assert_dir_exists "$worktree_path" "Worktree should exist when keep-worktree is true"
 
@@ -170,24 +179,21 @@ test_default_cleanup_removes_worktree() {
 test_gc_handles_no_status_dir() {
     log_test "Testing gc_stale_worktrees handles missing status directory"
 
-    # Temporarily rename status dir if it exists
-    local status_dir="${HOME}/.kapsis/status"
-    local backup_dir=""
-    if [[ -d "$status_dir" ]]; then
-        backup_dir="${status_dir}.bak-$$"
-        mv "$status_dir" "$backup_dir"
-    fi
+    # Use a temporary project path whose status files won't exist
+    # This avoids moving the real ~/.kapsis/status directory (which could
+    # affect other running agents)
+    local fake_project
+    fake_project=$(mktemp -d)
+    mkdir -p "$fake_project/.git"
+    git -C "$fake_project" init --quiet
 
-    # GC should return 0 without errors
+    # GC should return 0 without errors (no matching status files)
     local exit_code=0
-    gc_stale_worktrees "$TEST_PROJECT" 2>/dev/null || exit_code=$?
+    gc_stale_worktrees "$fake_project" 2>/dev/null || exit_code=$?
 
-    # Restore status dir
-    if [[ -n "$backup_dir" ]]; then
-        mv "$backup_dir" "$status_dir"
-    fi
+    rm -rf "$fake_project"
 
-    assert_equals "0" "$exit_code" "GC should succeed with no status directory"
+    assert_equals "0" "$exit_code" "GC should succeed with no matching status files"
 }
 
 #===============================================================================

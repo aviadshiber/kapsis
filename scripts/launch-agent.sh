@@ -2196,7 +2196,13 @@ post_container_worktree() {
         log_info "No file changes detected"
     fi
 
-    if [[ "$KEEP_WORKTREE" == "true" ]]; then
+    # Auto-cleanup worktree after completion (Fix #169)
+    # Only cleanup when: KEEP_WORKTREE is false AND agent didn't fail with uncommitted work
+    if [[ "$KEEP_WORKTREE" == "true" ]] || [[ "$EXIT_CODE" -ne 0 ]]; then
+        # Preserve worktree: user requested --keep-worktree, or agent failed (may have partial work)
+        if [[ "$EXIT_CODE" -ne 0 ]]; then
+            log_warn "Preserving worktree (agent exited with code $EXIT_CODE, partial work may exist)"
+        fi
         echo ""
         echo "Worktree location: $WORKTREE_PATH"
         echo ""
@@ -2206,7 +2212,7 @@ post_container_worktree() {
         echo "To cleanup worktree:"
         echo "  cd $PROJECT_PATH && git worktree remove $WORKTREE_PATH"
     else
-        log_info "Auto-cleaning worktree (use --keep-worktree to preserve)..."
+        log_info "Auto-cleaning worktree (use --keep-worktree or KAPSIS_KEEP_WORKTREE=true to preserve)..."
         cleanup_worktree "$PROJECT_PATH" "$AGENT_ID"
         prune_worktrees "$PROJECT_PATH"
     fi

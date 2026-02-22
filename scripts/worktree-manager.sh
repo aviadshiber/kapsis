@@ -725,6 +725,11 @@ gc_stale_worktrees() {
 
     [[ -d "$status_dir" ]] || return 0
 
+    if ! command -v jq &>/dev/null; then
+        log_debug "GC skipped: jq not installed (needed to parse status files)"
+        return 0
+    fi
+
     log_debug "Running opportunistic GC for stale worktrees..."
 
     for status_file in "$status_dir"/kapsis-"${project_name}"-*.json; do
@@ -733,7 +738,9 @@ gc_stale_worktrees() {
         # Extract agent_id from filename: kapsis-{project}-{agent_id}.json
         local basename_file
         basename_file=$(basename "$status_file" .json)
-        local agent_id="${basename_file##kapsis-"${project_name}"-}"
+        # Use sed to handle project names with hyphens (e.g., my-project)
+        local agent_id
+        agent_id=$(echo "$basename_file" | sed "s/^kapsis-${project_name}-//")
 
         # Skip if no worktree exists
         local worktree_path="${KAPSIS_WORKTREE_BASE}/${project_name}-${agent_id}"
