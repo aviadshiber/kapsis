@@ -738,9 +738,15 @@ gc_stale_worktrees() {
         # Extract agent_id from filename: kapsis-{project}-{agent_id}.json
         local basename_file
         basename_file=$(basename "$status_file" .json)
-        # Use sed to handle project names with hyphens (e.g., my-project)
-        local agent_id
-        agent_id=$(echo "$basename_file" | sed "s/^kapsis-${project_name}-//")
+        # Use literal prefix stripping (safe from regex injection, handles hyphens)
+        local prefix="kapsis-${project_name}-"
+        local agent_id="${basename_file#"$prefix"}"
+
+        # Validate agent_id (defense-in-depth against path traversal)
+        if [[ ! "$agent_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            log_warn "GC: Skipping invalid agent_id from status file: $status_file"
+            continue
+        fi
 
         # Skip if no worktree exists
         local worktree_path="${KAPSIS_WORKTREE_BASE}/${project_name}-${agent_id}"
