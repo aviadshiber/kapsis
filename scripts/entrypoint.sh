@@ -212,14 +212,17 @@ inject_secret_store() {
         }
     fi
 
-    # Parse keyring collection mappings for 99designs/keyring compat (Issue #170)
-    # Format: VAR_NAME|collection_label (comma-separated)
+    # Parse keyring collection mappings for 99designs/keyring compat (Issue #170, #176)
+    # Format: VAR_NAME|collection_label|profile (comma-separated)
+    # profile is optional — when empty, account is used as profile key (original behavior)
     declare -A keyring_collections
+    declare -A keyring_profiles
     if [[ -n "${KAPSIS_KEYRING_COLLECTIONS:-}" ]]; then
         IFS=',' read -ra kc_pairs <<< "$KAPSIS_KEYRING_COLLECTIONS"
         for pair in "${kc_pairs[@]}"; do
-            IFS='|' read -r kc_var kc_coll <<< "$pair"
+            IFS='|' read -r kc_var kc_coll kc_prof <<< "$pair"
             [[ -n "$kc_var" && -n "$kc_coll" ]] && keyring_collections["$kc_var"]="$kc_coll"
+            [[ -n "$kc_var" && -n "${kc_prof:-}" ]] && keyring_profiles["$kc_var"]="$kc_prof"
         done
         unset KAPSIS_KEYRING_COLLECTIONS
     fi
@@ -243,8 +246,10 @@ inject_secret_store() {
         # go-libsecret searches by profile=KEY in a collection matching ServiceName
         if [[ -n "$collection" ]]; then
             if command -v kapsis-ss-inject &>/dev/null; then
-                if printf '%s' "$value" | kapsis-ss-inject "$collection" "${account:-$var_name}" 2>/dev/null; then
-                    log_debug "Stored $var_name in collection '$collection' (99designs/keyring compat)"
+                local profile="${keyring_profiles[$var_name]:-}"
+                local inject_key="${profile:-${account:-$var_name}}"
+                if printf '%s' "$value" | kapsis-ss-inject "$collection" "$inject_key" 2>/dev/null; then
+                    log_debug "Stored $var_name in collection '$collection' with key '$inject_key' (99designs/keyring compat)"
                     stored=true
                 else
                     log_warn "kapsis-ss-inject failed for $var_name — falling back to secret-tool (99designs/keyring tools will NOT find this secret)"

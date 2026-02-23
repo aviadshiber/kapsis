@@ -198,6 +198,12 @@ environment:
   #              99designs/keyring's SecretService backend.
   #              Without this, secrets use standard service/account attributes
   #              in the default collection (works with secret-tool).
+  #   keyring_profile: (optional) Override D-Bus item key / profile attribute.
+  #              When set, this value is used as the 'profile' attribute key
+  #              in the D-Bus collection instead of the 'account' field.
+  #              Allows 'account' to be the macOS Keychain lookup key while
+  #              'keyring_profile' is the container-side D-Bus key.
+  #              Only meaningful when keyring_collection is also set.
   keychain:
     # Example: Token stored in container secret store (default behavior)
     BITBUCKET_TOKEN:
@@ -225,6 +231,13 @@ environment:
       service: "bkt"
       account: "host/git.taboolasyndication.com/token"
       keyring_collection: "bkt"  # Store in 'bkt' collection with profile attribute
+
+    # Example: Different macOS account and D-Bus profile key (Issue #176)
+    BKT_CREDENTIAL_V2:
+      service: "bitbucket-deeperdive-bot"
+      account: "aviad.s"                                    # macOS Keychain account lookup
+      keyring_collection: "bkt"                              # D-Bus collection label
+      keyring_profile: "host/git.taboolasyndication.com/token"  # D-Bus profile key
 
   # Variables to pass from host to container
   # Values are taken from host environment
@@ -904,6 +917,28 @@ environment:
 4. Go tools find the secret via their standard keyring lookup
 
 **Without `keyring_collection`:** Secrets are stored using `secret-tool` with `service`/`account` attributes (the default behavior, works with `secret-tool lookup` and libsecret-based tools).
+
+#### Separate Host and Container Keys (`keyring_profile`)
+
+When the macOS Keychain account name differs from the D-Bus profile key expected by the Go tool, use `keyring_profile` to decouple them:
+
+```yaml
+environment:
+  keychain:
+    BKT_CREDENTIAL:
+      service: "bitbucket-deeperdive-bot"                       # macOS keychain service name
+      account: "aviad.s"                                        # macOS keychain account (host lookup)
+      keyring_collection: "bkt"                                 # D-Bus collection label
+      keyring_profile: "host/git.taboolasyndication.com/token"  # D-Bus profile key
+```
+
+**How it works:**
+1. The secret is retrieved from macOS Keychain using `service` + `account` (i.e., `"bitbucket-deeperdive-bot"` + `"aviad.s"`)
+2. Inside the container, `kapsis-ss-inject` creates the named collection if needed
+3. The secret is stored with `{"profile": "host/git.taboolasyndication.com/token"}` attribute
+4. Go tools find the secret via their standard `profile` attribute lookup
+
+**Without `keyring_profile`:** The `account` field is used as both the host keychain lookup account and the D-Bus profile key (the original behavior from Issue #170).
 
 **Requirements:** `python3-secretstorage` must be installed in the container image (included when `ENABLE_SECRET_STORE=true`).
 
