@@ -119,6 +119,8 @@ readonly KAPSIS_GIT_EXCLUDE_PATTERNS="# Kapsis internal files
 # keyring_collection: (optional) D-Bus collection label for 99designs/keyring
 # compat (Issue #170). When set, secrets are stored with the 'profile' attribute
 # in a named collection, making them discoverable by Go CLI tools (bkt, gh).
+# keyring_profile: (optional) Override the D-Bus item key / profile attribute.
+# When omitted, the 'account' field is used as the profile key (Issue #176).
 #===============================================================================
 
 # Valid inject_to values for keychain entries
@@ -129,10 +131,10 @@ readonly KAPSIS_SECRET_STORE_DEFAULT_INJECT_TO="secret_store"
 
 # YQ expression for parsing keychain config with inject_to support.
 # Used by scripts/launch-agent.sh and tests/lib/test-framework.sh.
-# Output format: VAR_NAME|service|account|inject_to_file|mode|inject_to|keyring_collection
+# Output format: VAR_NAME|service|account|inject_to_file|mode|inject_to|keyring_collection|keyring_profile
 # Requires KAPSIS_INJECT_DEFAULT env var to be set before calling yq.
 # shellcheck disable=SC2016
-readonly KAPSIS_YQ_KEYCHAIN_EXPR='.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600") + "|" + (.value.inject_to // strenv(KAPSIS_INJECT_DEFAULT)) + "|" + (.value.keyring_collection // "")'
+readonly KAPSIS_YQ_KEYCHAIN_EXPR='.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600") + "|" + (.value.inject_to // strenv(KAPSIS_INJECT_DEFAULT)) + "|" + (.value.keyring_collection // "") + "|" + (.value.keyring_profile // "")'
 
 #===============================================================================
 # FILE SANITIZATION CONSTANTS

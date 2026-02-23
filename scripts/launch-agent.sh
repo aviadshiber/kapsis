@@ -1289,12 +1289,13 @@ generate_env_vars() {
     local CREDENTIAL_FILES=""
     # Track secrets that should be stored in container's Linux secret store
     local SECRET_STORE_ENTRIES=""
-    # Track keyring collection mappings for 99designs/keyring compat (Issue #170)
+    # Track keyring collection mappings for 99designs/keyring compat (Issue #170, #176)
+    # Format: VAR_NAME|collection_label|profile (comma-separated)
     local KEYRING_COLLECTIONS=""
 
     if [[ -n "$ENV_KEYCHAIN" ]]; then
         log_info "Resolving secrets from system keychain..."
-        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to keyring_collection; do
+        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to keyring_collection keyring_profile; do
             [[ -z "$var_name" || -z "$service" ]] && continue
 
             # Expand variables in account (e.g., ${USER})
@@ -1363,10 +1364,17 @@ generate_env_vars() {
                             keyring_collection=""
                         fi
                     fi
+                    # Validate keyring_profile (Issue #176)
+                    if [[ -n "${keyring_profile:-}" ]]; then
+                        if [[ "$keyring_profile" == *"|"* || "$keyring_profile" == *","* ]]; then
+                            log_warn "keyring_profile for $var_name contains invalid characters (|,) — ignoring"
+                            keyring_profile=""
+                        fi
+                    fi
                     if [[ -n "${keyring_collection:-}" ]]; then
-                        local kc_entry="${var_name}|${keyring_collection}"
+                        local kc_entry="${var_name}|${keyring_collection}|${keyring_profile:-}"
                         KEYRING_COLLECTIONS="${KEYRING_COLLECTIONS:+${KEYRING_COLLECTIONS},}${kc_entry}"
-                        log_debug "Will use collection '$keyring_collection' for $var_name"
+                        log_debug "Will use collection '$keyring_collection' for $var_name${keyring_profile:+ (profile: $keyring_profile)}"
                     fi
                 fi
 

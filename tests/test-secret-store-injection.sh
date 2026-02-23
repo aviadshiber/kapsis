@@ -205,7 +205,7 @@ test_yq_expr_shared_between_launch_and_tests() {
 #===============================================================================
 
 test_yq_expr_includes_keyring_collection() {
-    log_test "Testing YQ expression includes keyring_collection as 7th field"
+    log_test "Testing YQ expression includes keyring_collection and keyring_profile as 7th and 8th fields"
 
     if ! command -v yq &> /dev/null; then
         log_skip "yq not available"
@@ -226,6 +226,12 @@ environment:
     PLAIN_TOKEN:
       service: "plain-svc"
       inject_to: "secret_store"
+    CUSTOM_PROFILE:
+      service: "custom-svc"
+      account: "lookup-account"
+      inject_to: "secret_store"
+      keyring_collection: "mycoll"
+      keyring_profile: "host/example.com/token"
 EOF
 
     local parsed
@@ -233,10 +239,12 @@ EOF
 
     rm -f "$test_config"
 
-    assert_contains "$parsed" "BKT_TOKEN|bkt|host/example.com/token||0600|secret_store|bkt" \
+    assert_contains "$parsed" "BKT_TOKEN|bkt|host/example.com/token||0600|secret_store|bkt|" \
         "keyring_collection should be parsed as 7th field"
-    assert_contains "$parsed" "PLAIN_TOKEN|plain-svc|||0600|secret_store|" \
+    assert_contains "$parsed" "PLAIN_TOKEN|plain-svc|||0600|secret_store||" \
         "missing keyring_collection should be empty 7th field"
+    assert_contains "$parsed" "CUSTOM_PROFILE|custom-svc|lookup-account||0600|secret_store|mycoll|host/example.com/token" \
+        "keyring_profile should be parsed as 8th field"
 }
 
 test_keyring_collection_in_launch_script() {
@@ -291,8 +299,68 @@ EOF
     rm -f "$test_config"
 
     # All fields should coexist in the pipe output
-    assert_contains "$parsed" "BKT_CRED|bkt|host/example.com/token|~/.config/bkt/token|0600|secret_store|bkt" \
+    assert_contains "$parsed" "BKT_CRED|bkt|host/example.com/token|~/.config/bkt/token|0600|secret_store|bkt|" \
         "keyring_collection should coexist with inject_to_file and inject_to"
+}
+
+test_keyring_profile_overrides_account() {
+    log_test "Testing keyring_profile overrides account in YQ pipeline output"
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        return 0
+    fi
+
+    local test_config="$TEST_PROJECT/.kapsis-keyring-profile-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    BKT_TOKEN:
+      service: "bkt"
+      account: "aviad.s"
+      inject_to: "secret_store"
+      keyring_collection: "bkt"
+      keyring_profile: "host/git.taboolasyndication.com/token"
+    NO_PROFILE:
+      service: "plain"
+      account: "myaccount"
+      inject_to: "secret_store"
+      keyring_collection: "plain-coll"
+EOF
+
+    local parsed
+    parsed=$(parse_keychain_config "$test_config")
+
+    rm -f "$test_config"
+
+    assert_contains "$parsed" "BKT_TOKEN|bkt|aviad.s||0600|secret_store|bkt|host/git.taboolasyndication.com/token" \
+        "keyring_profile should appear as 8th field"
+    assert_contains "$parsed" "NO_PROFILE|plain|myaccount||0600|secret_store|plain-coll|" \
+        "missing keyring_profile should be empty 8th field"
+}
+
+test_keyring_profile_validation() {
+    log_test "Testing keyring_profile validation in launch-agent.sh"
+
+    local launch_script="$KAPSIS_ROOT/scripts/launch-agent.sh"
+
+    assert_contains "$(cat "$launch_script")" "keyring_profile" \
+        "launch-agent.sh should reference keyring_profile field"
+    assert_contains "$(cat "$launch_script")" "keyring_profile for" \
+        "launch-agent.sh should validate keyring_profile"
+}
+
+test_entrypoint_has_keyring_profile_support() {
+    log_test "Testing entrypoint.sh has keyring_profile support"
+
+    local entrypoint_script="$KAPSIS_ROOT/scripts/entrypoint.sh"
+
+    assert_contains "$(cat "$entrypoint_script")" "keyring_profiles" \
+        "entrypoint.sh should parse keyring_profiles map"
+    assert_contains "$(cat "$entrypoint_script")" "inject_key" \
+        "entrypoint.sh should compute inject_key from profile"
 }
 
 test_kapsis_ss_inject_script_exists() {
@@ -351,6 +419,11 @@ main() {
     run_test test_keyring_collection_coexists_with_inject_to
     run_test test_kapsis_ss_inject_script_exists
     run_test test_containerfile_includes_secretstorage
+
+    # Keyring profile tests (Issue #176)
+    run_test test_keyring_profile_overrides_account
+    run_test test_keyring_profile_validation
+    run_test test_entrypoint_has_keyring_profile_support
 
     # Cleanup
     cleanup_test_project
