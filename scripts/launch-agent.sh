@@ -1375,6 +1375,8 @@ generate_env_vars() {
                         local kc_entry="${var_name}|${keyring_collection}|${keyring_profile:-}"
                         KEYRING_COLLECTIONS="${KEYRING_COLLECTIONS:+${KEYRING_COLLECTIONS},}${kc_entry}"
                         log_debug "Will use collection '$keyring_collection' for $var_name${keyring_profile:+ (profile: $keyring_profile)}"
+                    elif [[ -n "${keyring_profile:-}" ]]; then
+                        log_warn "keyring_profile for $var_name ignored — requires keyring_collection to be set"
                     fi
                 fi
 
