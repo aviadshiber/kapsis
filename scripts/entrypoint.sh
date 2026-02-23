@@ -81,6 +81,13 @@ elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/atomic-copy.sh" ]]; then
     source "$(dirname "${BASH_SOURCE[0]}")/lib/atomic-copy.sh"
 fi
 
+# Source SSH config compatibility library (macOS-to-Linux portability, issue #172)
+if [[ -f "$KAPSIS_HOME/lib/ssh-config-compat.sh" ]]; then
+    source "$KAPSIS_HOME/lib/ssh-config-compat.sh"
+elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/ssh-config-compat.sh" ]]; then
+    source "$(dirname "${BASH_SOURCE[0]}")/lib/ssh-config-compat.sh"
+fi
+
 #===============================================================================
 # CREDENTIAL FILE INJECTION (Agent-Agnostic)
 #
@@ -388,6 +395,11 @@ setup_staged_config_overlays() {
     # Fix SSH permissions if .ssh was staged (safety net, issue #159)
     if [[ -d "${HOME}/.ssh" ]]; then
         fix_ssh_permissions "${HOME}/.ssh"
+    fi
+
+    # Patch SSH config for macOS-to-Linux portability (issue #172)
+    if [[ -f "${HOME}/.ssh/config" ]]; then
+        patch_ssh_config_portability "${HOME}/.ssh/config"
     fi
 
     log_success "Staged configs ready (CoW where possible)"
