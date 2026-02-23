@@ -205,6 +205,18 @@ inject_secret_store() {
         }
     fi
 
+    # Parse keyring collection mappings for 99designs/keyring compat (Issue #170)
+    # Format: VAR_NAME|collection_label (comma-separated)
+    declare -A keyring_collections
+    if [[ -n "${KAPSIS_KEYRING_COLLECTIONS:-}" ]]; then
+        IFS=',' read -ra kc_pairs <<< "$KAPSIS_KEYRING_COLLECTIONS"
+        for pair in "${kc_pairs[@]}"; do
+            IFS='|' read -r kc_var kc_coll <<< "$pair"
+            [[ -n "$kc_var" && -n "$kc_coll" ]] && keyring_collections["$kc_var"]="$kc_coll"
+        done
+        unset KAPSIS_KEYRING_COLLECTIONS
+    fi
+
     log_info "Injecting secrets into container secret store..."
 
     IFS=',' read -ra entries <<< "$KAPSIS_SECRET_STORE_ENTRIES"
@@ -217,16 +229,40 @@ inject_secret_store() {
         local value="${!var_name:-}"
         [[ -z "$value" ]] && continue
 
-        # Store in Secret Service via secret-tool
-        # Use printf to avoid echo interpreting -n/-e flags in secret values
-        if printf '%s' "$value" | secret-tool store --label="$var_name" \
-            service "$service" account "${account:-kapsis}" 2>/dev/null; then
-            log_debug "Stored $var_name in secret store (service: $service)"
+        local collection="${keyring_collections[$var_name]:-}"
+        local stored=false
+
+        # 99designs/keyring compat: store with 'profile' attribute in named collection
+        # go-libsecret searches by profile=KEY in a collection matching ServiceName
+        if [[ -n "$collection" ]]; then
+            if command -v kapsis-ss-inject &>/dev/null; then
+                if printf '%s' "$value" | kapsis-ss-inject "$collection" "${account:-$var_name}" 2>/dev/null; then
+                    log_debug "Stored $var_name in collection '$collection' (99designs/keyring compat)"
+                    stored=true
+                else
+                    log_warn "kapsis-ss-inject failed for $var_name — falling back to secret-tool (99designs/keyring tools will NOT find this secret)"
+                fi
+            else
+                log_warn "kapsis-ss-inject not found — falling back to secret-tool for $var_name (99designs/keyring tools will NOT find this secret)"
+            fi
+        fi
+
+        # Standard path: secret-tool with service/account attributes
+        if [[ "$stored" != "true" ]]; then
+            # Use printf to avoid echo interpreting -n/-e flags in secret values
+            if printf '%s' "$value" | secret-tool store --label="$var_name" \
+                service "$service" account "${account:-kapsis}" 2>/dev/null; then
+                log_debug "Stored $var_name in secret store (service: $service)"
+                stored=true
+            else
+                log_warn "Failed to store $var_name in secret store — keeping as env var"
+            fi
+        fi
+
+        if [[ "$stored" == "true" ]]; then
             # Unset env var — secret is now only in the keyring
             unset "$var_name"
             ((injected++)) || true
-        else
-            log_warn "Failed to store $var_name in secret store — keeping as env var"
         fi
     done
 
