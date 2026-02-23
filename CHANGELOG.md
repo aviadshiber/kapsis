@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.9.0] - 2026-02-22
+## [2.10.0] - 2026-02-23
+
+### Added
+- Add keyring_collection for 99designs/keyring compatibility (#170)
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Added
 - 169-auto-worktree-cleanup
@@ -15,9 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Security hardening for gc_stale_worktrees
 - Address PR review issues for worktree auto-cleanup
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Documentation
 - Update landing page and README with latest features and agent profiles
@@ -518,7 +522,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.9.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.10.0...HEAD
+[2.10.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.10.0
 [2.9.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.9.0
 [2.8.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.8.2
 [2.8.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.8.1
