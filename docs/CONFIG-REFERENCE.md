@@ -191,6 +191,13 @@ environment:
   #              Can be combined with inject_to — file injection happens first,
   #              then secret store injection (both receive the secret value).
   #   mode: (optional) File permissions for inject_to_file (default: 0600)
+  #   keyring_collection: (optional) D-Bus Secret Service collection label
+  #              Required for Go tools using 99designs/keyring (bkt, etc.)
+  #              When set, secrets are stored with the 'profile' attribute
+  #              in a named collection, making them discoverable by
+  #              99designs/keyring's SecretService backend.
+  #              Without this, secrets use standard service/account attributes
+  #              in the default collection (works with secret-tool).
   keychain:
     # Example: Token stored in container secret store (default behavior)
     BITBUCKET_TOKEN:
@@ -212,6 +219,12 @@ environment:
     JIRA_TOKEN:
       service: "my-jira-token"
       account: ["primary@example.com", "fallback@example.com", "${USER}@example.com"]
+
+    # Example: Token for Go CLI tools using 99designs/keyring (bkt, etc.)
+    BKT_CREDENTIAL:
+      service: "bkt"
+      account: "host/git.taboolasyndication.com/token"
+      keyring_collection: "bkt"  # Store in 'bkt' collection with profile attribute
 
   # Variables to pass from host to container
   # Values are taken from host environment
@@ -841,6 +854,12 @@ environment:
       inject_to: "secret_store"            # Store in keyring (also the default)
       inject_to_file: "~/.agent/creds"     # Additionally write to this file in container
       mode: "0600"                         # Optional: file permissions (default: 0600)
+
+    # Go keyring tool (99designs/keyring) — named collection with profile attribute
+    BKT_CREDENTIAL:
+      service: "bkt"                       # macOS keychain service name
+      account: "host/example.com/token"    # Used as the keyring key
+      keyring_collection: "bkt"            # Store in 'bkt' D-Bus collection
 ```
 
 ### Secret Store Injection (Default)
@@ -859,6 +878,34 @@ By default, keychain secrets are stored in the container's Linux Secret Service 
 **Combining `inject_to_file` and `inject_to`:** These are orthogonal — both can be specified on the same entry. File injection writes the secret to disk first, then secret store injection stores it in the keyring and unsets the env var. The file and the keyring entry both receive the secret value.
 
 To globally use environment variables instead: set `environment.inject_to: "env"` in your config.
+
+### Go Keyring Compatibility (`keyring_collection`)
+
+Go CLI tools using [99designs/keyring](https://github.com/99designs/keyring) (e.g., `bkt`) search for secrets differently than `secret-tool`:
+
+- **`secret-tool`** stores with `service`/`account` attributes in the default "login" collection
+- **99designs/keyring** searches by a `profile` attribute in a collection matching its `ServiceName`
+
+The `keyring_collection` field bridges this gap. When set, Kapsis stores the secret with the correct `profile` attribute in a named D-Bus collection, making it discoverable by 99designs/keyring's SecretService backend.
+
+```yaml
+environment:
+  keychain:
+    BKT_CREDENTIAL:
+      service: "bkt"                                    # macOS keychain service name
+      account: "host/git.taboolasyndication.com/token"  # keychain account / keyring key
+      keyring_collection: "bkt"                         # D-Bus collection label
+```
+
+**How it works:**
+1. The secret is retrieved from macOS Keychain using `service` + `account`
+2. Inside the container, `kapsis-ss-inject` (Python helper) creates the named collection if needed
+3. The secret is stored with `{"profile": "<account>"}` attribute — matching what 99designs/keyring expects
+4. Go tools find the secret via their standard keyring lookup
+
+**Without `keyring_collection`:** Secrets are stored using `secret-tool` with `service`/`account` attributes (the default behavior, works with `secret-tool lookup` and libsecret-based tools).
+
+**Requirements:** `python3-secretstorage` must be installed in the container image (included when `ENABLE_SECRET_STORE=true`).
 
 ### Account Fallback
 
