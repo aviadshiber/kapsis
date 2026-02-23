@@ -538,7 +538,7 @@ assert_matches() {
 #   config_file      - Path to YAML config file
 #   inject_default   - Default inject_to value (default: parsed from config or "secret_store")
 #
-# Output format per line: VAR_NAME|service|account|inject_to_file|mode|inject_to
+# Output format per line: VAR_NAME|service|account|inject_to_file|mode|inject_to|keyring_collection
 parse_keychain_config() {
     local config_file="$1"
     local inject_default="${2:-}"

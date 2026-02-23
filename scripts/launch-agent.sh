@@ -1289,10 +1289,12 @@ generate_env_vars() {
     local CREDENTIAL_FILES=""
     # Track secrets that should be stored in container's Linux secret store
     local SECRET_STORE_ENTRIES=""
+    # Track keyring collection mappings for 99designs/keyring compat (Issue #170)
+    local KEYRING_COLLECTIONS=""
 
     if [[ -n "$ENV_KEYCHAIN" ]]; then
         log_info "Resolving secrets from system keychain..."
-        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to; do
+        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to keyring_collection; do
             [[ -z "$var_name" || -z "$service" ]] && continue
 
             # Expand variables in account (e.g., ${USER})
@@ -1353,6 +1355,19 @@ generate_env_vars() {
                         SECRET_STORE_ENTRIES="${ss_entry}"
                     fi
                     log_debug "Will inject $var_name to container secret store"
+
+                    # Track keyring collection for 99designs/keyring compat (Issue #170)
+                    if [[ -n "${keyring_collection:-}" ]]; then
+                        if [[ "$keyring_collection" == *"|"* || "$keyring_collection" == *","* ]]; then
+                            log_warn "keyring_collection for $var_name contains invalid characters (|,) — ignoring"
+                            keyring_collection=""
+                        fi
+                    fi
+                    if [[ -n "${keyring_collection:-}" ]]; then
+                        local kc_entry="${var_name}|${keyring_collection}"
+                        KEYRING_COLLECTIONS="${KEYRING_COLLECTIONS:+${KEYRING_COLLECTIONS},}${kc_entry}"
+                        log_debug "Will use collection '$keyring_collection' for $var_name"
+                    fi
                 fi
 
                 # Track file injection if specified (orthogonal to inject_to)
@@ -1381,6 +1396,11 @@ generate_env_vars() {
     # Secrets with inject_to: "secret_store" will be moved from env vars to Linux keyring
     if [[ -n "$SECRET_STORE_ENTRIES" ]]; then
         ENV_VARS+=("-e" "KAPSIS_SECRET_STORE_ENTRIES=${SECRET_STORE_ENTRIES}")
+    fi
+
+    # Pass keyring collection mappings for 99designs/keyring compat (Issue #170)
+    if [[ -n "$KEYRING_COLLECTIONS" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_KEYRING_COLLECTIONS=${KEYRING_COLLECTIONS}")
     fi
 
     # Set explicit environment variables (non-secrets)

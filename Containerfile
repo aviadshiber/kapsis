@@ -150,11 +150,14 @@ RUN if [ "$ENABLE_OVERLAY" = "true" ]; then \
 
 # Secret store (gnome-keyring + secret-tool for Secret Service D-Bus API)
 # Enables CLI tools using keyring libraries to store/retrieve secrets natively
+# python3-secretstorage: 99designs/keyring compat (Issue #170) — stores with
+# 'profile' attribute in named collections for Go CLI tools (bkt, gh)
 RUN if [ "$ENABLE_SECRET_STORE" = "true" ]; then \
         apt-get update && apt-get install -y --no-install-recommends \
             dbus \
             gnome-keyring \
-            libsecret-tools && \
+            libsecret-tools \
+            python3-secretstorage && \
         rm -rf /var/lib/apt/lists/*; \
     fi
 
@@ -502,14 +505,16 @@ COPY scripts/entrypoint.sh /opt/kapsis/entrypoint.sh
 COPY scripts/init-git-branch.sh /opt/kapsis/init-git-branch.sh
 COPY scripts/post-exit-git.sh /opt/kapsis/post-exit-git.sh
 COPY scripts/switch-java.sh /opt/kapsis/switch-java.sh
+COPY scripts/kapsis-ss-inject.py /opt/kapsis/kapsis-ss-inject
 
 # Create agents directory for custom agent wrapper scripts
 RUN mkdir -p /opt/kapsis/agents && chown ${USER_ID}:${GROUP_ID} /opt/kapsis/agents
 
 # Make all scripts executable and readable
-RUN chmod 755 /opt/kapsis/*.sh /opt/kapsis/lib/*.sh /opt/kapsis/lib/status.py && \
+RUN chmod 755 /opt/kapsis/*.sh /opt/kapsis/kapsis-ss-inject /opt/kapsis/lib/*.sh /opt/kapsis/lib/status.py && \
     chmod 755 /opt/kapsis/hooks/*.sh /opt/kapsis/hooks/agent-adapters/*.sh && \
-    chmod 644 /opt/kapsis/maven/settings.xml /opt/kapsis/lib/progress-instructions.md
+    chmod 644 /opt/kapsis/maven/settings.xml /opt/kapsis/lib/progress-instructions.md && \
+    ln -sf /opt/kapsis/kapsis-ss-inject /usr/local/bin/kapsis-ss-inject
 
 #===============================================================================
 # ENVIRONMENT CONFIGURATION
