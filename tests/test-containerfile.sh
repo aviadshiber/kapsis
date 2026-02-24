@@ -317,6 +317,51 @@ test_entrypoint_libs_copied_to_container() {
     log_info "All entrypoint-sourced libraries have COPY directives in Containerfile"
 }
 
+test_container_lib_transitive_deps_present() {
+    log_test "Testing transitive lib dependencies are also in Containerfile"
+
+    assert_file_exists "$CONTAINERFILE" "Containerfile should exist"
+
+    local containerfile_content
+    containerfile_content=$(cat "$CONTAINERFILE")
+
+    # Get list of libs copied into the container
+    local container_libs
+    container_libs=$(echo "$containerfile_content" \
+        | grep -oE 'COPY scripts/lib/[a-zA-Z0-9_-]+\.sh' \
+        | grep -oE '[a-zA-Z0-9_-]+\.sh$' \
+        | sort -u)
+
+    # For each container lib, check if it sources other libs that are missing
+    local missing=0
+    local lib
+    for lib in $container_libs; do
+        local lib_path="$KAPSIS_ROOT/scripts/lib/$lib"
+        [[ -f "$lib_path" ]] || continue
+
+        # Extract libs sourced by this container lib (skip comments)
+        local deps
+        deps=$(grep -E '^\s+source\s' "$lib_path" \
+            | grep -oE '[a-zA-Z0-9_-]+\.sh' \
+            | sort -u) || true
+
+        local dep
+        for dep in $deps; do
+            if ! echo "$containerfile_content" | grep -q "COPY scripts/lib/${dep}"; then
+                log_fail "Library '$dep' is sourced by container lib '$lib' but missing from Containerfile COPY"
+                ((missing++)) || true
+            fi
+        done
+    done
+
+    if [[ "$missing" -gt 0 ]]; then
+        log_fail "$missing transitive dependency lib(s) missing from Containerfile"
+        return 1
+    fi
+
+    log_info "All transitive lib dependencies are present in Containerfile"
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -337,6 +382,7 @@ main() {
 
     # Entrypoint library completeness (issue #180)
     run_test test_entrypoint_libs_copied_to_container
+    run_test test_container_lib_transitive_deps_present
 
     # Container integration tests (requires Podman)
     if skip_if_no_container 2>/dev/null; then
