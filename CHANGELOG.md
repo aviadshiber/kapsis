@@ -6,14 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.11.2] - 2026-02-24
+## [2.11.3] - 2026-02-24
 
 ### Fixed
-- Use allowlist validation for keyring_collection and keyring_profile fields
+- Add compat.sh to container image (transitive dependency)
+- Add missing container libs for entrypoint.sh (fixes #180)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Use allowlist validation for keyring_collection and keyring_profile fields
+
 
 ### Added
 - Add keyring_profile field for container-side D-Bus key (#176)
@@ -537,7 +542,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.11.2...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.11.3...HEAD
+[2.11.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.11.3
 [2.11.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.11.2
 [2.11.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.11.0
 [2.10.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.10.1
