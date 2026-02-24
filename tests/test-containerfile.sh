@@ -279,6 +279,45 @@ test_maven_available_in_image() {
 }
 
 #===============================================================================
+# TEST CASES: Entrypoint Library Completeness (issue #180)
+#===============================================================================
+
+test_entrypoint_libs_copied_to_container() {
+    log_test "Testing all entrypoint-sourced libs have COPY in Containerfile"
+
+    local entrypoint="$KAPSIS_ROOT/scripts/entrypoint.sh"
+    assert_file_exists "$entrypoint" "entrypoint.sh should exist"
+    assert_file_exists "$CONTAINERFILE" "Containerfile should exist"
+
+    local containerfile_content
+    containerfile_content=$(cat "$CONTAINERFILE")
+
+    # Extract unique library filenames sourced by entrypoint.sh
+    # Matches patterns like: source "$KAPSIS_HOME/lib/foo.sh"
+    #                    and: source "$(dirname ...)/lib/foo.sh"
+    local libs
+    libs=$(grep -oE 'source [^;]+/lib/[a-zA-Z0-9_-]+\.sh' "$entrypoint" \
+        | grep -oE '[a-zA-Z0-9_-]+\.sh$' \
+        | sort -u)
+
+    local missing=0
+    local lib
+    for lib in $libs; do
+        if ! echo "$containerfile_content" | grep -q "COPY scripts/lib/${lib}"; then
+            log_fail "Library '$lib' is sourced by entrypoint.sh but missing from Containerfile COPY"
+            ((missing++)) || true
+        fi
+    done
+
+    if [[ "$missing" -gt 0 ]]; then
+        log_fail "$missing library file(s) sourced by entrypoint.sh are missing from Containerfile"
+        return 1
+    fi
+
+    log_info "All entrypoint-sourced libraries have COPY directives in Containerfile"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -295,6 +334,9 @@ main() {
     run_test test_sdkman_offline_mode_appended
     run_test test_sdkman_config_block_order
     run_test test_sdkman_config_comment_exists
+
+    # Entrypoint library completeness (issue #180)
+    run_test test_entrypoint_libs_copied_to_container
 
     # Container integration tests (requires Podman)
     if skip_if_no_container 2>/dev/null; then
