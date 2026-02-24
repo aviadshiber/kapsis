@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.11.0] - 2026-02-23
+## [2.11.2] - 2026-02-24
+
+### Fixed
+- Use allowlist validation for keyring_collection and keyring_profile fields
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Added
 - Add keyring_profile field for container-side D-Bus key (#176)
@@ -14,9 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Bump the github-actions group across 1 directory with 3 updates
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Prepend IgnoreUnknown to SSH config for macOS-to-Linux portability (#172)
@@ -533,7 +537,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.11.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.11.2...HEAD
+[2.11.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.11.2
 [2.11.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.11.0
 [2.10.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.10.1
 [2.10.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.10.0
