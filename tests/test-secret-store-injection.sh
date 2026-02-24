@@ -352,6 +352,25 @@ test_keyring_profile_validation() {
         "launch-agent.sh should validate keyring_profile"
 }
 
+test_keyring_field_allowlist_validation() {
+    log_test "Testing keyring fields use allowlist validation (not blocklist)"
+
+    local launch_script="$KAPSIS_ROOT/scripts/launch-agent.sh"
+    local content
+    content=$(cat "$launch_script")
+
+    # Should use regex allowlist pattern [^a-zA-Z0-9/.@:_-]
+    assert_contains "$content" '[^a-zA-Z0-9/.@:_-]' \
+        "Should use allowlist regex for character validation"
+
+    # Should NOT use old blocklist pattern *"|"*
+    if [[ "$content" == *'== *"|"*'* ]]; then
+        log_fail "Should not use blocklist pattern *\"|\"* — use allowlist regex instead"
+        return 1
+    fi
+    log_pass "No blocklist patterns found — using allowlist validation"
+}
+
 test_entrypoint_has_keyring_profile_support() {
     log_test "Testing entrypoint.sh has keyring_profile support"
 
@@ -424,6 +443,9 @@ main() {
     run_test test_keyring_profile_overrides_account
     run_test test_keyring_profile_validation
     run_test test_entrypoint_has_keyring_profile_support
+
+    # Security hardening
+    run_test test_keyring_field_allowlist_validation
 
     # Cleanup
     cleanup_test_project

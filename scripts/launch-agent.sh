@@ -1358,16 +1358,17 @@ generate_env_vars() {
                     log_debug "Will inject $var_name to container secret store"
 
                     # Track keyring collection for 99designs/keyring compat (Issue #170)
+                    # Allowlist validation: only safe characters for D-Bus paths/labels
                     if [[ -n "${keyring_collection:-}" ]]; then
-                        if [[ "$keyring_collection" == *"|"* || "$keyring_collection" == *","* ]]; then
-                            log_warn "keyring_collection for $var_name contains invalid characters (|,) — ignoring"
+                        if [[ "$keyring_collection" =~ [^a-zA-Z0-9/.@:_-] ]]; then
+                            log_warn "keyring_collection for $var_name contains invalid characters — ignoring"
                             keyring_collection=""
                         fi
                     fi
                     # Validate keyring_profile (Issue #176)
                     if [[ -n "${keyring_profile:-}" ]]; then
-                        if [[ "$keyring_profile" == *"|"* || "$keyring_profile" == *","* ]]; then
-                            log_warn "keyring_profile for $var_name contains invalid characters (|,) — ignoring"
+                        if [[ "$keyring_profile" =~ [^a-zA-Z0-9/.@:_-] ]]; then
+                            log_warn "keyring_profile for $var_name contains invalid characters — ignoring"
                             keyring_profile=""
                         fi
                     fi
