@@ -1,0 +1,266 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: agentrequests.kapsis.io
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.14.0
+spec:
+  group: kapsis.io
+  names:
+    kind: AgentRequest
+    listKind: AgentRequestList
+    plural: agentrequests
+    singular: agentrequest
+    shortNames:
+      - ar
+      - agent
+  scope: Namespaced
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Agent
+          type: string
+          jsonPath: .spec.agent.type
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: Progress
+          type: integer
+          jsonPath: .status.progress
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+      schema:
+        openAPIV3Schema:
+          description: AgentRequest is the Schema for the agentrequests API
+          type: object
+          properties:
+            apiVersion:
+              type: string
+            kind:
+              type: string
+            metadata:
+              type: object
+            spec:
+              description: AgentRequestSpec defines the desired state of AgentRequest
+              type: object
+              required:
+                - image
+                - agent
+              properties:
+                image:
+                  description: Container image to run
+                  type: string
+                agent:
+                  description: Agent configuration
+                  type: object
+                  required:
+                    - type
+                  properties:
+                    type:
+                      description: Agent type (claude-cli, codex-cli, aider, gemini-cli)
+                      type: string
+                    command:
+                      description: Command to execute in the container
+                      type: array
+                      items:
+                        type: string
+                    workdir:
+                      description: Working directory inside container
+                      type: string
+                      default: /workspace
+                resources:
+                  description: Resource limits for the pod
+                  type: object
+                  properties:
+                    memory:
+                      description: Memory limit (e.g., 8Gi)
+                      type: string
+                      default: "8Gi"
+                    cpu:
+                      description: CPU limit (e.g., 4)
+                      type: string
+                      default: "4"
+                git:
+                  description: Git repository configuration
+                  type: object
+                  properties:
+                    repoUrl:
+                      description: Repository URL to clone
+                      type: string
+                    branch:
+                      description: Branch to work on
+                      type: string
+                    baseBranch:
+                      description: Base branch for new branches
+                      type: string
+                      default: main
+                    push:
+                      description: Whether to push changes after completion
+                      type: boolean
+                      default: false
+                    credentialSecretRef:
+                      description: Reference to a Secret containing git credentials
+                      type: object
+                      required:
+                        - name
+                        - key
+                      properties:
+                        name:
+                          description: Name of the Secret
+                          type: string
+                        key:
+                          description: Key within the Secret
+                          type: string
+                task:
+                  description: Task specification
+                  type: object
+                  properties:
+                    inline:
+                      description: Inline task description
+                      type: string
+                    specConfigMapRef:
+                      description: Reference to a ConfigMap containing the task spec
+                      type: object
+                      required:
+                        - name
+                        - key
+                      properties:
+                        name:
+                          description: Name of the ConfigMap
+                          type: string
+                        key:
+                          description: Key within the ConfigMap
+                          type: string
+                          default: spec.md
+                environment:
+                  description: Environment configuration
+                  type: object
+                  properties:
+                    vars:
+                      description: Environment variables
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - name
+                          - value
+                        properties:
+                          name:
+                            type: string
+                          value:
+                            type: string
+                    secretRefs:
+                      description: References to Secrets to mount as env vars
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - name
+                        properties:
+                          name:
+                            description: Name of the Secret
+                            type: string
+                    configMounts:
+                      description: ConfigMaps to mount as volumes
+                      type: array
+                      items:
+                        type: object
+                        required:
+                          - name
+                          - mountPath
+                        properties:
+                          name:
+                            description: Name of the ConfigMap
+                            type: string
+                          mountPath:
+                            description: Mount path inside container
+                            type: string
+                network:
+                  description: Network configuration
+                  type: object
+                  properties:
+                    mode:
+                      description: "Network mode: none, filtered, open"
+                      type: string
+                      default: filtered
+                      enum:
+                        - none
+                        - filtered
+                        - open
+                security:
+                  description: Security configuration
+                  type: object
+                  properties:
+                    profile:
+                      description: "Security profile: minimal, standard, strict, paranoid"
+                      type: string
+                      default: standard
+                      enum:
+                        - minimal
+                        - standard
+                        - strict
+                        - paranoid
+                    serviceAccountName:
+                      description: ServiceAccount for the pod
+                      type: string
+                      default: kapsis-agent
+                ttl:
+                  description: Time-to-live in seconds (pod killed after this)
+                  type: integer
+                  default: 3600
+            status:
+              description: AgentRequestStatus defines the observed state of AgentRequest
+              type: object
+              properties:
+                phase:
+                  description: "Current phase: Pending, Initializing, Running, PostProcessing, Complete, Failed"
+                  type: string
+                progress:
+                  description: Progress percentage (0-100)
+                  type: integer
+                  minimum: 0
+                  maximum: 100
+                message:
+                  description: Human-readable status message
+                  type: string
+                gist:
+                  description: Short summary of current work
+                  type: string
+                gistUpdatedAt:
+                  description: Timestamp of last gist update
+                  type: string
+                  format: date-time
+                exitCode:
+                  description: Container exit code
+                  type: integer
+                podName:
+                  description: Name of the created Pod
+                  type: string
+                startedAt:
+                  description: Timestamp when the agent started
+                  type: string
+                  format: date-time
+                completedAt:
+                  description: Timestamp when the agent completed
+                  type: string
+                  format: date-time
+                commitSha:
+                  description: SHA of the commit created by the agent
+                  type: string
+                pushStatus:
+                  description: "Push status: success, failed, skipped"
+                  type: string
+                prUrl:
+                  description: URL of the PR created by the agent
+                  type: string
+                response:
+                  description: Agent response summary
+                  type: string
+                error:
+                  description: Error message if failed
+                  type: string

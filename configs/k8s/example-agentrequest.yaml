@@ -1,0 +1,31 @@
+apiVersion: kapsis.io/v1alpha1
+kind: AgentRequest
+metadata:
+  name: example-claude-task
+spec:
+  image: kapsis-claude-cli:latest
+  agent:
+    type: claude-cli
+    command: ["bash", "-c", "claude --task 'Implement the login feature'"]
+    workdir: /workspace
+  resources:
+    memory: "8Gi"
+    cpu: "4"
+  git:
+    repoUrl: https://github.com/org/repo.git
+    branch: feat/login-feature
+    baseBranch: main
+    push: true
+    credentialSecretRef:
+      name: git-credentials
+      key: token
+  task:
+    inline: "Implement the login feature with OAuth2 support"
+  environment:
+    vars:
+      - name: KAPSIS_BACKEND
+        value: k8s
+  security:
+    profile: standard
+    serviceAccountName: kapsis-agent
+  ttl: 3600
