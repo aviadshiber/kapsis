@@ -1944,9 +1944,13 @@ main() {
     status_init "$project_name" "$AGENT_ID" "$BRANCH" "$SANDBOX_MODE" "${WORKTREE_PATH:-}"
     status_phase "preparing" 18 "Sandbox ready"
 
-    generate_volume_mounts
-    generate_env_vars
-    write_secrets_env_file
+    # Podman-specific: generate volume mounts, env vars, secrets env-file
+    # K8s backend generates its own CR with this info
+    if [[ "$BACKEND" == "podman" ]]; then
+        generate_volume_mounts
+        generate_env_vars
+        write_secrets_env_file
+    fi
     backend_build_spec
     status_phase "preparing" 20 "Container configured"
 
@@ -1976,6 +1980,12 @@ main() {
     echo ""
 
     if [[ "$DRY_RUN" == "true" ]]; then
+        if [[ "$BACKEND" != "podman" ]]; then
+            # Non-podman backends handle dry-run output in backend_build_spec()
+            echo ""
+            exit 0
+        fi
+
         log_info "DRY RUN - Command that would be executed:"
         echo ""
         # Sanitize secrets as defense-in-depth (secrets normally go via --env-file,

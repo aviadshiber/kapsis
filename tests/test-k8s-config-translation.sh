@@ -103,11 +103,11 @@ test_generate_cr_contains_apiversion() {
         RESOURCE_MEMORY="8g"
         RESOURCE_CPUS="4"
         BRANCH=""
-        TASK_DESCRIPTION="test task"
+        TASK_INLINE="test task"
         INLINE_SPEC_FILE=""
         NETWORK_MODE="filtered"
         SECURITY_PROFILE="standard"
-        AGENT_COMMAND=("bash" "-c" "claude --task test")
+        AGENT_COMMAND="claude --task test"
         generate_agent_request_cr
     ')
 
@@ -125,11 +125,11 @@ test_generate_cr_contains_kind() {
         RESOURCE_MEMORY="8g"
         RESOURCE_CPUS="4"
         BRANCH=""
-        TASK_DESCRIPTION="test task"
+        TASK_INLINE="test task"
         INLINE_SPEC_FILE=""
         NETWORK_MODE="filtered"
         SECURITY_PROFILE="standard"
-        AGENT_COMMAND=("bash" "-c" "claude --task test")
+        AGENT_COMMAND="claude --task test"
         generate_agent_request_cr
     ')
 
@@ -147,11 +147,11 @@ test_generate_cr_contains_image() {
         RESOURCE_MEMORY="8g"
         RESOURCE_CPUS="4"
         BRANCH=""
-        TASK_DESCRIPTION="test task"
+        TASK_INLINE="test task"
         INLINE_SPEC_FILE=""
         NETWORK_MODE="filtered"
         SECURITY_PROFILE="standard"
-        AGENT_COMMAND=("bash" "-c" "claude --task test")
+        AGENT_COMMAND="claude --task test"
         generate_agent_request_cr
     ')
 
@@ -169,11 +169,11 @@ test_generate_cr_contains_resources() {
         RESOURCE_MEMORY="8g"
         RESOURCE_CPUS="4"
         BRANCH=""
-        TASK_DESCRIPTION="test task"
+        TASK_INLINE="test task"
         INLINE_SPEC_FILE=""
         NETWORK_MODE="filtered"
         SECURITY_PROFILE="standard"
-        AGENT_COMMAND=("bash" "-c" "claude --task test")
+        AGENT_COMMAND="claude --task test"
         generate_agent_request_cr
     ')
 
@@ -192,11 +192,11 @@ test_generate_cr_valid_yaml() {
         RESOURCE_MEMORY="8g"
         RESOURCE_CPUS="4"
         BRANCH=""
-        TASK_DESCRIPTION="test task"
+        TASK_INLINE="test task"
         INLINE_SPEC_FILE=""
         NETWORK_MODE="filtered"
         SECURITY_PROFILE="standard"
-        AGENT_COMMAND=("bash" "-c" "claude --task test")
+        AGENT_COMMAND="claude --task test"
         generate_agent_request_cr
     ')
 
@@ -221,11 +221,11 @@ test_generate_cr_with_branch() {
         RESOURCE_MEMORY="8g"
         RESOURCE_CPUS="4"
         BRANCH="feature/my-branch"
-        TASK_DESCRIPTION="test task"
+        TASK_INLINE="test task"
         INLINE_SPEC_FILE=""
         NETWORK_MODE="filtered"
         SECURITY_PROFILE="standard"
-        AGENT_COMMAND=("bash" "-c" "claude --task test")
+        AGENT_COMMAND="claude --task test"
         generate_agent_request_cr
     ')
 
@@ -243,11 +243,11 @@ test_generate_cr_with_task_inline() {
         RESOURCE_MEMORY="8g"
         RESOURCE_CPUS="4"
         BRANCH=""
-        TASK_DESCRIPTION="implement login feature"
+        TASK_INLINE="implement login feature"
         INLINE_SPEC_FILE=""
         NETWORK_MODE="filtered"
         SECURITY_PROFILE="standard"
-        AGENT_COMMAND=("bash" "-c" "claude --task test")
+        AGENT_COMMAND="claude --task test"
         generate_agent_request_cr
     ')
 

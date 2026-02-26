@@ -63,23 +63,21 @@ generate_env_yaml() {
 
 # Generate a complete AgentRequest CR YAML from launch-agent.sh globals
 # Required globals: AGENT_ID, IMAGE_NAME, AGENT_NAME, RESOURCE_MEMORY,
-#   RESOURCE_CPUS, BRANCH, TASK_DESCRIPTION, NETWORK_MODE, SECURITY_PROFILE,
-#   AGENT_COMMAND[]
+#   RESOURCE_CPUS, BRANCH, TASK_INLINE, NETWORK_MODE, SECURITY_PROFILE,
+#   AGENT_COMMAND (string — agent command from config)
 # Optional globals: INLINE_SPEC_FILE, GIT_REMOTE_URL, BASE_BRANCH, DO_PUSH
 generate_agent_request_cr() {
     local k8s_memory k8s_cpu
     k8s_memory=$(translate_memory_to_k8s "${RESOURCE_MEMORY:-8g}")
     k8s_cpu=$(translate_cpus_to_k8s "${RESOURCE_CPUS:-4}")
 
-    # Build command array YAML
+    # Build command array YAML from AGENT_COMMAND string
     local cmd_yaml=""
-    if [[ ${#AGENT_COMMAND[@]} -gt 0 ]]; then
-        cmd_yaml="    command:"
-        local arg
-        for arg in "${AGENT_COMMAND[@]}"; do
-            cmd_yaml="$cmd_yaml
-      - \"$arg\""
-        done
+    if [[ -n "${AGENT_COMMAND:-}" ]]; then
+        cmd_yaml="    command:
+      - \"bash\"
+      - \"-c\"
+      - \"${AGENT_COMMAND}\""
     fi
 
     cat <<YAML
@@ -116,10 +114,10 @@ YAML
     fi
 
     # Task section
-    if [[ -n "${TASK_DESCRIPTION:-}" ]]; then
+    if [[ -n "${TASK_INLINE:-}" ]]; then
         cat <<YAML
   task:
-    inline: "${TASK_DESCRIPTION}"
+    inline: "${TASK_INLINE}"
 YAML
     fi
 

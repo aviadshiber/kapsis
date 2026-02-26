@@ -119,6 +119,20 @@ test_podman_backend_defines_required_functions() {
     assert_contains "$result" "backend_supports:ok" "backend_supports should be defined"
 }
 
+test_k8s_dry_run_outputs_yaml() {
+    log_test "Testing --backend k8s --dry-run outputs CR YAML"
+
+    local output
+    local exit_code=0
+
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --backend k8s --task "test task" --dry-run 2>&1) || exit_code=$?
+
+    assert_equals 0 "$exit_code" "K8s dry-run should succeed"
+    assert_contains "$output" "apiVersion: kapsis.io/v1alpha1" "Should contain CRD apiVersion"
+    assert_contains "$output" "kind: AgentRequest" "Should contain kind"
+    assert_not_contains "$output" "podman run" "Should NOT contain podman run"
+}
+
 test_k8s_backend_defines_required_functions() {
     log_test "Testing k8s backend defines required functions"
 
@@ -166,6 +180,7 @@ main() {
     run_test test_backend_k8s_file_exists
     run_test test_podman_backend_defines_required_functions
     run_test test_k8s_backend_defines_required_functions
+    run_test test_k8s_dry_run_outputs_yaml
 
     cleanup_test_project
 
