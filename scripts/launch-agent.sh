@@ -1931,9 +1931,14 @@ main() {
         status_phase "initializing" 15 "Pre-flight check passed"
     fi
 
-    log_timer_start "sandbox_setup"
-    setup_sandbox
-    log_timer_end "sandbox_setup"
+    # Setup sandbox (worktree/overlay) — only for backends that support it
+    if backend_supports "worktree" || backend_supports "overlay"; then
+        log_timer_start "sandbox_setup"
+        setup_sandbox
+        log_timer_end "sandbox_setup"
+    else
+        log_info "Backend '$BACKEND' handles sandbox setup in-cluster"
+    fi
 
     # Update status with sandbox mode and worktree path now that we know them
     status_init "$project_name" "$AGENT_ID" "$BRANCH" "$SANDBOX_MODE" "${WORKTREE_PATH:-}"
@@ -1942,7 +1947,7 @@ main() {
     generate_volume_mounts
     generate_env_vars
     write_secrets_env_file
-    build_container_command
+    backend_build_spec
     status_phase "preparing" 20 "Container configured"
 
     echo ""
@@ -2066,16 +2071,22 @@ main() {
     echo ""
 
     # Handle post-container operations based on sandbox mode
-    log_debug "Running post-container operations (mode: $SANDBOX_MODE)"
-    log_timer_start "post_container"
-    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
-        post_container_worktree
-        POST_EXIT_CODE=$?
+    # Only local backends (podman) need host-side git operations
+    if [[ "$BACKEND" == "podman" ]]; then
+        log_debug "Running post-container operations (mode: $SANDBOX_MODE)"
+        log_timer_start "post_container"
+        if [[ "$SANDBOX_MODE" == "worktree" ]]; then
+            post_container_worktree
+            POST_EXIT_CODE=$?
+        else
+            post_container_overlay
+            POST_EXIT_CODE=$?
+        fi
+        log_timer_end "post_container"
     else
-        post_container_overlay
-        POST_EXIT_CODE=$?
+        log_info "Backend '$BACKEND' handles git operations in-pod"
+        POST_EXIT_CODE=0
     fi
-    log_timer_end "post_container"
 
     log_timer_end "total"
 
