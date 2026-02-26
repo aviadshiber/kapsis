@@ -101,6 +101,7 @@ SANITIZED_GIT_PATH=""
 AGENT_ID_AUTO_GENERATED=false  # Track if ID was auto-generated
 # Source shared constants (must come before using KAPSIS_DEFAULT_NETWORK_MODE)
 source "$SCRIPT_DIR/lib/constants.sh"
+BACKEND="${KAPSIS_DEFAULT_BACKEND}"  # podman (default) or k8s
 
 # Source security library (provides generate_security_args, validate_security_config, etc.)
 source "$SCRIPT_DIR/lib/security.sh"
@@ -438,6 +439,14 @@ parse_args() {
             --network-mode)
                 NETWORK_MODE="$2"
                 CLI_NETWORK_MODE="$2"  # Track that CLI explicitly set this
+                shift 2
+                ;;
+            --backend)
+                BACKEND="$2"
+                if [[ ! " $KAPSIS_SUPPORTED_BACKENDS " =~ [[:space:]]${BACKEND}[[:space:]] ]]; then
+                    log_error "Unsupported backend: '$BACKEND'. Supported: $KAPSIS_SUPPORTED_BACKENDS"
+                    exit 1
+                fi
                 shift 2
                 ;;
             --security-profile)
