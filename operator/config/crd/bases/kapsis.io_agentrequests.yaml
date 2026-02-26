@@ -1,266 +1,353 @@
+---
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: agentrequests.kapsis.io
   annotations:
-    controller-gen.kubebuilder.io/version: v0.14.0
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: agentrequests.kapsis.io
 spec:
   group: kapsis.io
   names:
     kind: AgentRequest
     listKind: AgentRequestList
     plural: agentrequests
-    singular: agentrequest
     shortNames:
-      - ar
-      - agent
+    - ar
+    - agent
+    singular: agentrequest
   scope: Namespaced
   versions:
-    - name: v1alpha1
-      served: true
-      storage: true
-      subresources:
-        status: {}
-      additionalPrinterColumns:
-        - name: Agent
-          type: string
-          jsonPath: .spec.agent.type
-        - name: Phase
-          type: string
-          jsonPath: .status.phase
-        - name: Progress
-          type: integer
-          jsonPath: .status.progress
-        - name: Age
-          type: date
-          jsonPath: .metadata.creationTimestamp
-      schema:
-        openAPIV3Schema:
-          description: AgentRequest is the Schema for the agentrequests API
-          type: object
-          properties:
-            apiVersion:
-              type: string
-            kind:
-              type: string
-            metadata:
-              type: object
-            spec:
-              description: AgentRequestSpec defines the desired state of AgentRequest
-              type: object
-              required:
-                - image
-                - agent
-              properties:
-                image:
-                  description: Container image to run
-                  type: string
-                agent:
-                  description: Agent configuration
-                  type: object
-                  required:
-                    - type
-                  properties:
-                    type:
-                      description: Agent type (claude-cli, codex-cli, aider, gemini-cli)
+  - additionalPrinterColumns:
+    - jsonPath: .spec.agent.type
+      name: Agent
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.progress
+      name: Progress
+      type: integer
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: AgentRequest is the Schema for the agentrequests API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: AgentRequestSpec defines the desired state of AgentRequest.
+            properties:
+              agent:
+                description: Agent defines the agent configuration.
+                properties:
+                  command:
+                    description: Command is the command to execute in the container.
+                    items:
                       type: string
-                    command:
-                      description: Command to execute in the container
-                      type: array
-                      items:
+                    type: array
+                  type:
+                    description: Type is the agent type (claude-cli, codex-cli, aider,
+                      gemini-cli).
+                    type: string
+                  workdir:
+                    default: /workspace
+                    description: Workdir is the working directory inside container.
+                    type: string
+                required:
+                - type
+                type: object
+              environment:
+                description: Environment defines environment configuration.
+                properties:
+                  configMounts:
+                    description: ConfigMounts are ConfigMaps to mount as volumes.
+                    items:
+                      description: ConfigMount defines a ConfigMap to mount as a volume.
+                      properties:
+                        mountPath:
+                          description: MountPath inside the container.
+                          type: string
+                        name:
+                          description: Name of the ConfigMap.
+                          type: string
+                      required:
+                      - mountPath
+                      - name
+                      type: object
+                    type: array
+                  secretRefs:
+                    description: SecretRefs are references to Secrets to mount as
+                      env vars.
+                    items:
+                      description: SecretRef references a Secret by name.
+                      properties:
+                        name:
+                          description: Name of the Secret.
+                          type: string
+                      required:
+                      - name
+                      type: object
+                    type: array
+                  vars:
+                    description: Vars is a list of environment variables.
+                    items:
+                      description: EnvVar is a name-value environment variable pair.
+                      properties:
+                        name:
+                          description: Name of the environment variable.
+                          type: string
+                        value:
+                          description: Value of the environment variable.
+                          type: string
+                      required:
+                      - name
+                      - value
+                      type: object
+                    type: array
+                type: object
+              git:
+                description: Git defines git repository configuration.
+                properties:
+                  baseBranch:
+                    default: main
+                    description: BaseBranch for new branches.
+                    type: string
+                  branch:
+                    description: Branch to work on.
+                    type: string
+                  credentialSecretRef:
+                    description: CredentialSecretRef is a reference to a Secret containing
+                      git credentials.
+                    properties:
+                      key:
+                        description: Key within the Secret.
                         type: string
-                    workdir:
-                      description: Working directory inside container
-                      type: string
-                      default: /workspace
-                resources:
-                  description: Resource limits for the pod
-                  type: object
+                      name:
+                        description: Name of the Secret.
+                        type: string
+                    required:
+                    - key
+                    - name
+                    type: object
+                  push:
+                    default: false
+                    description: Push indicates whether to push changes after completion.
+                    type: boolean
+                  repoUrl:
+                    description: RepoUrl is the repository URL to clone.
+                    type: string
+                type: object
+              image:
+                description: Image is the container image to run.
+                type: string
+              network:
+                description: Network defines network configuration.
+                properties:
+                  mode:
+                    default: filtered
+                    description: 'Mode is the network mode: none, filtered, open.'
+                    enum:
+                    - none
+                    - filtered
+                    - open
+                    type: string
+                type: object
+              resources:
+                description: Resources defines resource limits for the pod.
+                properties:
+                  cpu:
+                    default: "4"
+                    description: CPU limit (e.g., "4").
+                    type: string
+                  memory:
+                    default: 8Gi
+                    description: Memory limit (e.g., "8Gi").
+                    type: string
+                type: object
+              security:
+                description: Security defines security configuration.
+                properties:
+                  profile:
+                    default: standard
+                    description: 'Profile is the security profile: minimal, standard,
+                      strict, paranoid.'
+                    enum:
+                    - minimal
+                    - standard
+                    - strict
+                    - paranoid
+                    type: string
+                  serviceAccountName:
+                    default: kapsis-agent
+                    description: ServiceAccountName for the pod.
+                    type: string
+                type: object
+              task:
+                description: Task defines the task specification.
+                properties:
+                  inline:
+                    description: Inline task description.
+                    type: string
+                  specConfigMapRef:
+                    description: SpecConfigMapRef references a ConfigMap containing
+                      the task spec.
+                    properties:
+                      key:
+                        default: spec.md
+                        description: Key within the ConfigMap.
+                        type: string
+                      name:
+                        description: Name of the ConfigMap.
+                        type: string
+                    required:
+                    - name
+                    type: object
+                type: object
+              ttl:
+                default: 3600
+                description: TTL is the time-to-live in seconds (pod killed after
+                  this).
+                format: int32
+                type: integer
+            required:
+            - agent
+            - image
+            type: object
+          status:
+            description: AgentRequestStatus defines the observed state of AgentRequest.
+            properties:
+              commitSha:
+                description: CommitSha is the SHA of the commit created by the agent.
+                type: string
+              completedAt:
+                description: CompletedAt is when the agent completed.
+                format: date-time
+                type: string
+              conditions:
+                description: Conditions represent the current state of the AgentRequest.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
                   properties:
-                    memory:
-                      description: Memory limit (e.g., 8Gi)
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
                       type: string
-                      default: "8Gi"
-                    cpu:
-                      description: CPU limit (e.g., 4)
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
                       type: string
-                      default: "4"
-                git:
-                  description: Git repository configuration
-                  type: object
-                  properties:
-                    repoUrl:
-                      description: Repository URL to clone
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
                       type: string
-                    branch:
-                      description: Branch to work on
-                      type: string
-                    baseBranch:
-                      description: Base branch for new branches
-                      type: string
-                      default: main
-                    push:
-                      description: Whether to push changes after completion
-                      type: boolean
-                      default: false
-                    credentialSecretRef:
-                      description: Reference to a Secret containing git credentials
-                      type: object
-                      required:
-                        - name
-                        - key
-                      properties:
-                        name:
-                          description: Name of the Secret
-                          type: string
-                        key:
-                          description: Key within the Secret
-                          type: string
-                task:
-                  description: Task specification
-                  type: object
-                  properties:
-                    inline:
-                      description: Inline task description
-                      type: string
-                    specConfigMapRef:
-                      description: Reference to a ConfigMap containing the task spec
-                      type: object
-                      required:
-                        - name
-                        - key
-                      properties:
-                        name:
-                          description: Name of the ConfigMap
-                          type: string
-                        key:
-                          description: Key within the ConfigMap
-                          type: string
-                          default: spec.md
-                environment:
-                  description: Environment configuration
-                  type: object
-                  properties:
-                    vars:
-                      description: Environment variables
-                      type: array
-                      items:
-                        type: object
-                        required:
-                          - name
-                          - value
-                        properties:
-                          name:
-                            type: string
-                          value:
-                            type: string
-                    secretRefs:
-                      description: References to Secrets to mount as env vars
-                      type: array
-                      items:
-                        type: object
-                        required:
-                          - name
-                        properties:
-                          name:
-                            description: Name of the Secret
-                            type: string
-                    configMounts:
-                      description: ConfigMaps to mount as volumes
-                      type: array
-                      items:
-                        type: object
-                        required:
-                          - name
-                          - mountPath
-                        properties:
-                          name:
-                            description: Name of the ConfigMap
-                            type: string
-                          mountPath:
-                            description: Mount path inside container
-                            type: string
-                network:
-                  description: Network configuration
-                  type: object
-                  properties:
-                    mode:
-                      description: "Network mode: none, filtered, open"
-                      type: string
-                      default: filtered
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
                       enum:
-                        - none
-                        - filtered
-                        - open
-                security:
-                  description: Security configuration
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
                   type: object
-                  properties:
-                    profile:
-                      description: "Security profile: minimal, standard, strict, paranoid"
-                      type: string
-                      default: standard
-                      enum:
-                        - minimal
-                        - standard
-                        - strict
-                        - paranoid
-                    serviceAccountName:
-                      description: ServiceAccount for the pod
-                      type: string
-                      default: kapsis-agent
-                ttl:
-                  description: Time-to-live in seconds (pod killed after this)
-                  type: integer
-                  default: 3600
-            status:
-              description: AgentRequestStatus defines the observed state of AgentRequest
-              type: object
-              properties:
-                phase:
-                  description: "Current phase: Pending, Initializing, Running, PostProcessing, Complete, Failed"
-                  type: string
-                progress:
-                  description: Progress percentage (0-100)
-                  type: integer
-                  minimum: 0
-                  maximum: 100
-                message:
-                  description: Human-readable status message
-                  type: string
-                gist:
-                  description: Short summary of current work
-                  type: string
-                gistUpdatedAt:
-                  description: Timestamp of last gist update
-                  type: string
-                  format: date-time
-                exitCode:
-                  description: Container exit code
-                  type: integer
-                podName:
-                  description: Name of the created Pod
-                  type: string
-                startedAt:
-                  description: Timestamp when the agent started
-                  type: string
-                  format: date-time
-                completedAt:
-                  description: Timestamp when the agent completed
-                  type: string
-                  format: date-time
-                commitSha:
-                  description: SHA of the commit created by the agent
-                  type: string
-                pushStatus:
-                  description: "Push status: success, failed, skipped"
-                  type: string
-                prUrl:
-                  description: URL of the PR created by the agent
-                  type: string
-                response:
-                  description: Agent response summary
-                  type: string
-                error:
-                  description: Error message if failed
-                  type: string
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              error:
+                description: Error message if failed.
+                type: string
+              exitCode:
+                description: ExitCode is the container exit code.
+                format: int32
+                type: integer
+              gist:
+                description: Gist is a short summary of current work.
+                type: string
+              gistUpdatedAt:
+                description: GistUpdatedAt is the timestamp of last gist update.
+                format: date-time
+                type: string
+              message:
+                description: Message is a human-readable status message.
+                type: string
+              phase:
+                description: Phase is the current phase.
+                type: string
+              podName:
+                description: PodName is the name of the created Pod.
+                type: string
+              prUrl:
+                description: PrUrl is the URL of the PR created by the agent.
+                type: string
+              progress:
+                description: Progress percentage (0-100).
+                format: int32
+                maximum: 100
+                minimum: 0
+                type: integer
+              pushStatus:
+                description: 'PushStatus indicates push result: success, failed, skipped.'
+                type: string
+              response:
+                description: Response is the agent response summary.
+                type: string
+              startedAt:
+                description: StartedAt is when the agent started.
+                format: date-time
+                type: string
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
