@@ -531,32 +531,11 @@ validate_inputs() {
         fi
     fi
 
-    # Check Podman is available (skip in dry-run mode)
-    if [[ "$DRY_RUN" != "true" ]]; then
-        log_debug "Checking Podman availability..."
-        if ! command -v podman &> /dev/null; then
-            log_error "Podman is not installed or not in PATH"
-            exit 1
-        fi
-        log_debug "Podman found at: $(command -v podman)"
-
-        # Check Podman machine is running (macOS only)
-        if [[ "$(uname)" == "Darwin" ]]; then
-            log_debug "Checking Podman machine status..."
-            if ! podman machine inspect podman-machine-default &>/dev/null || \
-               [[ "$(podman machine inspect podman-machine-default --format '{{.State}}')" != "running" ]]; then
-                log_warn "Podman machine is not running. Attempting to start..."
-                podman machine start podman-machine-default || {
-                    log_error "Failed to start Podman machine. Please run: podman machine start"
-                    exit 1
-                }
-                log_success "Podman machine started"
-            else
-                log_debug "Podman machine is running"
-            fi
-        fi
-    else
-        log_debug "Skipping Podman checks (dry-run mode)"
+    # Backend validation (sources backend file and checks prerequisites)
+    source "$SCRIPT_DIR/backends/${BACKEND}.sh"
+    if ! backend_validate; then
+        log_error "Backend '$BACKEND' validation failed"
+        exit 1
     fi
     log_debug "Input validation completed successfully"
 }
@@ -1883,12 +1862,8 @@ main() {
         local exit_code=$?
         # Clean up temp files if they exist
         [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
-        [[ -n "${SECRETS_ENV_FILE:-}" && -f "$SECRETS_ENV_FILE" ]] && rm -f "$SECRETS_ENV_FILE"
-        [[ -n "${INLINE_SPEC_FILE:-}" && -f "$INLINE_SPEC_FILE" ]] && rm -f "$INLINE_SPEC_FILE"
-        [[ -n "${DNS_PIN_FILE:-}" && -f "$DNS_PIN_FILE" ]] && rm -f "$DNS_PIN_FILE"
-        [[ -n "${RESOLV_CONF_FILE:-}" && -f "$RESOLV_CONF_FILE" ]] && rm -f "$RESOLV_CONF_FILE"
-        # Clean up snapshot directory for filesystem includes (issue #164)
-        [[ -n "${SNAPSHOT_DIR:-}" && -d "$SNAPSHOT_DIR" ]] && rm -rf "$SNAPSHOT_DIR"
+        # Delegate backend-specific cleanup (secrets env file, inline spec, dns pin, etc.)
+        backend_cleanup 2>/dev/null || true
         # Show completion message if not already shown
         if [[ "$_DISPLAY_COMPLETE_SHOWN" != "true" ]]; then
             if [[ $exit_code -eq 0 ]]; then
@@ -2042,24 +2017,9 @@ main() {
     _CONTAINER_OUTPUT_TMP="$container_output"
     CONTAINER_ERROR_OUTPUT=""
 
-    # Run the container with real-time output display AND capture
-    # Use stdbuf to disable buffering on tee (if available), otherwise fall back to regular tee
-    # Note: On macOS, stdbuf requires coreutils (brew install coreutils provides gstdbuf)
-    set +e
-    if command -v stdbuf &>/dev/null; then
-        # Linux: use stdbuf for line-buffered output
-        "${CONTAINER_CMD[@]}" 2>&1 | stdbuf -oL tee "$container_output"
-    elif command -v gstdbuf &>/dev/null; then
-        # macOS with coreutils: use gstdbuf
-        "${CONTAINER_CMD[@]}" 2>&1 | gstdbuf -oL tee "$container_output"
-    else
-        # Fallback: regular tee (may buffer, but still works)
-        "${CONTAINER_CMD[@]}" 2>&1 | tee "$container_output"
-    fi
-    # CRITICAL: PIPESTATUS must be captured immediately after pipeline
-    # Any intervening command (even echo) will overwrite it
-    EXIT_CODE=${PIPESTATUS[0]}
-    set -e
+    # Run the container via backend
+    backend_run "$container_output"
+    EXIT_CODE=$(backend_get_exit_code)
 
     log_timer_end "container"
     log_info "Container exited with code: $EXIT_CODE"
