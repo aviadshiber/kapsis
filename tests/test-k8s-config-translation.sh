@@ -256,6 +256,80 @@ test_generate_cr_with_task_inline() {
 }
 
 #===============================================================================
+# EDGE CASE / NEGATIVE TESTS
+#===============================================================================
+
+test_translate_memory_empty_string() {
+    log_test "Testing memory translation: empty string passes through"
+
+    local result
+    result=$(_run_translator 'echo $(translate_memory_to_k8s "")')
+
+    assert_equals "" "$result" "Empty string should pass through"
+}
+
+test_translate_memory_uppercase() {
+    log_test "Testing memory translation: uppercase G/M handled"
+
+    local result
+    result=$(_run_translator 'echo $(translate_memory_to_k8s "8G")')
+    assert_equals "8Gi" "$result" "8G should become 8Gi"
+
+    result=$(_run_translator 'echo $(translate_memory_to_k8s "512M")')
+    assert_equals "512Mi" "$result" "512M should become 512Mi"
+}
+
+test_generate_cr_special_chars_valid_yaml() {
+    log_test "Testing CR with special characters produces valid YAML"
+
+    local cr_output
+    cr_output=$(_run_translator '
+        AGENT_ID="test123"
+        IMAGE_NAME="kapsis-sandbox:latest"
+        AGENT_NAME="claude-cli"
+        RESOURCE_MEMORY="8g"
+        RESOURCE_CPUS="4"
+        BRANCH=""
+        TASK_INLINE="implement \"login\" feature: with {special} chars"
+        INLINE_SPEC_FILE=""
+        NETWORK_MODE="filtered"
+        SECURITY_PROFILE="standard"
+        AGENT_COMMAND="claude --task \"hello: world\" && echo done"
+        generate_agent_request_cr
+    ')
+
+    local tmpfile
+    tmpfile=$(mktemp)
+    echo "$cr_output" > "$tmpfile"
+    local exit_code=0
+    yq eval '.' "$tmpfile" > /dev/null 2>&1 || exit_code=$?
+    rm -f "$tmpfile"
+
+    assert_equals 0 "$exit_code" "CR with special characters should be valid YAML"
+}
+
+test_generate_cr_empty_globals_does_not_crash() {
+    log_test "Testing CR generation with empty globals does not crash"
+
+    local exit_code=0
+    _run_translator '
+        AGENT_ID=""
+        IMAGE_NAME=""
+        AGENT_NAME=""
+        RESOURCE_MEMORY=""
+        RESOURCE_CPUS=""
+        BRANCH=""
+        TASK_INLINE=""
+        NETWORK_MODE=""
+        SECURITY_PROFILE=""
+        AGENT_COMMAND=""
+        generate_agent_request_cr
+    ' > /dev/null 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should not crash with empty globals"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -275,6 +349,10 @@ main() {
     run_test test_generate_cr_valid_yaml
     run_test test_generate_cr_with_branch
     run_test test_generate_cr_with_task_inline
+    run_test test_translate_memory_empty_string
+    run_test test_translate_memory_uppercase
+    run_test test_generate_cr_special_chars_valid_yaml
+    run_test test_generate_cr_empty_globals_does_not_crash
 
     print_summary
 }
