@@ -23,8 +23,10 @@ spec:
     inline: "Implement the login feature with OAuth2 support"
   environment:
     vars:
-      - name: KAPSIS_BACKEND
-        value: k8s
+      # KAPSIS_BACKEND, KAPSIS_AGENT_ID, and KAPSIS_AGENT_TYPE are
+      # automatically injected by the operator — do not set them here.
+      - name: MY_CUSTOM_VAR
+        value: "example-value"
   security:
     profile: standard
     serviceAccountName: kapsis-agent
