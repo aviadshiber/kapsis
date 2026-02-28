@@ -43,17 +43,30 @@ translate_cpus_to_k8s() {
     echo "$1"
 }
 
+# Escape a string for YAML double-quoted context
+# Handles \ and " which are the only chars needing escape in YAML double quotes
+_yaml_escape() {
+    local s="$1"
+    s="${s//\\/\\\\}"
+    s="${s//\"/\\\"}"
+    echo "$s"
+}
+
 # Generate YAML env: block from a bash array variable name
 # Arguments: $1 = name of the array variable (not the array itself)
 # Output: YAML lines for env entries
 generate_env_yaml() {
-    local -n arr_ref="$1"
+    # Indirect array expansion (bash 3.2 compatible; replaces nameref)
+    # Safety: callers only pass internal variable names, never user input
+    local _gen_arr_name="$1"
+    local _gen_arr
+    eval "_gen_arr=(\"\${${_gen_arr_name}[@]}\")"
     local entry name value
-    for entry in "${arr_ref[@]}"; do
+    for entry in "${_gen_arr[@]}"; do
         name="${entry%%=*}"
         value="${entry#*=}"
         echo "      - name: $name"
-        echo "        value: \"$value\""
+        echo "        value: \"$(_yaml_escape "$value")\""
     done
 }
 
@@ -77,7 +90,7 @@ generate_agent_request_cr() {
         cmd_yaml="    command:
       - \"bash\"
       - \"-c\"
-      - \"${AGENT_COMMAND}\""
+      - \"$(_yaml_escape "$AGENT_COMMAND")\""
     fi
 
     cat <<YAML
@@ -117,7 +130,7 @@ YAML
     if [[ -n "${TASK_INLINE:-}" ]]; then
         cat <<YAML
   task:
-    inline: "${TASK_INLINE}"
+    inline: "$(_yaml_escape "$TASK_INLINE")"
 YAML
     fi
 
