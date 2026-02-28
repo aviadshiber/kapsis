@@ -133,6 +133,15 @@ test_k8s_dry_run_outputs_yaml() {
     assert_not_contains "$output" "podman run" "Should NOT contain podman run"
 }
 
+test_k8s_timeout_constant_exists() {
+    log_test "Testing K8s timeout constant is defined"
+
+    local timeout
+    timeout=$(bash -c "source '$KAPSIS_ROOT/scripts/lib/constants.sh' && echo \"\$KAPSIS_K8S_DEFAULT_TIMEOUT\"")
+
+    assert_equals "7200" "$timeout" "Default timeout should be 7200"
+}
+
 test_k8s_backend_defines_required_functions() {
     log_test "Testing k8s backend defines required functions"
 
@@ -173,6 +182,7 @@ main() {
 
     run_test test_backend_constants_exist
     run_test test_k8s_constants_exist
+    run_test test_k8s_timeout_constant_exists
     run_test test_default_backend_is_podman
     run_test test_explicit_backend_podman
     run_test test_invalid_backend_rejected

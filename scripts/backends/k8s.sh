@@ -20,6 +20,9 @@ if [[ -n "${_KAPSIS_BACKEND_K8S_LOADED:-}" ]]; then
 fi
 readonly _KAPSIS_BACKEND_K8S_LOADED=1
 
+# Source the K8s config translator (double-source guard prevents re-execution)
+source "$SCRIPT_DIR/lib/k8s-config.sh"
+
 # K8s backend state
 _BACKEND_EXIT_CODE=1
 _K8S_CR_NAME=""
@@ -65,9 +68,6 @@ backend_validate() {
 backend_build_spec() {
     log_info "K8s backend: generating AgentRequest CR"
 
-    # Source the config translator
-    source "$SCRIPT_DIR/lib/k8s-config.sh"
-
     _K8S_CR_NAME="kapsis-${AGENT_ID}"
     _K8S_CR_FILE=$(mktemp)
 
@@ -91,13 +91,25 @@ backend_run() {
     kubectl apply -f "$_K8S_CR_FILE" -n "$_K8S_NAMESPACE"
 
     local poll_interval="${KAPSIS_K8S_POLL_INTERVAL:-${KAPSIS_K8S_DEFAULT_POLL_INTERVAL}}"
+    local max_timeout="${KAPSIS_K8S_TIMEOUT:-${KAPSIS_K8S_DEFAULT_TIMEOUT}}"
+    local start_seconds=$SECONDS
 
     while true; do
+        # Timeout check (safety net for stuck CRs)
+        local elapsed=$(( SECONDS - start_seconds ))
+        if (( elapsed >= max_timeout )); then
+            log_error "K8s backend: timeout after ${elapsed}s waiting for CR $_K8S_CR_NAME"
+            _BACKEND_EXIT_CODE=124
+            return 0
+        fi
+
+        # Single kubectl call for all status fields (consolidated)
+        local cr_status
+        cr_status=$(kubectl get agentrequest "$_K8S_CR_NAME" -n "$_K8S_NAMESPACE" \
+            -o jsonpath='{.status.phase}{"\t"}{.status.progress}{"\t"}{.status.message}{"\t"}{.status.gist}' 2>/dev/null) || cr_status=""
+
         local phase progress message gist
-        phase=$(kubectl get agentrequest "$_K8S_CR_NAME" -n "$_K8S_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null || echo "")
-        progress=$(kubectl get agentrequest "$_K8S_CR_NAME" -n "$_K8S_NAMESPACE" -o jsonpath='{.status.progress}' 2>/dev/null || echo "0")
-        message=$(kubectl get agentrequest "$_K8S_CR_NAME" -n "$_K8S_NAMESPACE" -o jsonpath='{.status.message}' 2>/dev/null || echo "")
-        gist=$(kubectl get agentrequest "$_K8S_CR_NAME" -n "$_K8S_NAMESPACE" -o jsonpath='{.status.gist}' 2>/dev/null || echo "")
+        IFS=$'\t' read -r phase progress message gist <<< "$cr_status"
 
         # Bridge CR status to local kapsis status system
         case "$phase" in
@@ -113,12 +125,16 @@ backend_run() {
         sleep "$poll_interval"
     done
 
-    # Capture exit code from CR status
-    _BACKEND_EXIT_CODE=$(kubectl get agentrequest "$_K8S_CR_NAME" -n "$_K8S_NAMESPACE" -o jsonpath='{.status.exitCode}' 2>/dev/null || echo "1")
+    # Single kubectl call for final status fields (consolidated)
+    local final_status
+    final_status=$(kubectl get agentrequest "$_K8S_CR_NAME" -n "$_K8S_NAMESPACE" \
+        -o jsonpath='{.status.exitCode}{"\t"}{.status.podName}' 2>/dev/null) || final_status=""
+
+    local exit_code_str pod_name
+    IFS=$'\t' read -r exit_code_str pod_name <<< "$final_status"
+    _BACKEND_EXIT_CODE="${exit_code_str:-1}"
 
     # Capture pod logs for error reporting
-    local pod_name
-    pod_name=$(kubectl get agentrequest "$_K8S_CR_NAME" -n "$_K8S_NAMESPACE" -o jsonpath='{.status.podName}' 2>/dev/null || echo "")
     if [[ -n "$pod_name" ]]; then
         kubectl logs "$pod_name" -n "$_K8S_NAMESPACE" > "$container_output" 2>&1 || true
     fi

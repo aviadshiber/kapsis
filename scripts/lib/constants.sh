@@ -97,6 +97,9 @@ readonly KAPSIS_K8S_DEFAULT_POLL_INTERVAL=10
 # K8s default namespace for AgentRequest CRs
 readonly KAPSIS_K8S_DEFAULT_NAMESPACE="default"
 
+# K8s maximum timeout in seconds (safety net for stuck CRs)
+readonly KAPSIS_K8S_DEFAULT_TIMEOUT=7200
+
 #===============================================================================
 # GIT EXCLUDE PATTERNS (Issue #89)
 #
