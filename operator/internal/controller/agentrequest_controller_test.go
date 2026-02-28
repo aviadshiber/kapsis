@@ -132,6 +132,20 @@ var _ = Describe("AgentRequest Controller", func() {
 			By("verifying owner reference is set")
 			Expect(pod.OwnerReferences).To(HaveLen(1))
 			Expect(pod.OwnerReferences[0].Name).To(Equal(resourceName))
+
+			By("verifying Guaranteed QoS (requests = limits)")
+			resources := pod.Spec.Containers[0].Resources
+			Expect(resources.Requests).To(Equal(resources.Limits))
+
+			By("verifying capabilities are dropped (standard profile)")
+			sc := pod.Spec.Containers[0].SecurityContext
+			Expect(sc.Capabilities).NotTo(BeNil())
+			Expect(sc.Capabilities.Drop).To(ContainElement(corev1.Capability("ALL")))
+			Expect(sc.Capabilities.Add).To(ContainElements(
+				corev1.Capability("CHOWN"),
+				corev1.Capability("KILL"),
+				corev1.Capability("NET_BIND_SERVICE"),
+			))
 		})
 	})
 

@@ -79,6 +79,7 @@ func BuildPod(cr *kapsisv1alpha1.AgentRequest) (*corev1.Pod, error) {
 		RunAsNonRoot:             &runAsNonRoot,
 		ReadOnlyRootFilesystem:   &readOnlyRoot,
 		AllowPrivilegeEscalation: boolPtr(false),
+		Capabilities:             buildCapabilities(cr),
 	}
 
 	// ServiceAccountName from security spec.
@@ -123,7 +124,8 @@ func buildContainer(cr *kapsisv1alpha1.AgentRequest) (corev1.Container, error) {
 		return corev1.Container{}, err
 	}
 	container.Resources = corev1.ResourceRequirements{
-		Limits: limits,
+		Requests: limits, // Guaranteed QoS: requests = limits
+		Limits:   limits,
 	}
 
 	return container, nil
@@ -248,6 +250,26 @@ func shouldReadOnlyRoot(cr *kapsisv1alpha1.AgentRequest) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// buildCapabilities returns container capabilities based on security profile.
+// Minimal: no restrictions. Standard/strict/paranoid: drop ALL, add back minimal set.
+// Matches KAPSIS_CAPS_MINIMAL from scripts/lib/security.sh for Podman parity.
+func buildCapabilities(cr *kapsisv1alpha1.AgentRequest) *corev1.Capabilities {
+	profile := "standard"
+	if cr.Spec.Security != nil && cr.Spec.Security.Profile != "" {
+		profile = cr.Spec.Security.Profile
+	}
+	if profile == "minimal" {
+		return nil
+	}
+	return &corev1.Capabilities{
+		Drop: []corev1.Capability{"ALL"},
+		Add: []corev1.Capability{
+			"CHOWN", "FOWNER", "FSETID", "KILL",
+			"SETGID", "SETUID", "SYS_NICE", "NET_BIND_SERVICE",
+		},
 	}
 }
 
