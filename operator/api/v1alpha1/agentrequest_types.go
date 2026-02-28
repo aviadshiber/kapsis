@@ -307,13 +307,13 @@ type AgentRequest struct {
 	metav1.TypeMeta `json:",inline"`
 
 	// +optional
-	metav1.ObjectMeta `json:"metadata,omitzero"`
+	metav1.ObjectMeta `json:"metadata,omitempty"`
 
 	// +required
 	Spec AgentRequestSpec `json:"spec"`
 
 	// +optional
-	Status AgentRequestStatus `json:"status,omitzero"`
+	Status AgentRequestStatus `json:"status,omitempty"`
 }
 
 // +kubebuilder:object:root=true
@@ -321,7 +321,7 @@ type AgentRequest struct {
 // AgentRequestList contains a list of AgentRequest.
 type AgentRequestList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitzero"`
+	metav1.ListMeta `json:"metadata,omitempty"`
 	Items           []AgentRequest `json:"items"`
 }
 

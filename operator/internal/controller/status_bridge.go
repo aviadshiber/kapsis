@@ -20,7 +20,6 @@ import (
 	"strconv"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	kapsisv1alpha1 "github.com/aviadshiber/kapsis/operator/api/v1alpha1"
 )
@@ -121,8 +120,8 @@ func applyAnnotations(pod *corev1.Pod, status *kapsisv1alpha1.AgentRequestStatus
 
 	if gist, ok := pod.Annotations[AnnotationGist]; ok {
 		status.Gist = gist
-		now := metav1.Now()
-		status.GistUpdatedAt = &now
+		// GistUpdatedAt is managed by the controller to avoid unnecessary
+		// timestamp updates when gist content hasn't changed.
 	}
 
 	if msg, ok := pod.Annotations[AnnotationMessage]; ok {

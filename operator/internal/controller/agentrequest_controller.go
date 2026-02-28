@@ -155,8 +155,12 @@ func (r *AgentRequestReconciler) reconcileWithPod(ctx context.Context, ar *kapsi
 	ar.Status.PodName = bridged.PodName
 	ar.Status.Progress = bridged.Progress
 	ar.Status.Message = bridged.Message
+	// Only update GistUpdatedAt when gist content actually changes.
+	if bridged.Gist != "" && bridged.Gist != ar.Status.Gist {
+		now := metav1.Now()
+		ar.Status.GistUpdatedAt = &now
+	}
 	ar.Status.Gist = bridged.Gist
-	ar.Status.GistUpdatedAt = bridged.GistUpdatedAt
 	ar.Status.ExitCode = bridged.ExitCode
 	ar.Status.CommitSha = bridged.CommitSha
 	ar.Status.PushStatus = bridged.PushStatus
