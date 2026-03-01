@@ -60,18 +60,34 @@ spec:
     memory: "8Gi"
     cpu: "4"
   git:
-    branch: feat/login
-    baseBranch: main
-    push: true
+    repoUrl: https://github.com/org/repo.git       # → GIT_REPO_URL env var
+    branch: feat/login                              # → KAPSIS_BRANCH env var
+    baseBranch: main                                # → KAPSIS_BASE_BRANCH env var
+    push: true                                      # → KAPSIS_DO_PUSH env var
+    credentialSecretRef:                             # → GIT_CREDENTIAL from Secret
+      name: git-credentials
+      key: token
   task:
-    inline: "Implement the login feature"
+    inline: "Implement the login feature"           # → KAPSIS_TASK env var
+    # Or mount from ConfigMap:
+    # specConfigMapRef:                             # Mounted at /task-spec.md
+    #   name: my-task-spec
+    #   key: spec.md                               # Default key if omitted
+  environment:
+    vars:
+      # KAPSIS_BACKEND, KAPSIS_AGENT_ID, and KAPSIS_AGENT_TYPE are
+      # auto-injected by the operator — do not set them here.
+      - name: MY_CUSTOM_VAR
+        value: "example-value"
+    secretRefs:
+      - name: agent-api-keys                       # All keys injected as env vars
   network:
-    mode: filtered
+    mode: filtered                                  # Default; NetworkPolicy planned
   security:
     profile: standard
     serviceAccountName: kapsis-agent
   ttl: 3600
-  podAnnotations:                             # Optional: passed to Pod
+  podAnnotations:                                   # Optional: passed to Pod
     vault.hashicorp.com/agent-inject: "true"
     vault.hashicorp.com/role: "kapsis-agent"
 ```
@@ -97,6 +113,46 @@ kubectl get agentrequest kapsis-abc123 -o yaml
 | `status.commitSha` | Git commit SHA (if push succeeded) |
 | `status.pushStatus` | success, failed, skipped |
 | `status.prUrl` | PR URL (if created) |
+
+### Feature Maturity
+
+| CRD Field | Status | Notes |
+|-----------|--------|-------|
+| `spec.image` | Implemented | Container image |
+| `spec.agent.type` | Implemented | Agent type label + env var |
+| `spec.agent.command` | Implemented | Pod command |
+| `spec.agent.workdir` | Implemented | Container working directory |
+| `spec.resources.memory` | Implemented | Guaranteed QoS (requests = limits) |
+| `spec.resources.cpu` | Implemented | Guaranteed QoS (requests = limits) |
+| `spec.git.branch` | Implemented | → `KAPSIS_BRANCH` env var |
+| `spec.git.baseBranch` | Implemented | → `KAPSIS_BASE_BRANCH` env var |
+| `spec.git.push` | Implemented | → `KAPSIS_DO_PUSH` env var |
+| `spec.git.repoUrl` | Implemented | → `GIT_REPO_URL` env var |
+| `spec.git.credentialSecretRef` | Implemented | → `GIT_CREDENTIAL` from Secret |
+| `spec.task.inline` | Implemented | → `KAPSIS_TASK` env var |
+| `spec.task.specConfigMapRef` | Implemented | Mounted at `/task-spec.md` |
+| `spec.environment.vars` | Implemented | User env vars |
+| `spec.environment.secretRefs` | Implemented | Secret envFrom |
+| `spec.environment.configMounts` | Implemented | ConfigMap volume mounts |
+| `spec.security.profile` | Implemented | Capabilities + readOnlyRoot |
+| `spec.security.serviceAccountName` | Implemented | Pod service account |
+| `spec.ttl` | Implemented | `activeDeadlineSeconds` |
+| `spec.podAnnotations` | Implemented | Passed to Pod metadata |
+| `spec.network.mode` | **Planned** | See [Network Isolation](#network-isolation-planned) |
+
+### Network Isolation (Planned)
+
+The `spec.network.mode` field is defined in the CRD but NetworkPolicy enforcement is not yet implemented in the operator. The default mode is `filtered` (matching the Podman backend behavior). No user configuration is needed for most use cases.
+
+When implemented, the operator will automatically create and manage a NetworkPolicy per agent pod:
+
+| Mode | Behavior |
+|------|----------|
+| `none` | Deny-all egress NetworkPolicy |
+| `filtered` (default) | Egress limited to git hosts, npm, PyPI, Maven Central |
+| `open` | No NetworkPolicy applied |
+
+In the meantime, cluster administrators can apply NetworkPolicies manually at the namespace level. The operator will need additional RBAC (`networking.k8s.io` NetworkPolicy resources) when this feature is implemented.
 
 ### Short Names
 
