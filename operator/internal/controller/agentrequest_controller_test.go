@@ -122,6 +122,10 @@ var _ = Describe("AgentRequest Controller", func() {
 			Expect(pod.Annotations).To(HaveKeyWithValue("vault.hashicorp.com/agent-inject", "true"))
 			Expect(pod.Annotations).To(HaveKeyWithValue("example.com/custom", "value"))
 
+			By("verifying service account token is not mounted")
+			Expect(pod.Spec.AutomountServiceAccountToken).NotTo(BeNil())
+			Expect(*pod.Spec.AutomountServiceAccountToken).To(BeFalse())
+
 			By("verifying Kapsis environment variables")
 			envNames := make(map[string]string)
 			for _, env := range pod.Spec.Containers[0].Env {
