@@ -27,6 +27,9 @@ import (
 )
 
 const (
+	// AgentContainerName is the name of the primary agent container in the pod.
+	AgentContainerName = "agent"
+
 	// LabelAgentType identifies the agent type on managed pods.
 	LabelAgentType = "kapsis.io/agent-type"
 	// LabelAgentID identifies the agent instance on managed pods.
@@ -67,8 +70,9 @@ func BuildPod(cr *kapsisv1alpha1.AgentRequest) (*corev1.Pod, error) {
 			},
 		},
 		Spec: corev1.PodSpec{
-			Containers:    []corev1.Container{container},
-			RestartPolicy: corev1.RestartPolicyNever,
+			Containers:                   []corev1.Container{container},
+			RestartPolicy:                corev1.RestartPolicyNever,
+			AutomountServiceAccountToken: boolPtr(false),
 		},
 	}
 
@@ -108,6 +112,35 @@ func BuildPod(cr *kapsisv1alpha1.AgentRequest) (*corev1.Pod, error) {
 		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, volumeMounts...)
 	}
 
+	// Mount task spec ConfigMap at /task-spec.md if referenced.
+	if cr.Spec.Task != nil && cr.Spec.Task.SpecConfigMapRef != nil {
+		cmRef := cr.Spec.Task.SpecConfigMapRef
+		key := cmRef.Key
+		if key == "" {
+			key = "spec.md"
+		}
+		volName := "task-spec"
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: volName,
+			VolumeSource: corev1.VolumeSource{
+				ConfigMap: &corev1.ConfigMapVolumeSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: cmRef.Name,
+					},
+					Items: []corev1.KeyToPath{
+						{Key: key, Path: "task-spec.md"},
+					},
+				},
+			},
+		})
+		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
+			Name:      volName,
+			MountPath: "/task-spec.md",
+			SubPath:   "task-spec.md",
+			ReadOnly:  true,
+		})
+	}
+
 	// envFrom for secret references.
 	pod.Spec.Containers[0].EnvFrom = buildSecretEnvFrom(cr)
 
@@ -117,7 +150,7 @@ func BuildPod(cr *kapsisv1alpha1.AgentRequest) (*corev1.Pod, error) {
 // buildContainer constructs the primary container for the agent pod.
 func buildContainer(cr *kapsisv1alpha1.AgentRequest) (corev1.Container, error) {
 	container := corev1.Container{
-		Name:    "agent",
+		Name:    AgentContainerName,
 		Image:   cr.Spec.Image,
 		Command: cr.Spec.Agent.Command,
 		Env:     buildEnvVars(cr),
@@ -147,6 +180,54 @@ func buildEnvVars(cr *kapsisv1alpha1.AgentRequest) []corev1.EnvVar {
 		{Name: "KAPSIS_BACKEND", Value: "k8s"},
 		{Name: "KAPSIS_AGENT_ID", Value: cr.Name},
 		{Name: "KAPSIS_AGENT_TYPE", Value: cr.Spec.Agent.Type},
+	}
+
+	// Task inline text (Podman parity: KAPSIS_TASK env var).
+	if cr.Spec.Task != nil && cr.Spec.Task.Inline != "" {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "KAPSIS_TASK",
+			Value: cr.Spec.Task.Inline,
+		})
+	}
+
+	// Git env vars (Podman parity).
+	if cr.Spec.Git != nil {
+		if cr.Spec.Git.Branch != "" {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "KAPSIS_BRANCH",
+				Value: cr.Spec.Git.Branch,
+			})
+		}
+		if cr.Spec.Git.BaseBranch != "" {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "KAPSIS_BASE_BRANCH",
+				Value: cr.Spec.Git.BaseBranch,
+			})
+		}
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "KAPSIS_DO_PUSH",
+			Value: fmt.Sprintf("%t", cr.Spec.Git.Push),
+		})
+		if cr.Spec.Git.RepoUrl != "" {
+			envVars = append(envVars, corev1.EnvVar{
+				Name:  "GIT_REPO_URL",
+				Value: cr.Spec.Git.RepoUrl,
+			})
+		}
+		// Git credentials from Secret reference.
+		if cr.Spec.Git.CredentialSecretRef != nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name: "GIT_CREDENTIAL",
+				ValueFrom: &corev1.EnvVarSource{
+					SecretKeyRef: &corev1.SecretKeySelector{
+						LocalObjectReference: corev1.LocalObjectReference{
+							Name: cr.Spec.Git.CredentialSecretRef.Name,
+						},
+						Key: cr.Spec.Git.CredentialSecretRef.Key,
+					},
+				},
+			})
+		}
 	}
 
 	// User-specified variables from spec.environment.vars.
