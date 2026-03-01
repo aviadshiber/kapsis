@@ -170,6 +170,14 @@ spec:
                     - open
                     type: string
                 type: object
+              podAnnotations:
+                additionalProperties:
+                  type: string
+                description: |-
+                  PodAnnotations are arbitrary annotations to add to the created Pod.
+                  Use this to integrate with annotation-based tools such as Vault/OpenBao
+                  Agent Injector, Istio, Linkerd, or Prometheus scraping.
+                type: object
               resources:
                 description: Resources defines resource limits for the pod.
                 properties:

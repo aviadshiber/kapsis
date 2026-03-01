@@ -58,6 +58,12 @@ type AgentRequestSpec struct {
 	// +optional
 	// +kubebuilder:default=3600
 	TTL *int32 `json:"ttl,omitempty"`
+
+	// PodAnnotations are arbitrary annotations to add to the created Pod.
+	// Use this to integrate with annotation-based tools such as Vault/OpenBao
+	// Agent Injector, Istio, Linkerd, or Prometheus scraping.
+	// +optional
+	PodAnnotations map[string]string `json:"podAnnotations,omitempty"`
 }
 
 // AgentSpec defines the agent type and command.

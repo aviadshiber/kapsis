@@ -72,6 +72,14 @@ func BuildPod(cr *kapsisv1alpha1.AgentRequest) (*corev1.Pod, error) {
 		},
 	}
 
+	// Pass through user-specified pod annotations.
+	if len(cr.Spec.PodAnnotations) > 0 {
+		pod.ObjectMeta.Annotations = make(map[string]string, len(cr.Spec.PodAnnotations))
+		for k, v := range cr.Spec.PodAnnotations {
+			pod.ObjectMeta.Annotations[k] = v
+		}
+	}
+
 	// SecurityContext: runAsNonRoot and readOnlyRootFilesystem based on profile.
 	runAsNonRoot := true
 	readOnlyRoot := shouldReadOnlyRoot(cr)

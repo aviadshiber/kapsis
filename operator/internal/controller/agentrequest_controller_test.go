@@ -60,6 +60,10 @@ var _ = Describe("AgentRequest Controller", func() {
 						Command: []string{"/bin/agent", "--task", "test"},
 						Workdir: "/workspace",
 					},
+					PodAnnotations: map[string]string{
+						"vault.hashicorp.com/agent-inject": "true",
+						"example.com/custom":               "value",
+					},
 				},
 			}
 			err := k8sClient.Get(ctx, typeNamespacedName, &kapsisv1alpha1.AgentRequest{})
@@ -113,6 +117,10 @@ var _ = Describe("AgentRequest Controller", func() {
 			Expect(pod.Labels[LabelAgentType]).To(Equal("claude-cli"))
 			Expect(pod.Labels[LabelAgentID]).To(Equal(resourceName))
 			Expect(pod.Labels[LabelManagedBy]).To(Equal(ManagedByValue))
+
+			By("verifying pod annotations are passed through")
+			Expect(pod.Annotations).To(HaveKeyWithValue("vault.hashicorp.com/agent-inject", "true"))
+			Expect(pod.Annotations).To(HaveKeyWithValue("example.com/custom", "value"))
 
 			By("verifying Kapsis environment variables")
 			envNames := make(map[string]string)

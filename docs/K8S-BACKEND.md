@@ -71,6 +71,9 @@ spec:
     profile: standard
     serviceAccountName: kapsis-agent
   ttl: 3600
+  podAnnotations:                             # Optional: passed to Pod
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/role: "kapsis-agent"
 ```
 
 ### Status Fields
@@ -148,6 +151,42 @@ The K8s backend maintains the same security model as Podman:
 | DNS filtering | dnsmasq in container | NetworkPolicy |
 | Status reporting | Mounted `/kapsis-status` dir | Pod annotations → CR status |
 | Post-container git | Host-side worktree operations | In-pod via entrypoint.sh |
+
+## Secrets Integration
+
+The Podman backend automatically pulls secrets from your OS keychain. The K8s backend uses Kubernetes-native secret mechanisms instead.
+
+### Option 1: Kubernetes Secrets (Built-in)
+
+Create a Secret and reference it in the CR:
+
+```bash
+kubectl create secret generic agent-creds \
+    --from-literal=ANTHROPIC_API_KEY=sk-ant-...
+```
+
+```yaml
+spec:
+  environment:
+    secretRefs:
+      - name: agent-creds
+```
+
+### Option 2: Vault / OpenBao (via podAnnotations)
+
+Use `podAnnotations` to enable the Vault Agent Injector sidecar:
+
+```yaml
+spec:
+  podAnnotations:
+    vault.hashicorp.com/agent-inject: "true"
+    vault.hashicorp.com/role: "kapsis-agent"
+    vault.hashicorp.com/agent-inject-secret-api-key: "secret/kapsis/anthropic"
+```
+
+### Option 3: External Secrets Operator
+
+Use ESO to sync secrets from any provider (Vault, AWS SM, GCP SM, Azure KV) into K8s Secrets, then reference them via `secretRefs` as in Option 1.
 
 ## Troubleshooting
 

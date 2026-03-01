@@ -31,3 +31,7 @@ spec:
     profile: standard
     serviceAccountName: kapsis-agent
   ttl: 3600
+  podAnnotations:
+    # Optional: pass annotations to the created Pod.
+    # Use for Vault/OpenBao secret injection, Istio sidecar, Prometheus scraping, etc.
+    example.com/team: "platform"
