@@ -100,9 +100,12 @@ func toAgentPhase(s string) kapsisv1alpha1.AgentRequestPhase {
 	}
 }
 
-// extractExitCode reads the termination exit code from the first container status.
+// extractExitCode reads the termination exit code from the agent container.
 func extractExitCode(pod *corev1.Pod) *int32 {
 	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name != AgentContainerName {
+			continue
+		}
 		if cs.State.Terminated != nil {
 			code := cs.State.Terminated.ExitCode
 			return &code
@@ -147,9 +150,12 @@ func applyAnnotations(pod *corev1.Pod, status *kapsisv1alpha1.AgentRequestStatus
 	}
 }
 
-// applyTimestamps sets StartedAt and CompletedAt based on container status.
+// applyTimestamps sets StartedAt and CompletedAt from the agent container status.
 func applyTimestamps(pod *corev1.Pod, status *kapsisv1alpha1.AgentRequestStatus) {
 	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name != AgentContainerName {
+			continue
+		}
 		if cs.State.Running != nil {
 			status.StartedAt = &cs.State.Running.StartedAt
 		}

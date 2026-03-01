@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -124,13 +125,15 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, ar *kapsi
 	log.Info("Created agent pod", "pod", pod.Name)
 
 	// Update CR status to Initializing.
-	ar.Status.Phase = kapsisv1alpha1.PhaseInitializing
-	ar.Status.PodName = pod.Name
-	ar.Status.Message = "Pod created, waiting for container start"
-	now := metav1.Now()
-	ar.Status.StartedAt = &now
-
-	if err := r.Status().Update(ctx, ar); err != nil {
+	nn := types.NamespacedName{Name: ar.Name, Namespace: ar.Namespace}
+	podNameStr := pod.Name
+	if err := r.updateStatusWithRetry(ctx, nn, func(fresh *kapsisv1alpha1.AgentRequest) {
+		fresh.Status.Phase = kapsisv1alpha1.PhaseInitializing
+		fresh.Status.PodName = podNameStr
+		fresh.Status.Message = "Pod created, waiting for container start"
+		now := metav1.Now()
+		fresh.Status.StartedAt = &now
+	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating status to Initializing: %w", err)
 	}
 
@@ -145,54 +148,52 @@ func (r *AgentRequestReconciler) reconcileWithPod(ctx context.Context, ar *kapsi
 	// Bridge status from the pod.
 	bridged := BridgeStatus(pod)
 
-	// Preserve fields that the bridge does not set.
-	if bridged.StartedAt == nil && ar.Status.StartedAt != nil {
-		bridged.StartedAt = ar.Status.StartedAt
-	}
-
-	// Apply bridged status to the CR.
-	ar.Status.Phase = bridged.Phase
-	ar.Status.PodName = bridged.PodName
-	ar.Status.Progress = bridged.Progress
-	ar.Status.Message = bridged.Message
-	// Only update GistUpdatedAt when gist content actually changes.
-	if bridged.Gist != "" && bridged.Gist != ar.Status.Gist {
-		now := metav1.Now()
-		ar.Status.GistUpdatedAt = &now
-	}
-	ar.Status.Gist = bridged.Gist
-	ar.Status.ExitCode = bridged.ExitCode
-	ar.Status.CommitSha = bridged.CommitSha
-	ar.Status.PushStatus = bridged.PushStatus
-	ar.Status.PrUrl = bridged.PrUrl
-	if bridged.StartedAt != nil {
-		ar.Status.StartedAt = bridged.StartedAt
-	}
-	if bridged.CompletedAt != nil {
-		ar.Status.CompletedAt = bridged.CompletedAt
-	}
-
-	// Set error message for failed pods.
-	if ar.Status.Phase == kapsisv1alpha1.PhaseFailed {
-		ar.Status.Error = terminationMessage(pod)
-		if ar.Status.Message == "" {
-			ar.Status.Message = "Agent failed"
+	// Update CR status with retry on conflict.
+	nn := types.NamespacedName{Name: ar.Name, Namespace: ar.Namespace}
+	prevStartedAt := ar.Status.StartedAt
+	if err := r.updateStatusWithRetry(ctx, nn, func(fresh *kapsisv1alpha1.AgentRequest) {
+		fresh.Status.Phase = bridged.Phase
+		fresh.Status.PodName = bridged.PodName
+		fresh.Status.Progress = bridged.Progress
+		fresh.Status.Message = bridged.Message
+		// Only update GistUpdatedAt when gist content actually changes.
+		if bridged.Gist != "" && bridged.Gist != fresh.Status.Gist {
+			now := metav1.Now()
+			fresh.Status.GistUpdatedAt = &now
 		}
-	}
-
-	if ar.Status.Phase == kapsisv1alpha1.PhaseComplete {
-		if ar.Status.Message == "" {
-			ar.Status.Message = "Agent completed successfully"
+		fresh.Status.Gist = bridged.Gist
+		fresh.Status.ExitCode = bridged.ExitCode
+		fresh.Status.CommitSha = bridged.CommitSha
+		fresh.Status.PushStatus = bridged.PushStatus
+		fresh.Status.PrUrl = bridged.PrUrl
+		if bridged.StartedAt != nil {
+			fresh.Status.StartedAt = bridged.StartedAt
+		} else if fresh.Status.StartedAt == nil {
+			fresh.Status.StartedAt = prevStartedAt
 		}
-	}
+		if bridged.CompletedAt != nil {
+			fresh.Status.CompletedAt = bridged.CompletedAt
+		}
 
-	if err := r.Status().Update(ctx, ar); err != nil {
+		// Set error message for failed pods.
+		if fresh.Status.Phase == kapsisv1alpha1.PhaseFailed {
+			fresh.Status.Error = terminationMessage(pod)
+			if fresh.Status.Message == "" {
+				fresh.Status.Message = "Agent failed"
+			}
+		}
+		if fresh.Status.Phase == kapsisv1alpha1.PhaseComplete {
+			if fresh.Status.Message == "" {
+				fresh.Status.Message = "Agent completed successfully"
+			}
+		}
+	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating CR status: %w", err)
 	}
 
 	// Terminal: no requeue.
-	if ar.Status.Phase == kapsisv1alpha1.PhaseComplete || ar.Status.Phase == kapsisv1alpha1.PhaseFailed {
-		log.Info("Agent finished", "phase", ar.Status.Phase, "exitCode", ar.Status.ExitCode)
+	if bridged.Phase == kapsisv1alpha1.PhaseComplete || bridged.Phase == kapsisv1alpha1.PhaseFailed {
+		log.Info("Agent finished", "phase", bridged.Phase, "exitCode", bridged.ExitCode)
 		return ctrl.Result{}, nil
 	}
 
@@ -200,10 +201,29 @@ func (r *AgentRequestReconciler) reconcileWithPod(ctx context.Context, ar *kapsi
 	return ctrl.Result{RequeueAfter: requeueInterval}, nil
 }
 
-// terminationMessage extracts the termination message from the first terminated
-// container, falling back to a generic message.
+// updateStatusWithRetry wraps a status update with conflict retry.
+// On conflict, it re-fetches the CR and reapplies the mutator function.
+func (r *AgentRequestReconciler) updateStatusWithRetry(
+	ctx context.Context, nn types.NamespacedName,
+	mutate func(*kapsisv1alpha1.AgentRequest),
+) error {
+	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		var ar kapsisv1alpha1.AgentRequest
+		if err := r.Get(ctx, nn, &ar); err != nil {
+			return err
+		}
+		mutate(&ar)
+		return r.Status().Update(ctx, &ar)
+	})
+}
+
+// terminationMessage extracts the termination message from the agent container,
+// falling back to a generic message.
 func terminationMessage(pod *corev1.Pod) string {
 	for _, cs := range pod.Status.ContainerStatuses {
+		if cs.Name != AgentContainerName {
+			continue
+		}
 		if cs.State.Terminated != nil && cs.State.Terminated.Message != "" {
 			return cs.State.Terminated.Message
 		}
