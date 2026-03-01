@@ -138,21 +138,28 @@ kubectl get agentrequest kapsis-abc123 -o yaml
 | `spec.security.serviceAccountName` | Implemented | Pod service account |
 | `spec.ttl` | Implemented | `activeDeadlineSeconds` |
 | `spec.podAnnotations` | Implemented | Passed to Pod metadata |
-| `spec.network.mode` | **Planned** | See [Network Isolation](#network-isolation-planned) |
+| `spec.network.mode` | Implemented | NetworkPolicy per pod (see [Network Isolation](#network-isolation)) |
 
-### Network Isolation (Planned)
+### Network Isolation
 
-The `spec.network.mode` field is defined in the CRD but NetworkPolicy enforcement is not yet implemented in the operator. The default mode is `filtered` (matching the Podman backend behavior). No user configuration is needed for most use cases.
+The operator enforces network isolation using a two-layer defense model:
 
-When implemented, the operator will automatically create and manage a NetworkPolicy per agent pod:
+| Layer | Mechanism | Scope |
+|-------|-----------|-------|
+| **NetworkPolicy** (K8s-native) | Port-level egress filtering | Blocks traffic on unauthorized ports |
+| **dnsmasq** (in-container) | DNS-name-level filtering | Blocks traffic to unauthorized domains |
 
-| Mode | Behavior |
-|------|----------|
-| `none` | Deny-all egress NetworkPolicy |
-| `filtered` (default) | Egress limited to git hosts, npm, PyPI, Maven Central |
-| `open` | No NetworkPolicy applied |
+The operator automatically creates and manages a `NetworkPolicy` per agent pod based on `spec.network.mode`:
 
-In the meantime, cluster administrators can apply NetworkPolicies manually at the namespace level. The operator will need additional RBAC (`networking.k8s.io` NetworkPolicy resources) when this feature is implemented.
+| Mode | NetworkPolicy | Allowed Egress |
+|------|--------------|----------------|
+| `none` | Deny-all egress | Nothing (complete isolation) |
+| `filtered` (default) | Port-restricted egress | DNS (53 UDP/TCP) + SSH (22) + HTTP (80) + HTTPS (443) + Git (9418) |
+| `open` | No policy created | Unrestricted |
+
+In `filtered` mode, the NetworkPolicy restricts egress to standard service ports. Fine-grained domain filtering (e.g., only `github.com`, `registry.npmjs.org`) is handled by dnsmasq inside the container, matching the Podman backend behavior.
+
+For additional enforcement, cluster administrators can layer CNI-specific DNS policies (Cilium `CiliumNetworkPolicy` with FQDN rules, or Calico `GlobalNetworkPolicy` with domain-based rules) on top of the standard NetworkPolicy.
 
 ### Short Names
 
@@ -195,7 +202,7 @@ The K8s backend maintains the same security model as Podman:
 | Read-only root FS | Overlay mount | `readOnlyRootFilesystem` (strict/paranoid) |
 | No privilege escalation | `--security-opt=no-new-privileges` | `allowPrivilegeEscalation: false` |
 | Resource limits | `--memory`, `--cpus` | Pod resource limits |
-| Network isolation | DNS filtering / `--network=none` | NetworkPolicy (per mode) |
+| Network isolation | DNS filtering / `--network=none` | NetworkPolicy + dnsmasq (per mode) |
 | TTL enforcement | Container timeout | `activeDeadlineSeconds` |
 
 ## Differences from Podman Backend
