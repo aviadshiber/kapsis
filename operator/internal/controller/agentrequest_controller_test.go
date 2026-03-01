@@ -22,6 +22,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -411,6 +412,253 @@ var _ = Describe("AgentRequest Controller", func() {
 			})
 			Expect(err).NotTo(HaveOccurred())
 			Expect(result).To(Equal(reconcile.Result{}))
+		})
+	})
+
+	Context("When reconciling with network mode 'filtered'", func() {
+		const resourceName = "test-netpol-filtered"
+
+		ctx := context.Background()
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: namespace,
+		}
+
+		BeforeEach(func() {
+			By("creating the AgentRequest CR with filtered network mode")
+			ar := &kapsisv1alpha1.AgentRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+				Spec: kapsisv1alpha1.AgentRequestSpec{
+					Image: "ghcr.io/kapsis/agent:latest",
+					Agent: kapsisv1alpha1.AgentSpec{
+						Type:    "claude-cli",
+						Command: []string{"/bin/agent"},
+						Workdir: "/workspace",
+					},
+					Network: &kapsisv1alpha1.NetworkSpec{
+						Mode: "filtered",
+					},
+				},
+			}
+			err := k8sClient.Get(ctx, typeNamespacedName, &kapsisv1alpha1.AgentRequest{})
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, ar)).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			resource := &kapsisv1alpha1.AgentRequest{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+
+			pod := &corev1.Pod{}
+			podNN := types.NamespacedName{Name: resourceName + "-pod", Namespace: namespace}
+			err = k8sClient.Get(ctx, podNN, pod)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, pod)).To(Succeed())
+			}
+
+			np := &networkingv1.NetworkPolicy{}
+			npNN := types.NamespacedName{Name: resourceName + NetworkPolicySuffix, Namespace: namespace}
+			err = k8sClient.Get(ctx, npNN, np)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, np)).To(Succeed())
+			}
+		})
+
+		It("should create a NetworkPolicy alongside the Pod", func() {
+			reconciler := &AgentRequestReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the Pod was created")
+			pod := &corev1.Pod{}
+			podNN := types.NamespacedName{Name: resourceName + "-pod", Namespace: namespace}
+			Expect(k8sClient.Get(ctx, podNN, pod)).To(Succeed())
+
+			By("verifying the NetworkPolicy was created")
+			np := &networkingv1.NetworkPolicy{}
+			npNN := types.NamespacedName{Name: resourceName + NetworkPolicySuffix, Namespace: namespace}
+			Expect(k8sClient.Get(ctx, npNN, np)).To(Succeed())
+
+			By("verifying NetworkPolicy has Egress policy type")
+			Expect(np.Spec.PolicyTypes).To(ContainElement(networkingv1.PolicyTypeEgress))
+
+			By("verifying 2 egress rules (DNS + service ports)")
+			Expect(np.Spec.Egress).To(HaveLen(2))
+
+			By("verifying owner reference points to the CR")
+			Expect(np.OwnerReferences).To(HaveLen(1))
+			Expect(np.OwnerReferences[0].Name).To(Equal(resourceName))
+		})
+	})
+
+	Context("When reconciling with network mode 'none'", func() {
+		const resourceName = "test-netpol-none"
+
+		ctx := context.Background()
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: namespace,
+		}
+
+		BeforeEach(func() {
+			By("creating the AgentRequest CR with none network mode")
+			ar := &kapsisv1alpha1.AgentRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+				Spec: kapsisv1alpha1.AgentRequestSpec{
+					Image: "ghcr.io/kapsis/agent:latest",
+					Agent: kapsisv1alpha1.AgentSpec{
+						Type:    "claude-cli",
+						Command: []string{"/bin/agent"},
+						Workdir: "/workspace",
+					},
+					Network: &kapsisv1alpha1.NetworkSpec{
+						Mode: "none",
+					},
+				},
+			}
+			err := k8sClient.Get(ctx, typeNamespacedName, &kapsisv1alpha1.AgentRequest{})
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, ar)).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			resource := &kapsisv1alpha1.AgentRequest{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+
+			pod := &corev1.Pod{}
+			podNN := types.NamespacedName{Name: resourceName + "-pod", Namespace: namespace}
+			err = k8sClient.Get(ctx, podNN, pod)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, pod)).To(Succeed())
+			}
+
+			np := &networkingv1.NetworkPolicy{}
+			npNN := types.NamespacedName{Name: resourceName + NetworkPolicySuffix, Namespace: namespace}
+			err = k8sClient.Get(ctx, npNN, np)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, np)).To(Succeed())
+			}
+		})
+
+		It("should create a deny-all NetworkPolicy", func() {
+			reconciler := &AgentRequestReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the NetworkPolicy was created")
+			np := &networkingv1.NetworkPolicy{}
+			npNN := types.NamespacedName{Name: resourceName + NetworkPolicySuffix, Namespace: namespace}
+			Expect(k8sClient.Get(ctx, npNN, np)).To(Succeed())
+
+			By("verifying deny-all egress (empty Egress list)")
+			Expect(np.Spec.PolicyTypes).To(ContainElement(networkingv1.PolicyTypeEgress))
+			Expect(np.Spec.Egress).To(BeEmpty())
+
+			By("verifying owner reference")
+			Expect(np.OwnerReferences).To(HaveLen(1))
+			Expect(np.OwnerReferences[0].Name).To(Equal(resourceName))
+		})
+	})
+
+	Context("When reconciling with network mode 'open'", func() {
+		const resourceName = "test-netpol-open"
+
+		ctx := context.Background()
+
+		typeNamespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: namespace,
+		}
+
+		BeforeEach(func() {
+			By("creating the AgentRequest CR with open network mode")
+			ar := &kapsisv1alpha1.AgentRequest{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName,
+					Namespace: namespace,
+				},
+				Spec: kapsisv1alpha1.AgentRequestSpec{
+					Image: "ghcr.io/kapsis/agent:latest",
+					Agent: kapsisv1alpha1.AgentSpec{
+						Type:    "claude-cli",
+						Command: []string{"/bin/agent"},
+						Workdir: "/workspace",
+					},
+					Network: &kapsisv1alpha1.NetworkSpec{
+						Mode: "open",
+					},
+				},
+			}
+			err := k8sClient.Get(ctx, typeNamespacedName, &kapsisv1alpha1.AgentRequest{})
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, ar)).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			resource := &kapsisv1alpha1.AgentRequest{}
+			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			}
+
+			pod := &corev1.Pod{}
+			podNN := types.NamespacedName{Name: resourceName + "-pod", Namespace: namespace}
+			err = k8sClient.Get(ctx, podNN, pod)
+			if err == nil {
+				Expect(k8sClient.Delete(ctx, pod)).To(Succeed())
+			}
+		})
+
+		It("should not create a NetworkPolicy", func() {
+			reconciler := &AgentRequestReconciler{
+				Client: k8sClient,
+				Scheme: k8sClient.Scheme(),
+			}
+
+			_, err := reconciler.Reconcile(ctx, reconcile.Request{
+				NamespacedName: typeNamespacedName,
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying the Pod was created")
+			pod := &corev1.Pod{}
+			podNN := types.NamespacedName{Name: resourceName + "-pod", Namespace: namespace}
+			Expect(k8sClient.Get(ctx, podNN, pod)).To(Succeed())
+
+			By("verifying no NetworkPolicy exists")
+			np := &networkingv1.NetworkPolicy{}
+			npNN := types.NamespacedName{Name: resourceName + NetworkPolicySuffix, Namespace: namespace}
+			err = k8sClient.Get(ctx, npNN, np)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "NetworkPolicy should not exist for open mode")
 		})
 	})
 })
