@@ -43,12 +43,15 @@ translate_cpus_to_k8s() {
     echo "$1"
 }
 
-# Escape a string for YAML double-quoted context
-# Handles \ and " which are the only chars needing escape in YAML double quotes
+# Escape a string for YAML double-quoted context.
+# Handles \, ", newline, tab, and carriage return.
 _yaml_escape() {
     local s="$1"
-    s="${s//\\/\\\\}"
-    s="${s//\"/\\\"}"
+    s="${s//\\/\\\\}"       # \ -> \\  (must be first)
+    s="${s//\"/\\\"}"       # " -> \"
+    s="${s//$'\n'/\\n}"     # newline -> \n
+    s="${s//$'\t'/\\t}"     # tab -> \t
+    s="${s//$'\r'/\\r}"     # CR -> \r
     echo "$s"
 }
 
@@ -74,12 +77,14 @@ generate_env_yaml() {
 # CR GENERATOR
 #===============================================================================
 
-# Generate a complete AgentRequest CR YAML from launch-agent.sh globals
+# Generate a complete AgentRequest CR YAML from launch-agent.sh globals.
 # Required globals: AGENT_ID, IMAGE_NAME, AGENT_NAME, RESOURCE_MEMORY,
 #   RESOURCE_CPUS, BRANCH, TASK_INLINE, NETWORK_MODE, SECURITY_PROFILE,
 #   AGENT_COMMAND (string — agent command from config)
 # Optional globals: INLINE_SPEC_FILE, GIT_REMOTE_URL, BASE_BRANCH, DO_PUSH
+# Optional argument: $1 = name of extra env vars array (entries as KEY=VALUE)
 generate_agent_request_cr() {
+    local extra_env_var_name="${1:-}"
     local k8s_memory k8s_cpu
     k8s_memory=$(translate_memory_to_k8s "${RESOURCE_MEMORY:-8g}")
     k8s_cpu=$(translate_cpus_to_k8s "${RESOURCE_CPUS:-4}")
@@ -116,13 +121,13 @@ YAML
     if [[ -n "${BRANCH:-}" ]]; then
         cat <<YAML
   git:
-    branch: ${BRANCH}
-    baseBranch: ${BASE_BRANCH:-main}
+    branch: "$(_yaml_escape "$BRANCH")"
+    baseBranch: "$(_yaml_escape "${BASE_BRANCH:-main}")"
     push: ${DO_PUSH:-false}
 YAML
         # Add repoUrl if available
         if [[ -n "${GIT_REMOTE_URL:-}" ]]; then
-            echo "    repoUrl: ${GIT_REMOTE_URL}"
+            echo "    repoUrl: \"$(_yaml_escape "$GIT_REMOTE_URL")\""
         fi
     fi
 
@@ -145,6 +150,15 @@ YAML
       - name: KAPSIS_AGENT_TYPE
         value: "${AGENT_NAME}"
 YAML
+
+    # Optional: additional env vars from caller
+    if [[ -n "$extra_env_var_name" ]]; then
+        local _arr_size
+        eval "_arr_size=\${#${extra_env_var_name}[@]}"
+        if (( _arr_size > 0 )); then
+            generate_env_yaml "$extra_env_var_name"
+        fi
+    fi
 
     # Network section
     cat <<YAML

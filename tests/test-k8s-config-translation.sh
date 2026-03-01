@@ -308,6 +308,87 @@ test_generate_cr_special_chars_valid_yaml() {
     assert_equals 0 "$exit_code" "CR with special characters should be valid YAML"
 }
 
+test_yaml_escape_newline_tab() {
+    log_test "Testing _yaml_escape handles newline and tab"
+
+    local result
+    result=$(_run_translator '
+        printf "%s" "$(_yaml_escape "line1
+line2")"
+    ')
+
+    assert_contains "$result" '\n' "Should escape newline to \\n"
+    # Verify no literal newline in the output (should be single line)
+    local line_count
+    line_count=$(echo "$result" | wc -l)
+    assert_equals 1 "$line_count" "Should be a single line (no literal newlines)"
+}
+
+test_yaml_escape_tab() {
+    log_test "Testing _yaml_escape handles tab character"
+
+    local result
+    result=$(_run_translator "printf '%s' \"\$(_yaml_escape \$'hello\\tworld')\"")
+
+    assert_contains "$result" '\t' "Should escape tab to \\t"
+}
+
+test_generate_cr_branch_special_chars_valid_yaml() {
+    log_test "Testing CR with special branch name produces valid YAML"
+
+    local cr_output
+    cr_output=$(_run_translator '
+        AGENT_ID="test123"
+        IMAGE_NAME="kapsis-sandbox:latest"
+        AGENT_NAME="claude-cli"
+        RESOURCE_MEMORY="8g"
+        RESOURCE_CPUS="4"
+        BRANCH="feat/my-branch:with-colon"
+        GIT_REMOTE_URL="https://github.com/user/repo.git"
+        BASE_BRANCH="main"
+        DO_PUSH="true"
+        TASK_INLINE=""
+        NETWORK_MODE="filtered"
+        SECURITY_PROFILE="standard"
+        AGENT_COMMAND=""
+        generate_agent_request_cr
+    ')
+
+    local tmpfile
+    tmpfile=$(mktemp)
+    echo "$cr_output" > "$tmpfile"
+    local exit_code=0
+    yq eval '.' "$tmpfile" > /dev/null 2>&1 || exit_code=$?
+    rm -f "$tmpfile"
+
+    assert_equals 0 "$exit_code" "CR with special branch chars should be valid YAML"
+    assert_contains "$cr_output" "feat/my-branch:with-colon" "Should contain branch name"
+}
+
+test_generate_env_yaml_cr_integration() {
+    log_test "Testing generate_env_yaml wired into CR generation"
+
+    local result
+    result=$(_run_translator '
+        AGENT_ID="test123"
+        IMAGE_NAME="kapsis-sandbox:latest"
+        AGENT_NAME="claude-cli"
+        RESOURCE_MEMORY="8g"
+        RESOURCE_CPUS="4"
+        BRANCH=""
+        TASK_INLINE=""
+        NETWORK_MODE="filtered"
+        SECURITY_PROFILE="standard"
+        AGENT_COMMAND=""
+        declare -a MY_EXTRA_ENV=("CUSTOM_KEY=custom_value" "ANOTHER=test")
+        generate_agent_request_cr MY_EXTRA_ENV
+    ')
+
+    assert_contains "$result" "CUSTOM_KEY" "Should contain extra env var name"
+    assert_contains "$result" "custom_value" "Should contain extra env var value"
+    assert_contains "$result" "ANOTHER" "Should contain second extra env var"
+}
+
 test_generate_cr_empty_globals_does_not_crash() {
     log_test "Testing CR generation with empty globals does not crash"
 
@@ -353,6 +434,10 @@ main() {
     run_test test_translate_memory_uppercase
     run_test test_generate_cr_special_chars_valid_yaml
     run_test test_generate_cr_empty_globals_does_not_crash
+    run_test test_yaml_escape_newline_tab
+    run_test test_yaml_escape_tab
+    run_test test_generate_cr_branch_special_chars_valid_yaml
+    run_test test_generate_env_yaml_cr_integration
 
     print_summary
 }

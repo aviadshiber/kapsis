@@ -93,6 +93,8 @@ backend_run() {
     local poll_interval="${KAPSIS_K8S_POLL_INTERVAL:-${KAPSIS_K8S_DEFAULT_POLL_INTERVAL}}"
     local max_timeout="${KAPSIS_K8S_TIMEOUT:-${KAPSIS_K8S_DEFAULT_TIMEOUT}}"
     local start_seconds=$SECONDS
+    local consecutive_failures=0
+    local max_consecutive_failures=10
 
     while true; do
         # Timeout check (safety net for stuck CRs)
@@ -107,6 +109,21 @@ backend_run() {
         local cr_status
         cr_status=$(kubectl get agentrequest "$_K8S_CR_NAME" -n "$_K8S_NAMESPACE" \
             -o jsonpath='{.status.phase}{"\t"}{.status.progress}{"\t"}{.status.message}{"\t"}{.status.gist}' 2>/dev/null) || cr_status=""
+
+        # Track consecutive kubectl failures
+        if [[ -z "$cr_status" ]]; then
+            ((consecutive_failures++)) || true
+            if (( consecutive_failures >= max_consecutive_failures )); then
+                log_error "K8s backend: kubectl failed ${max_consecutive_failures} consecutive times, giving up"
+                _BACKEND_EXIT_CODE=1
+                return 0
+            elif (( consecutive_failures >= 3 )); then
+                log_warn "K8s backend: kubectl failed ${consecutive_failures} consecutive times"
+            fi
+            sleep "$poll_interval"
+            continue
+        fi
+        consecutive_failures=0
 
         local phase progress message gist
         IFS=$'\t' read -r phase progress message gist <<< "$cr_status"
