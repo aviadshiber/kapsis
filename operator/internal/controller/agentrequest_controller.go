@@ -51,6 +51,7 @@ type AgentRequestReconciler struct {
 // +kubebuilder:rbac:groups=kapsis.io,resources=agentrequests/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kapsis.io,resources=agentrequests/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;delete
 
 // Reconcile implements the three-phase reconciliation loop for AgentRequest:
 //  1. Pending: CR just created, no pod yet. Create the pod and move to Initializing.
@@ -123,6 +124,23 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, ar *kapsi
 	}
 
 	log.Info("Created agent pod", "pod", pod.Name)
+
+	// Create NetworkPolicy for network isolation (skip for "open" mode).
+	if ShouldCreateNetworkPolicy(ar) {
+		np := BuildNetworkPolicy(ar)
+		if err := ctrl.SetControllerReference(ar, np, r.Scheme); err != nil {
+			return ctrl.Result{}, fmt.Errorf("setting network policy owner reference: %w", err)
+		}
+		if err := r.Create(ctx, np); err != nil {
+			if apierrors.IsAlreadyExists(err) {
+				log.V(1).Info("NetworkPolicy already exists", "name", np.Name)
+			} else {
+				return ctrl.Result{}, fmt.Errorf("creating network policy: %w", err)
+			}
+		} else {
+			log.Info("Created network policy", "name", np.Name, "mode", networkMode(ar))
+		}
+	}
 
 	// Update CR status to Initializing.
 	nn := types.NamespacedName{Name: ar.Name, Namespace: ar.Namespace}
