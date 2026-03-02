@@ -31,9 +31,9 @@ const (
 	AgentContainerName = "agent"
 
 	// LabelAgentType identifies the agent type on managed pods.
-	LabelAgentType = "kapsis.io/agent-type"
+	LabelAgentType = "kapsis.aviadshiber.github.io/agent-type"
 	// LabelAgentID identifies the agent instance on managed pods.
-	LabelAgentID = "kapsis.io/agent-id"
+	LabelAgentID = "kapsis.aviadshiber.github.io/agent-id"
 	// LabelManagedBy identifies the managing controller.
 	LabelManagedBy = "app.kubernetes.io/managed-by"
 	// ManagedByValue is the value for the managed-by label.

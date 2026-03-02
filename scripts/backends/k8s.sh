@@ -54,9 +54,9 @@ backend_validate() {
     fi
 
     # Check AgentRequest CRD is installed
-    if ! kubectl get crd agentrequests.kapsis.io &>/dev/null; then
+    if ! kubectl get crd agentrequests.kapsis.aviadshiber.github.io &>/dev/null; then
         log_error "AgentRequest CRD not found. Install the kapsis operator first."
-        log_error "  kubectl apply -f operator/config/crd/bases/kapsis.io_agentrequests.yaml"
+        log_error "  kubectl apply -f operator/config/crd/bases/kapsis.aviadshiber.github.io_agentrequests.yaml"
         return 1
     fi
 

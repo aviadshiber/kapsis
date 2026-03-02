@@ -128,7 +128,7 @@ test_k8s_dry_run_outputs_yaml() {
     output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --backend k8s --task "test task" --dry-run 2>&1) || exit_code=$?
 
     assert_equals 0 "$exit_code" "K8s dry-run should succeed"
-    assert_contains "$output" "apiVersion: kapsis.io/v1alpha1" "Should contain CRD apiVersion"
+    assert_contains "$output" "apiVersion: kapsis.aviadshiber.github.io/v1alpha1" "Should contain CRD apiVersion"
     assert_contains "$output" "kind: AgentRequest" "Should contain kind"
     assert_not_contains "$output" "podman run" "Should NOT contain podman run"
 }

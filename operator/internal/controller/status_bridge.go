@@ -26,13 +26,13 @@ import (
 
 const (
 	// Annotation keys written by in-container status hooks.
-	AnnotationGist      = "kapsis.io/gist"
-	AnnotationPhase     = "kapsis.io/phase"
-	AnnotationProgress  = "kapsis.io/progress"
-	AnnotationMessage   = "kapsis.io/message"
-	AnnotationCommitSha = "kapsis.io/commit-sha"
-	AnnotationPush      = "kapsis.io/push-status"
-	AnnotationPrURL     = "kapsis.io/pr-url"
+	AnnotationGist      = "kapsis.aviadshiber.github.io/gist"
+	AnnotationPhase     = "kapsis.aviadshiber.github.io/phase"
+	AnnotationProgress  = "kapsis.aviadshiber.github.io/progress"
+	AnnotationMessage   = "kapsis.aviadshiber.github.io/message"
+	AnnotationCommitSha = "kapsis.aviadshiber.github.io/commit-sha"
+	AnnotationPush      = "kapsis.aviadshiber.github.io/push-status"
+	AnnotationPrURL     = "kapsis.aviadshiber.github.io/pr-url"
 )
 
 // BridgeStatus reads Pod status and annotations to produce an updated

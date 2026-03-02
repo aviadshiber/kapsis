@@ -1,4 +1,4 @@
-apiVersion: kapsis.io/v1alpha1
+apiVersion: kapsis.aviadshiber.github.io/v1alpha1
 kind: AgentRequest
 metadata:
   name: example-claude-task

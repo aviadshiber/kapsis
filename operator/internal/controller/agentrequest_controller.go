@@ -47,9 +47,9 @@ type AgentRequestReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=kapsis.io,resources=agentrequests,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=kapsis.io,resources=agentrequests/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=kapsis.io,resources=agentrequests/finalizers,verbs=update
+// +kubebuilder:rbac:groups=kapsis.aviadshiber.github.io,resources=agentrequests,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=kapsis.aviadshiber.github.io,resources=agentrequests/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=kapsis.aviadshiber.github.io,resources=agentrequests/finalizers,verbs=update
 // +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;delete
 

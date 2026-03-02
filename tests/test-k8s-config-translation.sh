@@ -111,7 +111,7 @@ test_generate_cr_contains_apiversion() {
         generate_agent_request_cr
     ')
 
-    assert_contains "$result" "apiVersion: kapsis.io/v1alpha1" "Should contain apiVersion"
+    assert_contains "$result" "apiVersion: kapsis.aviadshiber.github.io/v1alpha1" "Should contain apiVersion"
 }
 
 test_generate_cr_contains_kind() {

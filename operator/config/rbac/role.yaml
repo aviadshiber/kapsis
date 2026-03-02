@@ -15,7 +15,7 @@ rules:
   - list
   - watch
 - apiGroups:
-  - kapsis.io
+  - kapsis.aviadshiber.github.io
   resources:
   - agentrequests
   verbs:
@@ -27,13 +27,13 @@ rules:
   - update
   - watch
 - apiGroups:
-  - kapsis.io
+  - kapsis.aviadshiber.github.io
   resources:
   - agentrequests/finalizers
   verbs:
   - update
 - apiGroups:
-  - kapsis.io
+  - kapsis.aviadshiber.github.io
   resources:
   - agentrequests/status
   verbs:

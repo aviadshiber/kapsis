@@ -99,13 +99,13 @@ generate_agent_request_cr() {
     fi
 
     cat <<YAML
-apiVersion: kapsis.io/v1alpha1
+apiVersion: kapsis.aviadshiber.github.io/v1alpha1
 kind: AgentRequest
 metadata:
   name: kapsis-${AGENT_ID}
   labels:
-    kapsis.io/agent-type: ${AGENT_NAME}
-    kapsis.io/agent-id: ${AGENT_ID}
+    kapsis.aviadshiber.github.io/agent-type: ${AGENT_NAME}
+    kapsis.aviadshiber.github.io/agent-id: ${AGENT_ID}
 spec:
   image: ${IMAGE_NAME}
   agent:

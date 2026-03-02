@@ -5,7 +5,7 @@ Run Kapsis agents as Kubernetes Pods instead of local Podman containers.
 ## Prerequisites
 
 - `kubectl` configured with cluster access
-- AgentRequest CRD installed: `kubectl apply -f operator/config/crd/bases/kapsis.io_agentrequests.yaml`
+- AgentRequest CRD installed: `kubectl apply -f operator/config/crd/bases/kapsis.aviadshiber.github.io_agentrequests.yaml`
 - Kapsis operator running in-cluster (see [Operator Deployment](#operator-deployment))
 - Container images pushed to a registry accessible from the cluster
 
@@ -46,7 +46,7 @@ The `--backend k8s` flag switches from local Podman containers to Kubernetes Pod
 The `AgentRequest` custom resource defines a single agent execution:
 
 ```yaml
-apiVersion: kapsis.io/v1alpha1
+apiVersion: kapsis.aviadshiber.github.io/v1alpha1
 kind: AgentRequest
 metadata:
   name: kapsis-abc123
@@ -173,7 +173,7 @@ kubectl get agent       # Also works
 ### Install CRD
 
 ```bash
-kubectl apply -f operator/config/crd/bases/kapsis.io_agentrequests.yaml
+kubectl apply -f operator/config/crd/bases/kapsis.aviadshiber.github.io_agentrequests.yaml
 ```
 
 ### Build and Deploy Operator

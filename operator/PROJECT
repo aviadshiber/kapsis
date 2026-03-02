@@ -3,7 +3,7 @@
 # and allow the plugins properly work.
 # More info: https://book.kubebuilder.io/reference/project-config.html
 cliVersion: 4.12.0
-domain: kapsis.io
+domain: aviadshiber.github.io
 layout:
 - go.kubebuilder.io/v4
 projectName: kapsis-operator
@@ -13,7 +13,7 @@ resources:
     crdVersion: v1
     namespaced: true
   controller: true
-  domain: kapsis.io
+  domain: aviadshiber.github.io
   group: kapsis
   kind: AgentRequest
   path: github.com/aviadshiber/kapsis/operator/api/v1alpha1
