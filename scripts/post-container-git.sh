@@ -291,6 +291,10 @@ commit_changes() {
 
     cd "$worktree_path"
 
+    # Fix #186: Ensure index cache-tree is valid before staging
+    # Stale cache-tree entries from sanitized git cause push failures
+    git read-tree HEAD 2>/dev/null || log_warn "git read-tree HEAD failed (non-fatal)"
+
     log_info "Staging changes..."
     git add -A
 
@@ -549,6 +553,12 @@ sync_index_from_container() {
 
         log_info "Syncing index from container..."
         cp "$sanitized_git/index" "$worktree_gitdir/index" 2>/dev/null || true
+
+        # Fix #186: Rebuild index cache-tree to prevent stale object references
+        # The copied index may contain cache-tree entries referencing objects from
+        # the parent repo that aren't valid in the worktree context.
+        log_info "Rebuilding index cache-tree..."
+        git read-tree HEAD 2>/dev/null || log_warn "git read-tree HEAD failed (non-fatal)"
     fi
 }
 
