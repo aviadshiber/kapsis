@@ -229,7 +229,7 @@ test_generate_cr_with_branch() {
         generate_agent_request_cr
     ')
 
-    assert_contains "$result" "branch: feature/my-branch" "Should contain branch"
+    assert_contains "$result" 'branch: "feature/my-branch"' "Should contain branch"
 }
 
 test_generate_cr_with_task_inline() {
@@ -320,7 +320,7 @@ line2")"
     assert_contains "$result" '\n' "Should escape newline to \\n"
     # Verify no literal newline in the output (should be single line)
     local line_count
-    line_count=$(echo "$result" | wc -l)
+    line_count=$(echo "$result" | wc -l | tr -d ' ')
     assert_equals 1 "$line_count" "Should be a single line (no literal newlines)"
 }
 
@@ -362,7 +362,7 @@ test_generate_cr_branch_special_chars_valid_yaml() {
     rm -f "$tmpfile"
 
     assert_equals 0 "$exit_code" "CR with special branch chars should be valid YAML"
-    assert_contains "$cr_output" "feat/my-branch:with-colon" "Should contain branch name"
+    assert_contains "$cr_output" 'feat/my-branch:with-colon' "Should contain branch name"
 }
 
 test_generate_env_yaml_cr_integration() {
