@@ -1,0 +1,37 @@
+apiVersion: kapsis.aviadshiber.github.io/v1alpha1
+kind: AgentRequest
+metadata:
+  name: example-claude-task
+spec:
+  image: kapsis-claude-cli:latest
+  agent:
+    type: claude-cli
+    command: ["bash", "-c", "claude --task 'Implement the login feature'"]
+    workdir: /workspace
+  resources:
+    memory: "8Gi"
+    cpu: "4"
+  git:
+    repoUrl: https://github.com/org/repo.git
+    branch: feat/login-feature
+    baseBranch: main
+    push: true
+    credentialSecretRef:
+      name: git-credentials
+      key: token
+  task:
+    inline: "Implement the login feature with OAuth2 support"
+  environment:
+    vars:
+      # KAPSIS_BACKEND, KAPSIS_AGENT_ID, and KAPSIS_AGENT_TYPE are
+      # automatically injected by the operator — do not set them here.
+      - name: MY_CUSTOM_VAR
+        value: "example-value"
+  security:
+    profile: standard
+    serviceAccountName: kapsis-agent
+  ttl: 3600
+  podAnnotations:
+    # Optional: pass annotations to the created Pod.
+    # Use for Vault/OpenBao secret injection, Istio sidecar, Prometheus scraping, etc.
+    example.com/team: "platform"

@@ -78,6 +78,29 @@ readonly KAPSIS_DEFAULT_NETWORK_MODE="filtered"
 readonly KAPSIS_REGISTRY="ghcr.io/aviadshiber"
 
 #===============================================================================
+# BACKEND CONFIGURATION
+#
+# Controls which container backend is used.
+# - podman: Local Podman containers (default, existing behavior)
+# - k8s:    Kubernetes Pods via AgentRequest CRD
+#===============================================================================
+
+# Default backend when --backend is not specified
+readonly KAPSIS_DEFAULT_BACKEND="podman"
+
+# Supported backend values (space-separated for validation)
+readonly KAPSIS_SUPPORTED_BACKENDS="podman k8s"
+
+# K8s polling interval in seconds (how often to check CR status)
+readonly KAPSIS_K8S_DEFAULT_POLL_INTERVAL=10
+
+# K8s default namespace for AgentRequest CRs
+readonly KAPSIS_K8S_DEFAULT_NAMESPACE="default"
+
+# K8s maximum timeout in seconds (safety net for stuck CRs)
+readonly KAPSIS_K8S_DEFAULT_TIMEOUT=7200
+
+#===============================================================================
 # GIT EXCLUDE PATTERNS (Issue #89)
 #
 # These patterns are written to $GIT_DIR/info/exclude to prevent accidental

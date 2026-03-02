@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Kapsis | Isolated AI Agent Sandbox</title>
-    <meta name="description" content="Run AI coding agents (Claude, Aider, Codex) in isolated Podman sandboxes. Full autonomy for the agent. Total safety for your files.">
+    <meta name="description" content="Run AI coding agents (Claude, Aider, Codex) in isolated Podman containers or Kubernetes Pods. Full autonomy for the agent. Total safety for your files.">
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website">
@@ -384,12 +384,12 @@
                 <i class="fa-solid fa-sparkles text-yellow-400 mr-2"></i> What's New
             </h2>
             <div class="grid md:grid-cols-3 gap-4">
-                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
+                <div class="bg-kapsis-card border border-indigo-700/50 rounded-xl p-5 hover:border-indigo-500/50 transition-colors">
                     <div class="flex items-center gap-2 mb-3">
-                        <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-bold">v2.8.0</span>
+                        <span class="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded font-bold">NEW</span>
                     </div>
-                    <h4 class="text-white font-medium text-sm mb-2">Secret Store Injection</h4>
-                    <p class="text-slate-400 text-xs">Secrets from your OS keychain are now injected directly into the container environment at runtime. No manual <code class="bg-slate-700 px-1 rounded">export</code> needed.</p>
+                    <h4 class="text-white font-medium text-sm mb-2"><i class="fa-solid fa-dharmachakra text-indigo-400 mr-1"></i> Kubernetes Backend</h4>
+                    <p class="text-slate-400 text-xs">Run agents as K8s Pods via the <code class="bg-slate-700 px-1 rounded">AgentRequest</code> CRD. Same isolation model, cluster-scale concurrency. NetworkPolicy per pod.</p>
                 </div>
                 <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
                     <div class="flex items-center gap-2 mb-3">
@@ -440,7 +440,16 @@
                                     <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
                                     <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
                                     <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
-                                    <td class="py-3 px-3 text-slate-400">Best balance for AI agent sandboxing</td>
+                                    <td class="py-3 px-3 text-slate-400">Best for local dev, macOS + Linux</td>
+                                </tr>
+                                <tr class="border-b border-indigo-900/50 bg-indigo-900/20">
+                                    <td class="py-3 px-3 text-indigo-400 font-medium">Kapsis <span class="text-xs">(K8s)</span></td>
+                                    <td class="py-3 px-3 text-slate-300">K8s Pod</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400 font-medium">Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-slate-500">Cluster</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-400">Best for teams, cluster-scale concurrency</td>
                                 </tr>
                                 <tr class="border-b border-slate-800">
                                     <td class="py-3 px-3 text-slate-300">Docker</td>
@@ -501,7 +510,8 @@
                     </div>
                     <!-- Compact Why Podman -->
                     <p class="mt-6 text-sm text-slate-500 text-center">
-                        <span class="text-emerald-400">Podman</span>: Rootless containers, macOS native, OCI compatible, copy-on-write filesystem. Runs anywhere — local dev, CI/CD, or servers.
+                        <span class="text-emerald-400">Podman</span>: Rootless containers, macOS native, copy-on-write filesystem. Best for local dev.
+                        <br><span class="text-indigo-400">Kubernetes</span>: Same isolation via CRD operator. Best for teams and cluster-scale workloads.
                     </p>
                 </div>
             </details>
@@ -1050,7 +1060,7 @@ Implement rate limiting for all public API endpoints to prevent abuse.
                     </div>
                     <h3 class="text-white font-bold text-lg mb-2">Rootless Containers</h3>
                     <p class="text-slate-400 text-sm mb-4">
-                        Podman runs without root privileges. Even container escape leaves attacker as unprivileged user.
+                        Podman runs rootless. K8s Pods use <code class="bg-slate-700 px-1 rounded text-xs">runAsNonRoot</code> with dropped capabilities. Both prevent privilege escalation.
                     </p>
                     <div class="code-block p-3 rounded text-xs font-mono">
                         <span class="text-slate-500"># Copy-on-Write filesystem</span><br>
@@ -1089,7 +1099,11 @@ Implement rate limiting for all public API endpoints to prevent abuse.
                     </div>
                     <div class="flex items-start">
                         <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
-                        <span class="text-slate-300"><strong>Credential isolation</strong> — API keys injected at runtime from keychain</span>
+                        <span class="text-slate-300"><strong>Credential isolation</strong> — API keys injected at runtime from keychain or K8s Secrets</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>K8s NetworkPolicy</strong> — Per-pod egress rules enforced by the cluster (K8s backend)</span>
                     </div>
                 </div>
             </div>
@@ -1600,15 +1614,15 @@ logging in with email+password
 
                 <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-5">
                     <h4 class="text-white font-bold mb-3 flex items-center text-sm">
-                        <i class="fa-solid fa-hands-asl-interpreting text-purple-400 mr-2"></i> Interactive mode
+                        <i class="fa-solid fa-dharmachakra text-indigo-400 mr-2"></i> Kubernetes backend
                     </h4>
                     <div class="code-block code-scroll-container rounded-lg p-3 font-mono text-xs overflow-x-auto relative group">
-                        <button onclick="copyCode(event, 'interactive-mode')" class="copy-btn absolute top-1 right-1 text-slate-500 hover:text-white bg-slate-800 p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy command">
+                        <button onclick="copyCode(event, 'k8s-mode')" class="copy-btn absolute top-1 right-1 text-slate-500 hover:text-white bg-slate-800 p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy command">
                             <i class="fa-regular fa-copy" aria-hidden="true"></i>
                         </button>
-                        <pre id="interactive-mode" class="text-slate-300">kapsis ~/project --interactive</pre>
+                        <pre id="k8s-mode" class="text-slate-300">kapsis ~/project --backend k8s --task "add input validation"</pre>
                     </div>
-                    <p class="text-slate-500 text-xs mt-2">Drop into an isolated shell for manual exploration.</p>
+                    <p class="text-slate-500 text-xs mt-2">Run agents as K8s Pods instead of local containers. Same flags, cluster-scale.</p>
                 </div>
             </div>
         </div>
@@ -1663,7 +1677,7 @@ logging in with email+password
 
                 <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
                     <h4 class="text-white font-medium mb-2">What platforms are supported?</h4>
-                    <p class="text-slate-400 text-sm">macOS (Apple Silicon and Intel) and Linux. Podman is the only container runtime dependency and is auto-installed by <code class="bg-slate-700 px-1 rounded text-xs">./setup.sh --install</code>.</p>
+                    <p class="text-slate-400 text-sm">macOS (Apple Silicon and Intel) and Linux for the Podman backend. Any Kubernetes cluster for the K8s backend. Use <code class="bg-slate-700 px-1 rounded text-xs">--backend k8s</code> to run agents as Pods.</p>
                 </div>
 
                 <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
@@ -1673,7 +1687,12 @@ logging in with email+password
 
                 <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
                     <h4 class="text-white font-medium mb-2">How does network isolation work?</h4>
-                    <p class="text-slate-400 text-sm">Kapsis runs a dnsmasq instance inside each container that only resolves domains on the allowlist. Unknown hosts return NXDOMAIN. You can choose between <code class="bg-slate-700 px-1 rounded text-xs">filtered</code> (default), <code class="bg-slate-700 px-1 rounded text-xs">none</code> (air-gapped), or <code class="bg-slate-700 px-1 rounded text-xs">open</code> modes.</p>
+                    <p class="text-slate-400 text-sm">Kapsis runs a dnsmasq instance inside each container that only resolves domains on the allowlist. Unknown hosts return NXDOMAIN. On K8s, a per-pod NetworkPolicy adds port-level egress filtering on top of DNS filtering. Choose between <code class="bg-slate-700 px-1 rounded text-xs">filtered</code> (default), <code class="bg-slate-700 px-1 rounded text-xs">none</code> (air-gapped), or <code class="bg-slate-700 px-1 rounded text-xs">open</code> modes.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">Can I run agents on Kubernetes instead of locally?</h4>
+                    <p class="text-slate-400 text-sm">Yes! Use <code class="bg-slate-700 px-1 rounded text-xs">--backend k8s</code> to run agents as Kubernetes Pods via the AgentRequest CRD. An in-cluster operator manages pod lifecycle, status bridging, and NetworkPolicy enforcement. Same flags, same isolation model, cluster-scale concurrency.</p>
                 </div>
             </div>
         </div>

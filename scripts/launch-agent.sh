@@ -101,6 +101,7 @@ SANITIZED_GIT_PATH=""
 AGENT_ID_AUTO_GENERATED=false  # Track if ID was auto-generated
 # Source shared constants (must come before using KAPSIS_DEFAULT_NETWORK_MODE)
 source "$SCRIPT_DIR/lib/constants.sh"
+BACKEND="${KAPSIS_DEFAULT_BACKEND}"  # podman (default) or k8s
 
 # Source security library (provides generate_security_args, validate_security_config, etc.)
 source "$SCRIPT_DIR/lib/security.sh"
@@ -440,6 +441,14 @@ parse_args() {
                 CLI_NETWORK_MODE="$2"  # Track that CLI explicitly set this
                 shift 2
                 ;;
+            --backend)
+                BACKEND="$2"
+                if [[ ! " $KAPSIS_SUPPORTED_BACKENDS " =~ [[:space:]]${BACKEND}[[:space:]] ]]; then
+                    log_error "Unsupported backend: '$BACKEND'. Supported: $KAPSIS_SUPPORTED_BACKENDS"
+                    exit 1
+                fi
+                shift 2
+                ;;
             --security-profile)
                 export KAPSIS_SECURITY_PROFILE="$2"
                 shift 2
@@ -522,32 +531,11 @@ validate_inputs() {
         fi
     fi
 
-    # Check Podman is available (skip in dry-run mode)
-    if [[ "$DRY_RUN" != "true" ]]; then
-        log_debug "Checking Podman availability..."
-        if ! command -v podman &> /dev/null; then
-            log_error "Podman is not installed or not in PATH"
-            exit 1
-        fi
-        log_debug "Podman found at: $(command -v podman)"
-
-        # Check Podman machine is running (macOS only)
-        if [[ "$(uname)" == "Darwin" ]]; then
-            log_debug "Checking Podman machine status..."
-            if ! podman machine inspect podman-machine-default &>/dev/null || \
-               [[ "$(podman machine inspect podman-machine-default --format '{{.State}}')" != "running" ]]; then
-                log_warn "Podman machine is not running. Attempting to start..."
-                podman machine start podman-machine-default || {
-                    log_error "Failed to start Podman machine. Please run: podman machine start"
-                    exit 1
-                }
-                log_success "Podman machine started"
-            else
-                log_debug "Podman machine is running"
-            fi
-        fi
-    else
-        log_debug "Skipping Podman checks (dry-run mode)"
+    # Backend validation (sources backend file and checks prerequisites)
+    source "$SCRIPT_DIR/backends/${BACKEND}.sh"
+    if ! backend_validate; then
+        log_error "Backend '$BACKEND' validation failed"
+        exit 1
     fi
     log_debug "Input validation completed successfully"
 }
@@ -1874,12 +1862,8 @@ main() {
         local exit_code=$?
         # Clean up temp files if they exist
         [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
-        [[ -n "${SECRETS_ENV_FILE:-}" && -f "$SECRETS_ENV_FILE" ]] && rm -f "$SECRETS_ENV_FILE"
-        [[ -n "${INLINE_SPEC_FILE:-}" && -f "$INLINE_SPEC_FILE" ]] && rm -f "$INLINE_SPEC_FILE"
-        [[ -n "${DNS_PIN_FILE:-}" && -f "$DNS_PIN_FILE" ]] && rm -f "$DNS_PIN_FILE"
-        [[ -n "${RESOLV_CONF_FILE:-}" && -f "$RESOLV_CONF_FILE" ]] && rm -f "$RESOLV_CONF_FILE"
-        # Clean up snapshot directory for filesystem includes (issue #164)
-        [[ -n "${SNAPSHOT_DIR:-}" && -d "$SNAPSHOT_DIR" ]] && rm -rf "$SNAPSHOT_DIR"
+        # Delegate backend-specific cleanup (secrets env file, inline spec, dns pin, etc.)
+        backend_cleanup 2>/dev/null || true
         # Show completion message if not already shown
         if [[ "$_DISPLAY_COMPLETE_SHOWN" != "true" ]]; then
             if [[ $exit_code -eq 0 ]]; then
@@ -1947,18 +1931,27 @@ main() {
         status_phase "initializing" 15 "Pre-flight check passed"
     fi
 
-    log_timer_start "sandbox_setup"
-    setup_sandbox
-    log_timer_end "sandbox_setup"
+    # Setup sandbox (worktree/overlay) — only for backends that support it
+    if backend_supports "worktree" || backend_supports "overlay"; then
+        log_timer_start "sandbox_setup"
+        setup_sandbox
+        log_timer_end "sandbox_setup"
+    else
+        log_info "Backend '$BACKEND' handles sandbox setup in-cluster"
+    fi
 
     # Update status with sandbox mode and worktree path now that we know them
     status_init "$project_name" "$AGENT_ID" "$BRANCH" "$SANDBOX_MODE" "${WORKTREE_PATH:-}"
     status_phase "preparing" 18 "Sandbox ready"
 
-    generate_volume_mounts
-    generate_env_vars
-    write_secrets_env_file
-    build_container_command
+    # Podman-specific: generate volume mounts, env vars, secrets env-file
+    # K8s backend generates its own CR with this info
+    if [[ "$BACKEND" == "podman" ]]; then
+        generate_volume_mounts
+        generate_env_vars
+        write_secrets_env_file
+    fi
+    backend_build_spec
     status_phase "preparing" 20 "Container configured"
 
     echo ""
@@ -1987,6 +1980,12 @@ main() {
     echo ""
 
     if [[ "$DRY_RUN" == "true" ]]; then
+        if [[ "$BACKEND" != "podman" ]]; then
+            # Non-podman backends handle dry-run output in backend_build_spec()
+            echo ""
+            exit 0
+        fi
+
         log_info "DRY RUN - Command that would be executed:"
         echo ""
         # Sanitize secrets as defense-in-depth (secrets normally go via --env-file,
@@ -2033,24 +2032,9 @@ main() {
     _CONTAINER_OUTPUT_TMP="$container_output"
     CONTAINER_ERROR_OUTPUT=""
 
-    # Run the container with real-time output display AND capture
-    # Use stdbuf to disable buffering on tee (if available), otherwise fall back to regular tee
-    # Note: On macOS, stdbuf requires coreutils (brew install coreutils provides gstdbuf)
-    set +e
-    if command -v stdbuf &>/dev/null; then
-        # Linux: use stdbuf for line-buffered output
-        "${CONTAINER_CMD[@]}" 2>&1 | stdbuf -oL tee "$container_output"
-    elif command -v gstdbuf &>/dev/null; then
-        # macOS with coreutils: use gstdbuf
-        "${CONTAINER_CMD[@]}" 2>&1 | gstdbuf -oL tee "$container_output"
-    else
-        # Fallback: regular tee (may buffer, but still works)
-        "${CONTAINER_CMD[@]}" 2>&1 | tee "$container_output"
-    fi
-    # CRITICAL: PIPESTATUS must be captured immediately after pipeline
-    # Any intervening command (even echo) will overwrite it
-    EXIT_CODE=${PIPESTATUS[0]}
-    set -e
+    # Run the container via backend
+    backend_run "$container_output"
+    EXIT_CODE=$(backend_get_exit_code)
 
     log_timer_end "container"
     log_info "Container exited with code: $EXIT_CODE"
@@ -2097,16 +2081,22 @@ main() {
     echo ""
 
     # Handle post-container operations based on sandbox mode
-    log_debug "Running post-container operations (mode: $SANDBOX_MODE)"
-    log_timer_start "post_container"
-    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
-        post_container_worktree
-        POST_EXIT_CODE=$?
+    # Only local backends (podman) need host-side git operations
+    if [[ "$BACKEND" == "podman" ]]; then
+        log_debug "Running post-container operations (mode: $SANDBOX_MODE)"
+        log_timer_start "post_container"
+        if [[ "$SANDBOX_MODE" == "worktree" ]]; then
+            post_container_worktree
+            POST_EXIT_CODE=$?
+        else
+            post_container_overlay
+            POST_EXIT_CODE=$?
+        fi
+        log_timer_end "post_container"
     else
-        post_container_overlay
-        POST_EXIT_CODE=$?
+        log_info "Backend '$BACKEND' handles git operations in-pod"
+        POST_EXIT_CODE=0
     fi
-    log_timer_end "post_container"
 
     log_timer_end "total"
 
