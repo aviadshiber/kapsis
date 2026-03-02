@@ -230,8 +230,9 @@ test_sync_index_cache_tree_rebuild() {
     # 8. Verify: git add + commit works cleanly
     cd "$wt_path"
     git add -A
-    if ! git commit -q -m "test commit" 2>/dev/null; then
-        log_fail "Commit failed after cache-tree rebuild"
+    local commit_output
+    if ! commit_output=$(git commit -q -m "test commit" 2>&1); then
+        log_fail "Commit failed after cache-tree rebuild: $commit_output"
         cleanup_sync_test
         return 1
     fi
