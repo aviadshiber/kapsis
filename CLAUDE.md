@@ -63,7 +63,11 @@ kapsis/
 │   │   ├── progress-display.sh # TTY progress visualization
 │   │   ├── progress-monitor.sh # Progress tracking
 │   │   ├── inject-status-hooks.sh # Status hook injection
-│   │   └── build-config.sh     # Build configuration parser
+│   │   ├── build-config.sh     # Build configuration parser
+│   │   └── k8s-config.sh       # K8s config translator (Docker→K8s format)
+│   ├── backends/               # Backend implementations
+│   │   ├── podman.sh           # Podman backend (default)
+│   │   └── k8s.sh              # Kubernetes backend (AgentRequest CRD)
 │   └── hooks/                  # Git & pre-commit hooks
 │       ├── kapsis-status-hook.sh
 │       ├── kapsis-stop-hook.sh
@@ -77,11 +81,16 @@ kapsis/
 │   ├── build-profiles/         # Container presets (minimal, java-dev, full-stack, etc.)
 │   ├── specs/                  # Task specification templates (feature.md, bugfix.md)
 │   ├── network-allowlist.yaml  # DNS filtering allowlist
-│   └── tool-phase-mapping.yaml # Tool lifecycle mapping
+│   ├── tool-phase-mapping.yaml # Tool lifecycle mapping
+│   └── k8s/                    # K8s backend configs and examples
 ├── tests/                      # 61 test files using tests/lib/test-framework.sh
 │   ├── run-all-tests.sh        # Test runner with category filtering
 │   └── test-*.sh               # Individual test scripts
-├── docs/                       # Extended documentation (14 guides)
+├── docs/                       # Extended documentation (15 guides)
+├── operator/                   # K8s operator (Go, kubebuilder)
+│   ├── api/v1alpha1/           # AgentRequest CRD types
+│   ├── internal/controller/    # Reconciliation logic
+│   └── config/                 # Kustomize manifests, CRD, RBAC
 ├── security/                   # AppArmor & seccomp profiles
 ├── packaging/                  # Debian, Homebrew, RPM packages
 ├── .github/workflows/          # CI/CD (ci, auto-release, release, security, packages, deploy-pages, sync-homebrew-tap)
@@ -103,6 +112,7 @@ kapsis/
 | GitHub integration | `docs/GITHUB-SETUP.md` |
 | Security hardening | `docs/SECURITY-HARDENING.md` |
 | Network isolation | `docs/NETWORK-ISOLATION.md` |
+| K8s backend | `docs/K8S-BACKEND.md` |
 | Installation | `docs/INSTALL.md` |
 | Initial setup | `docs/SETUP.md` |
 | Logging & testing | `CONTRIBUTING.md` |
@@ -121,6 +131,8 @@ kapsis/
 ./scripts/build-image.sh --profile java-dev       # Build with specific profile
 ./scripts/build-agent-image.sh claude-cli          # Build agent-specific image
 ./scripts/launch-agent.sh ~/project --agent claude --task "..."
+./scripts/launch-agent.sh ~/project --backend k8s --task "..."  # K8s backend
+./scripts/launch-agent.sh ~/project --backend k8s --task "..." --dry-run  # Preview CR YAML
 
 # Test
 ./tests/run-all-tests.sh --quick            # Fast tests, no containers (~10s)
@@ -193,6 +205,9 @@ Status is written as JSON to `~/.kapsis/status/`.
 | `scripts/lib/config-verifier.sh` | Config validation — YAML schema checking |
 | `scripts/lib/validate-scope.sh` | Filesystem scope enforcement — blocks out-of-bounds writes |
 | `scripts/lib/sanitize-files.sh` | File sanitization — homoglyph detection, binary filtering |
+| `scripts/backends/podman.sh` | Podman backend — local container execution |
+| `scripts/backends/k8s.sh` | K8s backend — AgentRequest CRD lifecycle |
+| `scripts/lib/k8s-config.sh` | Config translator — Docker-style to K8s format |
 | `Containerfile` | Multi-stage build with configurable languages/tools |
 | `configs/agents/*.yaml` | Agent install instructions, auth, config mounts |
 | `configs/build-profiles/*.yaml` | Container presets (minimal ~500MB to full-stack ~2.1GB) |
@@ -222,6 +237,7 @@ When `--config` is not specified, configuration is resolved in this order:
 | `git` | Yes | Branch creation, commit/push, worktree isolation |
 | `cleanup` | Yes | Sandbox cleanup operations |
 | `integration` | Yes | Full workflow, parallel agents |
+| `k8s` | No | Backend abstraction, K8s config translation |
 
 Quick tests (`--quick`) run without containers in ~10 seconds. Container tests require Podman.
 

@@ -89,6 +89,16 @@ elif [[ -f "$(dirname "${BASH_SOURCE[0]}")/lib/ssh-config-compat.sh" ]]; then
 fi
 
 #===============================================================================
+# K8s BACKEND DETECTION
+#===============================================================================
+
+export KAPSIS_IS_K8S=false
+if [[ "${KAPSIS_BACKEND:-podman}" == "k8s" ]]; then
+    export KAPSIS_IS_K8S=true
+    log_info "Running in Kubernetes backend mode"
+fi
+
+#===============================================================================
 # CREDENTIAL FILE INJECTION (Agent-Agnostic)
 #
 # Writes environment variables to files based on KAPSIS_CREDENTIAL_FILES.
