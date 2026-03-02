@@ -6,15 +6,59 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.11.3] - 2026-02-24
+## [2.12.0] - 2026-03-02
+
+### Added
+- Enforce NetworkPolicy per agent pod based on network mode (#182)
+- Wire task, git, and security fields to pod spec (#182)
+- Add podAnnotations passthrough for Vault/OpenBao integration (#182)
+- Implement operator reconciliation with pod builder and status bridge (#182)
+- Scaffold Go operator with kubebuilder (#182)
+- Add K8s backend detection to entrypoint.sh (#182)
+- K8s backend dry-run outputs AgentRequest CR YAML (#182)
+- Add K8s config translator library (#182)
+- Add AgentRequest CRD definition and example (#182)
+- Add backend-aware guards for sandbox and post-git (#182)
+- Add K8s backend stub with CR lifecycle (#182)
+- Add --backend flag to launch-agent.sh (#182)
+- Add backend constants and test scaffold for K8s backend (#182)
+
+### Changed
+- Upgrade Go dependencies to latest stable versions
+- Add NetworkPolicy unit and integration tests (#182)
+- Add pod_builder unit tests for task, git, and security wiring (#182)
+- Add negative and edge case tests for config translation (#182)
+- Add k8s config translation tests to category (#182)
+- Add k8s test category to run-all-tests.sh (#182)
+- Extract Podman backend from launch-agent.sh (#182)
+- Add .worktrees/ to .gitignore
+
+### Fixed
+- Change API group from kapsis.io to kapsis.aviadshiber.github.io (#182)
+- Upgrade OTel SDK to v1.40.0 (CVE-2026-24051) (#182)
+- Update k8s config tests for YAML-escaped branch values (#182)
+- Filter by agent container name and retry status updates on conflict (#182)
+- Harden YAML escaping, wire generate_env_yaml, add kubectl failure counter (#182)
+- Use omitempty for K8s API compat and only update GistUpdatedAt on change (#182)
+- Set Guaranteed QoS and drop capabilities per security profile (#182)
+- Prevent YAML injection in CR generator and fix bash 3.2 compat (#182)
+- Add polling timeout, consolidate kubectl calls, move source to file scope (#182)
+
+### Documentation
+- Add K8s backend to landing page (#182)
+- Update network isolation from Planned to Implemented (#182)
+- Add feature maturity table and document network mode as planned (#182)
+- Remove redundant auto-injected env vars from example CR (#182)
+- Add K8s backend documentation (#182)
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Add compat.sh to container image (transitive dependency)
 - Add missing container libs for entrypoint.sh (fixes #180)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Use allowlist validation for keyring_collection and keyring_profile fields
@@ -542,7 +586,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.11.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.12.0...HEAD
+[2.12.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.12.0
 [2.11.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.11.3
 [2.11.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.11.2
 [2.11.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.11.0
