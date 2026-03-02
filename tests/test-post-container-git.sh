@@ -8,6 +8,9 @@
 #
 # Regression test for PR #141: Fixes handling of .git as both file (worktree)
 # and directory (regular repo), which previously caused "cat: .git: Is a directory".
+#
+# Regression test for Fix #186: Cache-tree rebuild after index sync to prevent
+# stale object references that cause push failures.
 #===============================================================================
 # shellcheck disable=SC1090  # Dynamic source paths are intentional in tests
 # shellcheck disable=SC2034  # Variables used by sourced scripts
@@ -173,6 +176,86 @@ test_sync_index_no_index_in_sanitized() {
 }
 
 #===============================================================================
+# REGRESSION TEST: Fix #186 - Cache-tree rebuild
+#===============================================================================
+
+test_sync_index_cache_tree_rebuild() {
+    log_test "sync_index_from_container: cache-tree rebuilt after sync (Fix #186)"
+
+    setup_sync_test
+
+    # 1. Create a real git repo with an initial commit + file
+    local repo_path="$TEST_TEMP_DIR/repo"
+    mkdir -p "$repo_path"
+    cd "$repo_path"
+    git init -q
+    git config user.email "test@test.com"
+    git config user.name "Test"
+    echo "content" > file.txt
+    git add file.txt
+    git commit -q -m "init"
+
+    # 2. Create a worktree (simulating what Kapsis does)
+    local wt_path="$TEST_TEMP_DIR/worktree"
+    git worktree add -q "$wt_path" -b test-branch
+
+    # 3. Get the worktree gitdir path
+    local gitdir_content
+    gitdir_content=$(cat "$wt_path/.git")
+    local wt_gitdir="${gitdir_content#gitdir: }"
+
+    # 4. Simulate sanitized git with a copy of the index
+    #    This mimics prepare_sanitized_git() copying the index (worktree-manager.sh:504-506)
+    local sanitized_git="$TEST_TEMP_DIR/sanitized-git"
+    mkdir -p "$sanitized_git"
+    cp "$wt_gitdir/index" "$sanitized_git/index"
+
+    # 5. Create a file in the worktree (simulate agent work)
+    echo "new content" > "$wt_path/new-file.txt"
+
+    # 6. Call sync_index_from_container (this should rebuild cache-tree)
+    cd "$wt_path"
+    sync_index_from_container "$wt_path" "$sanitized_git"
+
+    # 7. Verify: git fsck should report no cache-tree errors
+    local fsck_output
+    fsck_output=$(cd "$wt_path" && git fsck --no-dangling 2>&1 || true)
+    if echo "$fsck_output" | grep -q "cache-tree"; then
+        log_fail "git fsck shows cache-tree errors after sync: $fsck_output"
+        cleanup_sync_test
+        return 1
+    fi
+    log_pass "No cache-tree errors after sync"
+
+    # 8. Verify: git add + commit works cleanly
+    cd "$wt_path"
+    git add -A
+    local commit_output
+    if ! commit_output=$(git commit -q -m "test commit" 2>&1); then
+        log_fail "Commit failed after cache-tree rebuild: $commit_output"
+        cleanup_sync_test
+        return 1
+    fi
+    log_pass "Commit succeeded after cache-tree rebuild"
+
+    # 9. Verify: git fsck clean after commit (no invalid objects)
+    local post_commit_fsck
+    post_commit_fsck=$(git fsck --no-dangling 2>&1 || true)
+    if echo "$post_commit_fsck" | grep -q "invalid"; then
+        log_fail "git fsck shows errors after commit: $post_commit_fsck"
+        cleanup_sync_test
+        return 1
+    fi
+    log_pass "Clean fsck after commit"
+
+    # 10. Cleanup the worktree properly before removing temp dir
+    cd "$repo_path"
+    git worktree remove "$wt_path" 2>/dev/null || true
+
+    cleanup_sync_test
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -183,6 +266,7 @@ main() {
     log_info "This function syncs the git index from sanitized-git to the worktree's gitdir"
     log_info ""
     log_info "PR #141 fix: Handle .git as both file (worktree) and directory (regular repo)"
+    log_info "Fix #186: Cache-tree rebuild after index sync"
     log_info ""
 
     # Run tests
@@ -190,6 +274,7 @@ main() {
     run_test test_sync_index_git_as_directory
     run_test test_sync_index_no_git
     run_test test_sync_index_no_index_in_sanitized
+    run_test test_sync_index_cache_tree_rebuild
 
     # Print summary
     print_summary
