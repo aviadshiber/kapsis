@@ -509,15 +509,17 @@ COPY scripts/init-git-branch.sh /opt/kapsis/init-git-branch.sh
 COPY scripts/post-exit-git.sh /opt/kapsis/post-exit-git.sh
 COPY scripts/switch-java.sh /opt/kapsis/switch-java.sh
 COPY scripts/kapsis-ss-inject.py /opt/kapsis/kapsis-ss-inject
+COPY scripts/git-credential-keyring /opt/kapsis/git-credential-keyring
 
 # Create agents directory for custom agent wrapper scripts
 RUN mkdir -p /opt/kapsis/agents && chown ${USER_ID}:${GROUP_ID} /opt/kapsis/agents
 
 # Make all scripts executable and readable
-RUN chmod 755 /opt/kapsis/*.sh /opt/kapsis/kapsis-ss-inject /opt/kapsis/lib/*.sh /opt/kapsis/lib/status.py && \
+RUN chmod 755 /opt/kapsis/*.sh /opt/kapsis/kapsis-ss-inject /opt/kapsis/git-credential-keyring /opt/kapsis/lib/*.sh /opt/kapsis/lib/status.py && \
     chmod 755 /opt/kapsis/hooks/*.sh /opt/kapsis/hooks/agent-adapters/*.sh && \
     chmod 644 /opt/kapsis/maven/settings.xml /opt/kapsis/lib/progress-instructions.md && \
-    ln -sf /opt/kapsis/kapsis-ss-inject /usr/local/bin/kapsis-ss-inject
+    ln -sf /opt/kapsis/kapsis-ss-inject /usr/local/bin/kapsis-ss-inject && \
+    ln -sf /opt/kapsis/git-credential-keyring /usr/local/bin/git-credential-keyring
 
 #===============================================================================
 # ENVIRONMENT CONFIGURATION
