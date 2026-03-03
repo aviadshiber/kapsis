@@ -61,8 +61,8 @@ languages:
     enabled: true
     # Versions to install (first is primary)
     versions:
-      - "18.18.0"        # LTS
-    default_version: "18.18.0"
+      - "22.22.0"        # LTS
+    default_version: "22.22.0"
     # Package managers to install globally
     package_managers:
       pnpm: "9.15.3"
@@ -155,7 +155,7 @@ build_tools:
   #-----------------------------------------------------------------------------
   protoc:
     enabled: true
-    version: "25.1"
+    version: "3.25.1"
     # Pre-cache binaries for both architectures
     cache_binaries: true
     architectures:

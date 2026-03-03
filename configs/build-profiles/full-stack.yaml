@@ -22,8 +22,8 @@ languages:
   nodejs:
     enabled: true
     versions:
-      - "18.18.0"
-    default_version: "18.18.0"
+      - "22.22.0"
+    default_version: "22.22.0"
     package_managers:
       pnpm: "9.15.3"
 
@@ -54,7 +54,7 @@ build_tools:
 
   protoc:
     enabled: true
-    version: "25.1"
+    version: "3.25.1"
 
 system_packages:
   development:

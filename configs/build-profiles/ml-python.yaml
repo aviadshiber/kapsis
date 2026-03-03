@@ -16,8 +16,8 @@ languages:
   nodejs:
     enabled: true
     versions:
-      - "18.18.0"
-    default_version: "18.18.0"
+      - "22.22.0"
+    default_version: "22.22.0"
     package_managers:
       pnpm: "9.15.3"
 

@@ -46,7 +46,7 @@ build_tools:
 
   protoc:
     enabled: true
-    version: "25.1"
+    version: "3.25.1"
 
 system_packages:
   development:
