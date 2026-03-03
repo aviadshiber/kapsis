@@ -297,6 +297,126 @@ inject_secret_store() {
 }
 
 #===============================================================================
+# GIT CREDENTIAL HELPER PATCHING (Issue #188)
+#
+# Replaces macOS-specific credential helpers (osxkeychain, etc.) from mounted
+# ~/.gitconfig with the container-native git-credential-keyring helper.
+# This bridges macOS Keychain -> gnome-keyring for native git operations.
+#
+# The credential map file maps git hosts to keyring entries. It is written
+# based on metadata passed from launch-agent.sh via KAPSIS_GIT_CREDENTIAL_MAP_DATA.
+#===============================================================================
+patch_git_credential_helpers() {
+    local gitconfig="$HOME/.gitconfig"
+
+    # Write credential map if metadata is available
+    if [[ -n "${KAPSIS_GIT_CREDENTIAL_MAP_DATA:-}" ]]; then
+        local map_file="/opt/kapsis/git-credential-map"
+
+        # Fall back to writable location if /opt/kapsis is not writable
+        if [[ ! -w "$(dirname "$map_file")" ]]; then
+            map_file="$HOME/.kapsis/git-credential-map"
+            mkdir -p "$(dirname "$map_file")"
+        fi
+
+        {
+            echo "# Kapsis git credential map (auto-generated)"
+            echo "# Format: host|service|account|keyring_collection|keyring_profile"
+            echo "${KAPSIS_GIT_CREDENTIAL_MAP_DATA}" | tr ',' '\n'
+        } > "$map_file"
+        chmod 600 "$map_file"
+        export KAPSIS_GIT_CREDENTIAL_MAP="$map_file"
+        log_debug "Git credential map written: $map_file"
+
+        unset KAPSIS_GIT_CREDENTIAL_MAP_DATA
+    fi
+
+    # No gitconfig to patch
+    if [[ ! -f "$gitconfig" ]]; then
+        log_debug "No ~/.gitconfig to patch for credential helpers"
+        return 0
+    fi
+
+    # Check if secret-tool is available (graceful degradation)
+    if ! command -v secret-tool &>/dev/null; then
+        log_debug "secret-tool not available — skipping credential helper patching"
+        return 0
+    fi
+
+    # Locate the credential helper script
+    local helper_path=""
+    if [[ -x "/opt/kapsis/git-credential-keyring" ]]; then
+        helper_path="/opt/kapsis/git-credential-keyring"
+    elif [[ -x "/usr/local/bin/git-credential-keyring" ]]; then
+        helper_path="/usr/local/bin/git-credential-keyring"
+    fi
+
+    if [[ -z "$helper_path" ]]; then
+        log_debug "git-credential-keyring not found — skipping credential helper patching"
+        return 0
+    fi
+
+    # Detect macOS-specific credential helpers in gitconfig
+    local needs_patch=false
+    if grep -qE 'helper[[:space:]]*=[[:space:]]*(osxkeychain|/usr/local/share/gcm|/usr/local/bin/git-credential-manager)' "$gitconfig" 2>/dev/null; then
+        needs_patch=true
+    fi
+
+    if [[ "$needs_patch" == "true" ]]; then
+        log_info "Patching ~/.gitconfig: replacing macOS credential helpers..."
+
+        # Atomic replacement via temp file (same pattern as ssh-config-compat.sh)
+        local tmp_file
+        tmp_file=$(mktemp "${gitconfig}.patch-XXXXXX") || {
+            log_warn "Could not create temp file for gitconfig patching"
+            return 0
+        }
+
+        # Replace macOS-specific helper values with our container-native helper
+        sed -E \
+            -e "s|(helper[[:space:]]*=[[:space:]]*)osxkeychain.*|\1$helper_path|" \
+            -e "s|(helper[[:space:]]*=[[:space:]]*)/usr/local/share/gcm.*|\1$helper_path|" \
+            -e "s|(helper[[:space:]]*=[[:space:]]*)/usr/local/bin/git-credential-manager.*|\1$helper_path|" \
+            "$gitconfig" > "$tmp_file"
+
+        # Deduplicate: if multiple macOS helpers were present, we now have duplicate
+        # git-credential-keyring lines. Remove all but the first occurrence.
+        local seen_helper=false
+        local dedup_file
+        dedup_file=$(mktemp "${gitconfig}.dedup-XXXXXX") || true
+        if [[ -n "${dedup_file:-}" ]]; then
+            while IFS= read -r line; do
+                if [[ "$line" =~ helper[[:space:]]*=[[:space:]]*/opt/kapsis/git-credential-keyring ]]; then
+                    if [[ "$seen_helper" == "true" ]]; then
+                        continue  # Skip duplicate
+                    fi
+                    seen_helper=true
+                fi
+                echo "$line"
+            done < "$tmp_file" > "$dedup_file"
+            mv "$dedup_file" "$gitconfig"
+            rm -f "$tmp_file"
+        else
+            mv "$tmp_file" "$gitconfig"
+        fi
+        log_info "Replaced macOS credential helpers with $helper_path"
+
+    elif [[ -n "${KAPSIS_GIT_CREDENTIAL_MAP:-}" ]] && [[ -f "${KAPSIS_GIT_CREDENTIAL_MAP:-}" ]]; then
+        # No macOS helper to replace, but we have a credential map.
+        # Register our helper if no credential.helper is currently set.
+        # Note: an explicit credential.helper="" (empty string) in .gitconfig is a
+        # deliberate directive to clear the helper chain. We respect this — we only
+        # register our helper when NO credential.helper line exists at all.
+        local current_helper
+        current_helper=$(git config --global credential.helper 2>/dev/null || echo "")
+        if [[ -z "$current_helper" ]]; then
+            git config --global credential.helper "$helper_path"
+            log_info "Registered git-credential-keyring as credential.helper"
+        fi
+    fi
+}
+
+#===============================================================================
 # SSH PERMISSION FIXUP (Issue #159)
 #
 # Safety net: after atomic-copy stages files, ensure SSH directories and keys
@@ -1256,6 +1376,11 @@ main() {
     # Must run AFTER inject_credential_files (both read from env vars;
     # file injection needs the values before secret store injection unsets them)
     inject_secret_store
+
+    # Patch git credential helpers for macOS-to-Linux bridging (Issue #188)
+    # Must run AFTER inject_secret_store (secrets in keyring) and
+    # AFTER setup_staged_config_overlays (gitconfig is writable copy)
+    patch_git_credential_helpers
 
     # Set up DNS filtering if in filtered network mode
     # Must happen early so all subsequent network operations go through the filter

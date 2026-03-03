@@ -204,6 +204,11 @@ environment:
   #              Allows 'account' to be the macOS Keychain lookup key while
   #              'keyring_profile' is the container-side D-Bus key.
   #              Only meaningful when keyring_collection is also set.
+  #   git_credential_for: (optional) Git hostname this credential serves.
+  #              When set, registers a container-native git credential helper
+  #              that returns this credential for the specified host.
+  #              Replaces macOS-specific helpers (osxkeychain) automatically.
+  #              Value must be a hostname (e.g., "github.com"). Issue #188.
   keychain:
     # Example: Token stored in container secret store (default behavior)
     BITBUCKET_TOKEN:
@@ -941,6 +946,42 @@ environment:
 **Without `keyring_profile`:** The `account` field is used as both the host keychain lookup account and the D-Bus profile key (the original behavior from Issue #170).
 
 **Requirements:** `python3-secretstorage` must be installed in the container image (included when `ENABLE_SECRET_STORE=true`).
+
+### Git Credential Helper (`git_credential_for`)
+
+When host `~/.gitconfig` is mounted into containers, macOS-specific credential helpers (like `osxkeychain`) don't work in Linux containers. The `git_credential_for` field bridges this gap by registering a container-native git credential helper that reads from the gnome-keyring.
+
+```yaml
+environment:
+  keychain:
+    BITBUCKET_TOKEN:
+      service: "taboola-bitbucket"
+      account: "aviad.s"
+      inject_to: "secret_store"
+      git_credential_for: "git.taboolasyndication.com"  # git host to serve credentials for
+
+    GITHUB_TOKEN:
+      service: "github-pat"
+      account: "myuser"
+      inject_to: "secret_store"
+      git_credential_for: "github.com"
+```
+
+**How it works:**
+1. At launch, Kapsis builds a host-to-keyring map from entries with `git_credential_for`
+2. The map is passed to the container as `KAPSIS_GIT_CREDENTIAL_MAP_DATA`
+3. The entrypoint writes the map file and replaces any macOS credential helpers in `~/.gitconfig` with the container-native `git-credential-keyring`
+4. When git needs credentials for a host, the helper looks up the matching keyring entry
+
+**Both keyring paths are supported:**
+- With `keyring_collection`: Uses `secret-tool lookup profile <key>` (99designs/keyring compat)
+- Without `keyring_collection`: Uses `secret-tool lookup service <svc> account <acct>` (standard)
+
+**The value is a hostname** (e.g., `github.com`, `git.example.com`). Only alphanumeric characters, dots, hyphens, and underscores are allowed.
+
+**Without `git_credential_for`:** The secret is injected into the keyring but not registered as a git credential helper. Git operations requiring auth must use alternative methods (e.g., `bkt` CLI).
+
+See: [Issue #188](https://github.com/aviadshiber/kapsis/issues/188)
 
 ### Account Fallback
 

@@ -1280,10 +1280,13 @@ generate_env_vars() {
     # Track keyring collection mappings for 99designs/keyring compat (Issue #170, #176)
     # Format: VAR_NAME|collection_label|profile (comma-separated)
     local KEYRING_COLLECTIONS=""
+    # Track git credential host-to-keyring mappings (Issue #188)
+    # Format: host|service|account|keyring_collection|keyring_profile (comma-separated)
+    local GIT_CREDENTIAL_MAP=""
 
     if [[ -n "$ENV_KEYCHAIN" ]]; then
         log_info "Resolving secrets from system keychain..."
-        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to keyring_collection keyring_profile; do
+        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to keyring_collection keyring_profile git_credential_for; do
             [[ -z "$var_name" || -z "$service" ]] && continue
 
             # Expand variables in account (e.g., ${USER})
@@ -1369,6 +1372,17 @@ generate_env_vars() {
                     fi
                 fi
 
+                # Track git credential mapping if specified (Issue #188)
+                if [[ -n "${git_credential_for:-}" ]]; then
+                    if [[ "$git_credential_for" =~ [^a-zA-Z0-9._-] ]]; then
+                        log_warn "git_credential_for for $var_name contains invalid characters — ignoring"
+                    else
+                        local gc_entry="${git_credential_for}|${service}|${account:-}|${keyring_collection:-}|${keyring_profile:-}"
+                        GIT_CREDENTIAL_MAP="${GIT_CREDENTIAL_MAP:+${GIT_CREDENTIAL_MAP},}${gc_entry}"
+                        log_debug "Git credential mapping: ${git_credential_for} -> $service"
+                    fi
+                fi
+
                 # Track file injection if specified (orthogonal to inject_to)
                 if [[ -n "$inject_to_file" ]]; then
                     # Format: VAR_NAME|file_path|mode (comma-separated list)
@@ -1400,6 +1414,11 @@ generate_env_vars() {
     # Pass keyring collection mappings for 99designs/keyring compat (Issue #170)
     if [[ -n "$KEYRING_COLLECTIONS" ]]; then
         ENV_VARS+=("-e" "KAPSIS_KEYRING_COLLECTIONS=${KEYRING_COLLECTIONS}")
+    fi
+
+    # Pass git credential host-to-keyring mappings (Issue #188)
+    if [[ -n "$GIT_CREDENTIAL_MAP" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_GIT_CREDENTIAL_MAP_DATA=${GIT_CREDENTIAL_MAP}")
     fi
 
     # Set explicit environment variables (non-secrets)
