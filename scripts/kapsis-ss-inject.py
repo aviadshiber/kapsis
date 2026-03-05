@@ -18,6 +18,7 @@ Requires: python3-secretstorage (apt install python3-secretstorage)
 See: https://github.com/aviadshiber/kapsis/issues/170
 """
 import sys
+import time
 
 try:
     import secretstorage
@@ -40,7 +41,20 @@ def main():
         sys.exit(1)
 
     try:
-        conn = secretstorage.dbus_init()
+        # Retry D-Bus connection with backoff (Issue #189)
+        # gnome-keyring-daemon may not have registered its D-Bus service yet.
+        # Entrypoint polls for readiness, but this is defense-in-depth.
+        max_retries = 5
+        for attempt in range(max_retries):
+            try:
+                conn = secretstorage.dbus_init()
+                break
+            except Exception as e:
+                if attempt == max_retries - 1:
+                    raise
+                wait_time = 0.2 * (attempt + 1)
+                print(f"warn: D-Bus attempt {attempt + 1} failed ({e}), retrying in {wait_time}s...", file=sys.stderr)
+                time.sleep(wait_time)
 
         # Find existing collection by label, or create it
         target = None
