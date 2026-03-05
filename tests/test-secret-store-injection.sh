@@ -409,6 +409,75 @@ test_containerfile_includes_secretstorage() {
 }
 
 #===============================================================================
+# RACE CONDITION FIX TESTS (Issue #189)
+#===============================================================================
+
+test_entrypoint_has_readiness_polling() {
+    log_test "Testing entrypoint.sh has Secret Service readiness polling (Issue #189)"
+
+    local entrypoint_script="$KAPSIS_ROOT/scripts/entrypoint.sh"
+
+    assert_contains "$(cat "$entrypoint_script")" "wait_for_secret_service" \
+        "entrypoint.sh should define wait_for_secret_service function"
+    assert_contains "$(cat "$entrypoint_script")" "Secret Service D-Bus registration" \
+        "entrypoint.sh should document the readiness polling purpose"
+    assert_contains "$(cat "$entrypoint_script")" "org.freedesktop.secrets" \
+        "Should poll for org.freedesktop.secrets D-Bus service"
+}
+
+test_entrypoint_has_readback_verification() {
+    log_test "Testing entrypoint.sh has read-back verification before unsetting env var (Issue #189)"
+
+    local entrypoint_script="$KAPSIS_ROOT/scripts/entrypoint.sh"
+
+    assert_contains "$(cat "$entrypoint_script")" "Read-back verification" \
+        "entrypoint.sh should document read-back verification"
+    assert_contains "$(cat "$entrypoint_script")" "secret-tool lookup" \
+        "Should use secret-tool lookup for read-back verification"
+    assert_contains "$(cat "$entrypoint_script")" "verified" \
+        "Should track verification status with 'verified' variable"
+}
+
+test_kapsis_ss_inject_has_retry_logic() {
+    log_test "Testing kapsis-ss-inject.py has D-Bus retry logic (Issue #189)"
+
+    local script="$KAPSIS_ROOT/scripts/kapsis-ss-inject.py"
+
+    assert_file_exists "$script" "kapsis-ss-inject.py should exist"
+    assert_contains "$(cat "$script")" "max_retries" \
+        "kapsis-ss-inject.py should have retry logic"
+    assert_contains "$(cat "$script")" "dbus_init" \
+        "kapsis-ss-inject.py should call dbus_init"
+    assert_contains "$(cat "$script")" "time.sleep" \
+        "kapsis-ss-inject.py should have backoff delays"
+    assert_contains "$(cat "$script")" "import time" \
+        "kapsis-ss-inject.py should import time module"
+}
+
+test_entrypoint_captures_injection_errors() {
+    log_test "Testing entrypoint.sh captures injection stderr for debug logging (Issue #189)"
+
+    local entrypoint_script="$KAPSIS_ROOT/scripts/entrypoint.sh"
+
+    # The injection calls should capture stderr, not suppress it entirely
+    assert_contains "$(cat "$entrypoint_script")" "inject_err" \
+        "kapsis-ss-inject errors should be captured in variable"
+    assert_contains "$(cat "$entrypoint_script")" "store_err" \
+        "secret-tool store errors should be captured in variable"
+    assert_contains "$(cat "$entrypoint_script")" "stderr:" \
+        "Captured stderr should be logged at debug level"
+}
+
+test_env_var_preserved_on_verification_failure() {
+    log_test "Testing env var is preserved when read-back verification fails (Issue #189)"
+
+    local entrypoint_script="$KAPSIS_ROOT/scripts/entrypoint.sh"
+
+    assert_contains "$(cat "$entrypoint_script")" "keeping as env var (secret may not have persisted)" \
+        "Should warn and keep env var when read-back fails"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -446,6 +515,13 @@ main() {
 
     # Security hardening
     run_test test_keyring_field_allowlist_validation
+
+    # Race condition fix tests (Issue #189)
+    run_test test_entrypoint_has_readiness_polling
+    run_test test_entrypoint_has_readback_verification
+    run_test test_kapsis_ss_inject_has_retry_logic
+    run_test test_entrypoint_captures_injection_errors
+    run_test test_env_var_preserved_on_verification_failure
 
     # Cleanup
     cleanup_test_project
