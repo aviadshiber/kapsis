@@ -6,15 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.12.2] - 2026-03-02
+## [2.13.1] - 2026-03-05
+
+### Fixed
+- Correct protoc version and upgrade Node.js to v22 LTS
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Capture error output instead of swallowing it in cache-tree rebuild
 - Rebuild index cache-tree after sanitized git sync (#186)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Changed
 - Bump the github-actions group with 2 updates
@@ -595,7 +599,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.12.2...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.13.1...HEAD
+[2.13.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.1
 [2.12.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.12.2
 [2.12.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.12.1
 [2.12.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.12.0
