@@ -170,6 +170,37 @@ inject_credential_files() {
 }
 
 #===============================================================================
+# SECRET SERVICE READINESS CHECK (Issue #189)
+#
+# Polls the D-Bus Secret Service (gnome-keyring) until it responds.
+# Prevents race condition where secret injection runs before the daemon
+# has registered its D-Bus service name.
+#===============================================================================
+wait_for_secret_service() {
+    local max_attempts="${1:-30}"
+    local sleep_interval="${2:-0.1}"
+    local attempt=0
+
+    log_debug "Waiting for Secret Service D-Bus registration..."
+
+    while (( attempt < max_attempts )); do
+        # Check if org.freedesktop.secrets service name is registered on the session bus.
+        # This is the most direct readiness check — no dependency on secret-tool behavior.
+        if dbus-send --session --print-reply --dest=org.freedesktop.DBus \
+            /org/freedesktop/DBus org.freedesktop.DBus.NameHasOwner \
+            string:"org.freedesktop.secrets" 2>/dev/null | grep -q "boolean true"; then
+            log_debug "Secret Service ready after $attempt poll(s)"
+            return 0
+        fi
+        sleep "$sleep_interval"
+        ((attempt++)) || true
+    done
+
+    log_warn "Secret Service not ready after ${max_attempts} x ${sleep_interval}s polls"
+    return 1
+}
+
+#===============================================================================
 # SECRET STORE INJECTION (Issue #162)
 #
 # Stores secrets in Linux Secret Service (gnome-keyring) instead of leaving
@@ -222,6 +253,14 @@ inject_secret_store() {
         }
     fi
 
+    # Wait for Secret Service D-Bus registration (Issue #189)
+    # The daemon starts asynchronously; injecting before it registers
+    # its D-Bus service name causes silent failures.
+    if ! wait_for_secret_service 30 0.1; then
+        log_warn "Secret Service readiness timeout — secrets will remain as env vars"
+        return 0
+    fi
+
     # Parse keyring collection mappings for 99designs/keyring compat (Issue #170, #176)
     # Format: VAR_NAME|collection_label|profile (comma-separated)
     # profile is optional — when empty, account is used as profile key (original behavior)
@@ -258,10 +297,12 @@ inject_secret_store() {
             if command -v kapsis-ss-inject &>/dev/null; then
                 local profile="${keyring_profiles[$var_name]:-}"
                 local inject_key="${profile:-${account:-$var_name}}"
-                if printf '%s' "$value" | kapsis-ss-inject "$collection" "$inject_key" 2>/dev/null; then
+                local inject_err=""
+                if inject_err=$(printf '%s' "$value" | kapsis-ss-inject "$collection" "$inject_key" 2>&1); then
                     log_debug "Stored $var_name in collection '$collection' with key '$inject_key' (99designs/keyring compat)"
                     stored=true
                 else
+                    log_debug "kapsis-ss-inject stderr: ${inject_err:-<empty>}"
                     log_warn "kapsis-ss-inject failed for $var_name — falling back to secret-tool (99designs/keyring tools will NOT find this secret)"
                 fi
             else
@@ -271,20 +312,46 @@ inject_secret_store() {
 
         # Standard path: secret-tool with service/account attributes
         if [[ "$stored" != "true" ]]; then
+            local store_err=""
             # Use printf to avoid echo interpreting -n/-e flags in secret values
-            if printf '%s' "$value" | secret-tool store --label="$var_name" \
-                service "$service" account "${account:-kapsis}" 2>/dev/null; then
+            if store_err=$(printf '%s' "$value" | secret-tool store --label="$var_name" \
+                service "$service" account "${account:-kapsis}" 2>&1); then
                 log_debug "Stored $var_name in secret store (service: $service)"
                 stored=true
             else
+                log_debug "secret-tool store stderr: ${store_err:-<empty>}"
                 log_warn "Failed to store $var_name in secret store — keeping as env var"
             fi
         fi
 
         if [[ "$stored" == "true" ]]; then
-            # Unset env var — secret is now only in the keyring
-            unset "$var_name"
-            ((injected++)) || true
+            # Read-back verification (Issue #189): confirm the secret is actually
+            # retrievable before unsetting the env var. Prevents data loss if the
+            # daemon accepted the write but didn't persist it.
+            local verified=false
+
+            if [[ -n "$collection" ]]; then
+                # 99designs/keyring path: lookup by profile attribute
+                # stdout contains the secret value — must be discarded
+                local verify_key="${keyring_profiles[$var_name]:-${account:-$var_name}}"
+                if secret-tool lookup profile "$verify_key" >/dev/null 2>&1; then
+                    verified=true
+                fi
+            else
+                # Standard path: lookup by service + account
+                # stdout contains the secret value — must be discarded
+                if secret-tool lookup service "$service" account "${account:-kapsis}" >/dev/null 2>&1; then
+                    verified=true
+                fi
+            fi
+
+            if [[ "$verified" == "true" ]]; then
+                # Secret confirmed in keyring — safe to unset env var
+                unset "$var_name"
+                ((injected++)) || true
+            else
+                log_warn "Read-back verification failed for $var_name — keeping as env var (secret may not have persisted)"
+            fi
         fi
     done
 
