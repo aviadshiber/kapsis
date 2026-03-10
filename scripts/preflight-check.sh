@@ -234,7 +234,8 @@ check_orphan_volumes() {
 
     # Count all kapsis volumes
     local all_volumes
-    all_volumes=$(podman volume ls --format "{{.Name}}" 2>/dev/null | grep -c "^kapsis-" || echo 0)
+    all_volumes=$(podman volume ls --format "{{.Name}}" 2>/dev/null | grep -c "^kapsis-" || true)
+    [[ -z "$all_volumes" ]] && all_volumes=0
 
     if (( all_volumes == 0 )); then
         preflight_ok "No orphaned volumes"
