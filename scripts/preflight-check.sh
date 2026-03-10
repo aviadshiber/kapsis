@@ -26,6 +26,11 @@ if [[ -z "${_KAPSIS_LOGGING_LOADED:-}" ]]; then
     log_init "preflight-check"
 fi
 
+# Source cross-platform compatibility helpers (only if not already loaded)
+if [[ -z "${_KAPSIS_COMPAT_LOADED:-}" ]] && [[ -f "$PREFLIGHT_SCRIPT_DIR/lib/compat.sh" ]]; then
+    source "$PREFLIGHT_SCRIPT_DIR/lib/compat.sh"
+fi
+
 #===============================================================================
 # PREFLIGHT CHECK RESULTS
 #===============================================================================
@@ -219,6 +224,86 @@ check_existing_worktree() {
     return 0
 }
 
+# Check for orphaned Kapsis volumes (Fix #191)
+check_orphan_volumes() {
+    log_info "Checking for orphaned volumes..."
+
+    if ! command -v podman &>/dev/null; then
+        return 0
+    fi
+
+    # Count all kapsis volumes
+    local all_volumes
+    all_volumes=$(podman volume ls --format "{{.Name}}" 2>/dev/null | grep -c "^kapsis-" || echo 0)
+
+    if (( all_volumes == 0 )); then
+        preflight_ok "No orphaned volumes"
+        return 0
+    fi
+
+    # Count volumes in use by running containers
+    local active_volumes=0
+    local running_containers
+    running_containers=$(podman ps --format "{{.Names}}" 2>/dev/null | grep "^kapsis-" || true)
+    if [[ -n "$running_containers" ]]; then
+        # Each running kapsis container uses 3 volumes (m2, gradle, ge)
+        local running_count
+        running_count=$(echo "$running_containers" | wc -l | tr -d ' ')
+        active_volumes=$(( running_count * 3 ))
+    fi
+
+    local orphan_count=$(( all_volumes - active_volumes ))
+    # Guard against over-estimation of active volumes
+    if (( orphan_count < 0 )); then
+        orphan_count=0
+    fi
+
+    if (( orphan_count > 10 )); then
+        preflight_warn "$orphan_count orphaned Kapsis volumes found (wasting disk space)"
+        preflight_warn "  Run: kapsis cleanup --volumes"
+    elif (( orphan_count > 0 )); then
+        log_debug "$orphan_count orphaned volume(s) found (below warning threshold)"
+        preflight_ok "Volumes OK ($orphan_count orphaned, below threshold)"
+    else
+        preflight_ok "No orphaned volumes"
+    fi
+
+    return 0
+}
+
+# Check available disk space (Fix #191)
+check_disk_space() {
+    local warn_mb="${KAPSIS_DISK_WARN_MB:-2048}"    # 2GB default
+    local abort_mb="${KAPSIS_DISK_ABORT_MB:-512}"    # 500MB default
+
+    log_info "Checking disk space..."
+
+    local available_mb
+    if is_macos; then
+        available_mb=$(df -m "$HOME" 2>/dev/null | tail -1 | awk '{print $4}')
+    else
+        available_mb=$(df -BM "$HOME" 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'M')
+    fi
+
+    if [[ -z "$available_mb" ]] || ! [[ "$available_mb" =~ ^[0-9]+$ ]]; then
+        log_debug "Could not determine available disk space"
+        return 0
+    fi
+
+    if (( available_mb < abort_mb )); then
+        preflight_error "Critically low disk space: ${available_mb}MB available (minimum: ${abort_mb}MB)"
+        preflight_error "  Run: kapsis cleanup --all --volumes --images"
+        return 1
+    elif (( available_mb < warn_mb )); then
+        preflight_warn "Low disk space: ${available_mb}MB available (recommend: ${warn_mb}MB+)"
+        preflight_warn "  Consider: kapsis cleanup --all --volumes --images"
+        return 0
+    fi
+
+    preflight_ok "Disk space OK (${available_mb}MB available)"
+    return 0
+}
+
 #===============================================================================
 # MAIN PREFLIGHT CHECK
 #===============================================================================
@@ -237,6 +322,7 @@ preflight_check() {
 
     # Run all checks
     check_podman || true
+    check_disk_space || true
     check_images "$image_name" || true
 
     if [[ -n "$target_branch" ]]; then
@@ -248,6 +334,8 @@ preflight_check() {
     if [[ -n "$spec_file" ]]; then
         check_spec_file "$spec_file" || true
     fi
+
+    check_orphan_volumes || true
 
     echo ""
 

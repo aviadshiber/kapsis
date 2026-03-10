@@ -91,6 +91,7 @@ DO_PUSH=false
 RESUME_MODE=false      # Fix #1: Auto-resume existing worktree
 FORCE_CLEAN=false      # Fix #1: Force remove existing worktree
 KEEP_WORKTREE="${KAPSIS_KEEP_WORKTREE:-false}"  # Fix #169: Preserve worktree after completion
+KEEP_VOLUMES="${KAPSIS_KEEP_VOLUMES:-false}"  # Fix #191: Preserve build cache volumes after completion
 INTERACTIVE=false
 DRY_RUN=false
 # Use KAPSIS_IMAGE env var if set (for CI), otherwise default
@@ -222,6 +223,7 @@ Options:
   --push                Push changes to remote after commit (default: off)
   --no-push             [DEPRECATED] Push is now off by default, use --push to enable
   --keep-worktree       Preserve worktree after agent completion (default: auto-cleanup)
+  --keep-volumes        Preserve build cache volumes after completion (default: auto-cleanup)
   --interactive         Force interactive shell mode (ignores agent.command)
   --dry-run             Show what would be executed without running
   --image <name>        Container image to use (e.g., kapsis-claude-cli:latest)
@@ -414,6 +416,11 @@ parse_args() {
             --keep-worktree)
                 # Preserve worktree after agent completion (Fix #169)
                 KEEP_WORKTREE=true
+                shift
+                ;;
+            --keep-volumes)
+                # Preserve build cache volumes after agent completion (Fix #191)
+                KEEP_VOLUMES=true
                 shift
                 ;;
             --interactive)
@@ -1863,6 +1870,28 @@ RESOLV_EOF
 }
 
 #===============================================================================
+# POST-CONTAINER: VOLUME CLEANUP (Fix #191)
+#===============================================================================
+
+# Remove per-agent build cache volumes after session completion
+cleanup_agent_volumes() {
+    local agent_id="$1"
+    local removed=0
+
+    for suffix in m2 gradle ge; do
+        local vol="kapsis-${agent_id}-${suffix}"
+        if podman volume rm "$vol" &>/dev/null; then
+            log_debug "Removed volume: $vol"
+            ((removed++)) || true
+        fi
+    done
+
+    if (( removed > 0 )); then
+        log_info "Cleaned up $removed build cache volume(s) for agent $agent_id"
+    fi
+}
+
+#===============================================================================
 # MAIN EXECUTION
 #===============================================================================
 main() {
@@ -2115,6 +2144,12 @@ main() {
     else
         log_info "Backend '$BACKEND' handles git operations in-pod"
         POST_EXIT_CODE=0
+    fi
+
+    # Auto-cleanup agent volumes after session end (Fix #191)
+    if [[ "$BACKEND" == "podman" ]] && [[ "$KEEP_VOLUMES" != "true" ]]; then
+        log_debug "Auto-cleaning volumes for agent $AGENT_ID (use --keep-volumes to preserve)..."
+        cleanup_agent_volumes "$AGENT_ID"
     fi
 
     log_timer_end "total"
