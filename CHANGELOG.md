@@ -6,14 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.13.2] - 2026-03-08
+## [2.13.3] - 2026-03-11
 
 ### Fixed
-- Resolve gnome-keyring-daemon race condition in secret injection (#189)
+- Resolve grep -c race in check_orphan_volumes on CI
+- Auto-cleanup volumes and images to prevent disk exhaustion (#191)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Resolve gnome-keyring-daemon race condition in secret injection (#189)
+
 
 ### Fixed
 - Correct protoc version and upgrade Node.js to v22 LTS
@@ -603,7 +608,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.13.2...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.13.3...HEAD
+[2.13.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.3
 [2.13.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.2
 [2.13.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.1
 [2.12.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.12.2
