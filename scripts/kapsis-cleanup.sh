@@ -44,6 +44,7 @@ DRY_RUN=false
 FORCE=false
 CLEAN_ALL=false
 CLEAN_VOLUMES=false
+CLEAN_IMAGES=false
 PROJECT_FILTER=""
 AGENT_FILTER=""
 
@@ -72,6 +73,7 @@ OPTIONS:
     --project <name>    Clean only artifacts for specific project
     --agent <proj> <id> Clean only specific agent's artifacts
     --volumes           Also clean build cache volumes (Maven, Gradle)
+    --images            Clean Kapsis container images and dangling images
     --containers        Clean stopped Kapsis containers
     --logs              Clean log files older than 7 days
     --ssh-cache         Clear cached SSH host keys from keychain
@@ -85,6 +87,7 @@ WHAT GETS CLEANED:
     Sanitized git   Temporary git dirs in ~/.kapsis/sanitized-git/
     Containers      Stopped kapsis-* containers (with --containers)
     Volumes         Build cache volumes (with --volumes)
+    Images          Kapsis container images (with --images or --all)
     Logs            Old log files (with --logs)
     SSH cache       Cached SSH host keys (with --ssh-cache)
 
@@ -95,8 +98,11 @@ EXAMPLES:
     # Clean everything for project 'products'
     $cmd_name --project products --force
 
-    # Full cleanup including volumes
+    # Full cleanup including volumes and images
     $cmd_name --all --volumes
+
+    # Clean only Kapsis images and dangling layers
+    $cmd_name --images
 
     # Clean specific agent
     $cmd_name --agent products 1
@@ -528,6 +534,58 @@ clean_volumes() {
     fi
 }
 
+# Clean Kapsis container images (Fix #191)
+clean_images() {
+    section "Kapsis Images"
+
+    if ! command -v podman &>/dev/null; then
+        echo "  Podman not available"
+        return
+    fi
+
+    local count=0
+
+    # Get kapsis images (kapsis-sandbox, kapsis-claude-cli, etc.)
+    local images
+    images=$(podman images --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}" 2>/dev/null | grep -E "^kapsis-" || true)
+
+    if [[ -n "$images" ]]; then
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            local image_ref image_id image_size
+            read -r image_ref image_id image_size <<< "$line"
+
+            if [[ "$DRY_RUN" == "true" ]]; then
+                print_item "image" "$image_ref" "$image_size"
+            else
+                podman rmi "$image_id" &>/dev/null || true
+                print_item "image" "$image_ref" "$image_size"
+            fi
+            ((count++)) || true
+        done <<< "$images"
+    fi
+
+    # Also prune dangling images
+    local dangling_count
+    dangling_count=$(podman images -q --filter "dangling=true" 2>/dev/null | wc -l | tr -d ' ')
+    if (( dangling_count > 0 )); then
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo -e "  ${CYAN}[DRY-RUN]${NC} Would prune $dangling_count dangling image(s)"
+        else
+            podman image prune -f >/dev/null 2>&1 || true
+            echo -e "  ${GREEN}[CLEANED]${NC} Pruned $dangling_count dangling image(s)"
+        fi
+        ((count += dangling_count)) || true
+    fi
+
+    if (( count == 0 )); then
+        echo "  No images to clean"
+    else
+        echo -e "  ${BOLD}Total: $count image(s) cleaned${NC}"
+        ((ITEMS_CLEANED += count)) || true
+    fi
+}
+
 # Clean old logs
 clean_logs() {
     section "Log Files"
@@ -676,6 +734,10 @@ main() {
                 CLEAN_VOLUMES=true
                 shift
                 ;;
+            --images)
+                CLEAN_IMAGES=true
+                shift
+                ;;
             --containers)
                 clean_containers_flag=true
                 shift
@@ -741,6 +803,10 @@ main() {
         else
             clean_volumes
         fi
+    fi
+
+    if [[ "$CLEAN_IMAGES" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
+        clean_images
     fi
 
     if [[ "$clean_logs_flag" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
