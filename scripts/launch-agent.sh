@@ -829,10 +829,9 @@ parse_config() {
         KAPSIS_CLEANUP_BRANCH_PREFIXES="${KAPSIS_CLEANUP_BRANCH_PREFIXES:-$(yq -r '.cleanup.branch.prefixes // [] | join("|")' "$CONFIG_FILE" 2>/dev/null || echo "")}"
         KAPSIS_CLEANUP_BRANCH_PROTECTED="${KAPSIS_CLEANUP_BRANCH_PROTECTED:-$(yq -r '.cleanup.branch.protected // [] | join("|")' "$CONFIG_FILE" 2>/dev/null || echo "")}"
         KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED="${KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED:-$(yq -r '.cleanup.branch.require_pushed // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
-        KAPSIS_CLEANUP_BRANCH_MAX_AGE_HOURS="${KAPSIS_CLEANUP_BRANCH_MAX_AGE_HOURS:-$(yq -r '.cleanup.branch.max_age_hours // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
         export KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS KAPSIS_CLEANUP_GC_ON_LAUNCH KAPSIS_CLEANUP_GC_BACKGROUND
         export KAPSIS_CLEANUP_BRANCH_ENABLED KAPSIS_CLEANUP_BRANCH_PREFIXES KAPSIS_CLEANUP_BRANCH_PROTECTED
-        export KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED KAPSIS_CLEANUP_BRANCH_MAX_AGE_HOURS
+        export KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED
 
         # Parse security capabilities from config
         # These are added to KAPSIS_CAPS_ADD for the capability generation
@@ -914,18 +913,26 @@ detect_sandbox_mode() {
 }
 
 #===============================================================================
-# Check if a GC lock file is held by a running process (Fix #183)
-_gc_lock_held() {
-    local lock_file="$1"
-    if [[ -f "$lock_file" ]]; then
-        local pid
-        pid=$(cat "$lock_file" 2>/dev/null) || return 1
-        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
-            return 0  # Lock held by live process
-        fi
-        rm -f "$lock_file"  # Stale lock
+# Acquire an atomic GC lock using mkdir (POSIX-atomic). Returns 0 if acquired.
+# Uses a lock directory with a PID file inside. (Fix #183)
+_gc_lock_acquire() {
+    local lock_dir="$1"
+    # Try atomic mkdir — only one process can succeed
+    if mkdir "$lock_dir" 2>/dev/null; then
+        return 0  # Lock acquired
     fi
-    return 1  # Lock not held
+    # Lock dir exists — check if owner is still alive
+    local pid_file="${lock_dir}/pid"
+    if [[ -f "$pid_file" ]]; then
+        local pid
+        pid=$(cat "$pid_file" 2>/dev/null) || return 1
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            return 1  # Lock held by live process
+        fi
+    fi
+    # Stale lock — remove and retry once
+    rm -rf "$lock_dir" 2>/dev/null || return 1
+    mkdir "$lock_dir" 2>/dev/null
 }
 
 # SANDBOX SETUP (dispatches to mode-specific setup)
@@ -971,13 +978,13 @@ setup_worktree_sandbox() {
     if [[ "$gc_on_launch" == "true" ]]; then
         if [[ "$gc_background" == "true" ]]; then
             # Run GC in background to avoid blocking agent launch (Fix #183)
-            local gc_lock
-            gc_lock="${KAPSIS_GC_LOCK_DIR:-$HOME/.kapsis/locks}/gc-$(basename "$PROJECT_PATH").lock"
-            mkdir -p "$(dirname "$gc_lock")" 2>/dev/null || true
-            if ! _gc_lock_held "$gc_lock"; then
+            local gc_lock_dir
+            gc_lock_dir="${KAPSIS_GC_LOCK_DIR:-$HOME/.kapsis/locks}/gc-$(basename "$PROJECT_PATH").lock.d"
+            mkdir -p "$(dirname "$gc_lock_dir")" 2>/dev/null || true
+            if _gc_lock_acquire "$gc_lock_dir"; then
                 (
-                    echo $$ > "$gc_lock"
-                    trap 'rm -f "$gc_lock"' EXIT
+                    echo "$BASHPID" > "${gc_lock_dir}/pid"
+                    trap 'rm -rf "$gc_lock_dir"' EXIT
                     gc_stale_worktrees "$PROJECT_PATH" 2>>"${LOG_FILE:-/dev/null}" || true
                 ) &
                 disown

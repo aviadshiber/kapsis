@@ -632,18 +632,19 @@ cleanup_branch() {
 
     local protected="${KAPSIS_CLEANUP_BRANCH_PROTECTED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_PROTECTED:-main|master|develop|release/.*|stable/.*}}"
     local require_pushed="${KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_REQUIRE_PUSHED:-true}}"
+    local prefixes="${KAPSIS_CLEANUP_BRANCH_PREFIXES:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_PREFIXES:-ai-agent/|kapsis/}}"
 
-    cd "$project_path" || return 2
+    [[ -d "$project_path" ]] || return 2
 
     # Safety 1: Never delete if branch is checked out in any worktree
-    if git worktree list --porcelain 2>/dev/null | grep -q "branch refs/heads/${branch_name}$"; then
+    if git -C "$project_path" worktree list --porcelain 2>/dev/null | grep -q "branch refs/heads/${branch_name}$"; then
         log_debug "Branch '$branch_name' is checked out in a worktree, skipping"
         return 1
     fi
 
     # Safety 2: Never delete the current branch of the main repo
     local current_branch
-    current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    current_branch=$(git -C "$project_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
     if [[ "$current_branch" == "$branch_name" ]]; then
         log_debug "Branch '$branch_name' is currently checked out, skipping"
         return 1
@@ -652,22 +653,26 @@ cleanup_branch() {
     # Safety 3: Check against protected patterns (pipe-separated)
     local saved_ifs="$IFS"
     IFS='|'
+    local is_protected=false
     for pattern in $protected; do
-        IFS="$saved_ifs"
         # Support glob-like patterns (e.g., release/.*)
         # shellcheck disable=SC2053
         if [[ "$branch_name" == $pattern ]] || [[ "$branch_name" =~ ^${pattern}$ ]]; then
-            log_debug "Branch '$branch_name' matches protected pattern '$pattern', skipping"
-            return 1
+            is_protected=true
+            break
         fi
     done
     IFS="$saved_ifs"
+    if [[ "$is_protected" == "true" ]]; then
+        log_debug "Branch '$branch_name' matches protected pattern, skipping"
+        return 1
+    fi
 
     # Safety 4: Check if branch has unpushed commits (when require_pushed=true)
     if [[ "$require_pushed" == "true" ]]; then
-        if git rev-parse --verify "origin/$branch_name" &>/dev/null; then
+        if git -C "$project_path" rev-parse --verify "origin/$branch_name" &>/dev/null; then
             local unpushed
-            unpushed=$(git log "origin/$branch_name..$branch_name" --oneline 2>/dev/null | wc -l | tr -d ' ')
+            unpushed=$(git -C "$project_path" log "origin/$branch_name..$branch_name" --oneline 2>/dev/null | wc -l | tr -d ' ')
             if [[ "$unpushed" -gt 0 ]]; then
                 log_warn "Branch '$branch_name' has $unpushed unpushed commit(s), skipping"
                 return 1
@@ -679,6 +684,24 @@ cleanup_branch() {
         fi
     fi
 
+    # Safety 5: Branch must match allowed prefixes (defense-in-depth)
+    if [[ -n "$prefixes" ]]; then
+        local matches_prefix=false
+        saved_ifs="$IFS"
+        IFS='|'
+        for prefix in $prefixes; do
+            if [[ "$branch_name" == "${prefix}"* ]]; then
+                matches_prefix=true
+                break
+            fi
+        done
+        IFS="$saved_ifs"
+        if [[ "$matches_prefix" == "false" ]]; then
+            log_debug "Branch '$branch_name' does not match any allowed prefix ($prefixes), skipping"
+            return 1
+        fi
+    fi
+
     # Delete (or dry-run)
     if [[ "$dry_run" == "true" ]]; then
         log_info "DRY-RUN: Would delete branch '$branch_name'"
@@ -686,14 +709,14 @@ cleanup_branch() {
     fi
 
     log_info "Deleting branch: $branch_name"
-    if git branch -d "$branch_name" 2>/dev/null; then
+    if git -C "$project_path" branch -d "$branch_name" 2>/dev/null; then
         log_success "Deleted branch: $branch_name"
         return 0
     fi
 
     # Force delete only if we already verified it's pushed
     if [[ "$require_pushed" == "true" ]]; then
-        if git branch -D "$branch_name" 2>/dev/null; then
+        if git -C "$project_path" branch -D "$branch_name" 2>/dev/null; then
             log_success "Force-deleted branch: $branch_name"
             return 0
         fi

@@ -363,8 +363,9 @@ test_cleanup_worktree_with_branch_deletion() {
         return 1
     fi
 
-    # Cleanup with branch deletion (require_pushed=false for local test)
+    # Cleanup with branch deletion (require_pushed=false, add test prefix for local test)
     KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED="false" \
+    KAPSIS_CLEANUP_BRANCH_PREFIXES="ai-agent/|kapsis/|feature/cleanup-test" \
         cleanup_worktree "$TEST_PROJECT" "$agent_id" "true"
 
     # Worktree should be gone

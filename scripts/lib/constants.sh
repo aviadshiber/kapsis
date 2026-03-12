@@ -199,8 +199,5 @@ readonly KAPSIS_DEFAULT_CLEANUP_BRANCH_PROTECTED="main|master|develop|release/.*
 # Only delete branches that are fully pushed to remote
 readonly KAPSIS_DEFAULT_CLEANUP_BRANCH_REQUIRE_PUSHED="true"
 
-# Max age (hours) for branch cleanup. 0 = no age check on branches.
-readonly KAPSIS_DEFAULT_CLEANUP_BRANCH_MAX_AGE_HOURS=336  # 14 days
-
 # Lock directory for background GC (prevents concurrent runs)
 readonly KAPSIS_GC_LOCK_DIR="${HOME}/.kapsis/locks"

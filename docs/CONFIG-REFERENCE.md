@@ -517,12 +517,6 @@ cleanup:
     # Env: KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED
     require_pushed: true
 
-    # Maximum age (hours) for branch cleanup via gc_stale_worktrees_by_age.
-    # Only branches older than this are candidates for deletion.
-    # Default: 336 (14 days). Set to 0 to skip age check on branches.
-    # Env: KAPSIS_CLEANUP_BRANCH_MAX_AGE_HOURS
-    max_age_hours: 336
-
 #===============================================================================
 # NETWORK ISOLATION
 #===============================================================================

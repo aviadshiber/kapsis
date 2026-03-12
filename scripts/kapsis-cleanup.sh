@@ -183,6 +183,7 @@ clean_worktrees() {
 
     local count=0
     local total_size=0
+    local -a repos_to_prune=()
 
     for worktree in "$WORKTREE_DIR"/*; do
         [[ -d "$worktree" ]] || continue
@@ -205,13 +206,14 @@ clean_worktrees() {
         if [[ "$DRY_RUN" == "true" ]]; then
             print_item "worktree" "$name" "$size_human"
         else
-            # Find the original git repo to prune from
+            # Collect the owning repo BEFORE deletion for later pruning (Fix #183)
             if [[ -f "$worktree/.git" ]]; then
                 local git_dir
                 git_dir=$(grep "gitdir:" "$worktree/.git" | cut -d' ' -f2-)
                 local main_repo
                 main_repo=$(dirname "$(dirname "$git_dir")")
                 if [[ -d "$main_repo/.git" ]]; then
+                    repos_to_prune+=("$main_repo")
                     git -C "$main_repo" worktree remove "$worktree" --force 2>/dev/null || rm -rf "$worktree"
                 else
                     rm -rf "$worktree"
@@ -226,29 +228,22 @@ clean_worktrees() {
         ((count++)) || true
     done
 
-    # Prune stale worktree references from project repos (Fix #183)
-    if [[ "$DRY_RUN" != "true" ]] && (( count > 0 )); then
+    # Prune stale worktree references from collected repos (Fix #183)
+    if [[ "$DRY_RUN" != "true" ]] && (( ${#repos_to_prune[@]} > 0 )); then
         local -a pruned_repos=()
-        for worktree in "$WORKTREE_DIR"/*; do
-            [[ -f "$worktree/.git" ]] || continue
-            local git_dir
-            git_dir=$(grep "gitdir:" "$worktree/.git" 2>/dev/null | cut -d' ' -f2-) || continue
-            local main_repo
-            main_repo=$(dirname "$(dirname "$git_dir")")
-            if [[ -d "$main_repo/.git" ]]; then
-                # Avoid pruning the same repo twice
-                local already_pruned=false
-                local pruned_repo
-                for pruned_repo in "${pruned_repos[@]+"${pruned_repos[@]}"}"; do
-                    if [[ "$pruned_repo" == "$main_repo" ]]; then
-                        already_pruned=true
-                        break
-                    fi
-                done
-                if [[ "$already_pruned" != "true" ]]; then
-                    git -C "$main_repo" worktree prune 2>/dev/null || true
-                    pruned_repos+=("$main_repo")
+        local repo
+        for repo in "${repos_to_prune[@]}"; do
+            local already_pruned=false
+            local pruned_repo
+            for pruned_repo in "${pruned_repos[@]+"${pruned_repos[@]}"}"; do
+                if [[ "$pruned_repo" == "$repo" ]]; then
+                    already_pruned=true
+                    break
                 fi
+            done
+            if [[ "$already_pruned" != "true" ]]; then
+                git -C "$repo" worktree prune 2>/dev/null || true
+                pruned_repos+=("$repo")
             fi
         done
     fi
@@ -760,7 +755,7 @@ clean_branches() {
 
     # Source worktree-manager for cleanup_branch()
     if [[ -f "$SCRIPT_DIR/worktree-manager.sh" ]]; then
-        source "$SCRIPT_DIR/worktree-manager.sh" 2>/dev/null || true
+        source "$SCRIPT_DIR/worktree-manager.sh" || { log_error "Failed to source worktree-manager.sh"; return; }
     fi
 
     if ! declare -f cleanup_branch &>/dev/null; then
@@ -775,8 +770,6 @@ clean_branches() {
 
     local branch_prefixes="${KAPSIS_CLEANUP_BRANCH_PREFIXES:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_PREFIXES:-ai-agent/|kapsis/}}"
     local count=0
-
-    cd "$project_path" || return
 
     # List local branches matching agent prefixes
     while IFS= read -r raw_branch; do
@@ -810,7 +803,7 @@ clean_branches() {
                 ((count++)) || true
             fi
         fi
-    done < <(git branch 2>/dev/null)
+    done < <(git -C "$project_path" branch 2>/dev/null)
 
     if (( count == 0 )); then
         echo "  No agent branches to clean"
