@@ -6,15 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.13.3] - 2026-03-11
+## [2.13.4] - 2026-03-12
+
+### Fixed
+- Address review feedback for #168
+- Ensure overlay mode status transitions to 'complete' (#168)
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Resolve grep -c race in check_orphan_volumes on CI
 - Auto-cleanup volumes and images to prevent disk exhaustion (#191)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Resolve gnome-keyring-daemon race condition in secret injection (#189)
@@ -608,7 +613,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.13.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.13.4...HEAD
+[2.13.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.4
 [2.13.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.3
 [2.13.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.2
 [2.13.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.1
