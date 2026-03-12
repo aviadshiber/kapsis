@@ -2323,8 +2323,6 @@ post_container_overlay() {
 
         if [[ "$changes_count" -gt 0 ]]; then
             log_success "Agent made $changes_count file change(s)"
-            # Set commit status for overlay mode (Fix #168)
-            status_set_commit_info "overlay_pending" "" "$changes_count"
             echo ""
             echo "Changed files:"
             # Cross-platform: use parameter expansion to strip prefix (safer than sed with special chars)
@@ -2342,6 +2340,10 @@ post_container_overlay() {
                 echo "Upper directory preserved: $UPPER_DIR"
                 return 1
             fi
+
+            # Set commit status for overlay mode (Fix #168)
+            # Placed after scope validation so it's only set for valid changes
+            status_set_commit_info "overlay_pending" "" "$changes_count"
 
             echo "Upper directory: $UPPER_DIR"
             echo ""

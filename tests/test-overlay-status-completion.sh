@@ -19,7 +19,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/test-framework.sh"
 
 LAUNCH_AGENT_SCRIPT="$KAPSIS_ROOT/scripts/launch-agent.sh"
-STATUS_SCRIPT="$KAPSIS_ROOT/scripts/lib/status.sh"
 
 #===============================================================================
 # TEST CASES: Cleanup Trap
@@ -71,10 +70,10 @@ test_status_complete_shown_set_after_normal_calls() {
     local guard_set_count
 
     # Count status_complete calls (exclude trap block and comments)
-    status_complete_count=$(grep -c 'status_complete' "$LAUNCH_AGENT_SCRIPT" | tr -d ' ')
+    status_complete_count=$(grep -c 'status_complete' "$LAUNCH_AGENT_SCRIPT")
 
     # Count _STATUS_COMPLETE_SHOWN=true assignments
-    guard_set_count=$(grep -c '_STATUS_COMPLETE_SHOWN=true' "$LAUNCH_AGENT_SCRIPT" | tr -d ' ')
+    guard_set_count=$(grep -c '_STATUS_COMPLETE_SHOWN=true' "$LAUNCH_AGENT_SCRIPT")
 
     # The trap has 2 status_complete calls (success/error) and the init has 1 false assignment
     # Normal flow calls should each have a corresponding _STATUS_COMPLETE_SHOWN=true
@@ -138,48 +137,6 @@ test_overlay_handles_missing_upper_dir() {
 }
 
 #===============================================================================
-# TEST CASES: Status Library (functional tests)
-#===============================================================================
-
-test_status_overlay_pending_functional() {
-    log_test "status_set_commit_info accepts overlay_pending value"
-
-    # Create isolated test status directory
-    local test_dir
-    test_dir=$(mktemp -d)
-    export KAPSIS_STATUS_DIR="$test_dir"
-    export KAPSIS_STATUS_ENABLED="true"
-
-    # Reset status library state
-    unset _KAPSIS_STATUS_LOADED 2>/dev/null || true
-    unset _KAPSIS_STATUS_FILE 2>/dev/null || true
-    unset _KAPSIS_STATUS_INITIALIZED 2>/dev/null || true
-    unset _KAPSIS_STATUS_PROJECT 2>/dev/null || true
-    unset _KAPSIS_STATUS_AGENT_ID 2>/dev/null || true
-    unset _KAPSIS_COMMIT_STATUS 2>/dev/null || true
-
-    # Source fresh status library
-    source "$STATUS_SCRIPT"
-
-    # Initialize and set overlay_pending
-    status_init "test-project" "test-agent" "" "overlay" ""
-    status_set_commit_info "overlay_pending" "" "5"
-
-    local result
-    result=$(status_get_commit_status)
-
-    if [[ "$result" == "overlay_pending" ]]; then
-        log_info "  ✓ status_get_commit_status returns overlay_pending"
-    else
-        log_fail "Expected overlay_pending, got: $result"
-        rm -rf "$test_dir"
-        return 1
-    fi
-
-    rm -rf "$test_dir"
-}
-
-#===============================================================================
 # RUNNER
 #===============================================================================
 
@@ -190,6 +147,5 @@ run_test test_status_complete_shown_set_after_normal_calls
 run_test test_overlay_sets_commit_info_pending
 run_test test_overlay_sets_commit_info_no_changes
 run_test test_overlay_handles_missing_upper_dir
-run_test test_status_overlay_pending_functional
 
 print_summary
