@@ -1900,6 +1900,8 @@ main() {
 
     # Track if we've shown completion message (to avoid duplicate on normal exit)
     _DISPLAY_COMPLETE_SHOWN=false
+    # Track if status_complete has been called (to avoid orphaned status on abnormal exit)
+    _STATUS_COMPLETE_SHOWN=false
 
     # Track temp file for cleanup on signal (set later when container runs)
     _CONTAINER_OUTPUT_TMP=""
@@ -1912,6 +1914,14 @@ main() {
         [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
         # Delegate backend-specific cleanup (secrets env file, inline spec, dns pin, etc.)
         backend_cleanup 2>/dev/null || true
+        # Ensure status transitions to 'complete' on abnormal exit (Fix #168)
+        if [[ "$_STATUS_COMPLETE_SHOWN" != "true" ]]; then
+            if [[ $exit_code -eq 0 ]]; then
+                status_complete 0 2>/dev/null || true
+            else
+                status_complete "$exit_code" "Exited with code $exit_code" 2>/dev/null || true
+            fi
+        fi
         # Show completion message if not already shown
         if [[ "$_DISPLAY_COMPLETE_SHOWN" != "true" ]]; then
             if [[ $exit_code -eq 0 ]]; then
@@ -1973,6 +1983,7 @@ main() {
         source "$SCRIPT_DIR/preflight-check.sh"
         if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"; then
             status_complete 1 "Pre-flight check failed"
+            _STATUS_COMPLETE_SHOWN=true
             exit 1
         fi
         log_timer_end "preflight"
@@ -2164,6 +2175,7 @@ main() {
         FINAL_EXIT_CODE=$EXIT_CODE
         log_finalize "$EXIT_CODE"
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
+        _STATUS_COMPLETE_SHOWN=true
         # Include captured container error in the failure message
         local error_msg="Agent exited with error code $EXIT_CODE"
         if [[ -n "$CONTAINER_ERROR_OUTPUT" ]]; then
@@ -2179,6 +2191,7 @@ main() {
         FINAL_EXIT_CODE=$POST_EXIT_CODE
         log_finalize $POST_EXIT_CODE
         status_complete "$POST_EXIT_CODE" "Post-container operations failed (push)"
+        _STATUS_COMPLETE_SHOWN=true
         display_complete "$POST_EXIT_CODE" "" "Post-container operations failed"
         _DISPLAY_COMPLETE_SHOWN=true
     else
@@ -2193,6 +2206,7 @@ main() {
             log_finalize 3
             log_warn "Uncommitted changes remain in worktree!"
             status_complete 3 "Uncommitted changes remain"
+            _STATUS_COMPLETE_SHOWN=true
             display_complete 3 "" "Uncommitted changes remain"
             _DISPLAY_COMPLETE_SHOWN=true
         else
@@ -2200,6 +2214,7 @@ main() {
             FINAL_EXIT_CODE=0
             log_finalize 0
             status_complete 0 "" "${PR_URL:-}"
+            _STATUS_COMPLETE_SHOWN=true
             display_complete 0 "${PR_URL:-}"
             _DISPLAY_COMPLETE_SHOWN=true
         fi
@@ -2238,6 +2253,7 @@ post_container_worktree() {
         if ! validate_scope_worktree "$WORKTREE_PATH"; then
             log_error "Aborting due to scope violation"
             status_complete 1 "Scope violation detected"
+            _STATUS_COMPLETE_SHOWN=true
             return 1
         fi
 
@@ -2320,9 +2336,14 @@ post_container_overlay() {
             if ! validate_scope_overlay "$UPPER_DIR"; then
                 log_error "Aborting due to scope violation"
                 status_complete 1 "Scope violation detected"
+                _STATUS_COMPLETE_SHOWN=true
                 echo "Upper directory preserved: $UPPER_DIR"
                 return 1
             fi
+
+            # Set commit status for overlay mode (Fix #168)
+            # Placed after scope validation so it's only set for valid changes
+            status_set_commit_info "overlay_pending" "" "$changes_count"
 
             echo "Upper directory: $UPPER_DIR"
             echo ""
@@ -2336,7 +2357,13 @@ post_container_overlay() {
             fi
         else
             log_info "No file changes detected"
+            # Set commit status for overlay mode (Fix #168)
+            status_set_commit_info "no_changes" "" "0"
         fi
+    else
+        log_info "No upper directory found"
+        # Set commit status for overlay mode (Fix #168)
+        status_set_commit_info "no_changes" "" "0"
     fi
 }
 
