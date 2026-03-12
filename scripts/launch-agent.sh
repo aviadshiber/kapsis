@@ -820,6 +820,20 @@ parse_config() {
         NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
         NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
 
+        # Parse cleanup configuration (Fix #183)
+        # Env vars take precedence over YAML via ${VAR:-$(yq ...)} pattern
+        KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS="${KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS:-$(yq -r '.cleanup.worktree.max_age_hours // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_GC_ON_LAUNCH="${KAPSIS_CLEANUP_GC_ON_LAUNCH:-$(yq -r '.cleanup.worktree.gc_on_launch // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_GC_BACKGROUND="${KAPSIS_CLEANUP_GC_BACKGROUND:-$(yq -r '.cleanup.worktree.gc_background // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_BRANCH_ENABLED="${KAPSIS_CLEANUP_BRANCH_ENABLED:-$(yq -r '.cleanup.branch.enabled // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_BRANCH_PREFIXES="${KAPSIS_CLEANUP_BRANCH_PREFIXES:-$(yq -r '.cleanup.branch.prefixes // [] | join("|")' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_BRANCH_PROTECTED="${KAPSIS_CLEANUP_BRANCH_PROTECTED:-$(yq -r '.cleanup.branch.protected // [] | join("|")' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED="${KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED:-$(yq -r '.cleanup.branch.require_pushed // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_BRANCH_MAX_AGE_HOURS="${KAPSIS_CLEANUP_BRANCH_MAX_AGE_HOURS:-$(yq -r '.cleanup.branch.max_age_hours // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        export KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS KAPSIS_CLEANUP_GC_ON_LAUNCH KAPSIS_CLEANUP_GC_BACKGROUND
+        export KAPSIS_CLEANUP_BRANCH_ENABLED KAPSIS_CLEANUP_BRANCH_PREFIXES KAPSIS_CLEANUP_BRANCH_PROTECTED
+        export KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED KAPSIS_CLEANUP_BRANCH_MAX_AGE_HOURS
+
         # Parse security capabilities from config
         # These are added to KAPSIS_CAPS_ADD for the capability generation
         local config_caps_add
@@ -900,6 +914,20 @@ detect_sandbox_mode() {
 }
 
 #===============================================================================
+# Check if a GC lock file is held by a running process (Fix #183)
+_gc_lock_held() {
+    local lock_file="$1"
+    if [[ -f "$lock_file" ]]; then
+        local pid
+        pid=$(cat "$lock_file" 2>/dev/null) || return 1
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            return 0  # Lock held by live process
+        fi
+        rm -f "$lock_file"  # Stale lock
+    fi
+    return 1  # Lock not held
+}
+
 # SANDBOX SETUP (dispatches to mode-specific setup)
 #===============================================================================
 setup_sandbox() {
@@ -936,8 +964,31 @@ setup_worktree_sandbox() {
         return
     fi
 
-    # Opportunistic GC: clean stale worktrees from previous completed agents (Fix #169)
-    gc_stale_worktrees "$PROJECT_PATH" || log_warn "Opportunistic GC failed (non-fatal)"
+    # Opportunistic GC: clean stale worktrees from previous completed agents (Fix #169, #183)
+    local gc_on_launch="${KAPSIS_CLEANUP_GC_ON_LAUNCH:-${KAPSIS_DEFAULT_CLEANUP_GC_ON_LAUNCH:-true}}"
+    local gc_background="${KAPSIS_CLEANUP_GC_BACKGROUND:-${KAPSIS_DEFAULT_CLEANUP_GC_BACKGROUND:-true}}"
+
+    if [[ "$gc_on_launch" == "true" ]]; then
+        if [[ "$gc_background" == "true" ]]; then
+            # Run GC in background to avoid blocking agent launch (Fix #183)
+            local gc_lock
+            gc_lock="${KAPSIS_GC_LOCK_DIR:-$HOME/.kapsis/locks}/gc-$(basename "$PROJECT_PATH").lock"
+            mkdir -p "$(dirname "$gc_lock")" 2>/dev/null || true
+            if ! _gc_lock_held "$gc_lock"; then
+                (
+                    echo $$ > "$gc_lock"
+                    trap 'rm -f "$gc_lock"' EXIT
+                    gc_stale_worktrees "$PROJECT_PATH" 2>>"${LOG_FILE:-/dev/null}" || true
+                ) &
+                disown
+                log_debug "Background GC started (PID: $!)"
+            else
+                log_debug "GC already running for $(basename "$PROJECT_PATH"), skipping"
+            fi
+        else
+            gc_stale_worktrees "$PROJECT_PATH" || log_warn "Opportunistic GC failed (non-fatal)"
+        fi
+    fi
 
     # Create worktree on host (Fix #116: pass base branch for proper branching)
     WORKTREE_PATH=$(create_worktree "$PROJECT_PATH" "$AGENT_ID" "$BRANCH" "$BASE_BRANCH" "$REMOTE_BRANCH")
@@ -2304,7 +2355,8 @@ post_container_worktree() {
         echo "  cd $PROJECT_PATH && git worktree remove $WORKTREE_PATH"
     else
         log_info "Auto-cleaning worktree (use --keep-worktree or KAPSIS_KEEP_WORKTREE=true to preserve)..."
-        cleanup_worktree "$PROJECT_PATH" "$AGENT_ID"
+        local delete_branch="${KAPSIS_CLEANUP_BRANCH_ENABLED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_ENABLED:-false}}"
+        cleanup_worktree "$PROJECT_PATH" "$AGENT_ID" "$delete_branch"
         prune_worktrees "$PROJECT_PATH"
     fi
 }

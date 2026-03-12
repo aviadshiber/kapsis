@@ -78,6 +78,28 @@ get_file_mtime() {
 }
 
 #-------------------------------------------------------------------------------
+# get_dir_mtime <dir>
+#
+# Returns directory modification time as Unix epoch (seconds since 1970).
+# Works on both macOS and Linux.
+# Returns empty string if directory doesn't exist or on error.
+#-------------------------------------------------------------------------------
+get_dir_mtime() {
+    local dir="$1"
+
+    if [[ ! -d "$dir" ]]; then
+        echo ""
+        return 1
+    fi
+
+    if [[ "$_KAPSIS_OS" == "Darwin" ]]; then
+        stat -f "%m" "$dir" 2>/dev/null
+    else
+        stat -c "%Y" "$dir" 2>/dev/null
+    fi
+}
+
+#-------------------------------------------------------------------------------
 # is_macos
 #
 # Returns 0 (true) if running on macOS, 1 (false) otherwise.

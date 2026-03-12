@@ -197,11 +197,226 @@ test_gc_handles_no_status_dir() {
 }
 
 #===============================================================================
+# BRANCH CLEANUP TESTS (Fix #183)
+#===============================================================================
+
+test_cleanup_branch_deletes_agent_branch() {
+    log_test "Testing cleanup_branch deletes a merged agent branch"
+
+    local branch_name="ai-agent/test-delete-$$"
+
+    cd "$TEST_PROJECT"
+    git checkout -b "$branch_name" 2>/dev/null
+    git checkout - 2>/dev/null
+
+    # Verify branch exists
+    if ! git rev-parse --verify "$branch_name" &>/dev/null; then
+        log_fail "Branch should exist before cleanup"
+        return 1
+    fi
+
+    # Disable require_pushed for this test (local-only branch)
+    KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED="false" \
+        cleanup_branch "$TEST_PROJECT" "$branch_name"
+
+    # Verify branch is gone
+    if git rev-parse --verify "$branch_name" &>/dev/null 2>&1; then
+        log_fail "Branch should be deleted after cleanup_branch"
+        git branch -D "$branch_name" 2>/dev/null || true
+        return 1
+    fi
+
+    return 0
+}
+
+test_cleanup_branch_preserves_protected() {
+    log_test "Testing cleanup_branch preserves protected branches"
+
+    cd "$TEST_PROJECT"
+    local branch_name="main"
+
+    # main is in the default protected list — cleanup_branch should skip it
+    local exit_code=0
+    cleanup_branch "$TEST_PROJECT" "$branch_name" 2>/dev/null || exit_code=$?
+
+    assert_equals "1" "$exit_code" "cleanup_branch should return 1 (skipped) for protected branch"
+}
+
+test_cleanup_branch_preserves_checked_out() {
+    log_test "Testing cleanup_branch preserves branch checked out in worktree"
+
+    local agent_id="branch-checkout-$$"
+    local branch_name="feature/checked-out-test-${agent_id}"
+
+    # Create a worktree with this branch (making it checked out)
+    setup_cleanup_test "$agent_id"
+
+    cd "$TEST_PROJECT"
+
+    # Try to delete the branch that's checked out in the worktree
+    local exit_code=0
+    KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED="false" \
+        cleanup_branch "$TEST_PROJECT" "feature/cleanup-test-${agent_id}" 2>/dev/null || exit_code=$?
+
+    assert_equals "1" "$exit_code" "cleanup_branch should return 1 (skipped) for checked-out branch"
+
+    teardown_cleanup_test "$agent_id"
+}
+
+test_cleanup_branch_preserves_unpushed() {
+    log_test "Testing cleanup_branch preserves branches without remote (require_pushed=true)"
+
+    local branch_name="ai-agent/unpushed-test-$$"
+
+    cd "$TEST_PROJECT"
+    git checkout -b "$branch_name" 2>/dev/null
+    # Make a commit so the branch has content
+    echo "test" > "test-unpushed-$$"
+    git add "test-unpushed-$$"
+    git commit -m "test commit" --quiet 2>/dev/null
+    git checkout - 2>/dev/null
+
+    # With require_pushed=true (default), should skip
+    local exit_code=0
+    KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED="true" \
+        cleanup_branch "$TEST_PROJECT" "$branch_name" 2>/dev/null || exit_code=$?
+
+    assert_equals "1" "$exit_code" "cleanup_branch should return 1 (skipped) for unpushed branch"
+
+    # Cleanup
+    git branch -D "$branch_name" 2>/dev/null || true
+}
+
+test_gc_age_cleans_old_worktrees() {
+    log_test "Testing gc_stale_worktrees_by_age cleans old worktrees"
+
+    local agent_id="gc-age-old-$$"
+    setup_cleanup_test "$agent_id"
+
+    # Backdate the worktree directory to 8 days ago (older than default 7-day TTL)
+    local old_time=$(($(date +%s) - 8 * 24 * 3600))
+    touch -t "$(date -r "$old_time" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$old_time" +%Y%m%d%H%M.%S 2>/dev/null)" "$CLEANUP_WORKTREE_PATH" 2>/dev/null || {
+        # Fallback: try GNU touch
+        touch -d "@$old_time" "$CLEANUP_WORKTREE_PATH" 2>/dev/null || true
+    }
+
+    # Run age-based GC with 168h (7 days) max age
+    KAPSIS_CLEANUP_BRANCH_ENABLED="false" \
+        gc_stale_worktrees_by_age "$TEST_PROJECT" 168 "false"
+
+    if [[ -d "$CLEANUP_WORKTREE_PATH" ]]; then
+        log_fail "GC-age should have removed worktree older than 7 days"
+        teardown_cleanup_test "$agent_id"
+        return 1
+    fi
+
+    return 0
+}
+
+test_gc_age_preserves_recent_worktrees() {
+    log_test "Testing gc_stale_worktrees_by_age preserves recent worktrees"
+
+    local agent_id="gc-age-new-$$"
+    setup_cleanup_test "$agent_id"
+
+    # Worktree was just created, should be preserved
+    KAPSIS_CLEANUP_BRANCH_ENABLED="false" \
+        gc_stale_worktrees_by_age "$TEST_PROJECT" 168 "false"
+
+    assert_dir_exists "$CLEANUP_WORKTREE_PATH" "GC-age should preserve recent worktree"
+
+    teardown_cleanup_test "$agent_id"
+}
+
+test_gc_age_zero_disables() {
+    log_test "Testing gc_stale_worktrees_by_age disabled when max_age_hours=0"
+
+    local agent_id="gc-age-zero-$$"
+    setup_cleanup_test "$agent_id"
+
+    # Backdate the worktree
+    local old_time=$(($(date +%s) - 30 * 24 * 3600))
+    touch -t "$(date -r "$old_time" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$old_time" +%Y%m%d%H%M.%S 2>/dev/null)" "$CLEANUP_WORKTREE_PATH" 2>/dev/null || true
+
+    # With max_age_hours=0, cleanup should be disabled
+    gc_stale_worktrees_by_age "$TEST_PROJECT" 0 "false"
+
+    assert_dir_exists "$CLEANUP_WORKTREE_PATH" "GC-age should be disabled when max_age_hours=0"
+
+    teardown_cleanup_test "$agent_id"
+}
+
+test_cleanup_worktree_with_branch_deletion() {
+    log_test "Testing cleanup_worktree with delete_branch=true"
+
+    local agent_id="wt-branch-del-$$"
+    local branch_name="feature/cleanup-test-${agent_id}"
+    setup_cleanup_test "$agent_id"
+
+    # Verify both worktree and branch exist
+    assert_dir_exists "$CLEANUP_WORKTREE_PATH" "Worktree should exist before cleanup"
+
+    cd "$TEST_PROJECT"
+    if ! git rev-parse --verify "$branch_name" &>/dev/null; then
+        log_fail "Branch should exist before cleanup"
+        teardown_cleanup_test "$agent_id"
+        return 1
+    fi
+
+    # Cleanup with branch deletion (require_pushed=false for local test)
+    KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED="false" \
+        cleanup_worktree "$TEST_PROJECT" "$agent_id" "true"
+
+    # Worktree should be gone
+    if [[ -d "$CLEANUP_WORKTREE_PATH" ]]; then
+        log_fail "Worktree should be removed"
+        teardown_cleanup_test "$agent_id"
+        return 1
+    fi
+
+    # Branch should be gone
+    cd "$TEST_PROJECT"
+    if git rev-parse --verify "$branch_name" &>/dev/null 2>&1; then
+        log_fail "Branch should be deleted when delete_branch=true"
+        git branch -D "$branch_name" 2>/dev/null || true
+        return 1
+    fi
+
+    return 0
+}
+
+test_cleanup_config_env_override() {
+    log_test "Testing environment variables override default constants"
+
+    # Source constants for defaults
+    source "$KAPSIS_ROOT/scripts/lib/constants.sh" 2>/dev/null || true
+
+    # Verify defaults exist
+    assert_equals "168" "$KAPSIS_DEFAULT_CLEANUP_WORKTREE_MAX_AGE_HOURS" \
+        "Default worktree max age should be 168"
+    assert_equals "false" "$KAPSIS_DEFAULT_CLEANUP_BRANCH_ENABLED" \
+        "Default branch cleanup should be disabled"
+
+    # Verify env var takes precedence
+    local result
+    KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS=24
+    result="${KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS:-$KAPSIS_DEFAULT_CLEANUP_WORKTREE_MAX_AGE_HOURS}"
+    assert_equals "24" "$result" "Env var should override default"
+    unset KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS
+
+    # Without env var, default should be used
+    result="${KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS:-$KAPSIS_DEFAULT_CLEANUP_WORKTREE_MAX_AGE_HOURS}"
+    assert_equals "168" "$result" "Default should be used when env var is unset"
+
+    return 0
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
 main() {
-    print_test_header "Worktree Auto-Cleanup (Fix #169)"
+    print_test_header "Worktree Auto-Cleanup (Fix #169, #183)"
 
     # Check for jq (required by gc_stale_worktrees)
     if ! command -v jq &>/dev/null; then
@@ -213,13 +428,24 @@ main() {
     setup_test_project
     source "$KAPSIS_ROOT/scripts/worktree-manager.sh"
 
-    # Run tests
+    # Run original tests (Fix #169)
     run_test test_cleanup_worktree_removes_worktree
     run_test test_keep_worktree_preserves_worktree
     run_test test_default_cleanup_removes_worktree
     run_test test_gc_cleans_stale_completed_worktrees
     run_test test_gc_preserves_running_worktrees
     run_test test_gc_handles_no_status_dir
+
+    # Run new tests (Fix #183)
+    run_test test_cleanup_branch_deletes_agent_branch
+    run_test test_cleanup_branch_preserves_protected
+    run_test test_cleanup_branch_preserves_checked_out
+    run_test test_cleanup_branch_preserves_unpushed
+    run_test test_gc_age_cleans_old_worktrees
+    run_test test_gc_age_preserves_recent_worktrees
+    run_test test_gc_age_zero_disables
+    run_test test_cleanup_worktree_with_branch_deletion
+    run_test test_cleanup_config_env_override
 
     # Cleanup
     cleanup_test_project
