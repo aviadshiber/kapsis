@@ -6,15 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.13.4] - 2026-03-12
+## [2.13.5] - 2026-03-13
+
+### Fixed
+- Address code review findings for #183
+- Add stale worktree and branch cleanup for large repos (#183)
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Address review feedback for #168
 - Ensure overlay mode status transitions to 'complete' (#168)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Resolve grep -c race in check_orphan_volumes on CI
@@ -613,7 +618,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.13.4...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.13.5...HEAD
+[2.13.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.5
 [2.13.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.4
 [2.13.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.3
 [2.13.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.2
