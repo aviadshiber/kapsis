@@ -687,6 +687,40 @@ print('All push fields validated')
     cleanup_status_test
 }
 
+test_status_commit_info_overlay_pending() {
+    log_test "status_set_commit_info records overlay_pending for overlay mode (Fix #168)"
+
+    setup_status_test
+
+    status_init "test-project" "1" "" "overlay" ""
+
+    # Set overlay_pending commit info
+    status_set_commit_info "overlay_pending" "" "5"
+
+    # Write status to capture commit info
+    status_phase "complete" 100 "Done"
+
+    local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+    local content
+    content=$(cat "$status_file")
+
+    assert_contains "$content" '"commit_status": "overlay_pending"' "Should contain overlay_pending"
+    assert_contains "$content" '"uncommitted_files": 5' "Should contain uncommitted file count"
+
+    # Verify get function returns the value
+    local result
+    result=$(status_get_commit_status)
+    if [[ "$result" == "overlay_pending" ]]; then
+        log_info "  ✓ status_get_commit_status returns overlay_pending"
+    else
+        log_fail "Expected overlay_pending, got: $result"
+        cleanup_status_test
+        return 1
+    fi
+
+    cleanup_status_test
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -727,6 +761,9 @@ main() {
     run_test test_status_push_unverified
     run_test test_status_push_fields_null_by_default
     run_test test_status_json_valid_with_push_fields
+
+    # Overlay commit status tests (Fix #168)
+    run_test test_status_commit_info_overlay_pending
 
     # Summary
     print_summary

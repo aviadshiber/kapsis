@@ -820,6 +820,19 @@ parse_config() {
         NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
         NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
 
+        # Parse cleanup configuration (Fix #183)
+        # Env vars take precedence over YAML via ${VAR:-$(yq ...)} pattern
+        KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS="${KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS:-$(yq -r '.cleanup.worktree.max_age_hours // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_GC_ON_LAUNCH="${KAPSIS_CLEANUP_GC_ON_LAUNCH:-$(yq -r '.cleanup.worktree.gc_on_launch // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_GC_BACKGROUND="${KAPSIS_CLEANUP_GC_BACKGROUND:-$(yq -r '.cleanup.worktree.gc_background // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_BRANCH_ENABLED="${KAPSIS_CLEANUP_BRANCH_ENABLED:-$(yq -r '.cleanup.branch.enabled // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_BRANCH_PREFIXES="${KAPSIS_CLEANUP_BRANCH_PREFIXES:-$(yq -r '.cleanup.branch.prefixes // [] | join("|")' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_BRANCH_PROTECTED="${KAPSIS_CLEANUP_BRANCH_PROTECTED:-$(yq -r '.cleanup.branch.protected // [] | join("|")' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED="${KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED:-$(yq -r '.cleanup.branch.require_pushed // ""' "$CONFIG_FILE" 2>/dev/null || echo "")}"
+        export KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS KAPSIS_CLEANUP_GC_ON_LAUNCH KAPSIS_CLEANUP_GC_BACKGROUND
+        export KAPSIS_CLEANUP_BRANCH_ENABLED KAPSIS_CLEANUP_BRANCH_PREFIXES KAPSIS_CLEANUP_BRANCH_PROTECTED
+        export KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED
+
         # Parse security capabilities from config
         # These are added to KAPSIS_CAPS_ADD for the capability generation
         local config_caps_add
@@ -900,6 +913,28 @@ detect_sandbox_mode() {
 }
 
 #===============================================================================
+# Acquire an atomic GC lock using mkdir (POSIX-atomic). Returns 0 if acquired.
+# Uses a lock directory with a PID file inside. (Fix #183)
+_gc_lock_acquire() {
+    local lock_dir="$1"
+    # Try atomic mkdir — only one process can succeed
+    if mkdir "$lock_dir" 2>/dev/null; then
+        return 0  # Lock acquired
+    fi
+    # Lock dir exists — check if owner is still alive
+    local pid_file="${lock_dir}/pid"
+    if [[ -f "$pid_file" ]]; then
+        local pid
+        pid=$(cat "$pid_file" 2>/dev/null) || return 1
+        if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+            return 1  # Lock held by live process
+        fi
+    fi
+    # Stale lock — remove and retry once
+    rm -rf "$lock_dir" 2>/dev/null || return 1
+    mkdir "$lock_dir" 2>/dev/null
+}
+
 # SANDBOX SETUP (dispatches to mode-specific setup)
 #===============================================================================
 setup_sandbox() {
@@ -936,8 +971,31 @@ setup_worktree_sandbox() {
         return
     fi
 
-    # Opportunistic GC: clean stale worktrees from previous completed agents (Fix #169)
-    gc_stale_worktrees "$PROJECT_PATH" || log_warn "Opportunistic GC failed (non-fatal)"
+    # Opportunistic GC: clean stale worktrees from previous completed agents (Fix #169, #183)
+    local gc_on_launch="${KAPSIS_CLEANUP_GC_ON_LAUNCH:-${KAPSIS_DEFAULT_CLEANUP_GC_ON_LAUNCH:-true}}"
+    local gc_background="${KAPSIS_CLEANUP_GC_BACKGROUND:-${KAPSIS_DEFAULT_CLEANUP_GC_BACKGROUND:-true}}"
+
+    if [[ "$gc_on_launch" == "true" ]]; then
+        if [[ "$gc_background" == "true" ]]; then
+            # Run GC in background to avoid blocking agent launch (Fix #183)
+            local gc_lock_dir
+            gc_lock_dir="${KAPSIS_GC_LOCK_DIR:-$HOME/.kapsis/locks}/gc-$(basename "$PROJECT_PATH").lock.d"
+            mkdir -p "$(dirname "$gc_lock_dir")" 2>/dev/null || true
+            if _gc_lock_acquire "$gc_lock_dir"; then
+                (
+                    echo "$BASHPID" > "${gc_lock_dir}/pid"
+                    trap 'rm -rf "$gc_lock_dir"' EXIT
+                    gc_stale_worktrees "$PROJECT_PATH" 2>>"${LOG_FILE:-/dev/null}" || true
+                ) &
+                disown
+                log_debug "Background GC started (PID: $!)"
+            else
+                log_debug "GC already running for $(basename "$PROJECT_PATH"), skipping"
+            fi
+        else
+            gc_stale_worktrees "$PROJECT_PATH" || log_warn "Opportunistic GC failed (non-fatal)"
+        fi
+    fi
 
     # Create worktree on host (Fix #116: pass base branch for proper branching)
     WORKTREE_PATH=$(create_worktree "$PROJECT_PATH" "$AGENT_ID" "$BRANCH" "$BASE_BRANCH" "$REMOTE_BRANCH")
@@ -1900,6 +1958,8 @@ main() {
 
     # Track if we've shown completion message (to avoid duplicate on normal exit)
     _DISPLAY_COMPLETE_SHOWN=false
+    # Track if status_complete has been called (to avoid orphaned status on abnormal exit)
+    _STATUS_COMPLETE_SHOWN=false
 
     # Track temp file for cleanup on signal (set later when container runs)
     _CONTAINER_OUTPUT_TMP=""
@@ -1912,6 +1972,14 @@ main() {
         [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
         # Delegate backend-specific cleanup (secrets env file, inline spec, dns pin, etc.)
         backend_cleanup 2>/dev/null || true
+        # Ensure status transitions to 'complete' on abnormal exit (Fix #168)
+        if [[ "$_STATUS_COMPLETE_SHOWN" != "true" ]]; then
+            if [[ $exit_code -eq 0 ]]; then
+                status_complete 0 2>/dev/null || true
+            else
+                status_complete "$exit_code" "Exited with code $exit_code" 2>/dev/null || true
+            fi
+        fi
         # Show completion message if not already shown
         if [[ "$_DISPLAY_COMPLETE_SHOWN" != "true" ]]; then
             if [[ $exit_code -eq 0 ]]; then
@@ -1973,6 +2041,7 @@ main() {
         source "$SCRIPT_DIR/preflight-check.sh"
         if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"; then
             status_complete 1 "Pre-flight check failed"
+            _STATUS_COMPLETE_SHOWN=true
             exit 1
         fi
         log_timer_end "preflight"
@@ -2164,6 +2233,7 @@ main() {
         FINAL_EXIT_CODE=$EXIT_CODE
         log_finalize "$EXIT_CODE"
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
+        _STATUS_COMPLETE_SHOWN=true
         # Include captured container error in the failure message
         local error_msg="Agent exited with error code $EXIT_CODE"
         if [[ -n "$CONTAINER_ERROR_OUTPUT" ]]; then
@@ -2179,6 +2249,7 @@ main() {
         FINAL_EXIT_CODE=$POST_EXIT_CODE
         log_finalize $POST_EXIT_CODE
         status_complete "$POST_EXIT_CODE" "Post-container operations failed (push)"
+        _STATUS_COMPLETE_SHOWN=true
         display_complete "$POST_EXIT_CODE" "" "Post-container operations failed"
         _DISPLAY_COMPLETE_SHOWN=true
     else
@@ -2193,6 +2264,7 @@ main() {
             log_finalize 3
             log_warn "Uncommitted changes remain in worktree!"
             status_complete 3 "Uncommitted changes remain"
+            _STATUS_COMPLETE_SHOWN=true
             display_complete 3 "" "Uncommitted changes remain"
             _DISPLAY_COMPLETE_SHOWN=true
         else
@@ -2200,6 +2272,7 @@ main() {
             FINAL_EXIT_CODE=0
             log_finalize 0
             status_complete 0 "" "${PR_URL:-}"
+            _STATUS_COMPLETE_SHOWN=true
             display_complete 0 "${PR_URL:-}"
             _DISPLAY_COMPLETE_SHOWN=true
         fi
@@ -2238,6 +2311,7 @@ post_container_worktree() {
         if ! validate_scope_worktree "$WORKTREE_PATH"; then
             log_error "Aborting due to scope violation"
             status_complete 1 "Scope violation detected"
+            _STATUS_COMPLETE_SHOWN=true
             return 1
         fi
 
@@ -2288,7 +2362,8 @@ post_container_worktree() {
         echo "  cd $PROJECT_PATH && git worktree remove $WORKTREE_PATH"
     else
         log_info "Auto-cleaning worktree (use --keep-worktree or KAPSIS_KEEP_WORKTREE=true to preserve)..."
-        cleanup_worktree "$PROJECT_PATH" "$AGENT_ID"
+        local delete_branch="${KAPSIS_CLEANUP_BRANCH_ENABLED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_ENABLED:-false}}"
+        cleanup_worktree "$PROJECT_PATH" "$AGENT_ID" "$delete_branch"
         prune_worktrees "$PROJECT_PATH"
     fi
 }
@@ -2320,9 +2395,14 @@ post_container_overlay() {
             if ! validate_scope_overlay "$UPPER_DIR"; then
                 log_error "Aborting due to scope violation"
                 status_complete 1 "Scope violation detected"
+                _STATUS_COMPLETE_SHOWN=true
                 echo "Upper directory preserved: $UPPER_DIR"
                 return 1
             fi
+
+            # Set commit status for overlay mode (Fix #168)
+            # Placed after scope validation so it's only set for valid changes
+            status_set_commit_info "overlay_pending" "" "$changes_count"
 
             echo "Upper directory: $UPPER_DIR"
             echo ""
@@ -2336,7 +2416,13 @@ post_container_overlay() {
             fi
         else
             log_info "No file changes detected"
+            # Set commit status for overlay mode (Fix #168)
+            status_set_commit_info "no_changes" "" "0"
         fi
+    else
+        log_info "No upper directory found"
+        # Set commit status for overlay mode (Fix #168)
+        status_set_commit_info "no_changes" "" "0"
     fi
 }
 

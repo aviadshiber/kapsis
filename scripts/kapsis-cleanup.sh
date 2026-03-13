@@ -45,6 +45,7 @@ FORCE=false
 CLEAN_ALL=false
 CLEAN_VOLUMES=false
 CLEAN_IMAGES=false
+CLEAN_BRANCHES=false
 PROJECT_FILTER=""
 AGENT_FILTER=""
 
@@ -77,6 +78,7 @@ OPTIONS:
     --containers        Clean stopped Kapsis containers
     --logs              Clean log files older than 7 days
     --ssh-cache         Clear cached SSH host keys from keychain
+    --branches          Clean stale agent branches (requires --project)
     --force, -f         Skip confirmation prompts
     --help, -h          Show this help message
 
@@ -90,6 +92,7 @@ WHAT GETS CLEANED:
     Images          Kapsis container images (with --images or --all)
     Logs            Old log files (with --logs)
     SSH cache       Cached SSH host keys (with --ssh-cache)
+    Branches        Agent-created git branches (with --branches or --all)
 
 EXAMPLES:
     # See what would be cleaned
@@ -106,6 +109,9 @@ EXAMPLES:
 
     # Clean specific agent
     $cmd_name --agent products 1
+
+    # Clean stale agent branches for a project
+    $cmd_name --project products --branches --dry-run
 
     # Clear SSH host key cache (after key rotation)
     $cmd_name --ssh-cache
@@ -177,6 +183,7 @@ clean_worktrees() {
 
     local count=0
     local total_size=0
+    local -a repos_to_prune=()
 
     for worktree in "$WORKTREE_DIR"/*; do
         [[ -d "$worktree" ]] || continue
@@ -199,13 +206,14 @@ clean_worktrees() {
         if [[ "$DRY_RUN" == "true" ]]; then
             print_item "worktree" "$name" "$size_human"
         else
-            # Find the original git repo to prune from
+            # Collect the owning repo BEFORE deletion for later pruning (Fix #183)
             if [[ -f "$worktree/.git" ]]; then
                 local git_dir
                 git_dir=$(grep "gitdir:" "$worktree/.git" | cut -d' ' -f2-)
                 local main_repo
                 main_repo=$(dirname "$(dirname "$git_dir")")
                 if [[ -d "$main_repo/.git" ]]; then
+                    repos_to_prune+=("$main_repo")
                     git -C "$main_repo" worktree remove "$worktree" --force 2>/dev/null || rm -rf "$worktree"
                 else
                     rm -rf "$worktree"
@@ -219,6 +227,26 @@ clean_worktrees() {
         ((total_size += size)) || true
         ((count++)) || true
     done
+
+    # Prune stale worktree references from collected repos (Fix #183)
+    if [[ "$DRY_RUN" != "true" ]] && (( ${#repos_to_prune[@]} > 0 )); then
+        local -a pruned_repos=()
+        local repo
+        for repo in "${repos_to_prune[@]}"; do
+            local already_pruned=false
+            local pruned_repo
+            for pruned_repo in "${pruned_repos[@]+"${pruned_repos[@]}"}"; do
+                if [[ "$pruned_repo" == "$repo" ]]; then
+                    already_pruned=true
+                    break
+                fi
+            done
+            if [[ "$already_pruned" != "true" ]]; then
+                git -C "$repo" worktree prune 2>/dev/null || true
+                pruned_repos+=("$repo")
+            fi
+        done
+    fi
 
     if (( count == 0 )); then
         echo "  No worktrees to clean"
@@ -696,6 +724,95 @@ clean_ssh_cache() {
     fi
 }
 
+# Clean stale agent branches (Fix #183)
+clean_branches() {
+    section "Agent Branches"
+
+    if [[ -z "$PROJECT_FILTER" ]]; then
+        echo "  Requires --project <name> to identify the git repository"
+        return
+    fi
+
+    # Find the project's git repo
+    local project_path=""
+    local candidate
+    for candidate in \
+        "$HOME/git/$PROJECT_FILTER" \
+        "$HOME/$PROJECT_FILTER" \
+        "/workspace/$PROJECT_FILTER" \
+        "."; do
+        if [[ -d "$candidate/.git" ]]; then
+            project_path="$candidate"
+            break
+        fi
+    done
+
+    if [[ -z "$project_path" ]]; then
+        echo "  Could not find git repository for project: $PROJECT_FILTER"
+        echo "  Ensure project is in ~/git/ or specify --project with a valid name"
+        return
+    fi
+
+    # Source worktree-manager for cleanup_branch()
+    if [[ -f "$SCRIPT_DIR/worktree-manager.sh" ]]; then
+        source "$SCRIPT_DIR/worktree-manager.sh" || { log_error "Failed to source worktree-manager.sh"; return; }
+    fi
+
+    if ! declare -f cleanup_branch &>/dev/null; then
+        echo "  cleanup_branch() not available (worktree-manager.sh not found)"
+        return
+    fi
+
+    # Source constants for defaults
+    if [[ -f "$SCRIPT_DIR/lib/constants.sh" ]]; then
+        source "$SCRIPT_DIR/lib/constants.sh" 2>/dev/null || true
+    fi
+
+    local branch_prefixes="${KAPSIS_CLEANUP_BRANCH_PREFIXES:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_PREFIXES:-ai-agent/|kapsis/}}"
+    local count=0
+
+    # List local branches matching agent prefixes
+    while IFS= read -r raw_branch; do
+        [[ -z "$raw_branch" ]] && continue
+        # Trim leading whitespace and current-branch marker
+        local branch
+        branch="${raw_branch#"${raw_branch%%[![:space:]]*}"}"
+        branch="${branch#\* }"
+
+        # Check if branch matches any cleanup prefix
+        local matches=false
+        local saved_ifs="$IFS"
+        IFS='|'
+        for prefix in $branch_prefixes; do
+            IFS="$saved_ifs"
+            if [[ "$branch" == "$prefix"* ]]; then
+                matches=true
+                break
+            fi
+        done
+        IFS="$saved_ifs"
+
+        [[ "$matches" != "true" ]] && continue
+
+        if [[ "$DRY_RUN" == "true" ]]; then
+            print_item "branch" "$branch" "N/A"
+            ((count++)) || true
+        else
+            if cleanup_branch "$project_path" "$branch" "false" 2>/dev/null; then
+                print_item "branch" "$branch" "N/A"
+                ((count++)) || true
+            fi
+        fi
+    done < <(git -C "$project_path" branch 2>/dev/null)
+
+    if (( count == 0 )); then
+        echo "  No agent branches to clean"
+    else
+        echo -e "  ${BOLD}Total: $count branches${NC}"
+        ((ITEMS_CLEANED += count)) || true
+    fi
+}
+
 # Print summary
 print_summary() {
     echo -e "\n${BOLD}${GREEN}=== Summary ===${NC}"
@@ -748,6 +865,10 @@ main() {
                 ;;
             --ssh-cache)
                 clean_ssh_cache_flag=true
+                shift
+                ;;
+            --branches)
+                CLEAN_BRANCHES=true
                 shift
                 ;;
             --project)
@@ -817,13 +938,12 @@ main() {
         clean_ssh_cache
     fi
 
+    if [[ "$CLEAN_BRANCHES" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
+        clean_branches
+    fi
+
     # Summary
     print_summary
-
-    # Suggest garbage collection
-    if [[ "$DRY_RUN" != "true" ]] && (( ITEMS_CLEANED > 0 )); then
-        echo -e "\n${YELLOW}Tip:${NC} Run 'git worktree prune' in your project repos to clean stale worktree references."
-    fi
 
     exit 0
 }

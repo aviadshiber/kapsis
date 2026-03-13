@@ -169,3 +169,35 @@ readonly KAPSIS_DEFAULT_SANITIZE_ENABLED="true"
 # File extensions considered "code files" for homoglyph detection
 # Homoglyph warnings only apply to code files where mixed scripts are suspicious
 readonly KAPSIS_CODE_FILE_EXTENSIONS='\.(jsx?|tsx?|py|java|go|rb|rs|[ch](pp)?|cs|sh|bash|zsh|pl|php|swift|kt|scala|lua|r|sql|proto|thrift|avdl)$'
+
+#===============================================================================
+# CLEANUP DEFAULTS (Fix #183)
+#
+# Configurable via YAML (cleanup: section) or environment variables.
+# Environment variables take precedence over YAML, which takes precedence
+# over these defaults.
+#===============================================================================
+
+# Max age (hours) for stale worktrees. 0 = age-based cleanup disabled.
+readonly KAPSIS_DEFAULT_CLEANUP_WORKTREE_MAX_AGE_HOURS=168  # 7 days
+
+# Whether to run opportunistic GC when launching a new agent
+readonly KAPSIS_DEFAULT_CLEANUP_GC_ON_LAUNCH="true"
+
+# Whether GC runs in background (non-blocking) during agent launch
+readonly KAPSIS_DEFAULT_CLEANUP_GC_BACKGROUND="true"
+
+# Whether branch cleanup is enabled (opt-in to prevent accidental branch loss)
+readonly KAPSIS_DEFAULT_CLEANUP_BRANCH_ENABLED="false"
+
+# Branch prefixes to consider for cleanup (pipe-separated for matching)
+readonly KAPSIS_DEFAULT_CLEANUP_BRANCH_PREFIXES="ai-agent/|kapsis/"
+
+# Protected branch patterns — never deleted (pipe-separated for matching)
+readonly KAPSIS_DEFAULT_CLEANUP_BRANCH_PROTECTED="main|master|develop|release/.*|stable/.*"
+
+# Only delete branches that are fully pushed to remote
+readonly KAPSIS_DEFAULT_CLEANUP_BRANCH_REQUIRE_PUSHED="true"
+
+# Lock directory for background GC (prevents concurrent runs)
+readonly KAPSIS_GC_LOCK_DIR="${HOME}/.kapsis/locks"

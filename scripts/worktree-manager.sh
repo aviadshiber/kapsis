@@ -607,13 +607,140 @@ get_objects_path() {
 }
 
 #===============================================================================
+# CLEANUP BRANCH (Fix #183)
+#
+# Safely deletes a git branch with multiple safety guards:
+# - Not currently checked out in any worktree
+# - Not the current branch of the main repo
+# - Not matching a protected pattern (configurable)
+# - Fully pushed to remote when require_pushed=true (configurable)
+#
+# Arguments:
+#   $1 - project_path: Path to the git repository
+#   $2 - branch_name:  Name of the branch to delete
+#   $3 - dry_run:      "true" to preview without deleting (default: "false")
+#
+# Returns:
+#   0 - Branch deleted (or would be deleted in dry-run)
+#   1 - Skipped due to safety check
+#   2 - Error during deletion
+#===============================================================================
+cleanup_branch() {
+    local project_path="$1"
+    local branch_name="$2"
+    local dry_run="${3:-false}"
+
+    local protected="${KAPSIS_CLEANUP_BRANCH_PROTECTED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_PROTECTED:-main|master|develop|release/.*|stable/.*}}"
+    local require_pushed="${KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_REQUIRE_PUSHED:-true}}"
+    local prefixes="${KAPSIS_CLEANUP_BRANCH_PREFIXES:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_PREFIXES:-ai-agent/|kapsis/}}"
+
+    [[ -d "$project_path" ]] || return 2
+
+    # Safety 1: Never delete if branch is checked out in any worktree
+    if git -C "$project_path" worktree list --porcelain 2>/dev/null | grep -q "branch refs/heads/${branch_name}$"; then
+        log_debug "Branch '$branch_name' is checked out in a worktree, skipping"
+        return 1
+    fi
+
+    # Safety 2: Never delete the current branch of the main repo
+    local current_branch
+    current_branch=$(git -C "$project_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [[ "$current_branch" == "$branch_name" ]]; then
+        log_debug "Branch '$branch_name' is currently checked out, skipping"
+        return 1
+    fi
+
+    # Safety 3: Check against protected patterns (pipe-separated)
+    local saved_ifs="$IFS"
+    IFS='|'
+    local is_protected=false
+    for pattern in $protected; do
+        # Support glob-like patterns (e.g., release/.*)
+        # shellcheck disable=SC2053
+        if [[ "$branch_name" == $pattern ]] || [[ "$branch_name" =~ ^${pattern}$ ]]; then
+            is_protected=true
+            break
+        fi
+    done
+    IFS="$saved_ifs"
+    if [[ "$is_protected" == "true" ]]; then
+        log_debug "Branch '$branch_name' matches protected pattern, skipping"
+        return 1
+    fi
+
+    # Safety 4: Check if branch has unpushed commits (when require_pushed=true)
+    if [[ "$require_pushed" == "true" ]]; then
+        if git -C "$project_path" rev-parse --verify "origin/$branch_name" &>/dev/null; then
+            local unpushed
+            unpushed=$(git -C "$project_path" log "origin/$branch_name..$branch_name" --oneline 2>/dev/null | wc -l | tr -d ' ')
+            if [[ "$unpushed" -gt 0 ]]; then
+                log_warn "Branch '$branch_name' has $unpushed unpushed commit(s), skipping"
+                return 1
+            fi
+        else
+            # No remote tracking — branch was never pushed
+            log_warn "Branch '$branch_name' has no remote tracking branch, skipping (require_pushed=true)"
+            return 1
+        fi
+    fi
+
+    # Safety 5: Branch must match allowed prefixes (defense-in-depth)
+    if [[ -n "$prefixes" ]]; then
+        local matches_prefix=false
+        saved_ifs="$IFS"
+        IFS='|'
+        for prefix in $prefixes; do
+            if [[ "$branch_name" == "${prefix}"* ]]; then
+                matches_prefix=true
+                break
+            fi
+        done
+        IFS="$saved_ifs"
+        if [[ "$matches_prefix" == "false" ]]; then
+            log_debug "Branch '$branch_name' does not match any allowed prefix ($prefixes), skipping"
+            return 1
+        fi
+    fi
+
+    # Delete (or dry-run)
+    if [[ "$dry_run" == "true" ]]; then
+        log_info "DRY-RUN: Would delete branch '$branch_name'"
+        return 0
+    fi
+
+    log_info "Deleting branch: $branch_name"
+    if git -C "$project_path" branch -d "$branch_name" 2>/dev/null; then
+        log_success "Deleted branch: $branch_name"
+        return 0
+    fi
+
+    # Force delete only if we already verified it's pushed
+    if [[ "$require_pushed" == "true" ]]; then
+        if git -C "$project_path" branch -D "$branch_name" 2>/dev/null; then
+            log_success "Force-deleted branch: $branch_name"
+            return 0
+        fi
+    fi
+
+    log_error "Failed to delete branch: $branch_name"
+    return 2
+}
+
+#===============================================================================
 # CLEANUP WORKTREE
 #
 # Removes a worktree and its associated sanitized git directory.
+# Optionally deletes the associated git branch (Fix #183).
+#
+# Arguments:
+#   $1 - project_path:  Path to the git repository
+#   $2 - agent_id:      Agent identifier
+#   $3 - delete_branch: "true" to also delete the associated branch (default: "false")
 #===============================================================================
 cleanup_worktree() {
     local project_path="$1"
     local agent_id="$2"
+    local delete_branch="${3:-false}"
 
     local project_name
     project_name=$(basename "$project_path")
@@ -621,6 +748,20 @@ cleanup_worktree() {
     local sanitized_dir="${KAPSIS_SANITIZED_GIT_BASE}/${agent_id}"
 
     log_info "Cleaning up worktree for agent: $agent_id"
+
+    # Extract branch name before removing worktree (for branch cleanup)
+    local branch_name=""
+    if [[ "$delete_branch" == "true" ]]; then
+        # Try status file first
+        local status_file="${HOME}/.kapsis/status/kapsis-${project_name}-${agent_id}.json"
+        if [[ -f "$status_file" ]] && command -v jq &>/dev/null; then
+            branch_name=$(jq -r '.branch // empty' "$status_file" 2>/dev/null) || true
+        fi
+        # Fall back to reading from worktree itself
+        if [[ -z "$branch_name" ]] && [[ -d "$worktree_path" ]]; then
+            branch_name=$(git -C "$worktree_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
+        fi
+    fi
 
     # Remove worktree via git
     if [[ -d "$worktree_path" ]]; then
@@ -638,6 +779,12 @@ cleanup_worktree() {
     if [[ -d "$sanitized_dir" ]]; then
         rm -rf "$sanitized_dir"
         log_info "Removed sanitized git: $sanitized_dir"
+    fi
+
+    # Delete associated branch if requested (Fix #183)
+    if [[ "$delete_branch" == "true" ]] && [[ -n "$branch_name" ]]; then
+        cleanup_branch "$project_path" "$branch_name" || \
+            log_debug "Branch cleanup skipped or failed for: $branch_name"
     fi
 
     log_success "Cleanup complete for agent: $agent_id"
@@ -764,6 +911,89 @@ gc_stale_worktrees() {
 
     if [[ "$cleaned" -gt 0 ]]; then
         log_info "GC: Cleaned $cleaned stale worktree(s)"
+        prune_worktrees "$project_path"
+    fi
+
+    # Also run age-based cleanup for worktrees without status files (Fix #183)
+    gc_stale_worktrees_by_age "$project_path"
+}
+
+#===============================================================================
+# GC STALE WORKTREES BY AGE (Fix #183)
+#
+# Cleans worktrees older than max_age_hours, regardless of status file presence.
+# Scans worktree directories directly to catch orphaned worktrees that have
+# no matching status file (e.g., from crashes or pre-status-tracking runs).
+#
+# Arguments:
+#   $1 - project_path:    Path to the git repository
+#   $2 - max_age_hours:   Max age in hours (default: from env/config/constant)
+#   $3 - delete_branches: "true"/"false" (default: from env/config/constant)
+#===============================================================================
+gc_stale_worktrees_by_age() {
+    local project_path="$1"
+    local max_age_hours="${2:-${KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS:-${KAPSIS_DEFAULT_CLEANUP_WORKTREE_MAX_AGE_HOURS:-168}}}"
+    local delete_branches="${3:-${KAPSIS_CLEANUP_BRANCH_ENABLED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_ENABLED:-false}}}"
+
+    # Age-based cleanup disabled
+    if [[ "$max_age_hours" -eq 0 ]] 2>/dev/null; then
+        log_debug "GC-age: Disabled (max_age_hours=0)"
+        return 0
+    fi
+
+    local project_name
+    project_name=$(basename "$project_path")
+    local max_age_secs=$((max_age_hours * 3600))
+    local now
+    now=$(date +%s)
+    local cleaned=0
+
+    # Source compat for get_dir_mtime if not already loaded
+    if ! declare -f get_dir_mtime &>/dev/null; then
+        if [[ -f "$WORKTREE_SCRIPT_DIR/lib/compat.sh" ]]; then
+            source "$WORKTREE_SCRIPT_DIR/lib/compat.sh"
+        else
+            log_debug "GC-age: Skipped (compat.sh not available for get_dir_mtime)"
+            return 0
+        fi
+    fi
+
+    log_debug "GC-age: max_age=${max_age_hours}h for project $project_name"
+
+    # Scan worktree directories directly (catches orphans without status files)
+    if [[ ! -d "$KAPSIS_WORKTREE_BASE" ]]; then
+        return 0
+    fi
+
+    for worktree_dir in "$KAPSIS_WORKTREE_BASE"/"${project_name}"-*/; do
+        [[ -d "$worktree_dir" ]] || continue
+
+        local dir_name
+        dir_name=$(basename "$worktree_dir")
+        local agent_id="${dir_name#"${project_name}-"}"
+
+        # Validate agent_id (defense-in-depth against path traversal)
+        if [[ ! "$agent_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            log_warn "GC-age: Skipping invalid agent_id: $agent_id"
+            continue
+        fi
+
+        # Get directory age
+        local mtime
+        mtime=$(get_dir_mtime "$worktree_dir") || continue
+        [[ -z "$mtime" ]] && continue
+
+        local age_secs=$((now - mtime))
+        if [[ "$age_secs" -gt "$max_age_secs" ]]; then
+            local age_hours=$((age_secs / 3600))
+            log_info "GC-age: Worktree $dir_name is ${age_hours}h old (max: ${max_age_hours}h)"
+            cleanup_worktree "$project_path" "$agent_id" "$delete_branches"
+            ((cleaned++)) || true
+        fi
+    done
+
+    if [[ "$cleaned" -gt 0 ]]; then
+        log_info "GC-age: Cleaned $cleaned stale worktree(s)"
         prune_worktrees "$project_path"
     fi
 }
