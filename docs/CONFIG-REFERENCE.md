@@ -461,6 +461,63 @@ sandbox:
   interactive_merge: true
 
 #===============================================================================
+# CLEANUP BEHAVIOR (Fix #183)
+#
+# Controls automatic cleanup of stale worktrees and agent branches.
+# All parameters can be overridden via environment variables.
+#===============================================================================
+cleanup:
+  worktree:
+    # Maximum age (hours) for stale worktrees. Worktrees older than this
+    # are cleaned up even without a "complete" status file.
+    # Default: 168 (7 days). Set to 0 to disable age-based cleanup.
+    # Env: KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS
+    max_age_hours: 168
+
+    # Run opportunistic GC when launching a new agent
+    # Default: true
+    # Env: KAPSIS_CLEANUP_GC_ON_LAUNCH
+    gc_on_launch: true
+
+    # Run GC in background (non-blocking) during agent launch.
+    # Prevents large-repo cleanup from delaying agent startup.
+    # Default: true
+    # Env: KAPSIS_CLEANUP_GC_BACKGROUND
+    gc_background: true
+
+  branch:
+    # Enable automatic branch deletion after worktree cleanup.
+    # When true, agent-created branches are deleted alongside their worktrees.
+    # Default: false (opt-in to prevent accidental branch loss)
+    # Env: KAPSIS_CLEANUP_BRANCH_ENABLED
+    enabled: false
+
+    # Branch prefixes to consider for cleanup.
+    # Only branches starting with these prefixes are candidates for deletion.
+    # Default: ["ai-agent/", "kapsis/"]
+    # Env: KAPSIS_CLEANUP_BRANCH_PREFIXES (pipe-separated, e.g., "ai-agent/|kapsis/")
+    prefixes:
+      - "ai-agent/"
+      - "kapsis/"
+
+    # Protected branch patterns — never deleted, even if they match prefixes.
+    # Supports regex patterns (e.g., "release/.*").
+    # Default: [main, master, develop, release/.*, stable/.*]
+    # Env: KAPSIS_CLEANUP_BRANCH_PROTECTED (pipe-separated)
+    protected:
+      - "main"
+      - "master"
+      - "develop"
+      - "release/.*"
+      - "stable/.*"
+
+    # Only delete branches that are fully pushed to remote.
+    # When true, branches with unpushed commits or no remote tracking are preserved.
+    # Default: true
+    # Env: KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED
+    require_pushed: true
+
+#===============================================================================
 # NETWORK ISOLATION
 #===============================================================================
 network:
