@@ -151,6 +151,16 @@ YAML
         value: "${AGENT_NAME}"
 YAML
 
+    # Audit environment variables (if enabled)
+    if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" ]]; then
+        cat <<YAML
+      - name: KAPSIS_AUDIT_ENABLED
+        value: "true"
+      - name: KAPSIS_AUDIT_DIR
+        value: "${CONTAINER_AUDIT_PATH}"
+YAML
+    fi
+
     # Optional: additional env vars from caller
     if [[ -n "$extra_env_var_name" ]]; then
         local _arr_size
