@@ -140,7 +140,7 @@ audit_init() {
 audit_log_event() {
     local event_type="${1:-tool_use}"
     local tool_name="${2:-unknown}"
-    local detail_json="${3:-\{\}}"
+    local detail_json="${3:-"{}"}"
 
     # Guard: must be initialized
     if [[ "$_KAPSIS_AUDIT_INITIALIZED" != "true" && "$event_type" != "session_start" ]]; then
@@ -440,10 +440,10 @@ audit_cleanup() {
     # Only run if audit directory exists
     [[ -d "$audit_dir" ]] || return 0
 
-    # Run cleanup in background subshell
+    # Run cleanup in background subshell (best-effort, errors suppressed)
     (
-        _audit_cleanup_ttl "$audit_dir"
-        _audit_cleanup_size "$audit_dir"
+        _audit_cleanup_ttl "$audit_dir" || true
+        _audit_cleanup_size "$audit_dir" || true
     ) &
 }
 
@@ -459,7 +459,12 @@ _audit_cleanup_ttl() {
 
     # Find and check each audit file
     local file
-    for file in "$audit_dir"/*.audit.jsonl "$audit_dir"/*.audit.jsonl.[0-9]; do
+    # Clean audit logs, rotated files, alerts, and reports
+    local file
+    for file in "$audit_dir"/*.audit.jsonl \
+                "$audit_dir"/*.audit.jsonl.[0-9] \
+                "$audit_dir"/*-alerts.jsonl \
+                "$audit_dir"/*-report.txt; do
         [[ -f "$file" ]] || continue
 
         local mtime
@@ -485,7 +490,11 @@ _audit_cleanup_size() {
     local -a files_by_age=()
 
     local file
-    for file in "$audit_dir"/*.audit.jsonl "$audit_dir"/*.audit.jsonl.[0-9]; do
+    # Include audit logs, rotated files, alerts, and reports
+    for file in "$audit_dir"/*.audit.jsonl \
+                "$audit_dir"/*.audit.jsonl.[0-9] \
+                "$audit_dir"/*-alerts.jsonl \
+                "$audit_dir"/*-report.txt; do
         [[ -f "$file" ]] || continue
 
         local size

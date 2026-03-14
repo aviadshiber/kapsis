@@ -178,13 +178,13 @@ readonly KAPSIS_CODE_FILE_EXTENSIONS='\.(jsx?|tsx?|py|java|go|rb|rs|[ch](pp)?|cs
 readonly KAPSIS_DEFAULT_AUDIT_ENABLED="false"
 
 # Per-session audit file size cap (MB) before rotation
-readonly KAPSIS_AUDIT_MAX_FILE_SIZE_MB=50
+readonly KAPSIS_AUDIT_MAX_FILE_SIZE_MB="${KAPSIS_AUDIT_MAX_FILE_SIZE_MB:-50}"
 
 # Auto-delete audit files older than this (days)
-readonly KAPSIS_AUDIT_TTL_DAYS=30
+readonly KAPSIS_AUDIT_TTL_DAYS="${KAPSIS_AUDIT_TTL_DAYS:-30}"
 
 # Total audit directory size cap (MB), oldest files pruned first
-readonly KAPSIS_AUDIT_MAX_TOTAL_SIZE_MB=500
+readonly KAPSIS_AUDIT_MAX_TOTAL_SIZE_MB="${KAPSIS_AUDIT_MAX_TOTAL_SIZE_MB:-500}"
 
 # Container mount point for audit directory
 readonly CONTAINER_AUDIT_PATH="/kapsis-audit"
