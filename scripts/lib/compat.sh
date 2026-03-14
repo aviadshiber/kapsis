@@ -245,3 +245,19 @@ except Exception:
 
     echo "$ips"
 }
+
+#-------------------------------------------------------------------------------
+# sha256_hash
+#
+# Reads stdin and outputs SHA-256 hash. Works on both macOS and Linux.
+# macOS has 'shasum', Linux has 'sha256sum'.
+#
+# Usage: echo "data" | sha256_hash
+#-------------------------------------------------------------------------------
+sha256_hash() {
+    if command -v sha256sum &>/dev/null; then
+        sha256sum | cut -d' ' -f1
+    else
+        shasum -a 256 | cut -d' ' -f1
+    fi
+}
