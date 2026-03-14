@@ -251,6 +251,66 @@ spec:
 
 Use ESO to sync secrets from any provider (Vault, AWS SM, GCP SM, Azure KV) into K8s Secrets, then reference them via `secretRefs` as in Option 1.
 
+## Audit Logging
+
+When audit logging is enabled, the K8s backend provides equivalent functionality to the Podman backend using Kubernetes-native volume and environment mechanisms.
+
+### Enabling Audit in K8s
+
+Set `KAPSIS_AUDIT_ENABLED=true` on the host, or specify `spec.audit.enabled: true` in the AgentRequest CR:
+
+```yaml
+spec:
+  audit:
+    enabled: true
+```
+
+### How It Works
+
+1. **Environment injection**: The K8s config translator (`scripts/lib/k8s-config.sh`) adds `KAPSIS_AUDIT_ENABLED=true` and `KAPSIS_AUDIT_DIR=/kapsis-audit` to the CR's `spec.environment.vars`
+2. **Volume provisioning**: The operator creates an `emptyDir` volume named `kapsis-audit` and mounts it at `/kapsis-audit` inside the agent container
+3. **In-pod logging**: The audit library writes hash-chained JSONL events to `/kapsis-audit/` during the session
+4. **File retrieval**: After pod completion, the K8s backend retrieves audit files via `kubectl cp`:
+
+```bash
+kubectl cp <namespace>/<pod-name>:/kapsis-audit/. ~/.kapsis/audit/
+```
+
+### CRD `spec.audit.enabled` Field
+
+The `AuditSpec` type in the AgentRequest CRD:
+
+```go
+type AuditSpec struct {
+    Enabled bool `json:"enabled,omitempty"`
+}
+```
+
+When `spec.audit.enabled` is true, the operator's pod builder automatically:
+
+- Adds an `emptyDir` volume (`kapsis-audit`)
+- Mounts it at `/kapsis-audit`
+- Injects `KAPSIS_AUDIT_ENABLED=true` and `KAPSIS_AUDIT_DIR=/kapsis-audit` as container environment variables
+
+### Differences from Podman
+
+| Aspect | Podman | K8s |
+|--------|--------|-----|
+| Volume type | Bind mount (host directory) | emptyDir (pod-local) |
+| Real-time access | Yes (host can read during session) | No (files retrieved after completion) |
+| Persistence | Files persist on host | Files exist only while pod is running |
+| Retrieval | Automatic (shared volume) | `kubectl cp` after pod completion |
+
+### Post-Run Analysis
+
+After retrieval, audit files are stored in `~/.kapsis/audit/` and can be analyzed with the standard report tool:
+
+```bash
+./scripts/audit-report.sh --latest --verify
+```
+
+For the full audit system documentation, see [AUDIT-SYSTEM.md](AUDIT-SYSTEM.md).
+
 ## Troubleshooting
 
 ### CR stuck in Pending

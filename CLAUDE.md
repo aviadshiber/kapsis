@@ -111,6 +111,7 @@ kapsis/
 | Status & progress tracking | `docs/STATUS-TRACKING.md` |
 | GitHub integration | `docs/GITHUB-SETUP.md` |
 | Security hardening | `docs/SECURITY-HARDENING.md` |
+| Audit system | `docs/AUDIT-SYSTEM.md` |
 | Network isolation | `docs/NETWORK-ISOLATION.md` |
 | K8s backend | `docs/K8S-BACKEND.md` |
 | Installation | `docs/INSTALL.md` |
