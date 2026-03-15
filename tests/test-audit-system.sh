@@ -657,6 +657,7 @@ test_k8s_cr_includes_audit_env() {
 
     # Run in a subshell to get a clean k8s-config.sh source
     local cr_yaml
+    # shellcheck disable=SC2030,SC2031,SC2034
     cr_yaml=$(
         # Set required globals for generate_agent_request_cr
         AGENT_ID="test-k8s-001"
@@ -692,6 +693,7 @@ test_k8s_cr_excludes_audit_env() {
 
     # Run in a subshell to get a clean k8s-config.sh source
     local cr_yaml
+    # shellcheck disable=SC2030,SC2031,SC2034
     cr_yaml=$(
         # Set required globals for generate_agent_request_cr
         AGENT_ID="test-k8s-002"
