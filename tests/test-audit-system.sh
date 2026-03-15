@@ -341,7 +341,7 @@ test_audit_secret_sanitization() {
 
     # Log an event containing a secret-like pattern
     # sanitize_secrets masks "-e VAR=value" patterns
-    audit_log_event "shell_command" "Bash" '{"command":"run -e API_TOKEN=sk-abc123secret456 something"}'
+    audit_log_event "shell_command" "Bash" '{"command":"run -e API_TOKEN=FAKE-test-value-not-real something"}'
 
     local audit_file
     audit_file=$(audit_get_file)
@@ -349,7 +349,7 @@ test_audit_secret_sanitization() {
     # The secret value should be masked
     local content
     content=$(cat "$audit_file")
-    assert_not_contains "$content" "sk-abc123secret456" "Secret value should be masked in audit"
+    assert_not_contains "$content" "FAKE-test-value-not-real" "Secret value should be masked in audit"
     assert_contains "$content" "MASKED" "Masked placeholder should appear in audit"
 
     teardown
