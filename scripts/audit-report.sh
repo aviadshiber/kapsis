@@ -372,17 +372,17 @@ report_alerts_text() {
         local description
         description=$(json_get_string "$line" "description")
         local pattern_name
-        pattern_name=$(json_get_string "$line" "pattern_name")
+        pattern_name=$(json_get_string "$line" "pattern")
         local timestamp
         timestamp=$(json_get_string "$line" "timestamp")
 
         # Color by severity
         local sev_color="$NC"
         case "$severity" in
-            critical) sev_color="$RED" ;;
-            high)     sev_color="$RED" ;;
-            medium)   sev_color="$YELLOW" ;;
-            low)      sev_color="$CYAN" ;;
+            CRITICAL) sev_color="$RED" ;;
+            HIGH)     sev_color="$RED" ;;
+            MEDIUM)   sev_color="$YELLOW" ;;
+            LOW)      sev_color="$CYAN" ;;
         esac
 
         echo -e "  ${sev_color}[${severity^^}]${NC} ${pattern_name:-alert}"

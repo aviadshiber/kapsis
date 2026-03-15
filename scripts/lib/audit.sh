@@ -458,7 +458,6 @@ _audit_cleanup_ttl() {
     local ttl_seconds=$((ttl_days * 86400))
 
     # Find and check each audit file
-    local file
     # Clean audit logs, rotated files, alerts, and reports
     local file
     for file in "$audit_dir"/*.audit.jsonl \
