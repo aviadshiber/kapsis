@@ -1704,6 +1704,54 @@ KAPSIS_STATUS_ENABLED=false ./scripts/launch-agent.sh ~/project --task "test"
 
 ---
 
+## Audit Logging Configuration
+
+Kapsis provides tamper-evident, hash-chained audit logging for all agent actions inside the sandbox. Audit logging is opt-in and configured via environment variables or YAML config. For the full audit system guide, see [AUDIT-SYSTEM.md](AUDIT-SYSTEM.md).
+
+### Audit Configuration Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `audit.enabled` | bool | `false` | Enable audit logging. When true, all agent actions are recorded as hash-chained JSONL events |
+| `audit.max_file_size_mb` | int | `50` | Maximum size of a single audit file (MB) before rotation. Rotated files are suffixed `.1`, `.2`, `.3` |
+| `audit.ttl_days` | int | `30` | Auto-delete audit files older than this many days |
+| `audit.max_total_size_mb` | int | `500` | Total size cap for the audit directory (MB). Oldest files are pruned first when exceeded |
+
+### YAML Example
+
+```yaml
+audit:
+  enabled: true
+  max_file_size_mb: 50
+  ttl_days: 30
+  max_total_size_mb: 500
+```
+
+### Audit Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_AUDIT_ENABLED` | `false` | Enable audit logging (`true` or `false`) |
+| `KAPSIS_AUDIT_DIR` | `~/.kapsis/audit` | Directory for audit files |
+| `KAPSIS_AUDIT_MAX_FILE_SIZE_MB` | `50` | Per-session file size cap (MB) before rotation |
+| `KAPSIS_AUDIT_TTL_DAYS` | `30` | Auto-delete audit files older than this (days) |
+| `KAPSIS_AUDIT_MAX_TOTAL_SIZE_MB` | `500` | Total audit directory size cap (MB) |
+
+### Quick Start
+
+```bash
+# Enable audit for a single run
+KAPSIS_AUDIT_ENABLED=true ./scripts/launch-agent.sh ~/project --task "implement feature"
+
+# Generate report from latest audit file
+./scripts/audit-report.sh --latest
+
+# Verify hash chain integrity
+./scripts/audit-report.sh --latest --verify
+```
+
+---
+
 ## Cleanup
 
 For cleanup configuration and usage, see [CLEANUP.md](CLEANUP.md).
