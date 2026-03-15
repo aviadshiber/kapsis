@@ -6,14 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.13.6] - 2026-03-14
+## [2.14.0] - 2026-03-15
+
+### Added
+- Integrate audit system into hooks and container launch
+- Add post-run audit report script
+- Add K8s backend integration for audit system
+- Add real-time pattern detection library
+- Add core audit trail library with hash-chained JSONL logging
 
 ### Changed
-- Bump the github-actions group with 3 updates
+- Add coverage for JSON report, alerts-only, cleanup, and false positives
+- Suppress shellcheck false positives in k8s test helpers
+- Add comprehensive test suite and cleanup integration
+
+### Fixed
+- Correct alert field name and severity case in report
+- Replace fake API token in test to avoid GitGuardian false positive
+- Address code review findings for audit library
+
+### Documentation
+- Add comprehensive audit system documentation
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Changed
+- Bump the github-actions group with 3 updates
+
 
 ### Fixed
 - Address code review findings for #183
@@ -622,7 +643,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.13.6...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.14.0...HEAD
+[2.14.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.14.0
 [2.13.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.6
 [2.13.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.5
 [2.13.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.13.4
