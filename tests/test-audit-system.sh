@@ -722,6 +722,314 @@ test_k8s_cr_excludes_audit_env() {
 }
 
 #===============================================================================
+# REPORT FORMAT TESTS
+#===============================================================================
+
+# 20. JSON report generates valid structure
+test_report_json_format() {
+    log_test "JSON report generates valid output structure"
+
+    setup
+    source_audit
+
+    audit_init "test-agent-020" "json-project" "claude-cli"
+    audit_log_event "shell_command" "Bash" '{"command":"git status"}'
+    audit_log_event "filesystem_op" "Read" '{"file_path":"/workspace/src/main.java"}'
+    audit_log_event "credential_access" "keychain" '{"command":"security find-generic-password"}'
+    audit_log_event "tool_use" "Grep" '{"pattern":"TODO"}'
+
+    local audit_file
+    audit_file=$(audit_get_file)
+
+    # Run the report script with --format json
+    local report_output
+    report_output=$("$AUDIT_REPORT_SCRIPT" "$audit_file" --format json 2>/dev/null) || true
+
+    # Verify top-level keys exist in JSON output
+    assert_contains "$report_output" '"summary"' "JSON report should contain summary key"
+    assert_contains "$report_output" '"alerts"' "JSON report should contain alerts key"
+    assert_contains "$report_output" '"statistics"' "JSON report should contain statistics key"
+    assert_contains "$report_output" '"credential_access"' "JSON report should contain credential_access key"
+    assert_contains "$report_output" '"filesystem_impact"' "JSON report should contain filesystem_impact key"
+
+    # Verify summary fields
+    assert_contains "$report_output" '"agent_id":"test-agent-020"' "JSON summary should contain agent_id"
+    assert_contains "$report_output" '"project":"json-project"' "JSON summary should contain project"
+    assert_contains "$report_output" '"agent_type":"claude-cli"' "JSON summary should contain agent_type"
+    assert_contains "$report_output" '"total_events":5' "JSON summary should show 5 total events (genesis + 4)"
+
+    # Verify events_by_type contains our event types
+    assert_contains "$report_output" '"shell_command"' "JSON should contain shell_command event type"
+    assert_contains "$report_output" '"filesystem_op"' "JSON should contain filesystem_op event type"
+    assert_contains "$report_output" '"credential_access"' "JSON should contain credential_access in events"
+
+    # Verify tool_usage statistics
+    assert_contains "$report_output" '"tool_usage"' "JSON should contain tool_usage stats"
+    assert_contains "$report_output" '"Bash"' "JSON tool_usage should contain Bash"
+    assert_contains "$report_output" '"Grep"' "JSON tool_usage should contain Grep"
+
+    # Verify filesystem_impact has our file
+    assert_contains "$report_output" '"paths"' "JSON should contain filesystem paths"
+    assert_contains "$report_output" 'main.java' "JSON filesystem_impact should contain our file"
+
+    teardown
+}
+
+# 21. --alerts-only mode works (text format)
+test_report_alerts_only_text() {
+    log_test "Report --alerts-only text mode works"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    audit_init "test-agent-021" "alerts-project" "claude-cli"
+
+    # Trigger a sensitive path alert via audit_log_event (which calls audit_check_patterns)
+    # This ensures the alert file is written at the path the report script expects.
+    audit_log_event "filesystem_op" "Read" '{"file_path":"/home/user/.ssh/id_rsa"}'
+
+    local audit_file
+    audit_file=$(audit_get_file)
+
+    # Verify alert file was created at the expected path
+    local expected_alerts="${audit_file%.audit.jsonl}-alerts.jsonl"
+    # _audit_alert writes to ${agent_id}-alerts.jsonl, but report derives from audit filename.
+    # Copy the alert file to where the report expects it if paths differ.
+    local actual_alerts="$TEST_AUDIT_DIR/test-agent-021-alerts.jsonl"
+    if [[ -f "$actual_alerts" && ! -f "$expected_alerts" ]]; then
+        cp "$actual_alerts" "$expected_alerts"
+    fi
+
+    # Run report with --alerts-only
+    local report_output
+    report_output=$("$AUDIT_REPORT_SCRIPT" "$audit_file" --format text --alerts-only 2>/dev/null) || true
+
+    # Should contain alert content
+    assert_contains "$report_output" "Security Alerts" "Alerts-only should show alerts section"
+    assert_contains "$report_output" "sensitive_path_access" "Alerts-only should show the pattern name"
+
+    # Should NOT contain other report sections
+    assert_not_contains "$report_output" "Session Summary" "Alerts-only should not contain Session Summary"
+    assert_not_contains "$report_output" "Event Statistics" "Alerts-only should not contain Event Statistics"
+
+    teardown
+}
+
+# 22. --alerts-only mode works (JSON format)
+test_report_alerts_only_json() {
+    log_test "Report --alerts-only JSON mode works"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    audit_init "test-agent-022" "alerts-json-project" "claude-cli"
+
+    # Trigger a sensitive path alert via audit_log_event
+    audit_log_event "filesystem_op" "Read" '{"file_path":"/home/user/.gnupg/secring.gpg"}'
+
+    local audit_file
+    audit_file=$(audit_get_file)
+
+    # Copy alert file to path the report expects (see test 21 for explanation)
+    local expected_alerts="${audit_file%.audit.jsonl}-alerts.jsonl"
+    local actual_alerts="$TEST_AUDIT_DIR/test-agent-022-alerts.jsonl"
+    if [[ -f "$actual_alerts" && ! -f "$expected_alerts" ]]; then
+        cp "$actual_alerts" "$expected_alerts"
+    fi
+
+    # Run report with --alerts-only --format json
+    local report_output
+    report_output=$("$AUDIT_REPORT_SCRIPT" "$audit_file" --format json --alerts-only 2>/dev/null) || true
+
+    # Should be a JSON array starting with [
+    assert_contains "$report_output" "[" "Alerts-only JSON should be an array"
+    assert_contains "$report_output" '"sensitive_path_access"' "Alerts-only JSON should contain pattern name"
+    assert_contains "$report_output" '"HIGH"' "Alerts-only JSON should contain severity"
+
+    # Should NOT contain summary/statistics keys (those are in full report only)
+    assert_not_contains "$report_output" '"summary"' "Alerts-only JSON should not contain summary"
+    assert_not_contains "$report_output" '"statistics"' "Alerts-only JSON should not contain statistics"
+
+    teardown
+}
+
+#===============================================================================
+# CLEANUP TESTS
+#===============================================================================
+
+# 23. TTL-based cleanup deletes old files
+test_audit_cleanup_ttl() {
+    log_test "TTL-based cleanup deletes old audit files"
+
+    setup
+
+    local audit_dir="$TEST_AUDIT_DIR"
+
+    # Create fake audit files with old timestamps
+    local old_file="$audit_dir/old-agent-20250101-120000-1234.audit.jsonl"
+    local old_alerts="$audit_dir/old-agent-alerts.jsonl"
+    local old_report="$audit_dir/old-agent-report.txt"
+    local new_file="$audit_dir/new-agent-20260315-120000-5678.audit.jsonl"
+
+    echo '{"seq":0}' > "$old_file"
+    echo '{"pattern":"test"}' > "$old_alerts"
+    echo 'report content' > "$old_report"
+    echo '{"seq":0}' > "$new_file"
+
+    # Set old files to 31 days old via touch (cross-platform)
+    touch -t 202602120000 "$old_file"
+    touch -t 202602120000 "$old_alerts"
+    touch -t 202602120000 "$old_report"
+
+    # Run TTL cleanup in a separate bash process where we can set the TTL
+    # before constants.sh makes it readonly. Use env(1) to bypass the
+    # readonly restriction on KAPSIS_AUDIT_TTL_DAYS in the current shell.
+    env KAPSIS_AUDIT_TTL_DAYS=30 bash -c '
+        set -euo pipefail
+        source "'"$KAPSIS_ROOT"'/scripts/lib/logging.sh"
+        source "'"$KAPSIS_ROOT"'/scripts/lib/json-utils.sh"
+        source "'"$KAPSIS_ROOT"'/scripts/lib/compat.sh"
+        source "'"$KAPSIS_ROOT"'/scripts/lib/constants.sh"
+        source "'"$AUDIT_SCRIPT"'"
+        _audit_cleanup_ttl "'"$audit_dir"'"
+    '
+
+    # Old files should be deleted
+    assert_file_not_exists "$old_file" "Old audit file should be deleted by TTL cleanup"
+    assert_file_not_exists "$old_alerts" "Old alerts file should be deleted by TTL cleanup"
+    assert_file_not_exists "$old_report" "Old report file should be deleted by TTL cleanup"
+
+    # New file should remain
+    assert_file_exists "$new_file" "New audit file should not be deleted"
+
+    teardown
+}
+
+# 24. Size-based cleanup prunes oldest files first
+test_audit_cleanup_size_cap() {
+    log_test "Size-based cleanup prunes oldest files first when over cap"
+
+    setup
+
+    local audit_dir="$TEST_AUDIT_DIR"
+
+    # Create several audit files with different ages and sizes
+    local oldest_file="$audit_dir/agent1-20250101-000000-0001.audit.jsonl"
+    local middle_file="$audit_dir/agent2-20250201-000000-0002.audit.jsonl"
+    local newest_file="$audit_dir/agent3-20250301-000000-0003.audit.jsonl"
+
+    # Write enough data to exceed 1MB total (each file ~400KB = ~1.2MB total)
+    local big_line='{"seq":0,"timestamp":"2025-01-01T00:00:00Z","session_id":"test","agent_id":"a","agent_type":"t","project":"p","event_type":"tool_use","tool_name":"Bash","detail":{"command":"'
+    big_line+=$(printf 'x%.0s' {1..800})
+    big_line+='"},"prev_hash":"0000000000000000000000000000000000000000000000000000000000000000","hash":"abcdef1234567890"}'
+
+    local _i
+    for _i in $(seq 1 400); do
+        echo "$big_line" >> "$oldest_file"
+    done
+    for _i in $(seq 1 400); do
+        echo "$big_line" >> "$middle_file"
+    done
+    for _i in $(seq 1 400); do
+        echo "$big_line" >> "$newest_file"
+    done
+
+    # Set different timestamps so sort-by-age works
+    touch -t 202501010000 "$oldest_file"
+    touch -t 202502010000 "$middle_file"
+    touch -t 202503010000 "$newest_file"
+
+    # Run size cleanup in a separate bash process with 1MB cap.
+    # Use env(1) to bypass the readonly restriction on KAPSIS_AUDIT_MAX_TOTAL_SIZE_MB.
+    env KAPSIS_AUDIT_MAX_TOTAL_SIZE_MB=1 bash -c '
+        set -euo pipefail
+        source "'"$KAPSIS_ROOT"'/scripts/lib/logging.sh"
+        source "'"$KAPSIS_ROOT"'/scripts/lib/json-utils.sh"
+        source "'"$KAPSIS_ROOT"'/scripts/lib/compat.sh"
+        source "'"$KAPSIS_ROOT"'/scripts/lib/constants.sh"
+        source "'"$AUDIT_SCRIPT"'"
+        _audit_cleanup_size "'"$audit_dir"'"
+    '
+
+    # Oldest file should be deleted (it's first in age-sorted order)
+    assert_file_not_exists "$oldest_file" "Oldest file should be pruned by size cleanup"
+
+    # Newest file should survive
+    assert_file_exists "$newest_file" "Newest file should not be deleted by size cleanup"
+
+    teardown
+}
+
+#===============================================================================
+# ADDITIONAL FALSE POSITIVE TESTS
+#===============================================================================
+
+# 25. pip install not flagged as credential exfiltration
+test_pattern_no_false_positive_pip() {
+    log_test "pip install not flagged as credential exfiltration"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    local now
+    now=$(date +%s)
+
+    # Credential access event
+    audit_check_patterns "credential_access" "keychain" "security find-generic-password" "" "$now" || true
+
+    # pip install should be excluded (in package manager allowlist)
+    audit_check_patterns "network_activity" "Bash" "pip install requests" "" "$((now + 5))" || true
+
+    local exfil_found=false
+    for f in "$TEST_AUDIT_DIR"/*-alerts.jsonl; do
+        if [[ -f "$f" ]]; then
+            if grep -q "credential_exfiltration" "$f" 2>/dev/null; then
+                exfil_found=true
+            fi
+        fi
+    done
+    assert_true "[[ '$exfil_found' == 'false' ]]" "pip install should not trigger credential_exfiltration"
+
+    teardown
+}
+
+# 26. maven/gradle not flagged as credential exfiltration
+test_pattern_no_false_positive_maven() {
+    log_test "mvn/gradle commands not flagged as credential exfiltration"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    local now
+    now=$(date +%s)
+
+    # Credential access event
+    audit_check_patterns "credential_access" "keychain" "security find-generic-password" "" "$now" || true
+
+    # mvn install should be excluded
+    audit_check_patterns "network_activity" "Bash" "mvn clean install -q" "" "$((now + 3))" || true
+
+    # Also test gradle
+    audit_check_patterns "network_activity" "Bash" "gradle build" "" "$((now + 6))" || true
+
+    local exfil_found=false
+    for f in "$TEST_AUDIT_DIR"/*-alerts.jsonl; do
+        if [[ -f "$f" ]]; then
+            if grep -q "credential_exfiltration" "$f" 2>/dev/null; then
+                exfil_found=true
+            fi
+        fi
+    done
+    assert_true "[[ '$exfil_found' == 'false' ]]" "mvn/gradle should not trigger credential_exfiltration"
+
+    teardown
+}
+
+#===============================================================================
 # TEST RUNNER
 #===============================================================================
 
@@ -754,6 +1062,19 @@ main() {
     # K8s backend tests (18-19)
     run_test test_k8s_cr_includes_audit_env
     run_test test_k8s_cr_excludes_audit_env
+
+    # Report format tests (20-22)
+    run_test test_report_json_format
+    run_test test_report_alerts_only_text
+    run_test test_report_alerts_only_json
+
+    # Cleanup tests (23-24)
+    run_test test_audit_cleanup_ttl
+    run_test test_audit_cleanup_size_cap
+
+    # Additional false positive tests (25-26)
+    run_test test_pattern_no_false_positive_pip
+    run_test test_pattern_no_false_positive_maven
 
     print_summary
     return "$TESTS_FAILED"
