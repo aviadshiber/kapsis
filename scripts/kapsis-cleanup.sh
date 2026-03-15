@@ -38,6 +38,7 @@ STATUS_DIR="${KAPSIS_STATUS_DIR:-$KAPSIS_DIR/status}"
 LOG_DIR="${KAPSIS_LOG_DIR:-$KAPSIS_DIR/logs}"
 SANDBOX_DIR="${KAPSIS_SANDBOX_DIR:-$HOME/.ai-sandboxes}"
 SANITIZED_GIT_DIR="${KAPSIS_SANITIZED_GIT_DIR:-$KAPSIS_DIR/sanitized-git}"
+AUDIT_DIR="${KAPSIS_AUDIT_DIR:-$KAPSIS_DIR/audit}"
 
 # Options
 DRY_RUN=false
@@ -87,6 +88,7 @@ WHAT GETS CLEANED:
     Sandboxes       Overlay upper dirs in ~/.ai-sandboxes/
     Status files    Completed status files in ~/.kapsis/status/
     Sanitized git   Temporary git dirs in ~/.kapsis/sanitized-git/
+    Audit files     Old audit trail files in ~/.kapsis/audit/ (TTL-based or --all)
     Containers      Stopped kapsis-* containers (with --containers)
     Volumes         Build cache volumes (with --volumes)
     Images          Kapsis container images (with --images or --all)
@@ -656,6 +658,67 @@ clean_logs() {
     fi
 }
 
+# Clean audit files
+clean_audit() {
+    section "Audit Files"
+
+    if [[ ! -d "$AUDIT_DIR" ]]; then
+        echo "  No audit directory found"
+        return
+    fi
+
+    local count=0
+    local total_size=0
+    local ttl_days="${KAPSIS_AUDIT_TTL_DAYS:-30}"
+    local now
+    now=$(date +%s)
+    local ttl_seconds=$((ttl_days * 86400))
+
+    # Clean audit logs, rotated files, alerts, and reports
+    for audit_file in "$AUDIT_DIR"/*.audit.jsonl \
+                      "$AUDIT_DIR"/*.audit.jsonl.[0-9] \
+                      "$AUDIT_DIR"/*-alerts.jsonl \
+                      "$AUDIT_DIR"/*-report.txt; do
+        [[ -f "$audit_file" ]] || continue
+        local name
+        name=$(basename "$audit_file")
+
+        # In --all mode, clean everything; otherwise only clean files older than TTL
+        if [[ "$CLEAN_ALL" != "true" ]]; then
+            local mtime
+            mtime=$(get_file_mtime "$audit_file" 2>/dev/null) || continue
+            [[ -z "$mtime" ]] && continue
+            local age=$((now - mtime))
+            if [[ "$age" -le "$ttl_seconds" ]]; then
+                continue
+            fi
+        fi
+
+        local size
+        size=$(get_file_size "$audit_file")
+        local size_human
+        size_human=$(format_size "$size")
+
+        if [[ "$DRY_RUN" == "true" ]]; then
+            print_item "audit" "$name" "$size_human"
+        else
+            rm -f "$audit_file"
+            print_item "audit" "$name" "$size_human"
+        fi
+
+        ((total_size += size)) || true
+        ((count++)) || true
+    done
+
+    if (( count == 0 )); then
+        echo "  No audit files to clean"
+    else
+        echo -e "  ${BOLD}Total: $count audit files ($(format_size $total_size))${NC}"
+        ((TOTAL_SIZE_FREED += total_size)) || true
+        ((ITEMS_CLEANED += count)) || true
+    fi
+}
+
 # Clean SSH cache
 clean_ssh_cache() {
     section "SSH Host Key Cache"
@@ -913,6 +976,7 @@ main() {
     clean_sandboxes
     clean_status
     clean_sanitized_git
+    clean_audit
 
     if [[ "$clean_containers_flag" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
         clean_containers
