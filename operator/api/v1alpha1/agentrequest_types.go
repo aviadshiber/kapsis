@@ -54,6 +54,10 @@ type AgentRequestSpec struct {
 	// +optional
 	Security *SecuritySpec `json:"security,omitempty"`
 
+	// Audit configures audit logging.
+	// +optional
+	Audit *AuditSpec `json:"audit,omitempty"`
+
 	// TTL is the time-to-live in seconds (pod killed after this).
 	// +optional
 	// +kubebuilder:default=3600
@@ -219,6 +223,13 @@ type SecuritySpec struct {
 	// +optional
 	// +kubebuilder:default="kapsis-agent"
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+}
+
+// AuditSpec defines audit logging configuration.
+type AuditSpec struct {
+	// Enabled controls whether audit logging is active.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
 }
 
 // AgentRequestPhase represents the current phase of an AgentRequest.

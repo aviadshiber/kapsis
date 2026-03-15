@@ -141,6 +141,24 @@ func BuildPod(cr *kapsisv1alpha1.AgentRequest) (*corev1.Pod, error) {
 		})
 	}
 
+	// Audit volume and mount (if audit is enabled).
+	if cr.Spec.Audit != nil && cr.Spec.Audit.Enabled {
+		pod.Spec.Volumes = append(pod.Spec.Volumes, corev1.Volume{
+			Name: "kapsis-audit",
+			VolumeSource: corev1.VolumeSource{
+				EmptyDir: &corev1.EmptyDirVolumeSource{},
+			},
+		})
+		pod.Spec.Containers[0].VolumeMounts = append(pod.Spec.Containers[0].VolumeMounts, corev1.VolumeMount{
+			Name:      "kapsis-audit",
+			MountPath: "/kapsis-audit",
+		})
+		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env,
+			corev1.EnvVar{Name: "KAPSIS_AUDIT_ENABLED", Value: "true"},
+			corev1.EnvVar{Name: "KAPSIS_AUDIT_DIR", Value: "/kapsis-audit"},
+		)
+	}
+
 	// envFrom for secret references.
 	pod.Spec.Containers[0].EnvFrom = buildSecretEnvFrom(cr)
 

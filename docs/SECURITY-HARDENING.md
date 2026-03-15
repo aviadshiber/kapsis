@@ -977,6 +977,60 @@ security:
 
 ---
 
+## 6.8 Audit Logging (Defense-in-Depth)
+
+The audit system provides an additional defense-in-depth layer that complements the existing security hardening mechanisms described in this document.
+
+### How Audit Complements Existing Layers
+
+| Existing Layer | What It Prevents | Audit Adds |
+|---------------|------------------|------------|
+| **Scope validation** (`validate-scope.sh`) | Blocks out-of-bounds filesystem writes | Records all filesystem operations for post-run review |
+| **File sanitization** (`sanitize-files.sh`) | Detects homoglyphs and binary injection | Logs every file access with hash-chained evidence |
+| **DNS filtering** (`dns-filter.sh`) | Blocks unauthorized network access | Detects credential-then-network patterns (exfiltration) |
+| **Capability dropping** (`security.sh`) | Removes dangerous container capabilities | Logs all shell commands for unusual pattern detection |
+| **Seccomp profiles** | Blocks dangerous syscalls | Records tool invocations that reach the application layer |
+
+### Hash Chain Tamper Detection
+
+Every audit event is cryptographically linked to the previous event via SHA-256. If an agent (or an attacker who compromised the container) attempts to modify the audit trail:
+
+- **Deletion**: Missing events break the chain -- `prev_hash` of the next event will not match
+- **Modification**: Changed event fields produce a different hash -- `hash` will not match recomputation
+- **Insertion**: Inserted events break both forward and backward chain linkages
+
+The hash chain can be verified post-run with `./scripts/audit-report.sh --latest --verify`.
+
+### Real-Time Pattern Detection
+
+The audit system runs lightweight behavioral pattern detection inline during the session:
+
+| Pattern | Severity | What It Detects |
+|---------|----------|-----------------|
+| `credential_exfiltration` | HIGH | Credential access followed by network activity within 30 seconds |
+| `mass_deletion` | MEDIUM | 5+ recursive delete operations in a sliding window |
+| `sensitive_path_access` | HIGH | Access to `.ssh/`, `.gnupg/`, `.aws/`, `.kube/`, `/etc/passwd`, `/etc/shadow` |
+| `unusual_commands` | CRITICAL | `base64 -d`, `curl \| sh`, `nc -l`, `python -c socket`, `eval base64` |
+
+Alerts are written to `~/.kapsis/audit/<agent-id>-alerts.jsonl` and logged as warnings. These complement the preventive controls (seccomp, capabilities, DNS filtering) with detective controls that surface suspicious behavior even when it is not blocked.
+
+### Enabling Audit
+
+Audit logging is opt-in. Enable via environment variable or YAML config:
+
+```bash
+KAPSIS_AUDIT_ENABLED=true ./scripts/launch-agent.sh ~/project --task "implement feature"
+```
+
+```yaml
+audit:
+  enabled: true
+```
+
+For the complete audit system documentation, see [AUDIT-SYSTEM.md](AUDIT-SYSTEM.md).
+
+---
+
 ## 7. Implementation Plan
 
 ### 7.1 Phase 1: Core Hardening (Low Risk)

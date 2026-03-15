@@ -1048,6 +1048,13 @@ add_common_volume_mounts() {
     ensure_dir "$status_dir"
     VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
 
+    # Audit directory (shared between host and container)
+    if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" ]]; then
+        local audit_dir="${KAPSIS_AUDIT_DIR:-$HOME/.kapsis/audit}"
+        ensure_dir "$audit_dir"
+        VOLUME_MOUNTS+=("-v" "${audit_dir}:${CONTAINER_AUDIT_PATH}")
+    fi
+
     # Maven repository (isolated per agent)
     VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")
 
@@ -1496,6 +1503,12 @@ generate_env_vars() {
     ENV_VARS+=("-e" "KAPSIS_STATUS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_STATUS_BRANCH=${BRANCH:-}")
     ENV_VARS+=("-e" "KAPSIS_INJECT_GIST=${INJECT_GIST:-false}")
+
+    # Audit environment variables
+    if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_AUDIT_ENABLED=true")
+        ENV_VARS+=("-e" "KAPSIS_AUDIT_DIR=${CONTAINER_AUDIT_PATH}")
+    fi
 
     # Agent type for status tracking hooks
     # Maps to hook mechanism: claude-cli, codex-cli, gemini-cli use hooks; others use monitor
@@ -2343,6 +2356,15 @@ post_container_worktree() {
             "$REMOTE_BRANCH"
     else
         log_info "No file changes detected"
+    fi
+
+    # Generate audit report if audit was enabled
+    if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" ]]; then
+        if [[ -f "$SCRIPT_DIR/audit-report.sh" ]]; then
+            "$SCRIPT_DIR/audit-report.sh" --agent-id "$AGENT_ID" --format text \
+                > "${KAPSIS_AUDIT_DIR:-$HOME/.kapsis/audit}/${AGENT_ID}-report.txt" 2>/dev/null || true
+            log_info "Audit report generated: ${KAPSIS_AUDIT_DIR:-$HOME/.kapsis/audit}/${AGENT_ID}-report.txt"
+        fi
     fi
 
     # Auto-cleanup worktree after completion (Fix #169)

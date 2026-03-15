@@ -155,6 +155,14 @@ backend_run() {
     if [[ -n "$pod_name" ]]; then
         kubectl logs "$pod_name" -n "$_K8S_NAMESPACE" > "$container_output" 2>&1 || true
     fi
+
+    # Retrieve audit files from pod (if audit was enabled)
+    if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" && -n "$pod_name" ]]; then
+        local audit_dir="${KAPSIS_AUDIT_DIR:-$HOME/.kapsis/audit}"
+        mkdir -p "$audit_dir"
+        kubectl cp "$_K8S_NAMESPACE/$pod_name:${CONTAINER_AUDIT_PATH}/." "$audit_dir/" 2>/dev/null || \
+            log_warn "Could not retrieve audit files from pod $pod_name"
+    fi
 }
 
 # Get the exit code from the last backend_run()

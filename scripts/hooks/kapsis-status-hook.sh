@@ -430,6 +430,21 @@ print(json.dumps(state))
     # Log decision if significant
     log_decision "$tool_name" "${command:-$file_path}" "$file_path"
 
+    # Audit logging (if enabled)
+    if [[ "${KAPSIS_AUDIT_ENABLED:-false}" == "true" ]]; then
+        if [[ -f "$KAPSIS_HOME/lib/audit.sh" ]]; then
+            source "$KAPSIS_HOME/lib/audit.sh"
+            source "$KAPSIS_HOME/lib/audit-patterns.sh"
+            if [[ "${_KAPSIS_AUDIT_INITIALIZED:-false}" != "true" ]]; then
+                audit_init "$_safe_agent_id" \
+                           "${KAPSIS_STATUS_PROJECT:-unknown}" \
+                           "${KAPSIS_AGENT_TYPE:-claude-cli}"
+            fi
+            audit_log_event "auto" "$tool_name" \
+                "{\"command\":\"$(json_escape_string "${command:0:1000}")\",\"file_path\":\"$(json_escape_string "$file_path")\",\"category\":\"$category\"}"
+        fi
+    fi
+
     # Output empty JSON (required by hook system)
     echo "{}"
 }

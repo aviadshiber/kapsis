@@ -139,6 +139,16 @@ main() {
         fi
     fi
 
+    # Finalize audit session
+    if [[ "${KAPSIS_AUDIT_ENABLED:-false}" == "true" ]]; then
+        if [[ -f "$KAPSIS_HOME/lib/audit.sh" ]]; then
+            source "$KAPSIS_HOME/lib/audit.sh"
+            if type audit_finalize &>/dev/null; then
+                audit_finalize "${exit_code:-0}" "${error_message:-}"
+            fi
+        fi
+    fi
+
     # Cleanup state file
     local state_file="/tmp/kapsis-hook-state-${_safe_agent_id}.json"
     [[ -f "$state_file" ]] && rm -f "$state_file"
