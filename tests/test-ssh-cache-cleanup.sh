@@ -15,10 +15,35 @@ CLEANUP_SCRIPT="$KAPSIS_ROOT/scripts/kapsis-cleanup.sh"
 
 # Test-specific directories
 TEST_SSH_CACHE_DIR=""
+TEST_KAPSIS_DIR=""
 
 #===============================================================================
 # SETUP / TEARDOWN
 #===============================================================================
+
+# Isolate ALL directory variables so cleanup script never touches real user data.
+# Without this, clean_worktrees/clean_sandboxes/clean_ssh_cache scan real dirs
+# and can hang (e.g., security dump-keychain on macOS).
+isolate_cleanup_dirs() {
+    TEST_KAPSIS_DIR="$TEST_PROJECT/.kapsis-test"
+    mkdir -p "$TEST_KAPSIS_DIR"/{worktrees,status,logs,sanitized-git,audit,ssh-cache}
+    mkdir -p "$TEST_PROJECT/.ai-sandboxes-test"
+
+    export KAPSIS_DIR="$TEST_KAPSIS_DIR"
+    export KAPSIS_WORKTREE_DIR="$TEST_KAPSIS_DIR/worktrees"
+    export KAPSIS_STATUS_DIR="$TEST_KAPSIS_DIR/status"
+    export KAPSIS_LOG_DIR="$TEST_KAPSIS_DIR/logs"
+    export KAPSIS_SANDBOX_DIR="$TEST_PROJECT/.ai-sandboxes-test"
+    export KAPSIS_SANITIZED_GIT_DIR="$TEST_KAPSIS_DIR/sanitized-git"
+    export KAPSIS_AUDIT_DIR="$TEST_KAPSIS_DIR/audit"
+}
+
+restore_cleanup_dirs() {
+    rm -rf "$TEST_KAPSIS_DIR" "$TEST_PROJECT/.ai-sandboxes-test" 2>/dev/null || true
+    unset KAPSIS_DIR KAPSIS_WORKTREE_DIR KAPSIS_STATUS_DIR KAPSIS_LOG_DIR \
+          KAPSIS_SANDBOX_DIR KAPSIS_SANITIZED_GIT_DIR KAPSIS_AUDIT_DIR \
+          SSH_CACHE_DIR
+}
 
 setup_ssh_cache_test() {
     TEST_SSH_CACHE_DIR="$TEST_PROJECT/.kapsis-test-ssh-cache"
@@ -26,14 +51,12 @@ setup_ssh_cache_test() {
 
     # Override the cache directory for testing
     export SSH_CACHE_DIR="$TEST_SSH_CACHE_DIR"
-    export KAPSIS_DIR="$TEST_PROJECT/.kapsis-test"
     mkdir -p "$KAPSIS_DIR/ssh-cache"
 }
 
 cleanup_ssh_cache_test() {
     rm -rf "$TEST_SSH_CACHE_DIR"
-    rm -rf "$TEST_PROJECT/.kapsis-test"
-    unset SSH_CACHE_DIR KAPSIS_DIR
+    unset SSH_CACHE_DIR
 }
 
 #===============================================================================
@@ -51,7 +74,7 @@ test_ssh_cache_flag_recognized() {
     log_test "Testing --ssh-cache flag is recognized"
 
     local output
-    output=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1) || true
+    output=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1 </dev/null) || true
 
     # Should run and produce cleanup output (contains standard sections)
     assert_contains "$output" "Cleanup" "Should show Cleanup header"
@@ -77,7 +100,7 @@ test_ssh_cache_dry_run() {
     echo "test-key" > "$KAPSIS_DIR/ssh-cache/test-host.key"
 
     local output
-    output=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1) || true
+    output=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1 </dev/null) || true
 
     # File should still exist after dry-run
     assert_file_exists "$KAPSIS_DIR/ssh-cache/test-host.key" "File should exist after dry-run"
@@ -91,7 +114,7 @@ test_ssh_cache_actual_cleanup() {
 
     # Run cleanup with ssh-cache flag and verify it completes
     local output
-    output=$("$CLEANUP_SCRIPT" --ssh-cache --force --dry-run 2>&1) || true
+    output=$("$CLEANUP_SCRIPT" --ssh-cache --force --dry-run 2>&1 </dev/null) || true
 
     # Cleanup should run (exit code may be non-zero due to nothing to clean)
     assert_contains "$output" "Cleanup" "Should show cleanup output"
@@ -103,8 +126,8 @@ test_cleanup_idempotent() {
     # Run cleanup with dry-run twice - should not error
     local output1
     local output2
-    output1=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1) || true
-    output2=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1) || true
+    output1=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1 </dev/null) || true
+    output2=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1 </dev/null) || true
 
     # Both should produce output (not crash)
     assert_contains "$output1" "Cleanup" "First cleanup should run"
@@ -115,7 +138,7 @@ test_cleanup_dry_run_no_changes() {
     log_test "Testing dry-run doesn't make changes"
 
     local output
-    output=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1) || true
+    output=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1 </dev/null) || true
 
     # Should indicate dry-run mode
     assert_contains "$output" "Dry run" "Should indicate dry-run mode"
@@ -125,7 +148,7 @@ test_cleanup_force_no_prompt() {
     log_test "Testing --force skips prompts"
 
     local output
-    output=$("$CLEANUP_SCRIPT" --ssh-cache --force --dry-run 2>&1) || true
+    output=$("$CLEANUP_SCRIPT" --ssh-cache --force --dry-run 2>&1 </dev/null) || true
 
     # Should complete without hanging (prompts would hang)
     assert_contains "$output" "Cleanup" "Should complete with --force"
@@ -135,7 +158,7 @@ test_cleanup_with_other_flags() {
     log_test "Testing --ssh-cache works with other flags"
 
     local output
-    output=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run --force 2>&1) || true
+    output=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run --force 2>&1 </dev/null) || true
 
     # Should work with combined flags
     assert_contains "$output" "Cleanup" "Should work with multiple flags"
@@ -145,7 +168,7 @@ test_cleanup_shows_sections() {
     log_test "Testing cleanup shows expected sections"
 
     local output
-    output=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1) || true
+    output=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1 </dev/null) || true
 
     # Should show standard sections (at minimum Worktrees and Sandboxes)
     assert_contains "$output" "Worktrees" "Should show Worktrees section"
@@ -160,6 +183,7 @@ main() {
 
     # Setup
     setup_test_project
+    isolate_cleanup_dirs
 
     # Run tests
     run_test test_cleanup_script_exists
@@ -174,6 +198,7 @@ main() {
     run_test test_cleanup_shows_sections
 
     # Cleanup
+    restore_cleanup_dirs
     cleanup_test_project
 
     # Summary
