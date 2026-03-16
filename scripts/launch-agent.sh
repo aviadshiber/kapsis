@@ -761,6 +761,16 @@ parse_config() {
         # Parse environment set
         ENV_SET=$(yq -r '.environment.set // {}' "$CONFIG_FILE" 2>/dev/null || echo "{}")
 
+        # If KAPSIS_AUDIT_ENABLED is set in config but not in host env, promote it
+        # so that volume mount decisions (which happen before env var injection) see it
+        if [[ -z "${KAPSIS_AUDIT_ENABLED:-}" ]]; then
+            local config_audit_enabled
+            config_audit_enabled=$(yq -r '.environment.set.KAPSIS_AUDIT_ENABLED // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+            if [[ "$config_audit_enabled" == "true" ]]; then
+                KAPSIS_AUDIT_ENABLED="true"
+            fi
+        fi
+
         # Parse global inject_to default (secret_store is preferred/default)
         GLOBAL_INJECT_TO=$(yq -r '.environment.inject_to // "secret_store"' "$CONFIG_FILE" 2>/dev/null || echo "secret_store")
 
