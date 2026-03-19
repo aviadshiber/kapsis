@@ -1203,14 +1203,20 @@ inject_progress_instructions() {
     log_info "Injecting progress reporting instructions..."
 
     # Create workspace directory for progress file
-    # Must succeed for injection to work
-    if ! mkdir -p "/workspace/.kapsis" 2>/dev/null; then
-        log_warn "Could not create /workspace/.kapsis - skipping progress injection"
-        return 0
+    # Test actual writability — mkdir -p may return 0 on read-only overlay
+    # if the directory exists in the lower layer (see kapsis#204)
+    local kapsis_dir="/workspace/.kapsis"
+    mkdir -p "$kapsis_dir" 2>/dev/null
+    if ! touch "$kapsis_dir/.write-test" 2>/dev/null; then
+        # Workspace is read-only (e.g., Podman overlay mode on macOS)
+        kapsis_dir="/tmp/.kapsis"
+        mkdir -p "$kapsis_dir"
+        log_warn "Workspace read-only, using $kapsis_dir for progress injection"
     fi
+    rm -f "$kapsis_dir/.write-test" 2>/dev/null
 
     # Append instructions to task spec (copy to writable location first)
-    local injected_spec="/workspace/.kapsis/task-spec-with-progress.md"
+    local injected_spec="$kapsis_dir/task-spec-with-progress.md"
     {
         cat "$task_spec"
         echo ""
