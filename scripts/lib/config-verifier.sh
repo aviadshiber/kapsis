@@ -318,7 +318,73 @@ validate_launch_config() {
         fi
     fi
 
+    # Validate lsp_servers if present
+    validate_lsp_config "$config_file"
+
     return 0
+}
+
+# Validate LSP server configuration in a launch config
+validate_lsp_config() {
+    local config_file="$1"
+
+    local has_lsp
+    has_lsp=$(yq -r '.lsp_servers // "null"' "$config_file" 2>/dev/null)
+    if [[ "$has_lsp" == "null" ]]; then
+        return 0
+    fi
+
+    log_info "Validating lsp_servers section..."
+
+    # Iterate over each server
+    local server_names
+    server_names=$(yq -r '.lsp_servers | keys | .[]' "$config_file" 2>/dev/null || echo "")
+
+    if [[ -z "$server_names" ]]; then
+        log_warn "lsp_servers section is empty"
+        return 0
+    fi
+
+    local server_name
+    while IFS= read -r server_name; do
+        [[ -z "$server_name" ]] && continue
+
+        # Required: command
+        local command_val
+        command_val=$(yq -r ".lsp_servers.\"$server_name\".command // \"null\"" "$config_file" 2>/dev/null)
+        if [[ "$command_val" == "null" || -z "$command_val" ]]; then
+            log_error "lsp_servers.$server_name: missing required field 'command'"
+        else
+            log_pass "lsp_servers.$server_name: has command ($command_val)"
+        fi
+
+        # Required: languages
+        local languages_val
+        languages_val=$(yq -r ".lsp_servers.\"$server_name\".languages // \"null\"" "$config_file" 2>/dev/null)
+        if [[ "$languages_val" == "null" ]]; then
+            log_error "lsp_servers.$server_name: missing required field 'languages'"
+        else
+            # Check that languages is a non-empty object with array values
+            local lang_count
+            lang_count=$(yq -r ".lsp_servers.\"$server_name\".languages | keys | length" "$config_file" 2>/dev/null || echo "0")
+            if [[ "$lang_count" -eq 0 ]]; then
+                log_error "lsp_servers.$server_name: 'languages' must have at least one language mapping"
+            else
+                log_pass "lsp_servers.$server_name: has languages ($lang_count language(s))"
+            fi
+
+            # Validate extension format (should start with '.')
+            local extensions
+            extensions=$(yq -r ".lsp_servers.\"$server_name\".languages.[][]" "$config_file" 2>/dev/null || echo "")
+            local ext
+            while IFS= read -r ext; do
+                [[ -z "$ext" ]] && continue
+                if [[ "$ext" != .* ]]; then
+                    log_warn "lsp_servers.$server_name: extension '$ext' should start with '.'"
+                fi
+            done <<< "$extensions"
+        fi
+    done <<< "$server_names"
 }
 
 # Validate network allowlist config YAML (configs/network-*.yaml or files with network.mode)
