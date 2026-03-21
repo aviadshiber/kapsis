@@ -1071,6 +1071,66 @@ Implement rate limiting for all public API endpoints to prevent abuse.
                 </div>
             </div>
 
+            <!-- Audit Trail Feature (NEW in v2.14.0) -->
+            <div class="mt-12 mb-12 bg-gradient-to-r from-amber-900/20 to-orange-900/20 rounded-2xl border border-amber-500/30 p-6 md:p-8">
+                <div class="flex items-center gap-3 mb-6">
+                    <div class="bg-amber-500/20 p-3 rounded-lg">
+                        <i class="fa-solid fa-scroll text-amber-400 text-2xl"></i>
+                    </div>
+                    <div>
+                        <span class="text-xs font-bold text-amber-400 uppercase tracking-wider">New in v2.14.0</span>
+                        <h3 class="text-white font-bold text-xl">Tamper-Evident Audit Trail</h3>
+                    </div>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-6">
+                    <!-- Left: Description + Features -->
+                    <div>
+                        <p class="text-slate-300 text-sm mb-4">
+                            Every agent action is recorded as a hash-chained JSONL event log. SHA-256 hash links make tampering detectable &mdash; if any event is modified, the chain breaks.
+                        </p>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex items-start">
+                                <i class="fa-solid fa-link text-amber-400 mt-1 mr-3 w-4"></i>
+                                <span class="text-slate-300"><strong>Hash chain</strong> &mdash; Each event links to the previous via SHA-256</span>
+                            </div>
+                            <div class="flex items-start">
+                                <i class="fa-solid fa-eye text-amber-400 mt-1 mr-3 w-4"></i>
+                                <span class="text-slate-300"><strong>Real-time detection</strong> &mdash; Credential exfil, mass deletion, suspicious commands</span>
+                            </div>
+                            <div class="flex items-start">
+                                <i class="fa-solid fa-file-lines text-amber-400 mt-1 mr-3 w-4"></i>
+                                <span class="text-slate-300"><strong>Post-run reports</strong> &mdash; Timeline, statistics, security alerts, chain verification</span>
+                            </div>
+                            <div class="flex items-start">
+                                <i class="fa-solid fa-tags text-amber-400 mt-1 mr-3 w-4"></i>
+                                <span class="text-slate-300"><strong>Auto-classification</strong> &mdash; Events tagged as credential, network, filesystem, git ops</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Code example -->
+                    <div>
+                        <div class="code-block p-4 rounded-lg text-xs font-mono">
+                            <span class="text-slate-500"># Enable audit for an agent run</span><br>
+                            <span class="text-purple-400">audit:</span><br>
+                            <span class="text-slate-400">&nbsp;&nbsp;enabled:</span> <span class="text-green-400">true</span><br>
+                            <br>
+                            <span class="text-slate-500"># Verify chain integrity after run</span><br>
+                            <span class="text-cyan-400">$</span> <span class="text-slate-300">audit-report.sh --latest --verify</span><br>
+                            <span class="text-green-400">&nbsp;&nbsp;Hash chain: VALID (142 events)</span><br>
+                            <span class="text-green-400">&nbsp;&nbsp;Alerts: 0</span><br>
+                            <br>
+                            <span class="text-slate-500"># Each event is hash-linked</span><br>
+                            <span class="text-slate-400">{</span><span class="text-cyan-400">"seq"</span>:<span class="text-orange-400">42</span>, <span class="text-cyan-400">"event_type"</span>:<span class="text-green-400">"tool_use"</span>,<br>
+                            <span class="text-slate-400">&nbsp;</span><span class="text-cyan-400">"tool_name"</span>:<span class="text-green-400">"Bash"</span>,<br>
+                            <span class="text-slate-400">&nbsp;</span><span class="text-cyan-400">"prev_hash"</span>:<span class="text-green-400">"a3f2..."</span>,<br>
+                            <span class="text-slate-400">&nbsp;</span><span class="text-cyan-400">"hash"</span>:<span class="text-green-400">"7b1c..."</span><span class="text-slate-400">}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
             <!-- Security Guarantees -->
             <div class="mt-12 bg-gradient-to-r from-slate-800 to-slate-900 rounded-xl border border-slate-700 p-6">
                 <h4 class="text-white font-bold mb-4 flex items-center">
@@ -1104,6 +1164,10 @@ Implement rate limiting for all public API endpoints to prevent abuse.
                     <div class="flex items-start">
                         <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
                         <span class="text-slate-300"><strong>K8s NetworkPolicy</strong> — Per-pod egress rules enforced by the cluster (K8s backend)</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Tamper-evident audit trail</strong> — Hash-chained JSONL logs with real-time pattern detection</span>
                     </div>
                 </div>
             </div>
