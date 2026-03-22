@@ -118,12 +118,14 @@ get_current_version() {
             fi
 
             # Fallback to VERSION file (check kapsis_root and script install location)
+            # Script install layout: ~/.local/lib/kapsis/{VERSION,lib/version.sh}
+            # Git install layout:    ~/git/kapsis/{VERSION,.git,scripts/lib/version.sh}
             if [[ -z "$version" ]]; then
                 local script_dir
                 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
                 local version_paths=(
                     "$kapsis_root/VERSION"
-                    "$script_dir/../VERSION"    # script install: lib/ is sibling to VERSION
+                    "$script_dir/../VERSION"
                     "$script_dir/VERSION"
                 )
                 for vpath in "${version_paths[@]}"; do

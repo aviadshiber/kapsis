@@ -177,7 +177,9 @@ install_files() {
     cp "$src_dir/maven/isolated-settings.xml" "$SHARE_DIR/maven/"
 
     # Write VERSION file for version detection (used by get_current_version)
-    echo "$KAPSIS_INSTALL_VERSION" > "$LIB_DIR/VERSION"
+    if [[ -n "${KAPSIS_INSTALL_VERSION:-}" ]]; then
+        echo "$KAPSIS_INSTALL_VERSION" > "$LIB_DIR/VERSION"
+    fi
 
     # Create wrapper scripts
     create_wrapper "kapsis" "launch-agent.sh"
