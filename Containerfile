@@ -488,6 +488,7 @@ COPY scripts/lib/progress-instructions.md /opt/kapsis/lib/progress-instructions.
 COPY scripts/lib/status.py /opt/kapsis/lib/status.py
 COPY scripts/lib/inject-status-hooks.sh /opt/kapsis/lib/inject-status-hooks.sh
 COPY scripts/lib/filter-agent-config.sh /opt/kapsis/lib/filter-agent-config.sh
+COPY scripts/lib/inject-lsp-config.sh /opt/kapsis/lib/inject-lsp-config.sh
 COPY scripts/lib/dns-filter.sh /opt/kapsis/lib/dns-filter.sh
 COPY scripts/lib/git-remote-utils.sh /opt/kapsis/lib/git-remote-utils.sh
 COPY scripts/lib/atomic-copy.sh /opt/kapsis/lib/atomic-copy.sh
