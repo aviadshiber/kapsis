@@ -267,6 +267,24 @@ validate_launch_config() {
         log_error "Missing required field: agent.command"
     fi
 
+    # Optional: agent.type (Fix #213 — explicit agent type for LSP injection, hooks, etc.)
+    local agent_type_val
+    agent_type_val=$(yq -r '.agent.type // ""' "$config_file" 2>/dev/null)
+    if [[ -n "$agent_type_val" && "$agent_type_val" != "null" ]]; then
+        local agent_types_lib
+        agent_types_lib="$KAPSIS_ROOT/scripts/lib/agent-types.sh"
+        if [[ -f "$agent_types_lib" ]]; then
+            source "$agent_types_lib"
+            local normalized
+            normalized=$(normalize_agent_type "$agent_type_val")
+            if [[ "$normalized" == "unknown" ]]; then
+                log_warn "agent.type '$agent_type_val' is not recognized (expected: claude-cli, codex-cli, gemini-cli, aider, python, interactive)"
+            else
+                log_pass "Valid agent.type: $agent_type_val (→ $normalized)"
+            fi
+        fi
+    fi
+
     # Optional sections
     local sections=("filesystem" "environment" "resources" "maven" "git")
     for section in "${sections[@]}"; do
