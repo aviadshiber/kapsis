@@ -291,23 +291,67 @@ commit_changes() {
 
     cd "$worktree_path"
 
-    # Fix #186: Ensure index cache-tree is valid before staging
-    # Stale cache-tree entries from sanitized git cause push failures
-    local read_tree_err
-    if ! read_tree_err=$(git read-tree HEAD 2>&1); then
-        log_warn "git read-tree HEAD failed — cache-tree may be stale: $read_tree_err"
+    # Note: git read-tree HEAD for cache-tree rebuild is handled by
+    # sync_index_from_container() (line ~569). The duplicate here was
+    # removed in #211 — it caused index inconsistency on large monorepos.
+
+    # Stage changes: prefer explicit paths (targeted), fallback to git add -A (#211)
+    log_info "Staging changes..."
+    local changed_files
+    changed_files=$(git status --porcelain | awk '{print $2}')
+    if [[ -n "$changed_files" ]]; then
+        while IFS= read -r f; do
+            [[ -n "$f" ]] && git add -- "$f" 2>/dev/null || true
+        done <<< "$changed_files"
     fi
 
-    log_info "Staging changes..."
-    git add -A
+    local staged_count
+    staged_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
+    log_info "Staged $staged_count file(s) via explicit paths"
+
+    # Fallback: if explicit staging missed files, try git add -A
+    if [[ "$staged_count" -eq 0 ]]; then
+        log_warn "No files staged via explicit paths — falling back to git add -A"
+        git add -A
+        staged_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
+        log_info "Staged $staged_count file(s) after git add -A fallback"
+    fi
+
+    # If still nothing staged, log diagnostic state and bail
+    if [[ "$staged_count" -eq 0 ]]; then
+        log_error "Failed to stage any files. Diagnostic state:"
+        log_error "  git status --porcelain: $(git status --porcelain | head -10)"
+        log_error "  git diff --stat: $(git diff --stat | tail -5)"
+        return 1
+    fi
 
     # Validate staged files and remove suspicious ones
     # This catches literal ~ paths, .kapsis/ files, and accidental submodules
     validate_staged_files "$worktree_path"
 
+    # Log count after validation
+    local post_validate_count
+    post_validate_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
+    if [[ "$post_validate_count" -ne "$staged_count" ]]; then
+        log_info "After validation: $post_validate_count file(s) staged (was $staged_count)"
+    fi
+
     # Sanitize staged files - strip dangerous invisible characters
     # This prevents Trojan Source attacks (CVE-2021-42574) and similar exploits
     sanitize_staged_files "$worktree_path"
+
+    # Log count after sanitization
+    local post_sanitize_count
+    post_sanitize_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
+    if [[ "$post_sanitize_count" -ne "$post_validate_count" ]]; then
+        log_info "After sanitization: $post_sanitize_count file(s) staged (was $post_validate_count)"
+    fi
+
+    # Final guard: don't attempt commit if nothing staged
+    if [[ "$post_sanitize_count" -eq 0 ]]; then
+        log_warn "No files staged after validation and sanitization — nothing to commit"
+        return 1
+    fi
 
     # Show what's being committed
     echo ""

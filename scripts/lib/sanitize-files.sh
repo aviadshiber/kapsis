@@ -614,7 +614,7 @@ sanitize_staged_files() {
     files=$(_sanitize_get_staged_text_files)
 
     if [[ -z "$files" ]]; then
-        log_debug "No text files staged"
+        log_info "No text files staged — skipping sanitization"
         return 0
     fi
 
@@ -662,7 +662,11 @@ sanitize_staged_files() {
         fi
     done <<< "$files"
 
-    # Report and log if any cleaning was done
+    # Report results
+    if [[ $total_chars -eq 0 ]]; then
+        log_info "All staged files are clean (no dangerous characters found)"
+    fi
+
     if [[ $total_chars -gt 0 ]]; then
         _sanitize_report "$total_chars" "$total_files" "${file_summaries[@]}"
         _sanitize_audit_log "$worktree_path" "$total_chars" "$total_files" "${file_summaries[@]}"
