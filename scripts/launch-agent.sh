@@ -1572,10 +1572,10 @@ generate_env_vars() {
     # Fix #213: infer from agent command string as last resort
     if [[ "$agent_type" == "unknown" && -n "${AGENT_COMMAND:-}" ]]; then
         case "$AGENT_COMMAND" in
-            claude\ *|*claude\ --*|*/claude\ *)   agent_type="claude-cli" ;;
-            codex\ *|*/codex\ *)                   agent_type="codex-cli" ;;
-            gemini\ *|*/gemini\ *)                 agent_type="gemini-cli" ;;
-            aider\ *|*/aider\ *)                   agent_type="aider" ;;
+            claude\ *|*\ claude\ *|*/claude\ *)   agent_type="claude-cli" ;;
+            codex\ *|*\ codex\ *|*/codex\ *)      agent_type="codex-cli" ;;
+            gemini\ *|*\ gemini\ *|*/gemini\ *)    agent_type="gemini-cli" ;;
+            aider\ *|*\ aider\ *|*/aider\ *)      agent_type="aider" ;;
         esac
         if [[ "$agent_type" != "unknown" ]]; then
             log_debug "Inferred agent type from command: $agent_type"

@@ -106,112 +106,54 @@ test_config_type_not_used_when_name_resolves() {
 # TEST: Command string inference
 #===============================================================================
 
-test_command_inference_claude() {
-    log_test "Testing command inference for claude"
-
-    local agent_type="unknown"
-    local AGENT_COMMAND="claude --dangerously-skip-permissions -p \"\$(cat /task-spec.md)\""
-
-    if [[ "$agent_type" == "unknown" && -n "${AGENT_COMMAND:-}" ]]; then
-        case "$AGENT_COMMAND" in
-            claude\ *|*claude\ --*|*/claude\ *)   agent_type="claude-cli" ;;
-            codex\ *|*/codex\ *)                   agent_type="codex-cli" ;;
-            gemini\ *|*/gemini\ *)                 agent_type="gemini-cli" ;;
-            aider\ *|*/aider\ *)                   agent_type="aider" ;;
+# Helper: mirrors the command inference logic from launch-agent.sh
+_infer_type_from_command() {
+    local cmd="$1"
+    local result="unknown"
+    if [[ -n "$cmd" ]]; then
+        case "$cmd" in
+            claude\ *|*\ claude\ *|*/claude\ *)   result="claude-cli" ;;
+            codex\ *|*\ codex\ *|*/codex\ *)      result="codex-cli" ;;
+            gemini\ *|*\ gemini\ *|*/gemini\ *)    result="gemini-cli" ;;
+            aider\ *|*\ aider\ *|*/aider\ *)      result="aider" ;;
         esac
     fi
+    echo "$result"
+}
 
-    assert_equals "claude-cli" "$agent_type" "Should infer claude-cli from command"
+test_command_inference_claude() {
+    log_test "Testing command inference for claude"
+    assert_equals "claude-cli" "$(_infer_type_from_command "claude --dangerously-skip-permissions -p task")" "Should infer claude-cli from command"
 }
 
 test_command_inference_claude_with_path() {
     log_test "Testing command inference for /usr/local/bin/claude"
-
-    local agent_type="unknown"
-    local AGENT_COMMAND="/usr/local/bin/claude --dangerously-skip-permissions"
-
-    if [[ "$agent_type" == "unknown" && -n "${AGENT_COMMAND:-}" ]]; then
-        case "$AGENT_COMMAND" in
-            claude\ *|*claude\ --*|*/claude\ *)   agent_type="claude-cli" ;;
-            codex\ *|*/codex\ *)                   agent_type="codex-cli" ;;
-            gemini\ *|*/gemini\ *)                 agent_type="gemini-cli" ;;
-            aider\ *|*/aider\ *)                   agent_type="aider" ;;
-        esac
-    fi
-
-    assert_equals "claude-cli" "$agent_type" "Should infer claude-cli from full path"
+    assert_equals "claude-cli" "$(_infer_type_from_command "/usr/local/bin/claude --dangerously-skip-permissions")" "Should infer claude-cli from full path"
 }
 
 test_command_inference_codex() {
     log_test "Testing command inference for codex"
-
-    local agent_type="unknown"
-    local AGENT_COMMAND="codex --approval-mode full-auto \"implement feature\""
-
-    if [[ "$agent_type" == "unknown" && -n "${AGENT_COMMAND:-}" ]]; then
-        case "$AGENT_COMMAND" in
-            claude\ *|*claude\ --*|*/claude\ *)   agent_type="claude-cli" ;;
-            codex\ *|*/codex\ *)                   agent_type="codex-cli" ;;
-            gemini\ *|*/gemini\ *)                 agent_type="gemini-cli" ;;
-            aider\ *|*/aider\ *)                   agent_type="aider" ;;
-        esac
-    fi
-
-    assert_equals "codex-cli" "$agent_type" "Should infer codex-cli from command"
+    assert_equals "codex-cli" "$(_infer_type_from_command "codex --approval-mode full-auto \"implement feature\"")" "Should infer codex-cli from command"
 }
 
 test_command_inference_gemini() {
     log_test "Testing command inference for gemini"
-
-    local agent_type="unknown"
-    local AGENT_COMMAND="gemini --sandbox -p task"
-
-    if [[ "$agent_type" == "unknown" && -n "${AGENT_COMMAND:-}" ]]; then
-        case "$AGENT_COMMAND" in
-            claude\ *|*claude\ --*|*/claude\ *)   agent_type="claude-cli" ;;
-            codex\ *|*/codex\ *)                   agent_type="codex-cli" ;;
-            gemini\ *|*/gemini\ *)                 agent_type="gemini-cli" ;;
-            aider\ *|*/aider\ *)                   agent_type="aider" ;;
-        esac
-    fi
-
-    assert_equals "gemini-cli" "$agent_type" "Should infer gemini-cli from command"
+    assert_equals "gemini-cli" "$(_infer_type_from_command "gemini --sandbox -p task")" "Should infer gemini-cli from command"
 }
 
 test_command_inference_aider() {
     log_test "Testing command inference for aider"
-
-    local agent_type="unknown"
-    local AGENT_COMMAND="aider --yes --auto-commits"
-
-    if [[ "$agent_type" == "unknown" && -n "${AGENT_COMMAND:-}" ]]; then
-        case "$AGENT_COMMAND" in
-            claude\ *|*claude\ --*|*/claude\ *)   agent_type="claude-cli" ;;
-            codex\ *|*/codex\ *)                   agent_type="codex-cli" ;;
-            gemini\ *|*/gemini\ *)                 agent_type="gemini-cli" ;;
-            aider\ *|*/aider\ *)                   agent_type="aider" ;;
-        esac
-    fi
-
-    assert_equals "aider" "$agent_type" "Should infer aider from command"
+    assert_equals "aider" "$(_infer_type_from_command "aider --yes --auto-commits")" "Should infer aider from command"
 }
 
 test_command_inference_no_match() {
     log_test "Testing command inference with non-matching command"
+    assert_equals "unknown" "$(_infer_type_from_command "python run_agent.py --task implement")" "Should stay unknown for non-matching command"
+}
 
-    local agent_type="unknown"
-    local AGENT_COMMAND="python run_agent.py --task implement"
-
-    if [[ "$agent_type" == "unknown" && -n "${AGENT_COMMAND:-}" ]]; then
-        case "$AGENT_COMMAND" in
-            claude\ *|*claude\ --*|*/claude\ *)   agent_type="claude-cli" ;;
-            codex\ *|*/codex\ *)                   agent_type="codex-cli" ;;
-            gemini\ *|*/gemini\ *)                 agent_type="gemini-cli" ;;
-            aider\ *|*/aider\ *)                   agent_type="aider" ;;
-        esac
-    fi
-
-    assert_equals "unknown" "$agent_type" "Should stay unknown for non-matching command"
+test_command_inference_no_substring_match() {
+    log_test "Testing command inference does not match substrings"
+    assert_equals "unknown" "$(_infer_type_from_command "my-claude-wrapper --task foo")" "Should not match claude as substring"
 }
 
 test_command_inference_not_used_when_config_type_resolves() {
@@ -221,7 +163,6 @@ test_command_inference_not_used_when_config_type_resolves() {
 
     local agent_type="unknown"
     local AGENT_CONFIG_TYPE="codex-cli"
-    local AGENT_COMMAND="claude --dangerously-skip-permissions"
 
     # Step 1: config type override
     if [[ "$agent_type" == "unknown" && -n "${AGENT_CONFIG_TYPE:-}" ]]; then
@@ -233,10 +174,8 @@ test_command_inference_not_used_when_config_type_resolves() {
     fi
 
     # Step 2: command inference (should be skipped since agent_type != unknown)
-    if [[ "$agent_type" == "unknown" && -n "${AGENT_COMMAND:-}" ]]; then
-        case "$AGENT_COMMAND" in
-            claude\ *|*claude\ --*|*/claude\ *)   agent_type="claude-cli" ;;
-        esac
+    if [[ "$agent_type" == "unknown" ]]; then
+        agent_type=$(_infer_type_from_command "claude --dangerously-skip-permissions")
     fi
 
     assert_equals "codex-cli" "$agent_type" "Config type should prevent command inference"
@@ -365,6 +304,7 @@ main() {
     run_test test_command_inference_gemini
     run_test test_command_inference_aider
     run_test test_command_inference_no_match
+    run_test test_command_inference_no_substring_match
     run_test test_command_inference_not_used_when_config_type_resolves
 
     log_info "=== Config Verifier ==="

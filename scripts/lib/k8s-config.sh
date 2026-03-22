@@ -104,6 +104,7 @@ kind: AgentRequest
 metadata:
   name: kapsis-${AGENT_ID}
   labels:
+    # AGENT_CONFIG_TYPE set by parse_config() in launch-agent.sh; falls back to AGENT_NAME
     kapsis.aviadshiber.github.io/agent-type: ${AGENT_CONFIG_TYPE:-${AGENT_NAME}}
     kapsis.aviadshiber.github.io/agent-id: ${AGENT_ID}
 spec:

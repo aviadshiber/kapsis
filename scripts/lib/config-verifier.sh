@@ -272,7 +272,7 @@ validate_launch_config() {
     agent_type_val=$(yq -r '.agent.type // ""' "$config_file" 2>/dev/null)
     if [[ -n "$agent_type_val" && "$agent_type_val" != "null" ]]; then
         local agent_types_lib
-        agent_types_lib="$(cd "$(dirname "$0")" && pwd)/agent-types.sh"
+        agent_types_lib="$KAPSIS_ROOT/scripts/lib/agent-types.sh"
         if [[ -f "$agent_types_lib" ]]; then
             source "$agent_types_lib"
             local normalized
