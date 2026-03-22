@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.15.0] - 2026-03-22
+## [2.15.1] - 2026-03-22
 
-### Added
-- Support LSP server configuration via kapsis config YAML
+### Changed
+- Bump google.golang.org/grpc
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Added
+- Support LSP server configuration via kapsis config YAML
+
 
 ### Fixed
 - Skip progress injection instead of /tmp fallback
@@ -660,7 +664,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.15.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.15.1...HEAD
+[2.15.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.15.1
 [2.15.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.15.0
 [2.14.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.14.2
 [2.14.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.14.1
