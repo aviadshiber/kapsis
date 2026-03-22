@@ -104,12 +104,12 @@ kind: AgentRequest
 metadata:
   name: kapsis-${AGENT_ID}
   labels:
-    kapsis.aviadshiber.github.io/agent-type: ${AGENT_NAME}
+    kapsis.aviadshiber.github.io/agent-type: ${AGENT_CONFIG_TYPE:-${AGENT_NAME}}
     kapsis.aviadshiber.github.io/agent-id: ${AGENT_ID}
 spec:
   image: ${IMAGE_NAME}
   agent:
-    type: ${AGENT_NAME}
+    type: ${AGENT_CONFIG_TYPE:-${AGENT_NAME}}
 ${cmd_yaml}
     workdir: /workspace
   resources:
