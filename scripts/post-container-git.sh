@@ -292,13 +292,18 @@ commit_changes() {
     cd "$worktree_path"
 
     # Note: git read-tree HEAD for cache-tree rebuild is handled by
-    # sync_index_from_container() (line ~569). The duplicate here was
-    # removed in #211 — it caused index inconsistency on large monorepos.
+    # sync_index_from_container(). The duplicate here was removed in
+    # #211 — it caused index inconsistency on large monorepos.
 
     # Stage changes: prefer explicit paths (targeted), fallback to git add -A (#211)
+    # Uses cut -c4- to strip the 2-char status + space prefix from porcelain output,
+    # which correctly handles filenames with spaces (awk $2 would truncate them).
     log_info "Staging changes..."
+    local expected_count
+    expected_count=$(git status --porcelain | wc -l | tr -d ' ')
+
     local changed_files
-    changed_files=$(git status --porcelain | awk '{print $2}')
+    changed_files=$(git status --porcelain | cut -c4-)
     if [[ -n "$changed_files" ]]; then
         while IFS= read -r f; do
             [[ -n "$f" ]] && git add -- "$f" 2>/dev/null || true
@@ -309,9 +314,9 @@ commit_changes() {
     staged_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
     log_info "Staged $staged_count file(s) via explicit paths"
 
-    # Fallback: if explicit staging missed files, try git add -A
-    if [[ "$staged_count" -eq 0 ]]; then
-        log_warn "No files staged via explicit paths — falling back to git add -A"
+    # Fallback: if explicit staging missed some files, try git add -A
+    if [[ "$staged_count" -lt "$expected_count" ]]; then
+        log_warn "Only staged $staged_count of $expected_count files — falling back to git add -A"
         git add -A
         staged_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
         log_info "Staged $staged_count file(s) after git add -A fallback"

@@ -663,10 +663,6 @@ sanitize_staged_files() {
     done <<< "$files"
 
     # Report results
-    if [[ $total_chars -eq 0 ]]; then
-        log_info "All staged files are clean (no dangerous characters found)"
-    fi
-
     if [[ $total_chars -gt 0 ]]; then
         _sanitize_report "$total_chars" "$total_files" "${file_summaries[@]}"
         _sanitize_audit_log "$worktree_path" "$total_chars" "$total_files" "${file_summaries[@]}"
@@ -710,7 +706,7 @@ sanitize_staged_files() {
             fi
         fi
     else
-        log_debug "All staged files are clean"
+        log_info "All staged files are clean (no dangerous characters found)"
     fi
 
     return 0
