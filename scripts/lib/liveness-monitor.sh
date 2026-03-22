@@ -80,7 +80,7 @@ _liveness_get_updated_at() {
 
     if [[ -n "${status_file:-}" && -f "$status_file" ]]; then
         local content
-        content=$(<"$status_file") 2>/dev/null || return
+        content=$(cat "$status_file" 2>/dev/null) || return
         if [[ "$content" =~ \"updated_at\":\ *\"([^\"]*)\" ]]; then
             echo "${BASH_REMATCH[1]}"
         fi
@@ -93,10 +93,23 @@ _liveness_write_heartbeat() {
     if type status_set_heartbeat &>/dev/null && type status_is_active &>/dev/null; then
         if status_is_active; then
             status_set_heartbeat
-            # Trigger a status write with current phase to persist heartbeat
-            local current_phase
-            current_phase=$(status_get_phase 2>/dev/null || echo "running")
-            status_phase "$current_phase" "" "" 2>/dev/null || true
+            # Trigger a status write to persist heartbeat_at.
+            # Read current phase/progress from status file to avoid overwriting them.
+            local status_file
+            status_file=$(status_get_file 2>/dev/null || echo "")
+            local current_phase="running"
+            local current_progress=0
+            if [[ -n "$status_file" && -f "$status_file" ]]; then
+                local file_content
+                file_content=$(<"$status_file") 2>/dev/null || true
+                if [[ "$file_content" =~ \"phase\":\ *\"([^\"]*)\" ]]; then
+                    current_phase="${BASH_REMATCH[1]}"
+                fi
+                if [[ "$file_content" =~ \"progress\":\ *([0-9]+) ]]; then
+                    current_progress="${BASH_REMATCH[1]}"
+                fi
+            fi
+            status_phase "$current_phase" "$current_progress" "" 2>/dev/null || true
         fi
     fi
 }

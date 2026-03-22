@@ -292,7 +292,10 @@ show_health() {
 
     if [[ ! -f "$file" ]]; then
         if [[ "$json_mode" == "true" ]]; then
-            echo '{"error": "not_found", "message": "No status found for '"$project"' agent '"$agent"'"}'
+            # Sanitize project/agent for safe JSON embedding (strip quotes)
+            local safe_proj="${project//\"/}"
+            local safe_agent="${agent//\"/}"
+            echo "{\"error\": \"not_found\", \"message\": \"No status found for ${safe_proj} agent ${safe_agent}\"}"
         else
             echo "No status found for project '$project' agent '$agent'"
         fi
