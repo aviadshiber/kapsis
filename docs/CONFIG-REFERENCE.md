@@ -132,6 +132,12 @@ See [BUILD-CONFIGURATION.md](BUILD-CONFIGURATION.md) for detailed documentation.
 # AGENT CONFIGURATION
 #===============================================================================
 agent:
+  # Agent type for LSP injection, status hooks, and Claude-specific features.
+  # When omitted, inferred from config filename, image name, or command string.
+  # Values: claude-cli, codex-cli, gemini-cli, aider, python, interactive
+  # Default: (inferred)
+  type: claude-cli
+
   # Command to launch the agent (required)
   # Placeholders:
   #   {task} - Replaced with task description
