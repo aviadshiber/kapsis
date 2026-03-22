@@ -137,6 +137,24 @@ test_compare_versions_with_v_prefix() {
     assert_equals "0" "$result" "v prefix should be handled"
 }
 
+test_compare_versions_unknown_treated_as_zero() {
+    log_test "Testing version comparison treats 'unknown' as 0.0.0"
+
+    local result
+
+    # "unknown" current version should always be less than any real version
+    result=$(compare_versions "unknown" "2.14.1")
+    assert_equals "-1" "$result" "unknown should be less than 2.14.1"
+
+    # Real version should be greater than "unknown"
+    result=$(compare_versions "2.14.1" "unknown")
+    assert_equals "1" "$result" "2.14.1 should be greater than unknown"
+
+    # Both unknown should be equal (both become 0.0.0)
+    result=$(compare_versions "unknown" "unknown")
+    assert_equals "0" "$result" "unknown vs unknown should be equal"
+}
+
 test_upgrade_command_generates_output() {
     log_test "Testing upgrade command generates valid output"
 
@@ -435,6 +453,7 @@ main() {
     run_test test_compare_versions_greater_than
     run_test test_compare_versions_major_difference
     run_test test_compare_versions_with_v_prefix
+    run_test test_compare_versions_unknown_treated_as_zero
     run_test test_upgrade_command_generates_output
     run_test test_upgrade_command_specific_version
 

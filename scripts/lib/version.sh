@@ -117,9 +117,21 @@ get_current_version() {
                 fi
             fi
 
-            # Fallback to VERSION file
-            if [[ -z "$version" ]] && [[ -f "$kapsis_root/VERSION" ]]; then
-                version=$(cat "$kapsis_root/VERSION")
+            # Fallback to VERSION file (check kapsis_root and script install location)
+            if [[ -z "$version" ]]; then
+                local script_dir
+                script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+                local version_paths=(
+                    "$kapsis_root/VERSION"
+                    "$script_dir/../VERSION"    # script install: lib/ is sibling to VERSION
+                    "$script_dir/VERSION"
+                )
+                for vpath in "${version_paths[@]}"; do
+                    if [[ -f "$vpath" ]]; then
+                        version=$(cat "$vpath")
+                        break
+                    fi
+                done
             fi
 
             # Fallback to parsing CHANGELOG.md for latest version
@@ -254,6 +266,14 @@ compare_versions() {
     # Remove 'v' prefix if present
     v1="${v1#v}"
     v2="${v2#v}"
+
+    # Treat non-semver values (e.g., "unknown") as 0.0.0 so upgrades always proceed
+    if [[ ! "$v1" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+        v1="0.0.0"
+    fi
+    if [[ ! "$v2" =~ ^[0-9]+(\.[0-9]+)*$ ]]; then
+        v2="0.0.0"
+    fi
 
     if [[ "$v1" == "$v2" ]]; then
         echo 0
