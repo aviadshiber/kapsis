@@ -24,15 +24,15 @@ LIB_DIR="$INSTALL_PREFIX/lib/kapsis"
 SHARE_DIR="$INSTALL_PREFIX/share/kapsis"
 
 info() {
-    echo -e "${BLUE}[INFO]${NC} $*"
+    echo -e "${BLUE}[INFO]${NC} $*" >&2
 }
 
 success() {
-    echo -e "${GREEN}[OK]${NC} $*"
+    echo -e "${GREEN}[OK]${NC} $*" >&2
 }
 
 warn() {
-    echo -e "${YELLOW}[WARN]${NC} $*"
+    echo -e "${YELLOW}[WARN]${NC} $*" >&2
 }
 
 error() {
@@ -176,6 +176,11 @@ install_files() {
     cp "$src_dir/configs/agents/"*.yaml "$SHARE_DIR/configs/agents/" 2>/dev/null || true
     cp "$src_dir/maven/isolated-settings.xml" "$SHARE_DIR/maven/"
 
+    # Write VERSION file for version detection (used by get_current_version)
+    if [[ -n "${KAPSIS_INSTALL_VERSION:-}" ]]; then
+        echo "$KAPSIS_INSTALL_VERSION" > "$LIB_DIR/VERSION"
+    fi
+
     # Create wrapper scripts
     create_wrapper "kapsis" "launch-agent.sh"
     create_wrapper "kapsis-build" "build-image.sh"
@@ -312,8 +317,8 @@ main() {
     # shellcheck disable=SC2064  # Intentional: expand src_dir now to capture value
     trap "cleanup '$src_dir'" EXIT
 
-    # Install
-    install_files "$src_dir"
+    # Install (pass version for VERSION file)
+    KAPSIS_INSTALL_VERSION="$version" install_files "$src_dir"
     setup_path
 
     echo ""
