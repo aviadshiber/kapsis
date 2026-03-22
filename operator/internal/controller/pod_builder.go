@@ -248,6 +248,34 @@ func buildEnvVars(cr *kapsisv1alpha1.AgentRequest) []corev1.EnvVar {
 		}
 	}
 
+	// Liveness monitoring env vars.
+	if cr.Spec.Liveness != nil && cr.Spec.Liveness.Enabled {
+		envVars = append(envVars, corev1.EnvVar{Name: "KAPSIS_LIVENESS_ENABLED", Value: "true"})
+		if cr.Spec.Liveness.TimeoutSeconds != nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name: "KAPSIS_LIVENESS_TIMEOUT", Value: fmt.Sprintf("%d", *cr.Spec.Liveness.TimeoutSeconds),
+			})
+		}
+		if cr.Spec.Liveness.GracePeriodSeconds != nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name: "KAPSIS_LIVENESS_GRACE_PERIOD", Value: fmt.Sprintf("%d", *cr.Spec.Liveness.GracePeriodSeconds),
+			})
+		}
+		if cr.Spec.Liveness.CheckIntervalSeconds != nil {
+			envVars = append(envVars, corev1.EnvVar{
+				Name: "KAPSIS_LIVENESS_CHECK_INTERVAL", Value: fmt.Sprintf("%d", *cr.Spec.Liveness.CheckIntervalSeconds),
+			})
+		}
+	}
+
+	// Fix hang-after-completion for Claude agents (anthropics/claude-code#21099).
+	agentType := cr.Spec.Agent.Type
+	if agentType == "claude-cli" || agentType == "claude" || agentType == "claude-code" {
+		envVars = append(envVars, corev1.EnvVar{
+			Name: "CLAUDE_CODE_EXIT_AFTER_STOP_DELAY", Value: "10000",
+		})
+	}
+
 	// User-specified variables from spec.environment.vars.
 	if cr.Spec.Environment != nil {
 		for _, v := range cr.Spec.Environment.Vars {
