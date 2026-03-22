@@ -6,16 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.15.2] - 2026-03-22
+## [2.16.0] - 2026-03-22
+
+### Added
+- Built-in agent liveness monitoring and auto-kill (#209)
+
+### Fixed
+- Address review findings in liveness monitor
+- Remove unused LAUNCH_SCRIPT variable
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Guard VERSION write and add install layout comments
 - Handle "unknown" version in compare and write VERSION on install
 - Redirect display output to stderr to prevent stdout pollution
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Changed
 - Bump google.golang.org/grpc
@@ -670,7 +678,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.15.2...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.0...HEAD
+[2.16.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.0
 [2.15.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.15.2
 [2.15.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.15.1
 [2.15.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.15.0
