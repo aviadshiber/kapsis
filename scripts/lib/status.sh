@@ -71,6 +71,9 @@ _KAPSIS_PRE_COMMIT_SHA=""        # SHA before commit (to verify HEAD moved)
 _KAPSIS_GIST=""                  # Current gist message from agent
 _KAPSIS_GIST_UPDATED_AT=""       # When gist was last updated
 
+# Liveness heartbeat state (written by liveness-monitor.sh, independent of hooks)
+_KAPSIS_HEARTBEAT_AT=""             # Last heartbeat timestamp from liveness monitor
+
 # Gist rate limiting state (reduce I/O on frequent PostToolUse calls)
 _KAPSIS_GIST_LAST_READ=""        # Epoch timestamp of last gist read
 _KAPSIS_GIST_LAST_MTIME=""       # Last known file mtime
@@ -431,6 +434,12 @@ status_set_gist() {
     _KAPSIS_GIST_UPDATED_AT=$(_status_timestamp)
 }
 
+# Set liveness heartbeat timestamp
+# Called by liveness-monitor.sh on each check cycle (independent of agent hooks)
+status_set_heartbeat() {
+    _KAPSIS_HEARTBEAT_AT=$(_status_timestamp)
+}
+
 # Read gist from the signaling file
 # The agent writes to $KAPSIS_GIST_FILE (default: /workspace/.kapsis/gist.txt)
 # This function reads it and updates internal state
@@ -580,6 +589,10 @@ _status_write() {
         [[ -n "$_KAPSIS_GIST_UPDATED_AT" ]] && gist_updated_at_json="\"$_KAPSIS_GIST_UPDATED_AT\""
     fi
 
+    # Liveness heartbeat field (written by liveness-monitor.sh, independent of hooks)
+    local heartbeat_json="null"
+    [[ -n "$_KAPSIS_HEARTBEAT_AT" ]] && heartbeat_json="\"$_KAPSIS_HEARTBEAT_AT\""
+
     # Build JSON (using heredoc for readability)
     local json
     json=$(cat << EOF
@@ -606,7 +619,8 @@ _status_write() {
   "push_fallback_command": ${push_fallback_json},
   "commit_status": ${commit_status_json},
   "commit_sha": ${commit_sha_json},
-  "uncommitted_files": ${uncommitted_files_json}
+  "uncommitted_files": ${uncommitted_files_json},
+  "heartbeat_at": ${heartbeat_json}
 }
 EOF
 )

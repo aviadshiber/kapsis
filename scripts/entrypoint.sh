@@ -1537,6 +1537,18 @@ main() {
         fi
     fi
 
+    # Start liveness monitor if enabled (background process, survives exec)
+    # Must happen after status_init (writes to status.json) and before exec
+    if [[ "${KAPSIS_LIVENESS_ENABLED:-false}" == "true" ]]; then
+        local liveness_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/liveness-monitor.sh"
+        if [[ -f "$liveness_lib" ]]; then
+            source "$liveness_lib"
+            start_liveness_monitor
+        else
+            log_warn "Liveness monitoring enabled but library not found: $liveness_lib"
+        fi
+    fi
+
     # Execute command
     log_debug "About to execute command: $*"
     if [[ $# -eq 0 ]]; then

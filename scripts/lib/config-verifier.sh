@@ -321,6 +321,9 @@ validate_launch_config() {
     # Validate lsp_servers if present
     validate_lsp_config "$config_file"
 
+    # Validate liveness if present
+    validate_liveness_config "$config_file"
+
     return 0
 }
 
@@ -486,6 +489,92 @@ validate_network_config() {
             log_pass "Valid dns_pinning.protect_dns_files: $dns_pin_protect"
         else
             log_error "Invalid dns_pinning.protect_dns_files: $dns_pin_protect (must be true/false)"
+        fi
+    fi
+
+    return 0
+}
+
+#===============================================================================
+# Liveness Config Validation
+#===============================================================================
+
+validate_liveness_config() {
+    local config_file="$1"
+
+    # Check if liveness section exists
+    local liveness_present
+    liveness_present=$(yq -r '.liveness // "null"' "$config_file" 2>/dev/null)
+    if [[ "$liveness_present" == "null" ]]; then
+        return 0  # No liveness section, nothing to validate
+    fi
+
+    log_info "Validating liveness config in: $config_file"
+
+    # enabled: boolean
+    local enabled
+    enabled=$(yq -r '.liveness.enabled // "null"' "$config_file" 2>/dev/null)
+    if [[ "$enabled" != "null" ]]; then
+        if [[ "$enabled" == "true" || "$enabled" == "false" ]]; then
+            log_pass "Valid liveness.enabled: $enabled"
+        else
+            log_error "Invalid liveness.enabled: $enabled (must be true/false)"
+        fi
+    fi
+
+    # timeout: positive integer >= 60
+    local timeout
+    timeout=$(yq -r '.liveness.timeout // "null"' "$config_file" 2>/dev/null)
+    if [[ "$timeout" != "null" ]]; then
+        if [[ "$timeout" =~ ^[0-9]+$ ]]; then
+            if [[ "$timeout" -ge 60 ]]; then
+                log_pass "Valid liveness.timeout: ${timeout}s"
+            else
+                log_error "Invalid liveness.timeout: $timeout (must be >= 60)"
+            fi
+        else
+            log_error "Invalid liveness.timeout: $timeout (must be a positive integer)"
+        fi
+    fi
+
+    # grace_period: positive integer
+    local grace
+    grace=$(yq -r '.liveness.grace_period // "null"' "$config_file" 2>/dev/null)
+    if [[ "$grace" != "null" ]]; then
+        if [[ "$grace" =~ ^[0-9]+$ ]]; then
+            log_pass "Valid liveness.grace_period: ${grace}s"
+        else
+            log_error "Invalid liveness.grace_period: $grace (must be a positive integer)"
+        fi
+    fi
+
+    # check_interval: positive integer >= 10
+    local interval
+    interval=$(yq -r '.liveness.check_interval // "null"' "$config_file" 2>/dev/null)
+    if [[ "$interval" != "null" ]]; then
+        if [[ "$interval" =~ ^[0-9]+$ ]]; then
+            if [[ "$interval" -ge 10 ]]; then
+                log_pass "Valid liveness.check_interval: ${interval}s"
+            else
+                log_error "Invalid liveness.check_interval: $interval (must be >= 10)"
+            fi
+        else
+            log_error "Invalid liveness.check_interval: $interval (must be a positive integer)"
+        fi
+    fi
+
+    # Cross-field warnings
+    if [[ "$timeout" != "null" && "$grace" != "null" ]] && \
+       [[ "$timeout" =~ ^[0-9]+$ && "$grace" =~ ^[0-9]+$ ]]; then
+        if [[ "$timeout" -lt "$grace" ]]; then
+            log_warn "liveness.timeout ($timeout) is less than grace_period ($grace) — agent may be killed during grace"
+        fi
+    fi
+
+    if [[ "$interval" != "null" && "$timeout" != "null" ]] && \
+       [[ "$interval" =~ ^[0-9]+$ && "$timeout" =~ ^[0-9]+$ ]]; then
+        if [[ "$interval" -gt "$timeout" ]]; then
+            log_warn "liveness.check_interval ($interval) is greater than timeout ($timeout) — may miss hangs"
         fi
     fi
 
