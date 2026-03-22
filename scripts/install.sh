@@ -24,15 +24,15 @@ LIB_DIR="$INSTALL_PREFIX/lib/kapsis"
 SHARE_DIR="$INSTALL_PREFIX/share/kapsis"
 
 info() {
-    echo -e "${BLUE}[INFO]${NC} $*"
+    echo -e "${BLUE}[INFO]${NC} $*" >&2
 }
 
 success() {
-    echo -e "${GREEN}[OK]${NC} $*"
+    echo -e "${GREEN}[OK]${NC} $*" >&2
 }
 
 warn() {
-    echo -e "${YELLOW}[WARN]${NC} $*"
+    echo -e "${YELLOW}[WARN]${NC} $*" >&2
 }
 
 error() {
