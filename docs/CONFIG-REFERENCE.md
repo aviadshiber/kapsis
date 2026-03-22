@@ -825,6 +825,56 @@ image:
     - postgresql-client
 ```
 
+## Liveness Monitoring
+
+Built-in agent liveness monitoring detects and kills hung agent processes. When enabled, a background monitor checks two signals: hook-driven `updated_at` timestamps and `/proc/1/io` disk activity. Both must be stale before the agent is killed (defense against false positives during long thinking phases).
+
+### Configuration
+
+```yaml
+liveness:
+  enabled: true           # Enable liveness monitoring (default: false)
+  timeout: 1800           # Kill after N seconds of no activity (default: 1800, min: 60)
+  grace_period: 300       # Skip checks for N seconds after start (default: 300)
+  check_interval: 30      # Check every N seconds (default: 30, min: 10)
+```
+
+### K8s Backend (AgentRequest CR)
+
+```yaml
+spec:
+  liveness:
+    enabled: true
+    timeoutSeconds: 1800
+    gracePeriodSeconds: 300
+    checkIntervalSeconds: 30
+```
+
+### Behavior
+
+1. **Grace period**: No checks for the first `grace_period` seconds after agent start
+2. **Activity check**: Every `check_interval` seconds, monitor reads:
+   - `updated_at` from status.json (set by PostToolUse hooks)
+   - `read_bytes + write_bytes` from `/proc/1/io` (kernel I/O counters)
+3. **Kill decision**: If `updated_at` is stale for >= `timeout` seconds AND I/O counters unchanged for 2+ consecutive cycles → SIGTERM, wait 10s, SIGKILL
+4. **Heartbeat**: Monitor writes `heartbeat_at` to status.json on every check cycle (independent of agent activity)
+
+### Claude Hang Fix
+
+For Claude Code agents, Kapsis automatically sets `CLAUDE_CODE_EXIT_AFTER_STOP_DELAY=10000` to fix the known hang-after-completion bug ([anthropics/claude-code#21099](https://github.com/anthropics/claude-code/issues/21099)). This is always enabled for Claude agents regardless of liveness config.
+
+### Health Diagnostics
+
+```bash
+# Pretty output
+kapsis-status --health <project> <agent-id>
+
+# JSON output (for automation)
+kapsis-status --health --json <project> <agent-id>
+```
+
+Shows process state, I/O activity, TCP connections, memory/CPU, hook staleness, and overall health status (HEALTHY / WARNING / CRITICAL / STOPPED).
+
 ## Example Configurations
 
 ### Minimal Configuration

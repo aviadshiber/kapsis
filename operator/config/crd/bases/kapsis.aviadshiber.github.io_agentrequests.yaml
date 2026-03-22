@@ -74,6 +74,13 @@ spec:
                 required:
                 - type
                 type: object
+              audit:
+                description: Audit configures audit logging.
+                properties:
+                  enabled:
+                    description: Enabled controls whether audit logging is active.
+                    type: boolean
+                type: object
               environment:
                 description: Environment defines environment configuration.
                 properties:
@@ -158,6 +165,34 @@ spec:
               image:
                 description: Image is the container image to run.
                 type: string
+              liveness:
+                description: Liveness configures agent liveness monitoring and auto-kill
+                  for hung processes.
+                properties:
+                  checkIntervalSeconds:
+                    default: 30
+                    description: CheckIntervalSeconds is how often to check for agent
+                      activity.
+                    format: int32
+                    minimum: 10
+                    type: integer
+                  enabled:
+                    description: Enabled controls whether liveness monitoring is active.
+                    type: boolean
+                  gracePeriodSeconds:
+                    default: 300
+                    description: GracePeriodSeconds is how long to skip liveness checks
+                      after agent start.
+                    format: int32
+                    type: integer
+                  timeoutSeconds:
+                    default: 1800
+                    description: TimeoutSeconds is how long (in seconds) to wait with
+                      no activity before killing the agent.
+                    format: int32
+                    minimum: 60
+                    type: integer
+                type: object
               network:
                 description: Network defines network configuration.
                 properties:

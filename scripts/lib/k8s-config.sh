@@ -170,6 +170,17 @@ YAML
         fi
     fi
 
+    # Liveness section (if enabled)
+    if [[ "${LIVENESS_ENABLED:-false}" == "true" ]]; then
+        cat <<YAML
+  liveness:
+    enabled: true
+    timeoutSeconds: ${LIVENESS_TIMEOUT:-1800}
+    gracePeriodSeconds: ${LIVENESS_GRACE_PERIOD:-300}
+    checkIntervalSeconds: ${LIVENESS_CHECK_INTERVAL:-30}
+YAML
+    fi
+
     # Network section
     cat <<YAML
   network:

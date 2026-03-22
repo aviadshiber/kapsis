@@ -799,6 +799,12 @@ parse_config() {
         # Parse LSP server configuration (agent-agnostic YAML, transformed per agent in container)
         LSP_SERVERS_JSON=$(yq -r '.lsp_servers // {} | tojson' "$CONFIG_FILE" 2>/dev/null || echo "{}")
 
+        # Parse liveness monitoring configuration
+        LIVENESS_ENABLED=$(yq -r '.liveness.enabled // "false"' "$CONFIG_FILE" 2>/dev/null || echo "false")
+        LIVENESS_TIMEOUT=$(yq -r '.liveness.timeout // "1800"' "$CONFIG_FILE" 2>/dev/null || echo "1800")
+        LIVENESS_GRACE_PERIOD=$(yq -r '.liveness.grace_period // "300"' "$CONFIG_FILE" 2>/dev/null || echo "300")
+        LIVENESS_CHECK_INTERVAL=$(yq -r '.liveness.check_interval // "30"' "$CONFIG_FILE" 2>/dev/null || echo "30")
+
         # Parse network mode from config (CLI flag takes precedence)
         # Only read from config if CLI didn't explicitly set the value
         if [[ -z "$CLI_NETWORK_MODE" ]]; then
@@ -1593,6 +1599,21 @@ generate_env_vars() {
     # Pass LSP server configuration as JSON
     if [[ -n "${LSP_SERVERS_JSON:-}" && "${LSP_SERVERS_JSON:-}" != "{}" ]]; then
         ENV_VARS+=("-e" "KAPSIS_LSP_SERVERS_JSON=${LSP_SERVERS_JSON}")
+    fi
+
+    # Liveness monitoring env vars
+    if [[ "${LIVENESS_ENABLED:-false}" == "true" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_LIVENESS_ENABLED=true")
+        ENV_VARS+=("-e" "KAPSIS_LIVENESS_TIMEOUT=${LIVENESS_TIMEOUT:-1800}")
+        ENV_VARS+=("-e" "KAPSIS_LIVENESS_GRACE_PERIOD=${LIVENESS_GRACE_PERIOD:-300}")
+        ENV_VARS+=("-e" "KAPSIS_LIVENESS_CHECK_INTERVAL=${LIVENESS_CHECK_INTERVAL:-30}")
+    fi
+
+    # Fix hang-after-completion for Claude agents (anthropics/claude-code#21099)
+    # This env var tells Claude CLI to exit after the Stop event when stdout is piped
+    # agent_type is set earlier in this function from AGENT_NAME or image inference
+    if [[ "$agent_type" == "claude-cli" || "$agent_type" == "claude" || "$agent_type" == "claude-code" ]]; then
+        ENV_VARS+=("-e" "CLAUDE_CODE_EXIT_AFTER_STOP_DELAY=${CLAUDE_CODE_EXIT_AFTER_STOP_DELAY:-10000}")
     fi
 
     # Process explicit set environment variables from config

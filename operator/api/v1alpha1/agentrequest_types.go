@@ -58,6 +58,10 @@ type AgentRequestSpec struct {
 	// +optional
 	Audit *AuditSpec `json:"audit,omitempty"`
 
+	// Liveness configures agent liveness monitoring and auto-kill for hung processes.
+	// +optional
+	Liveness *LivenessSpec `json:"liveness,omitempty"`
+
 	// TTL is the time-to-live in seconds (pod killed after this).
 	// +optional
 	// +kubebuilder:default=3600
@@ -230,6 +234,30 @@ type AuditSpec struct {
 	// Enabled controls whether audit logging is active.
 	// +optional
 	Enabled bool `json:"enabled,omitempty"`
+}
+
+// LivenessSpec configures agent liveness monitoring and auto-kill for hung processes.
+type LivenessSpec struct {
+	// Enabled controls whether liveness monitoring is active.
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// TimeoutSeconds is how long (in seconds) to wait with no activity before killing the agent.
+	// +optional
+	// +kubebuilder:default=1800
+	// +kubebuilder:validation:Minimum=60
+	TimeoutSeconds *int32 `json:"timeoutSeconds,omitempty"`
+
+	// GracePeriodSeconds is how long to skip liveness checks after agent start.
+	// +optional
+	// +kubebuilder:default=300
+	GracePeriodSeconds *int32 `json:"gracePeriodSeconds,omitempty"`
+
+	// CheckIntervalSeconds is how often to check for agent activity.
+	// +optional
+	// +kubebuilder:default=30
+	// +kubebuilder:validation:Minimum=10
+	CheckIntervalSeconds *int32 `json:"checkIntervalSeconds,omitempty"`
 }
 
 // AgentRequestPhase represents the current phase of an AgentRequest.
