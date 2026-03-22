@@ -1440,6 +1440,15 @@ main() {
         filter_claude_agent_config
     fi
 
+    # Inject LSP server configuration based on YAML config
+    # Must happen after CoW (files writable) and after filtering (clean slate)
+    # but before hook injection (both write to settings.local.json)
+    local lsp_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/inject-lsp-config.sh"
+    if [[ -f "$lsp_lib" ]]; then
+        source "$lsp_lib"
+        inject_lsp_config
+    fi
+
     # Inject credentials to files (agent-agnostic)
     # Reads KAPSIS_CREDENTIAL_FILES env var set by launch-agent.sh
     inject_credential_files

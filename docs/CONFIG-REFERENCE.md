@@ -740,6 +740,62 @@ claude:
       - atlassian              # Jira/Confluence
 
 #===============================================================================
+# LSP SERVERS
+#
+# Configures Language Server Protocol servers for AI agents inside the container.
+# LSP servers provide diagnostics, completions, hover, and go-to-definition.
+#
+# Kapsis transforms this agent-agnostic config into the agent's native format.
+# CLI tools installed in the container (e.g., java-functional-lsp, pyright) are
+# available as shell commands for all agents, but LSP protocol integration
+# requires native agent support.
+#
+# Agent support:
+#   Claude Code  - Native: lspServers injected into settings.local.json
+#   Codex CLI    - Not yet: warning logged; LSP binary usable as CLI command
+#   Gemini CLI   - Not yet: warning logged; LSP binary usable as CLI command
+#   Aider        - Not yet: warning logged; LSP binary usable as CLI command
+#
+# When native LSP support is added by other agent vendors, open a Kapsis
+# feature request for integration.
+#===============================================================================
+lsp_servers:
+  # Each key is the server name (used in Claude Code's lspServers config)
+  java-functional-lsp:
+    # Required: LSP server binary (must be in container's PATH)
+    command: java-functional-lsp
+    # Optional: CLI arguments passed to the server
+    # args: ["--stdio"]
+    # Required: Language-to-extension mapping
+    # Keys are LSP language IDs, values are arrays of file extensions (with dot)
+    # Transformed to Claude's extensionToLanguage format (extension → language)
+    languages:
+      java: [".java"]
+
+  pyright:
+    command: pyright-langserver
+    args: ["--stdio"]
+    languages:
+      python: [".py", ".pyi"]
+
+  typescript-lsp:
+    command: typescript-language-server
+    args: ["--stdio"]
+    languages:
+      typescript: [".ts", ".tsx"]
+      javascript: [".js", ".jsx"]
+    # Optional: Environment variables for the LSP server process
+    env:
+      NODE_OPTIONS: "--max-old-space-size=4096"
+    # Optional: Passed to server during LSP initialization
+    initialization_options:
+      preferences:
+        importModuleSpecifierPreference: "relative"
+    # Optional: Sent via workspace/didChangeConfiguration
+    # settings:
+    #   typescript.format.semicolons: "insert"
+
+#===============================================================================
 # CONTAINER IMAGE
 #===============================================================================
 image:
