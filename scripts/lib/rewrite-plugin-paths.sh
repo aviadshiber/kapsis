@@ -74,13 +74,17 @@ rewrite_installed_plugin_paths() {
     tmp_file=$(mktemp)
 
     # Rewrite installPath in every plugin entry:
-    # Replace host_home prefix with container $HOME
+    # Replace host_home prefix with container $HOME (literal prefix, not regex)
     if jq --arg host_home "$host_home" --arg container_home "$HOME" '
+        def rewrite_path:
+            if startswith($host_home) then
+                ($container_home + .[$host_home | length:])
+            else . end;
         if .plugins then
             .plugins |= with_entries(
                 .value |= map(
                     if .installPath then
-                        .installPath |= sub("^\($host_home)"; $container_home)
+                        .installPath |= rewrite_path
                     else . end
                 )
             )
@@ -88,9 +92,7 @@ rewrite_installed_plugin_paths() {
     ' "$plugins_file" > "$tmp_file" 2>/dev/null; then
         mv "$tmp_file" "$plugins_file"
         chmod 600 "$plugins_file"
-        local count
-        count=$(jq '[.plugins[][]?.installPath] | length' "$plugins_file" 2>/dev/null || echo "?")
-        log_success "Plugin paths rewritten ($count entries): $host_home -> $HOME"
+        log_success "Plugin paths rewritten: $host_home -> $HOME"
         return 0
     else
         rm -f "$tmp_file"

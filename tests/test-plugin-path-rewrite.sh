@@ -328,6 +328,47 @@ EOF
     done
 }
 
+test_multi_version_plugin_entries() {
+    log_test "Testing multi-version plugin entries (array with >1 entry)"
+    setup_test_home
+
+    cat > "$TEST_HOME/.claude/plugins/installed_plugins.json" << 'EOF'
+{
+  "version": 2,
+  "plugins": {
+    "my-plugin@source": [
+      {
+        "scope": "user",
+        "installPath": "/Users/hostuser/.claude/plugins/cache/source/my-plugin/1.0.0",
+        "version": "1.0.0"
+      },
+      {
+        "scope": "user",
+        "installPath": "/Users/hostuser/.claude/plugins/cache/source/my-plugin/2.0.0",
+        "version": "2.0.0"
+      }
+    ]
+  }
+}
+EOF
+
+    HOME="$TEST_HOME"
+    export KAPSIS_HOST_HOME="/Users/hostuser"
+    export KAPSIS_AGENT_TYPE="claude-cli"
+
+    unset _KAPSIS_REWRITE_PLUGIN_PATHS_LOADED
+    source "$LIB_DIR/rewrite-plugin-paths.sh"
+    rewrite_plugin_paths
+
+    local result
+    result=$(cat "$TEST_HOME/.claude/plugins/installed_plugins.json")
+    assert_not_contains "$result" "/Users/hostuser" "Both version paths should be replaced"
+    assert_contains "$result" "$TEST_HOME/.claude/plugins/cache/source/my-plugin/1.0.0" "v1.0.0 path should be rewritten"
+    assert_contains "$result" "$TEST_HOME/.claude/plugins/cache/source/my-plugin/2.0.0" "v2.0.0 path should be rewritten"
+
+    cleanup_test_home
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -347,6 +388,7 @@ main() {
     run_test test_preserves_non_installpath_fields
     run_test test_no_plugins_key_in_json
     run_test test_all_claude_variants
+    run_test test_multi_version_plugin_entries
 
     print_summary
 }
