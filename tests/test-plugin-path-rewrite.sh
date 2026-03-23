@@ -369,6 +369,33 @@ EOF
     cleanup_test_home
 }
 
+test_sets_claude_home_env() {
+    log_test "Testing CLAUDE_HOME is exported after rewrite"
+    setup_test_home
+
+    cat > "$TEST_HOME/.claude/plugins/installed_plugins.json" << 'EOF'
+{
+  "version": 2,
+  "plugins": {
+    "plugin@source": [{"installPath": "/Users/hostuser/.claude/plugins/cache/source/plugin/1.0.0"}]
+  }
+}
+EOF
+
+    HOME="$TEST_HOME"
+    export KAPSIS_HOST_HOME="/Users/hostuser"
+    export KAPSIS_AGENT_TYPE="claude-cli"
+    unset CLAUDE_HOME 2>/dev/null || true
+
+    unset _KAPSIS_REWRITE_PLUGIN_PATHS_LOADED
+    source "$LIB_DIR/rewrite-plugin-paths.sh"
+    rewrite_plugin_paths
+
+    assert_equals "$TEST_HOME/.claude" "$CLAUDE_HOME" "CLAUDE_HOME should be set to container .claude dir"
+
+    cleanup_test_home
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -389,6 +416,7 @@ main() {
     run_test test_no_plugins_key_in_json
     run_test test_all_claude_variants
     run_test test_multi_version_plugin_entries
+    run_test test_sets_claude_home_env
 
     print_summary
 }

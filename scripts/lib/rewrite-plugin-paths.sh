@@ -120,5 +120,10 @@ rewrite_plugin_paths() {
     log_info "Rewriting plugin paths for container environment..."
     rewrite_installed_plugin_paths || log_warn "Plugin path rewriting had errors (continuing)"
 
+    # Export CLAUDE_HOME so plugins (e.g., deeperdive-marketplace) resolve paths
+    # correctly inside the container. Plugins use ${CLAUDE_HOME:-$HOME/.claude}.
+    export CLAUDE_HOME="${HOME}/.claude"
+    log_debug "CLAUDE_HOME set to $CLAUDE_HOME"
+
     return 0
 }
