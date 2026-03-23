@@ -1615,6 +1615,11 @@ generate_env_vars() {
         ENV_VARS+=("-e" "KAPSIS_STAGED_CONFIGS=${STAGED_CONFIGS}")
     fi
 
+    # Pass host HOME for plugin path rewriting inside container (Issue #217)
+    # Plugin paths in installed_plugins.json contain host-absolute paths
+    # that need to be rewritten to container HOME
+    ENV_VARS+=("-e" "KAPSIS_HOST_HOME=${HOME}")
+
     # Pass Claude config whitelist filters
     if [[ -n "${CLAUDE_HOOKS_INCLUDE:-}" ]]; then
         ENV_VARS+=("-e" "KAPSIS_CLAUDE_HOOKS_INCLUDE=${CLAUDE_HOOKS_INCLUDE}")
