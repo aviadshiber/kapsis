@@ -80,6 +80,7 @@ generate_agent_id() {
 # DEFAULT VALUES
 #===============================================================================
 AGENT_NAME=""
+AGENT_CONFIG_TYPE=""  # Fix #213: explicit agent type from config YAML
 CONFIG_FILE=""
 TASK_INLINE=""
 SPEC_FILE=""
@@ -731,6 +732,8 @@ parse_config() {
     if command -v yq &> /dev/null; then
         log_debug "Using yq for config parsing"
         AGENT_COMMAND=$(yq -r '.agent.command // "bash"' "$CONFIG_FILE")
+        # Fix #213: explicit agent type for LSP injection, hooks, etc.
+        AGENT_CONFIG_TYPE=$(yq -r '.agent.type // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
         export AGENT_WORKDIR
         AGENT_WORKDIR=$(yq -r '.agent.workdir // "/workspace"' "$CONFIG_FILE")
         # Gist instruction injection (default: false for safe rollout)
@@ -1544,6 +1547,16 @@ generate_env_vars() {
         agent_type=$(normalize_agent_type "$agent_type")
     fi
 
+    # Fix #213: explicit agent.type from YAML config overrides filename inference
+    if [[ "$agent_type" == "unknown" && -n "${AGENT_CONFIG_TYPE:-}" ]]; then
+        local config_type
+        config_type=$(normalize_agent_type "$AGENT_CONFIG_TYPE")
+        if [[ "$config_type" != "unknown" ]]; then
+            agent_type="$config_type"
+            log_debug "Agent type from config agent.type: $agent_type"
+        fi
+    fi
+
     # If agent_type is still unknown, try to infer from image name
     # E.g., kapsis-claude-cli -> claude-cli, kapsis-codex-cli -> codex-cli
     if [[ "$agent_type" == "unknown" && -n "$IMAGE_NAME" ]]; then
@@ -1555,6 +1568,20 @@ generate_env_vars() {
         esac
         log_debug "Inferred agent type from image name: $agent_type"
     fi
+
+    # Fix #213: infer from agent command string as last resort
+    if [[ "$agent_type" == "unknown" && -n "${AGENT_COMMAND:-}" ]]; then
+        case "$AGENT_COMMAND" in
+            claude\ *|*\ claude\ *|*/claude\ *)   agent_type="claude-cli" ;;
+            codex\ *|*\ codex\ *|*/codex\ *)      agent_type="codex-cli" ;;
+            gemini\ *|*\ gemini\ *|*/gemini\ *)    agent_type="gemini-cli" ;;
+            aider\ *|*\ aider\ *|*/aider\ *)      agent_type="aider" ;;
+        esac
+        if [[ "$agent_type" != "unknown" ]]; then
+            log_debug "Inferred agent type from command: $agent_type"
+        fi
+    fi
+
     ENV_VARS+=("-e" "KAPSIS_AGENT_TYPE=${agent_type}")
     log_debug "Agent type for status tracking: $agent_type"
 
