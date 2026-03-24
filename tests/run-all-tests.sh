@@ -30,7 +30,7 @@ get_tests_for_category() {
     local category="$1"
     case "$category" in
         agent)
-            echo "test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-agent-config-mounts.sh test-agent-image-build.sh test-containerfile.sh test-filter-agent-config.sh test-lsp-config.sh test-plugin-path-rewrite.sh test-liveness-monitor.sh test-sanitized-git-objects.sh"
+            echo "test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-agent-config-mounts.sh test-agent-image-build.sh test-containerfile.sh test-filter-agent-config.sh test-lsp-config.sh test-plugin-path-rewrite.sh test-liveness-monitor.sh"
             ;;
         validation)
             echo "test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-preflight-check.sh test-version-fetch.sh test-version-management.sh test-post-container-exit-code.sh test-disk-space-guard.sh"
@@ -48,7 +48,7 @@ get_tests_for_category() {
             echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh test-ssh-keychain.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-config-security.sh test-network-isolation.sh test-scope-validation.sh test-sanitize-files.sh test-ssh-config-portability.sh test-git-credential-helper.sh test-secret-store-injection.sh"
             ;;
         git)
-            echo "test-git-new-branch.sh test-git-auto-commit-push.sh test-worktree-isolation.sh test-worktree-cleanup.sh test-push-verification.sh test-git-excludes.sh test-validate-staged-files.sh test-coauthor-fork.sh test-post-container-git.sh"
+            echo "test-git-new-branch.sh test-git-auto-commit-push.sh test-worktree-isolation.sh test-worktree-cleanup.sh test-push-verification.sh test-git-excludes.sh test-validate-staged-files.sh test-coauthor-fork.sh test-post-container-git.sh test-sanitized-git-objects.sh"
             ;;
         cleanup)
             echo "test-cleanup-sandbox.sh test-volume-cleanup.sh"

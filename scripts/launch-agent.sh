@@ -100,6 +100,7 @@ IMAGE_NAME="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 SANDBOX_MODE=""  # auto-detect, worktree, or overlay
 WORKTREE_PATH=""
 SANITIZED_GIT_PATH=""
+OBJECTS_PATH=""
 AGENT_ID_AUTO_GENERATED=false  # Track if ID was auto-generated
 # Source shared constants (must come before using KAPSIS_DEFAULT_NETWORK_MODE)
 source "$SCRIPT_DIR/lib/constants.sh"
@@ -2375,9 +2376,41 @@ main() {
 # PR_URL is set by post_container_git and used for status reporting
 PR_URL=""
 
+# Fix #219: Re-point sanitized git objects symlink from container path to host path.
+# Inside the container, objects were at /workspace/.git-objects (mounted from host).
+# After container exit, that path is dangling. Re-point to actual host objects.
+# Exported as a function so tests can exercise the production code path.
+repoint_sanitized_git_objects() {
+    local sanitized_git="${1:-${SANITIZED_GIT_PATH:-}}"
+    local objects_path="${2:-${OBJECTS_PATH:-}}"
+
+    # Fallback: read HOST_OBJECTS_PATH from kapsis-meta if objects_path is empty
+    if [[ -z "$objects_path" && -n "$sanitized_git" && -f "$sanitized_git/kapsis-meta" ]]; then
+        objects_path=$(grep "^HOST_OBJECTS_PATH=" "$sanitized_git/kapsis-meta" 2>/dev/null | cut -d= -f2-)
+        log_debug "Read HOST_OBJECTS_PATH from kapsis-meta: $objects_path"
+    fi
+
+    if [[ -z "$sanitized_git" || ! -d "$sanitized_git" || -z "$objects_path" ]]; then
+        log_debug "Skipping sanitized git objects re-point (missing path or dir)"
+        return 0
+    fi
+
+    # Only re-point if objects is a symlink or doesn't exist yet
+    if [[ -L "$sanitized_git/objects" ]] || [[ ! -e "$sanitized_git/objects" ]]; then
+        ln -sfn "$objects_path" "$sanitized_git/objects"
+        log_debug "Re-pointed sanitized git objects: $sanitized_git/objects -> $objects_path"
+    else
+        log_warn "sanitized git objects is not a symlink — skipping re-point"
+    fi
+}
+
 post_container_worktree() {
     log_debug "Processing worktree post-container operations..."
     log_debug "  WORKTREE_PATH=$WORKTREE_PATH"
+
+    # Re-point sanitized git objects symlink BEFORE any git operations (#219)
+    # Must happen first so git status and sync_index_from_container work correctly
+    repoint_sanitized_git_objects
 
     # Show changes summary
     cd "$WORKTREE_PATH"
@@ -2401,14 +2434,6 @@ post_container_worktree() {
             status_complete 1 "Scope violation detected"
             _STATUS_COMPLETE_SHOWN=true
             return 1
-        fi
-
-        # Fix #219: Re-point sanitized git objects symlink from container path to host path
-        # Inside the container, objects were at /workspace/.git-objects (mounted from host).
-        # After container exit, that path is dangling. Re-point to actual host objects.
-        if [[ -n "$SANITIZED_GIT_PATH" && -d "$SANITIZED_GIT_PATH" && -n "$OBJECTS_PATH" ]]; then
-            ln -sfn "$OBJECTS_PATH" "$SANITIZED_GIT_PATH/objects"
-            log_debug "Re-pointed sanitized git objects: $SANITIZED_GIT_PATH/objects -> $OBJECTS_PATH"
         fi
 
         # Run post-container git operations on HOST
