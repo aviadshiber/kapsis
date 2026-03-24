@@ -2410,7 +2410,7 @@ post_container_worktree() {
 
     # Re-point sanitized git objects symlink BEFORE any git operations (#219)
     # Must happen first so git status and sync_index_from_container work correctly
-    repoint_sanitized_git_objects
+    repoint_sanitized_git_objects "$SANITIZED_GIT_PATH" "$OBJECTS_PATH"
 
     # Show changes summary
     cd "$WORKTREE_PATH"
