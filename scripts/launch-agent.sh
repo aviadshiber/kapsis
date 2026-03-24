@@ -2403,6 +2403,14 @@ post_container_worktree() {
             return 1
         fi
 
+        # Fix #219: Re-point sanitized git objects symlink from container path to host path
+        # Inside the container, objects were at /workspace/.git-objects (mounted from host).
+        # After container exit, that path is dangling. Re-point to actual host objects.
+        if [[ -n "$SANITIZED_GIT_PATH" && -d "$SANITIZED_GIT_PATH" && -n "$OBJECTS_PATH" ]]; then
+            ln -sfn "$OBJECTS_PATH" "$SANITIZED_GIT_PATH/objects"
+            log_debug "Re-pointed sanitized git objects: $SANITIZED_GIT_PATH/objects -> $OBJECTS_PATH"
+        fi
+
         # Run post-container git operations on HOST
         local post_container_script="$SCRIPT_DIR/post-container-git.sh"
         log_debug "Sourcing post-container script: $post_container_script"
