@@ -6,15 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.16.2] - 2026-03-23
+## [2.16.3] - 2026-03-23
+
+### Fixed
+- Export CLAUDE_HOME for deeperdive-marketplace plugins
+- Use literal prefix replacement and add multi-version test
+- Rewrite host-absolute paths in installed_plugins.json (#217)
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Tighten command inference patterns and review cleanup
 - Support explicit agent.type in config YAML for LSP injection (#213)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Correct porcelain parsing and improve review findings
@@ -688,7 +694,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.2...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.3...HEAD
+[2.16.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.3
 [2.16.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.2
 [2.16.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.1
 [2.16.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.0

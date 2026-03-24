@@ -489,6 +489,7 @@ COPY scripts/lib/status.py /opt/kapsis/lib/status.py
 COPY scripts/lib/inject-status-hooks.sh /opt/kapsis/lib/inject-status-hooks.sh
 COPY scripts/lib/filter-agent-config.sh /opt/kapsis/lib/filter-agent-config.sh
 COPY scripts/lib/inject-lsp-config.sh /opt/kapsis/lib/inject-lsp-config.sh
+COPY scripts/lib/rewrite-plugin-paths.sh /opt/kapsis/lib/rewrite-plugin-paths.sh
 COPY scripts/lib/liveness-monitor.sh /opt/kapsis/lib/liveness-monitor.sh
 COPY scripts/lib/dns-filter.sh /opt/kapsis/lib/dns-filter.sh
 COPY scripts/lib/git-remote-utils.sh /opt/kapsis/lib/git-remote-utils.sh

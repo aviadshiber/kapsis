@@ -1440,6 +1440,14 @@ main() {
         filter_claude_agent_config
     fi
 
+    # Rewrite host-absolute paths in plugin registry (Issue #217)
+    # Must happen after CoW (files writable) and after filtering
+    local plugin_path_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/rewrite-plugin-paths.sh"
+    if [[ -f "$plugin_path_lib" ]]; then
+        source "$plugin_path_lib"
+        rewrite_plugin_paths
+    fi
+
     # Inject LSP server configuration based on YAML config
     # Must happen after CoW (files writable) and after filtering (clean slate)
     # but before hook injection (both write to settings.local.json)
