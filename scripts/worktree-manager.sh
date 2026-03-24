@@ -866,6 +866,7 @@ prune_worktrees() {
 #===============================================================================
 gc_stale_worktrees() {
     local project_path="$1"
+    local exclude_agent_id="${2:-}"  # Fix #221: skip current agent's worktree
     local project_name
     project_name=$(basename "$project_path")
     local status_dir="${HOME}/.kapsis/status"
@@ -896,6 +897,12 @@ gc_stale_worktrees() {
             continue
         fi
 
+        # Fix #221: skip the current agent to prevent self-deletion race
+        if [[ -n "$exclude_agent_id" && "$agent_id" == "$exclude_agent_id" ]]; then
+            log_debug "GC: Skipping current agent $agent_id"
+            continue
+        fi
+
         # Skip if no worktree exists
         local worktree_path="${KAPSIS_WORKTREE_BASE}/${project_name}-${agent_id}"
         [[ -d "$worktree_path" ]] || continue
@@ -916,7 +923,7 @@ gc_stale_worktrees() {
     fi
 
     # Also run age-based cleanup for worktrees without status files (Fix #183)
-    gc_stale_worktrees_by_age "$project_path"
+    gc_stale_worktrees_by_age "$project_path" "" "" "$exclude_agent_id"
 }
 
 #===============================================================================
@@ -935,6 +942,7 @@ gc_stale_worktrees_by_age() {
     local project_path="$1"
     local max_age_hours="${2:-${KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS:-${KAPSIS_DEFAULT_CLEANUP_WORKTREE_MAX_AGE_HOURS:-168}}}"
     local delete_branches="${3:-${KAPSIS_CLEANUP_BRANCH_ENABLED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_ENABLED:-false}}}"
+    local exclude_agent_id="${4:-}"  # Fix #221: skip current agent's worktree
 
     # Age-based cleanup disabled
     if [[ "$max_age_hours" -eq 0 ]] 2>/dev/null; then
@@ -976,6 +984,12 @@ gc_stale_worktrees_by_age() {
         # Validate agent_id (defense-in-depth against path traversal)
         if [[ ! "$agent_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
             log_warn "GC-age: Skipping invalid agent_id: $agent_id"
+            continue
+        fi
+
+        # Fix #221: skip the current agent to prevent self-deletion race
+        if [[ -n "$exclude_agent_id" && "$agent_id" == "$exclude_agent_id" ]]; then
+            log_debug "GC-age: Skipping current agent $agent_id"
             continue
         fi
 
