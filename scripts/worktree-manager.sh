@@ -512,7 +512,7 @@ prepare_sanitized_git() {
     # The sanitized git will be mounted at $CONTAINER_GIT_PATH
     # and objects will be mounted at $CONTAINER_OBJECTS_PATH
     # This symlink allows git to find objects when running inside the container
-    ln -sf "$CONTAINER_OBJECTS_PATH" "$sanitized_dir/objects"
+    ln -sfn "$CONTAINER_OBJECTS_PATH" "$sanitized_dir/objects"
     log_debug "Created objects symlink -> $CONTAINER_OBJECTS_PATH"
 
     # Create info/exclude with protective patterns (issue #89)
@@ -530,6 +530,7 @@ PROJECT_PATH=$project_path
 PARENT_GIT=$parent_git
 AGENT_ID=$agent_id
 BRANCH=$current_branch
+HOST_OBJECTS_PATH=${project_path}/.git/objects
 EOF
 
     log_success "Sanitized git ready: $sanitized_dir"
