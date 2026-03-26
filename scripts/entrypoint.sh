@@ -1423,19 +1423,17 @@ print_welcome() {
 #===============================================================================
 validate_workspace_mount() {
     local sandbox_mode="${1:-overlay}"
-    local workspace="/workspace"
+    local workspace="${2:-/workspace}"
 
     if [[ ! -d "$workspace" ]]; then
-        log_error "WORKSPACE MOUNT FAILURE: /workspace does not exist"
+        log_error "WORKSPACE MOUNT FAILURE: $workspace does not exist"
         log_error "Check: Podman VM status, host worktree path, virtio-fs health"
         return 1
     fi
 
-    # /workspace is not empty? (WORKDIR creates empty dir in image)
-    local entry_count
-    entry_count=$(find "$workspace" -maxdepth 1 -mindepth 1 2>/dev/null | head -3 | wc -l | tr -d ' ')
-    if [[ "$entry_count" -eq 0 ]]; then
-        log_error "WORKSPACE MOUNT FAILURE: /workspace exists but is EMPTY"
+    # Workspace is not empty? (WORKDIR creates empty dir in image)
+    if [[ -z "$(ls -A "$workspace" 2>/dev/null)" ]]; then
+        log_error "WORKSPACE MOUNT FAILURE: $workspace exists but is EMPTY"
         log_error "Expected: project files from host volume mount"
         log_error "Likely cause: macOS Podman VM virtio-fs mount drop (Issue #221)"
         log_error "  Agent ID:      ${KAPSIS_AGENT_ID:-unknown}"
@@ -1447,12 +1445,12 @@ validate_workspace_mount() {
     # In worktree mode, warn if git markers are missing (non-fatal)
     if [[ "$sandbox_mode" == "worktree" ]]; then
         local git_safe="${CONTAINER_GIT_PATH:-/workspace/.git-safe}"
-        if [[ ! -f "$workspace/.git" ]] && [[ ! -d "$git_safe" ]]; then
+        if [[ ! -e "$workspace/.git" ]] && [[ ! -d "$git_safe" ]]; then
             log_warn "WORKSPACE MOUNT DEGRADED: No .git file and no sanitized git at $git_safe"
         fi
     fi
 
-    log_debug "Workspace mount validation passed ($entry_count+ entries)"
+    log_debug "Workspace mount validation passed: $workspace"
     return 0
 }
 

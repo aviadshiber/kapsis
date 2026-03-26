@@ -934,9 +934,10 @@ gc_stale_worktrees() {
 # no matching status file (e.g., from crashes or pre-status-tracking runs).
 #
 # Arguments:
-#   $1 - project_path:    Path to the git repository
-#   $2 - max_age_hours:   Max age in hours (default: from env/config/constant)
-#   $3 - delete_branches: "true"/"false" (default: from env/config/constant)
+#   $1 - project_path:      Path to the git repository
+#   $2 - max_age_hours:     Max age in hours (default: from env/config/constant)
+#   $3 - delete_branches:   "true"/"false" (default: from env/config/constant)
+#   $4 - exclude_agent_id:  Agent ID to skip (default: empty — skip none) [Fix #221]
 #===============================================================================
 gc_stale_worktrees_by_age() {
     local project_path="$1"
