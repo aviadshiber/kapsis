@@ -975,6 +975,38 @@ setup_sandbox() {
 }
 
 #===============================================================================
+# WORKTREE PATH VALIDATION (Fix #221)
+#
+# Validates that WORKTREE_PATH exists and is well-formed after creation.
+# Guards against race conditions (background GC, external deletion) and
+# filesystem issues between worktree creation and container start.
+#===============================================================================
+validate_worktree_path() {
+    local worktree_path="$1"
+    local sanitized_git_path="$2"
+
+    if [[ ! -d "$worktree_path" ]]; then
+        log_error "WORKTREE MISSING: $worktree_path does not exist after creation"
+        log_error "Possible causes: background GC race condition, filesystem error"
+        return 1
+    fi
+
+    if [[ ! -f "$worktree_path/.git" ]]; then
+        log_error "WORKTREE INVALID: $worktree_path/.git not found"
+        log_error "Expected a git worktree with .git file"
+        return 1
+    fi
+
+    if [[ ! -d "$sanitized_git_path" ]]; then
+        log_error "SANITIZED GIT MISSING: $sanitized_git_path does not exist"
+        return 1
+    fi
+
+    log_debug "Worktree validation passed: $worktree_path"
+    return 0
+}
+
+#===============================================================================
 # WORKTREE SANDBOX SETUP
 #===============================================================================
 setup_worktree_sandbox() {
@@ -1012,7 +1044,7 @@ setup_worktree_sandbox() {
                 (
                     echo "$BASHPID" > "${gc_lock_dir}/pid"
                     trap 'rm -rf "$gc_lock_dir"' EXIT
-                    gc_stale_worktrees "$PROJECT_PATH" 2>>"${LOG_FILE:-/dev/null}" || true
+                    gc_stale_worktrees "$PROJECT_PATH" "$AGENT_ID" 2>>"${LOG_FILE:-/dev/null}" || true
                 ) &
                 disown
                 log_debug "Background GC started (PID: $!)"
@@ -1020,7 +1052,7 @@ setup_worktree_sandbox() {
                 log_debug "GC already running for $(basename "$PROJECT_PATH"), skipping"
             fi
         else
-            gc_stale_worktrees "$PROJECT_PATH" || log_warn "Opportunistic GC failed (non-fatal)"
+            gc_stale_worktrees "$PROJECT_PATH" "$AGENT_ID" || log_warn "Opportunistic GC failed (non-fatal)"
         fi
     fi
 
@@ -1036,6 +1068,13 @@ setup_worktree_sandbox() {
     log_info "  Worktree: $WORKTREE_PATH"
     log_info "  Sanitized git: $SANITIZED_GIT_PATH"
     log_info "  Objects: $OBJECTS_PATH (read-only)"
+
+    # Validate worktree exists and is well-formed (Fix #221)
+    if ! validate_worktree_path "$WORKTREE_PATH" "$SANITIZED_GIT_PATH"; then
+        status_complete 1 "Worktree validation failed after creation (Issue #221)"
+        _STATUS_COMPLETE_SHOWN=true
+        exit 1
+    fi
 }
 
 #===============================================================================
