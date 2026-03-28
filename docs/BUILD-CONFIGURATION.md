@@ -65,9 +65,9 @@ languages:
   nodejs:
     enabled: true
     versions:
-      - "18.18.0"
-      - "20.10.0"
-    default_version: "18.18.0"
+      - "24.14.1"
+      - "22.14.0"
+    default_version: "24.14.1"
     package_managers:
       pnpm: "9.15.3"
       yarn: "latest"
