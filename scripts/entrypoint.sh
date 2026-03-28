@@ -1425,13 +1425,6 @@ validate_workspace_mount() {
     local sandbox_mode="${1:-overlay}"
     local workspace="${2:-/workspace}"
 
-    # Skip validation when no agent ID is set — container is being used as a probe
-    # (e.g., "podman run image which bash"). Production runs always have KAPSIS_AGENT_ID.
-    if [[ -z "${KAPSIS_AGENT_ID:-}" ]]; then
-        log_debug "Workspace validation skipped: no KAPSIS_AGENT_ID (probe/test mode)"
-        return 0
-    fi
-
     if [[ ! -d "$workspace" ]]; then
         log_error "WORKSPACE MOUNT FAILURE: $workspace does not exist"
         log_error "Check: Podman VM status, host worktree path, virtio-fs health"

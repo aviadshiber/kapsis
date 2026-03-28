@@ -77,6 +77,16 @@ get_test_container_env_args() {
     echo "-e CI=${CI:-true} -e KAPSIS_NETWORK_MODE=${KAPSIS_NETWORK_MODE:-open}"
 }
 
+# _make_probe_workspace <tmpvar>
+# Creates a minimal non-empty /workspace for probe containers (image property checks).
+# Sets the named variable to the temp dir path; caller must rm -rf it after use.
+# This satisfies validate_workspace_mount without providing real project files.
+_make_probe_workspace() {
+    local -n _ws_var="$1"
+    _ws_var=$(mktemp -d)
+    echo "kapsis-probe" > "$_ws_var/.kapsis-probe"
+}
+
 # run_simple_container <command> [extra_podman_args...]
 # Runs a simple command in the test container with standard env vars.
 # Use this for quick checks that don't need overlay mounts or special setup.
@@ -86,13 +96,19 @@ get_test_container_env_args() {
 run_simple_container() {
     local command="$1"
     shift
+    local _probe_ws
+    _make_probe_workspace _probe_ws
+    local result=0
     # shellcheck disable=SC2046 # Word splitting intentional for env args
     podman run --rm \
         $(get_test_container_env_args) \
         --userns=keep-id \
+        -v "$_probe_ws:/workspace:ro" \
         "$@" \
         "$KAPSIS_TEST_IMAGE" \
-        bash -c "$command" 2>&1
+        bash -c "$command" 2>&1 || result=$?
+    rm -rf "$_probe_ws"
+    return $result
 }
 
 # run_named_container <name> <command> [extra_podman_args...]
@@ -104,14 +120,20 @@ run_named_container() {
     local name="$1"
     local command="$2"
     shift 2
+    local _probe_ws
+    _make_probe_workspace _probe_ws
+    local result=0
     # shellcheck disable=SC2046 # Word splitting intentional for env args
     podman run --rm \
         $(get_test_container_env_args) \
         --name "$name" \
         --userns=keep-id \
+        -v "$_probe_ws:/workspace:ro" \
         "$@" \
         "$KAPSIS_TEST_IMAGE" \
-        bash -c "$command" 2>&1
+        bash -c "$command" 2>&1 || result=$?
+    rm -rf "$_probe_ws"
+    return $result
 }
 
 # run_detached_named_container <name> <command> [extra_podman_args...]
