@@ -6,7 +6,7 @@ Essential context for AI assistants working on the Kapsis codebase.
 
 ## Project Overview
 
-Kapsis is a **hermetically isolated AI agent sandbox** (v2.7.1) for running multiple AI coding agents (Claude Code, Codex CLI, Aider, Gemini CLI) in parallel with complete isolation via Podman rootless containers, Copy-on-Write filesystems, and DNS-based network filtering.
+Kapsis is a **hermetically isolated AI agent sandbox** (v2.16.6) for running multiple AI coding agents (Claude Code, Codex CLI, Aider, Gemini CLI) in parallel with complete isolation via Podman rootless containers, Copy-on-Write filesystems, and DNS-based network filtering.
 
 ### Core Isolation Guarantees
 
@@ -38,6 +38,7 @@ kapsis/
 │   ├── configure-deps.sh       # Interactive dependency configuration
 │   ├── install.sh              # Distribution installer
 │   ├── switch-java.sh          # Java version switcher (in-container)
+│   ├── audit-report.sh         # Audit report generation
 │   ├── setup-github-protection.sh  # GitHub branch protection setup
 │   ├── setup-homebrew-tap-sync.sh  # Homebrew tap sync setup
 │   ├── setup-package-repos.sh  # Package repository setup
@@ -55,6 +56,7 @@ kapsis/
 │   │   ├── filter-agent-config.sh  # Agent config filtering
 │   │   ├── git-remote-utils.sh # GitHub/GitLab/Bitbucket helpers
 │   │   ├── ssh-keychain.sh     # SSH host key verification
+│   │   ├── ssh-config-compat.sh # SSH config portability across environments
 │   │   ├── secret-store.sh     # OS keychain integration
 │   │   ├── json-utils.sh       # JSON parsing utilities
 │   │   ├── sanitize-files.sh   # File sanitization & homoglyph detection
@@ -63,7 +65,13 @@ kapsis/
 │   │   ├── progress-display.sh # TTY progress visualization
 │   │   ├── progress-monitor.sh # Progress tracking
 │   │   ├── inject-status-hooks.sh # Status hook injection
+│   │   ├── inject-lsp-config.sh   # LSP configuration injection
 │   │   ├── build-config.sh     # Build configuration parser
+│   │   ├── atomic-copy.sh      # Atomic file copy operations
+│   │   ├── audit.sh            # Audit trail recording
+│   │   ├── audit-patterns.sh   # Audit pattern detection
+│   │   ├── liveness-monitor.sh # Container liveness monitoring
+│   │   ├── rewrite-plugin-paths.sh # Plugin path rewriting
 │   │   └── k8s-config.sh       # K8s config translator (Docker→K8s format)
 │   ├── backends/               # Backend implementations
 │   │   ├── podman.sh           # Podman backend (default)
@@ -78,25 +86,31 @@ kapsis/
 │       └── prepush/            # Pre-push hooks (check-docs, create-pr, pr-comments, unbiased-review)
 ├── configs/
 │   ├── agents/                 # Agent profiles (claude-cli, claude-api, aider, codex-cli, gemini-cli)
-│   ├── build-profiles/         # Container presets (minimal, java-dev, full-stack, etc.)
+│   ├── build-profiles/         # Container presets (minimal, java-dev, java8-legacy, frontend,
+│   │                           #   backend-go, backend-rust, ml-python, full-stack)
 │   ├── specs/                  # Task specification templates (feature.md, bugfix.md)
 │   ├── network-allowlist.yaml  # DNS filtering allowlist
 │   ├── tool-phase-mapping.yaml # Tool lifecycle mapping
 │   └── k8s/                    # K8s backend configs and examples
-├── tests/                      # 61 test files using tests/lib/test-framework.sh
+├── tests/                      # 79 test files using tests/lib/test-framework.sh
 │   ├── run-all-tests.sh        # Test runner with category filtering
 │   └── test-*.sh               # Individual test scripts
-├── docs/                       # Extended documentation (15 guides)
+├── docs/                       # Extended documentation (15 guides + designs/)
+│   ├── designs/                # Design documents (agent-profiles-architecture.md)
+│   └── *.md                    # Reference guides (see Documentation Map below)
 ├── operator/                   # K8s operator (Go, kubebuilder)
 │   ├── api/v1alpha1/           # AgentRequest CRD types
-│   ├── internal/controller/    # Reconciliation logic
-│   └── config/                 # Kustomize manifests, CRD, RBAC
+│   ├── internal/controller/    # Reconciliation logic (pod builder, network policy, status bridge)
+│   ├── config/                 # Kustomize manifests, CRD, RBAC
+│   └── test/                   # E2E tests and utilities
 ├── security/                   # AppArmor & seccomp profiles
 ├── packaging/                  # Debian, Homebrew, RPM packages
 ├── .github/workflows/          # CI/CD (ci, auto-release, release, security, packages, deploy-pages, sync-homebrew-tap)
 ├── Containerfile               # Multi-stage container image definition
 ├── setup.sh                    # Initial system setup & dependency validation
-└── quick-start.sh              # Simplified one-line agent launcher
+├── quick-start.sh              # Simplified one-line agent launcher
+├── agent-sandbox.yaml.template # Configuration template
+└── index.html                  # Landing page
 ```
 
 ## Documentation Map
@@ -120,6 +134,7 @@ kapsis/
 | Cleanup operations | `docs/CLEANUP.md` |
 | Test coverage analysis | `docs/TEST-COVERAGE-ANALYSIS.md` |
 | Security vulnerability scan | `docs/SECURITY-VULNERABILITY-SCAN.md` |
+| Agent profiles design | `docs/designs/agent-profiles-architecture.md` |
 | Agent profiles | `configs/agents/*.yaml` |
 | Security policy | `SECURITY.md` |
 | AI agent guidelines | `AGENTS.md` |
@@ -145,6 +160,9 @@ kapsis/
 ./scripts/kapsis-status.sh                   # Show running agents
 ./scripts/kapsis-status.sh --json            # Machine-readable status
 ./scripts/kapsis-cleanup.sh                  # Reclaim disk space
+
+# Audit
+./scripts/audit-report.sh                    # Generate audit report
 
 # Debug
 KAPSIS_DEBUG=1 ./scripts/launch-agent.sh ...
@@ -198,6 +216,7 @@ Status is written as JSON to `~/.kapsis/status/`.
 | `scripts/entrypoint.sh` | Container startup — SDKMAN, NVM, Maven settings, credential injection |
 | `scripts/worktree-manager.sh` | Git worktree isolation — creates sanitized git views for containers |
 | `scripts/post-container-git.sh` | Post-exit git operations — auto-commit, push, branch creation |
+| `scripts/audit-report.sh` | Audit report generation from recorded events |
 | `scripts/lib/logging.sh` | Shared logging with rotation (used by all scripts) |
 | `scripts/lib/status.sh` | JSON status reporting for external monitoring |
 | `scripts/lib/constants.sh` | Central constants — mount paths, network modes, git patterns |
@@ -206,6 +225,13 @@ Status is written as JSON to `~/.kapsis/status/`.
 | `scripts/lib/config-verifier.sh` | Config validation — YAML schema checking |
 | `scripts/lib/validate-scope.sh` | Filesystem scope enforcement — blocks out-of-bounds writes |
 | `scripts/lib/sanitize-files.sh` | File sanitization — homoglyph detection, binary filtering |
+| `scripts/lib/audit.sh` | Audit trail — records container and agent events |
+| `scripts/lib/audit-patterns.sh` | Audit pattern detection — identifies suspicious activity |
+| `scripts/lib/atomic-copy.sh` | Atomic file copy — safe copy with rollback |
+| `scripts/lib/liveness-monitor.sh` | Container liveness — heartbeat monitoring and recovery |
+| `scripts/lib/inject-lsp-config.sh` | LSP config injection — editor integration inside containers |
+| `scripts/lib/rewrite-plugin-paths.sh` | Plugin path rewriting — adjusts paths for container mounts |
+| `scripts/lib/ssh-config-compat.sh` | SSH config portability — normalizes SSH config across environments |
 | `scripts/backends/podman.sh` | Podman backend — local container execution |
 | `scripts/backends/k8s.sh` | K8s backend — AgentRequest CRD lifecycle |
 | `scripts/lib/k8s-config.sh` | Config translator — Docker-style to K8s format |
@@ -300,6 +326,19 @@ shellcheck scripts/**/*.sh tests/*.sh
 | `none` | Complete network isolation (`--network=none`) |
 | `filtered` (default) | DNS-based allowlist (git, npm, PyPI, Maven) |
 | `open` | Unrestricted network access |
+
+## Build Profiles
+
+| Profile | Description |
+|---------|-------------|
+| `minimal` | Smallest image, basic tools only |
+| `java-dev` | Java development with Maven/Gradle |
+| `java8-legacy` | Java 8 compatibility environment |
+| `frontend` | Node.js, npm, frontend tooling |
+| `backend-go` | Go development environment |
+| `backend-rust` | Rust development with Cargo |
+| `ml-python` | Python ML/AI libraries |
+| `full-stack` | Everything combined (~2.1GB) |
 
 ## Things to Avoid
 
