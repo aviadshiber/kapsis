@@ -301,7 +301,7 @@ jobs:
         id: cache-key
         run: |
           # Cache key based on Containerfile, build script, and runner architecture
-          echo "key=kapsis-image-${{ runner.arch }}-${{ hashFiles('Containerfile', 'scripts/build-image.sh') }}" >> $GITHUB_OUTPUT
+          echo "key=kapsis-image-${{ runner.arch }}-${{ hashFiles('Containerfile', 'scripts/build-image.sh', 'scripts/entrypoint.sh', 'scripts/lib/**') }}" >> $GITHUB_OUTPUT
 
       - name: Restore cached container image
         id: cache-restore
