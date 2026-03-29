@@ -1425,6 +1425,21 @@ validate_workspace_mount() {
     local sandbox_mode="${1:-overlay}"
     local workspace="${2:-/workspace}"
 
+    # Skip validation when no agent ID is set — container is being used as a probe
+    # (e.g., "podman run image which bash") or in a test that doesn't mount /workspace.
+    # Production runs always set KAPSIS_AGENT_ID via launch-agent.sh.
+    if [[ -z "${KAPSIS_AGENT_ID:-}" ]]; then
+        log_debug "Workspace validation skipped: no KAPSIS_AGENT_ID (probe/test mode)"
+        return 0
+    fi
+
+    # Skip validation when fuse-overlayfs will set up /workspace later
+    # (setup_fuse_overlay runs after this check and populates /workspace from /lower)
+    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-false}" == "true" ]]; then
+        log_debug "Workspace validation skipped: fuse-overlayfs will set up /workspace"
+        return 0
+    fi
+
     if [[ ! -d "$workspace" ]]; then
         log_error "WORKSPACE MOUNT FAILURE: $workspace does not exist"
         log_error "Check: Podman VM status, host worktree path, virtio-fs health"
