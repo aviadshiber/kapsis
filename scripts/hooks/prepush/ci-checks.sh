@@ -40,15 +40,15 @@ log_info "Running ShellCheck on modified shell scripts..."
 if ! command -v shellcheck &>/dev/null; then
     log_warn "shellcheck not found — skipping lint (install: brew install shellcheck)"
 else
-    # Collect modified .sh files (staged + unstaged vs merge-base with main)
-    mapfile -t CHANGED_SCRIPTS < <(
-        git diff --name-only HEAD 2>/dev/null | grep '\.sh$' || true
-        git diff --name-only --cached HEAD 2>/dev/null | grep '\.sh$' || true
+    # Collect modified .sh files (staged + unstaged), deduplicated.
+    # Avoid mapfile (bash 4+) for macOS bash 3.2 compatibility.
+    SCRIPTS=()
+    while IFS= read -r f; do
+        [[ -n "$f" && -f "$REPO_ROOT/$f" ]] && SCRIPTS+=("$REPO_ROOT/$f")
+    done < <(
+        { git diff --name-only HEAD 2>/dev/null; git diff --name-only --cached HEAD 2>/dev/null; } \
+            | grep '\.sh$' | sort -u || true
     )
-    # Deduplicate and filter to existing files
-    mapfile -t SCRIPTS < <(printf '%s\n' "${CHANGED_SCRIPTS[@]}" | sort -u | while read -r f; do
-        [[ -f "$REPO_ROOT/$f" ]] && echo "$REPO_ROOT/$f"
-    done)
 
     if [[ ${#SCRIPTS[@]} -eq 0 ]]; then
         log_info "  No modified shell scripts to lint"
