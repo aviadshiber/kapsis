@@ -5,6 +5,11 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  schedule:
+    # Weekly full run on Monday at 06:00 UTC — catches dormant test breakage
+    # that change-detection would otherwise miss (e.g. logic added in one PR
+    # that breaks a test only triggered by a different set of file changes).
+    - cron: '0 6 * * 1'
 
 # Security: Explicitly define minimal permissions
 permissions:
@@ -16,17 +21,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Check which files changed to determine which tests to run
+  # Check which files changed to determine which tests to run.
+  # Scheduled runs always set both outputs to true so every test category runs.
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
     outputs:
-      scripts: ${{ steps.filter.outputs.scripts }}
-      container: ${{ steps.filter.outputs.container }}
+      scripts: ${{ steps.determine.outputs.scripts }}
+      container: ${{ steps.determine.outputs.container }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
       - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d  # v4.0.1
         id: filter
+        if: github.event_name != 'schedule'
         with:
           filters: |
             scripts:
@@ -42,6 +49,17 @@ jobs:
               - 'scripts/build-image.sh'
               - 'scripts/lib/**'
               - '.github/workflows/ci.yml'
+      - name: Determine test scope
+        id: determine
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            # Scheduled run: always run all tests regardless of what changed
+            echo "scripts=true" >> "$GITHUB_OUTPUT"
+            echo "container=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scripts=${{ steps.filter.outputs.scripts }}" >> "$GITHUB_OUTPUT"
+            echo "container=${{ steps.filter.outputs.container }}" >> "$GITHUB_OUTPUT"
+          fi
 
   # All test jobs run in parallel after change detection
   lint:
