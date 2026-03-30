@@ -61,11 +61,11 @@ languages:
     enabled: true
     # Versions to install (first is primary)
     versions:
-      - "24.14.1"        # LTS
-    default_version: "24.14.1"
+      - "25.8.2"         # LTS
+    default_version: "25.8.2"
     # Package managers to install globally
     package_managers:
-      pnpm: "9.15.3"
+      pnpm: "10.33.0"
       # yarn: "latest"   # Uncomment to install yarn
 
   #-----------------------------------------------------------------------------
@@ -101,7 +101,7 @@ languages:
   #-----------------------------------------------------------------------------
   go:
     enabled: false
-    version: "1.22.0"
+    version: "1.26.1"
     # Enable module support (default behavior in modern Go)
     modules: true
 
@@ -155,7 +155,7 @@ build_tools:
   #-----------------------------------------------------------------------------
   protoc:
     enabled: true
-    version: "3.25.1"
+    version: "34.1"
     # Pre-cache binaries for both architectures
     cache_binaries: true
     architectures:
@@ -229,8 +229,8 @@ system_packages:
 dependency_managers:
   # yq (YAML processor) - required for Kapsis, always installed
   yq:
-    version: "4.44.3"
-    sha256: "a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7"
+    version: "4.52.5"
+    sha256: "75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9"
 
 #===============================================================================
 # IMAGE CONFIGURATION

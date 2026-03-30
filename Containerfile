@@ -29,13 +29,13 @@ ARG JAVA_VERSIONS='["17.0.14-zulu","8.0.422-zulu"]'
 ARG JAVA_DEFAULT="17.0.14-zulu"
 
 # Node.js configuration
-ARG NODE_VERSION=24.14.1
+ARG NODE_VERSION=25.8.2
 
 # Rust configuration
 ARG RUST_CHANNEL=stable
 
 # Go configuration
-ARG GO_VERSION=1.22.0
+ARG GO_VERSION=1.26.1
 
 # Build tool toggles
 ARG ENABLE_MAVEN=true
@@ -48,7 +48,7 @@ ARG MAVEN_VERSION=3.9.9
 ARG GRADLE_VERSION=8.5
 ARG GE_EXT_VERSION=1.20
 ARG GE_CCUD_VERSION=1.12.5
-ARG PROTOC_VERSION=25.1
+ARG PROTOC_VERSION=34.1
 
 # System package toggles
 ARG ENABLE_DEV_TOOLS=true
@@ -59,8 +59,8 @@ ARG ENABLE_SECRET_STORE=true
 ARG CUSTOM_PACKAGES=""
 
 # yq configuration (required for Kapsis)
-ARG YQ_VERSION=4.44.3
-ARG YQ_SHA256=a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7
+ARG YQ_VERSION=4.52.5
+ARG YQ_SHA256=75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9
 
 # User configuration
 ARG USER_ID=1000
@@ -256,7 +256,7 @@ RUN if [ "$ENABLE_NODEJS" = "true" ]; then \
             nvm install '"$NODE_VERSION"' && \
             nvm alias default '"$NODE_VERSION"' && \
             nvm use default && \
-            npm install -g pnpm@9.15.3'; \
+            npm install -g pnpm@10.33.0'; \
     else \
         mkdir -p /opt/nvm; \
     fi
