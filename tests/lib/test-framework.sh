@@ -349,7 +349,7 @@ assert_contains() {
     if [[ "$haystack" == *"$needle"* ]]; then
         return 0
     else
-        _log_failure "$message" "Looking for: $needle" "In: ${haystack:0:200}..."
+        _log_failure "$message" "Looking for: $needle" "In: ${haystack:0:2000}..."
         return 1
     fi
 }

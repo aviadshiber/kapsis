@@ -1485,7 +1485,6 @@ validate_workspace_mount() {
 # MAIN
 #===============================================================================
 main() {
-    log_section "Kapsis Container Entrypoint Starting"
     log_debug "KAPSIS_HOME=$KAPSIS_HOME"
     log_debug "KAPSIS_AGENT_ID=${KAPSIS_AGENT_ID:-unset}"
     log_debug "KAPSIS_PROJECT=${KAPSIS_PROJECT:-unset}"
