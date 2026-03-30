@@ -1425,6 +1425,33 @@ validate_workspace_mount() {
     local sandbox_mode="${1:-overlay}"
     local workspace="${2:-/workspace}"
 
+    # Probe/test containers (e.g. DNS library checks, config-mount tests) run without
+    # a real agent and therefore never set KAPSIS_AGENT_ID.  There is no workspace to
+    # validate in those cases, so skip early.
+    # Production runs always set KAPSIS_AGENT_ID via launch-agent.sh.
+    if [[ -z "${KAPSIS_AGENT_ID:-}" ]]; then
+        log_debug "No KAPSIS_AGENT_ID — skipping workspace mount validation (probe container)"
+        return 0
+    fi
+
+    # In fuse-overlayfs mode, /workspace is set up by setup_fuse_overlay AFTER this
+    # validation runs (entrypoint mounts it from /lower via fuse-overlayfs).
+    # Validate /lower (the source directory) instead of /workspace.
+    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-false}" == "true" ]]; then
+        if [[ ! -d "/lower" ]]; then
+            log_error "WORKSPACE MOUNT FAILURE: /lower not mounted (required for fuse-overlayfs mode)"
+            log_error "  Agent ID: ${KAPSIS_AGENT_ID:-unknown}"
+            return 1
+        fi
+        if [[ -z "$(ls -A "/lower" 2>/dev/null)" ]]; then
+            log_error "WORKSPACE MOUNT FAILURE: /lower exists but is EMPTY (fuse-overlayfs mode)"
+            log_error "  Agent ID: ${KAPSIS_AGENT_ID:-unknown}"
+            return 1
+        fi
+        log_debug "Workspace mount validation passed: /lower (fuse-overlayfs mode)"
+        return 0
+    fi
+
     if [[ ! -d "$workspace" ]]; then
         log_error "WORKSPACE MOUNT FAILURE: $workspace does not exist"
         log_error "Check: Podman VM status, host worktree path, virtio-fs health"
@@ -1458,7 +1485,6 @@ validate_workspace_mount() {
 # MAIN
 #===============================================================================
 main() {
-    log_section "Kapsis Container Entrypoint Starting"
     log_debug "KAPSIS_HOME=$KAPSIS_HOME"
     log_debug "KAPSIS_AGENT_ID=${KAPSIS_AGENT_ID:-unset}"
     log_debug "KAPSIS_PROJECT=${KAPSIS_PROJECT:-unset}"

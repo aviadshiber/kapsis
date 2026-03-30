@@ -29,7 +29,7 @@ ARG JAVA_VERSIONS='["17.0.14-zulu","8.0.422-zulu"]'
 ARG JAVA_DEFAULT="17.0.14-zulu"
 
 # Node.js configuration
-ARG NODE_VERSION=18.18.0
+ARG NODE_VERSION=24.14.1
 
 # Rust configuration
 ARG RUST_CHANNEL=stable

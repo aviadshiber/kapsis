@@ -352,7 +352,7 @@ rm -rf ~/.ai-sandboxes/project-1/
 ubuntu:24.04
 └── Base dependencies (curl, git, ripgrep, etc.)
     └── SDKMAN + Java 8/17 + Maven 3.9.9
-        └── NVM + Node.js 18.18.0
+        └── NVM + Node.js 24.14.1
             └── Kapsis scripts + Maven settings
                 └── Runtime configuration
 ```

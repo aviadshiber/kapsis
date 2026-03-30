@@ -22,8 +22,8 @@ languages:
   nodejs:
     enabled: true
     versions:
-      - "22.22.0"
-    default_version: "22.22.0"
+      - "24.14.1"
+    default_version: "24.14.1"
     package_managers:
       pnpm: "9.15.3"
 

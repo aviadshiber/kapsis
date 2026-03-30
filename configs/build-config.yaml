@@ -61,8 +61,8 @@ languages:
     enabled: true
     # Versions to install (first is primary)
     versions:
-      - "22.22.0"        # LTS
-    default_version: "22.22.0"
+      - "24.14.1"        # LTS
+    default_version: "24.14.1"
     # Package managers to install globally
     package_managers:
       pnpm: "9.15.3"

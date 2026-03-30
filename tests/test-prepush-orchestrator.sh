@@ -92,7 +92,8 @@ test_orchestrator_no_review_option() {
     log_test "Testing orchestrator --no-review option"
 
     local output
-    output=$("$ORCHESTRATOR_SCRIPT" --no-review --no-pr 2>&1) || true
+    # --no-ci prevents ci-checks.sh from running run-all-tests.sh (which would recurse into this test)
+    output=$("$ORCHESTRATOR_SCRIPT" --no-review --no-pr --no-ci 2>&1) || true
 
     assert_contains "$output" "Skipping LLM review" "Should skip LLM review"
 }
@@ -101,9 +102,19 @@ test_orchestrator_no_pr_option() {
     log_test "Testing orchestrator --no-pr option"
 
     local output
-    output=$("$ORCHESTRATOR_SCRIPT" --no-review --no-pr 2>&1) || true
+    # --no-ci prevents ci-checks.sh from running run-all-tests.sh (which would recurse into this test)
+    output=$("$ORCHESTRATOR_SCRIPT" --no-review --no-pr --no-ci 2>&1) || true
 
     assert_contains "$output" "Skipping PR creation" "Should skip PR creation"
+}
+
+test_orchestrator_no_ci_option() {
+    log_test "Testing orchestrator --no-ci option"
+
+    local output
+    output=$("$ORCHESTRATOR_SCRIPT" --no-review --no-pr --no-ci 2>&1) || true
+
+    assert_contains "$output" "Skipping CI checks" "Should skip CI checks"
 }
 
 #===============================================================================
@@ -122,6 +133,7 @@ main() {
     run_test test_orchestrator_help
     run_test test_orchestrator_no_review_option
     run_test test_orchestrator_no_pr_option
+    run_test test_orchestrator_no_ci_option
 
     print_summary
 }

@@ -32,6 +32,18 @@ fi
 eval "$(sed -n '/^validate_workspace_mount()/,/^}/p' "$KAPSIS_ROOT/scripts/entrypoint.sh")"
 eval "$(sed -n '/^validate_worktree_path()/,/^}/p' "$KAPSIS_ROOT/scripts/launch-agent.sh")"
 
+# Simulate a real agent environment: validate_workspace_mount skips when
+# KAPSIS_AGENT_ID is unset (probe containers).  Unit tests must set it so the
+# function exercises its validation logic.
+#
+# NOTE: This export applies to ALL tests in this file.  Any future test that
+# needs to cover the "probe container / no KAPSIS_AGENT_ID" path must
+# explicitly unset it within the test function:
+#   local saved=$KAPSIS_AGENT_ID; unset KAPSIS_AGENT_ID
+#   ... test ...
+#   export KAPSIS_AGENT_ID="$saved"
+export KAPSIS_AGENT_ID="${KAPSIS_AGENT_ID:-test-agent}"
+
 # Helper to create a temp dir with automatic cleanup
 _TEST_DIRS=()
 make_test_dir() {
