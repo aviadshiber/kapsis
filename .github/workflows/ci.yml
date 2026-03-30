@@ -380,38 +380,34 @@ jobs:
     steps:
       - name: Check all jobs passed
         run: |
-          # If no script changes, all tests are skipped - that's OK
-          if [[ "${{ needs.changes.outputs.scripts }}" != "true" ]]; then
-            echo "No script changes detected - CI tests skipped"
-            echo "Files changed: docs, assets, or other non-code files"
+          failed=0
+          check() {
+            local name="$1" result="$2" required="$3"
+            if [[ "$required" == "false" ]]; then
+              echo "  skip  $name (not required)"
+            elif [[ "$result" == "success" ]]; then
+              echo "  pass  $name"
+            else
+              echo "  FAIL  $name — expected: success, got: $result"
+              failed=1
+            fi
+          }
+
+          scripts_changed="${{ needs.changes.outputs.scripts }}"
+          container_changed="${{ needs.changes.outputs.container }}"
+
+          if [[ "$scripts_changed" != "true" ]]; then
+            echo "No script changes detected — CI tests skipped (docs/assets only)"
             exit 0
           fi
 
-          # Script changes detected - lint, verify-pinning, config-validation, and quick-tests must pass
-          if [[ "${{ needs.lint.result }}" != "success" ]]; then
-            echo "Lint job failed"
-            exit 1
-          fi
-          if [[ "${{ needs.verify-pinning.result }}" != "success" ]]; then
-            echo "Supply chain pinning verification job failed"
-            exit 1
-          fi
-          if [[ "${{ needs.config-validation.result }}" != "success" ]]; then
-            echo "Config validation job failed"
-            exit 1
-          fi
-          if [[ "${{ needs.quick-tests.result }}" != "success" ]]; then
-            echo "Quick tests job failed"
-            exit 1
-          fi
+          check "lint"              "${{ needs.lint.result }}"              "true"
+          check "verify-pinning"    "${{ needs.verify-pinning.result }}"    "true"
+          check "config-validation" "${{ needs.config-validation.result }}" "true"
+          check "quick-tests"       "${{ needs.quick-tests.result }}"       "true"
+          check "container-tests"   "${{ needs.container-tests.result }}"   "$container_changed"
 
-          # Container tests only required if container-related files changed
-          if [[ "${{ needs.changes.outputs.container }}" == "true" ]]; then
-            if [[ "${{ needs.container-tests.result }}" != "success" ]]; then
-              echo "Container tests job failed"
-              exit 1
-            fi
-            echo "All CI checks passed (including container tests)!"
-          else
-            echo "All CI checks passed (container tests skipped - no container changes)!"
+          if [[ $failed -eq 1 ]]; then
+            exit 1
           fi
+          echo "All required CI checks passed!"
