@@ -28,7 +28,7 @@ declare -g DEFAULT_JAVA_ENABLED="true"
 declare -g DEFAULT_JAVA_VERSIONS='["17.0.14-zulu","8.0.422-zulu"]'
 declare -g DEFAULT_JAVA_DEFAULT="17.0.14-zulu"
 declare -g DEFAULT_NODEJS_ENABLED="true"
-declare -g DEFAULT_NODEJS_VERSION="18.18.0"
+declare -g DEFAULT_NODEJS_VERSION="24.14.1"
 declare -g DEFAULT_PYTHON_ENABLED="true"
 declare -g DEFAULT_RUST_ENABLED="false"
 declare -g DEFAULT_GO_ENABLED="false"
@@ -162,7 +162,7 @@ parse_build_config() {
     JAVA_DEFAULT=$(yq -r '.languages.java.default_version // "17.0.14-zulu"' "$config_file")
 
     ENABLE_NODEJS=$(_yq_bool '.languages.nodejs.enabled' "true" "$config_file")
-    NODEJS_VERSION=$(yq -r '.languages.nodejs.default_version // "18.18.0"' "$config_file")
+    NODEJS_VERSION=$(yq -r '.languages.nodejs.default_version // "24.14.1"' "$config_file")
 
     ENABLE_PYTHON=$(_yq_bool '.languages.python.enabled' "true" "$config_file")
 

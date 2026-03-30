@@ -3,6 +3,7 @@
 # Kapsis Pre-push Orchestrator
 #
 # Orchestrates all pre-push tasks in sequence:
+#   0. CI parity checks — ShellCheck, quick tests, config validation (blocking)
 #   1. Check PR comments (if PR exists)
 #   2. Check documentation updates
 #   3. Run unbiased LLM review (skeptical + security)
@@ -10,6 +11,7 @@
 #
 # Usage:
 #   ./prepush-orchestrator.sh              # Run all checks
+#   ./prepush-orchestrator.sh --no-ci      # Skip CI parity checks
 #   ./prepush-orchestrator.sh --no-review  # Skip LLM review
 #   ./prepush-orchestrator.sh --no-pr      # Skip PR creation
 #
@@ -37,6 +39,7 @@ fi
 # Parse arguments
 SKIP_REVIEW=false
 SKIP_PR=false
+SKIP_CI=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -48,10 +51,15 @@ while [[ $# -gt 0 ]]; do
             SKIP_PR=true
             shift
             ;;
+        --no-ci)
+            SKIP_CI=true
+            shift
+            ;;
         -h|--help)
             echo "Usage: $(basename "$0") [options]"
             echo ""
             echo "Options:"
+            echo "  --no-ci        Skip CI parity checks (ShellCheck, quick tests, config validation)"
             echo "  --no-review    Skip LLM review"
             echo "  --no-pr        Skip PR creation"
             echo "  -h, --help     Show this help"
@@ -70,8 +78,24 @@ EXIT_CODE=0
 log_info "Starting pre-push checks..."
 echo ""
 
+# 0. CI parity checks (blocking) — mirrors GitHub Actions CI jobs
+if [[ "$SKIP_CI" == "false" ]]; then
+    log_info "Step 0/5: Running CI parity checks (ShellCheck, quick tests, config validation)..."
+    if [[ -x "$PREPUSH_DIR/ci-checks.sh" ]]; then
+        if ! "$PREPUSH_DIR/ci-checks.sh"; then
+            log_error "CI checks failed — push blocked"
+            exit 1
+        fi
+    else
+        log_debug "ci-checks.sh not found, skipping"
+    fi
+else
+    log_info "Step 0/5: Skipping CI checks (--no-ci)"
+fi
+echo ""
+
 # 1. Check PR comments
-log_info "Step 1/4: Checking PR comments..."
+log_info "Step 1/5: Checking PR comments..."
 if [[ -x "$PREPUSH_DIR/pr-comments.sh" ]]; then
     if ! "$PREPUSH_DIR/pr-comments.sh"; then
         log_warn "PR comment check had warnings"
@@ -82,7 +106,7 @@ fi
 echo ""
 
 # 2. Check documentation
-log_info "Step 2/4: Checking documentation..."
+log_info "Step 2/5: Checking documentation..."
 if [[ -x "$PREPUSH_DIR/check-docs.sh" ]]; then
     if ! "$PREPUSH_DIR/check-docs.sh"; then
         log_warn "Documentation check had warnings"
@@ -94,7 +118,7 @@ echo ""
 
 # 3. Run unbiased review
 if [[ "$SKIP_REVIEW" == "false" ]]; then
-    log_info "Step 3/4: Running unbiased review..."
+    log_info "Step 3/5: Running unbiased review..."
     if [[ -x "$PREPUSH_DIR/unbiased-review.sh" ]]; then
         if ! "$PREPUSH_DIR/unbiased-review.sh"; then
             log_error "Review found critical issues"
@@ -104,13 +128,13 @@ if [[ "$SKIP_REVIEW" == "false" ]]; then
         log_debug "unbiased-review.sh not found, skipping"
     fi
 else
-    log_info "Step 3/4: Skipping LLM review (--no-review)"
+    log_info "Step 3/5: Skipping LLM review (--no-review)"
 fi
 echo ""
 
 # 4. Create PR if needed
 if [[ "$SKIP_PR" == "false" ]]; then
-    log_info "Step 4/4: Checking/creating PR..."
+    log_info "Step 4/5: Checking/creating PR..."
     if [[ -x "$PREPUSH_DIR/create-pr.sh" ]]; then
         if ! "$PREPUSH_DIR/create-pr.sh"; then
             log_warn "PR creation had issues"
@@ -119,7 +143,7 @@ if [[ "$SKIP_PR" == "false" ]]; then
         log_debug "create-pr.sh not found, skipping"
     fi
 else
-    log_info "Step 4/4: Skipping PR creation (--no-pr)"
+    log_info "Step 4/5: Skipping PR creation (--no-pr)"
 fi
 echo ""
 

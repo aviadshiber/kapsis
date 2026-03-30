@@ -190,7 +190,7 @@ test_parse_frontend_profile() {
     assert_equals "true" "$ENABLE_NODEJS" "Node.js should be enabled in frontend"
     assert_equals "true" "$ENABLE_RUST" "Rust should be enabled in frontend"
     assert_equals "false" "$ENABLE_JAVA" "Java should be disabled in frontend"
-    assert_equals "20.10.0" "$NODEJS_VERSION" "Node.js default should be 20.10.0"
+    assert_equals "24.14.1" "$NODEJS_VERSION" "Node.js default should be 24.14.1"
 }
 
 test_parse_java_versions_array() {

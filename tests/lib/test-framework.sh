@@ -86,13 +86,15 @@ get_test_container_env_args() {
 run_simple_container() {
     local command="$1"
     shift
+    local result=0
     # shellcheck disable=SC2046 # Word splitting intentional for env args
     podman run --rm \
         $(get_test_container_env_args) \
         --userns=keep-id \
         "$@" \
         "$KAPSIS_TEST_IMAGE" \
-        bash -c "$command" 2>&1
+        bash -c "$command" 2>&1 || result=$?
+    return $result
 }
 
 # run_named_container <name> <command> [extra_podman_args...]
@@ -104,6 +106,7 @@ run_named_container() {
     local name="$1"
     local command="$2"
     shift 2
+    local result=0
     # shellcheck disable=SC2046 # Word splitting intentional for env args
     podman run --rm \
         $(get_test_container_env_args) \
@@ -111,7 +114,8 @@ run_named_container() {
         --userns=keep-id \
         "$@" \
         "$KAPSIS_TEST_IMAGE" \
-        bash -c "$command" 2>&1
+        bash -c "$command" 2>&1 || result=$?
+    return $result
 }
 
 # run_detached_named_container <name> <command> [extra_podman_args...]
@@ -327,7 +331,7 @@ assert_contains() {
     if [[ "$haystack" == *"$needle"* ]]; then
         return 0
     else
-        _log_failure "$message" "Looking for: $needle" "In: ${haystack:0:200}..."
+        _log_failure "$message" "Looking for: $needle" "In: ${haystack:0:2000}..."
         return 1
     fi
 }

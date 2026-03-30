@@ -57,9 +57,15 @@ test_kapsis_env_vars_set() {
 
     setup_container_test "env-kapsis"
 
+    # validate_workspace_mount runs when KAPSIS_AGENT_ID is set; provide a
+    # non-empty writable workspace so it passes.
+    mkdir -p "$TEST_PROJECT"
+    touch "$TEST_PROJECT/.kapsis-marker"
+
     local output
     output=$(run_named_container "$CONTAINER_TEST_ID" \
         'echo "AGENT_ID=$KAPSIS_AGENT_ID PROJECT=$KAPSIS_PROJECT"' \
+        -v "$TEST_PROJECT:/workspace" \
         -e KAPSIS_AGENT_ID="test-agent" -e KAPSIS_PROJECT="test-project") || true
 
     cleanup_container_test
