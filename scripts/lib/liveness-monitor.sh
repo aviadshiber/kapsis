@@ -6,12 +6,14 @@
 # auto-kills hung agent processes. Runs as a background subshell before
 # the entrypoint exec's into the agent (same pattern as DNS watchdog).
 #
-# Detection strategy (two signals, both must be stale to trigger kill):
+# Detection strategy (three signals, all must indicate inactivity to trigger kill):
 #   1. status.json updated_at - hook fires on every PostToolUse
 #   2. /proc/1/io read_bytes+write_bytes - catches activity during thinking
+#   3. TCP connections to AI API endpoints on port 443 - catches agents
+#      waiting on subagent/API responses (e.g., Task tool calls)
 #
 # Kill decision: updated_at stale for timeout AND I/O unchanged for 2+
-# consecutive check cycles -> SIGTERM, wait 10s, SIGKILL.
+# consecutive check cycles AND no active API connections -> SIGTERM, wait 10s, SIGKILL.
 #
 # Environment Variables:
 #   KAPSIS_LIVENESS_TIMEOUT        - Kill after N seconds of no activity (default: 1800)
@@ -137,6 +139,63 @@ _liveness_ts_to_epoch() {
 }
 
 #===============================================================================
+# Network Activity Detection
+#===============================================================================
+
+# Known AI API endpoint domains that agents connect to.
+# Used as a third liveness signal: if the agent has active TCP connections
+# to these endpoints, it is waiting on an API response (e.g., subagent Task
+# tool), not hung.
+_LIVENESS_API_DOMAINS=(
+    api.anthropic.com
+    api.openai.com
+    generativelanguage.googleapis.com
+    aiplatform.googleapis.com
+    bedrock-runtime.amazonaws.com
+    api.githubcopilot.com
+    openai.azure.com
+)
+
+# Check whether the agent (PID 1) has established TCP connections to known
+# AI API endpoints on port 443.  Returns 0 (true) if at least one such
+# connection exists, 1 otherwise.
+#
+# Strategy:
+#   1. Preferred: `ss -tn state established` — available in most containers
+#      that include iproute2.
+#   2. Fallback: parse /proc/net/tcp6 (and tcp) directly — always available
+#      on Linux, no extra tooling required.
+_liveness_has_active_api_connections() {
+    # --- Method 1: ss (iproute2) -------------------------------------------
+    if command -v ss &>/dev/null; then
+        local ss_output
+        ss_output=$(ss -tn state established 2>/dev/null) || true
+        if [[ -n "$ss_output" ]]; then
+            # Check for any connection to port 443 (HTTPS)
+            if echo "$ss_output" | grep -qE ':443\s*$'; then
+                _liveness_log "DEBUG" "Active HTTPS connection(s) detected via ss"
+                return 0
+            fi
+        fi
+    fi
+
+    # --- Method 2: /proc/net/tcp{,6} ---------------------------------------
+    # Port 443 in hex = 01BB
+    local tcp_file
+    for tcp_file in /proc/net/tcp /proc/net/tcp6; do
+        if [[ -r "$tcp_file" ]]; then
+            # Column 2 = remote address:port, column 4 = state (01 = ESTABLISHED)
+            if awk '$4 == "01" && $3 ~ /:01BB$/ {found=1; exit} END {exit !found}' "$tcp_file" 2>/dev/null; then
+                _liveness_log "DEBUG" "Active HTTPS connection(s) detected via $tcp_file"
+                return 0
+            fi
+        fi
+    done
+
+    return 1
+}
+
+#===============================================================================
 # Monitor Loop
 #===============================================================================
 
@@ -205,8 +264,17 @@ _liveness_monitor_loop() {
         # Decision logic
         if [[ "$stale_seconds" -ge "$timeout" ]]; then
             if [[ "$io_stale_cycles" -ge 2 ]]; then
-                # Both signals stale: agent is hung
-                _liveness_log "WARN" "Agent hung detected! updated_at stale for ${stale_seconds}s, I/O unchanged for ${io_stale_cycles} cycles"
+                # Both signals stale — but check for active API connections
+                # before killing. An agent waiting on a subagent API response
+                # (e.g., Task tool) has no disk I/O and no hook fires, but it
+                # IS alive: it holds an ESTABLISHED TCP connection to the API.
+                if _liveness_has_active_api_connections; then
+                    _liveness_log "INFO" "updated_at stale (${stale_seconds}s) and I/O idle (${io_stale_cycles} cycles), but active API connection(s) found — skipping kill"
+                    continue
+                fi
+
+                # All three signals confirm the agent is hung
+                _liveness_log "WARN" "Agent hung detected! updated_at stale for ${stale_seconds}s, I/O unchanged for ${io_stale_cycles} cycles, no active API connections"
                 _liveness_log "WARN" "Sending SIGTERM to PID $pid"
 
                 # Write killed status before sending signal

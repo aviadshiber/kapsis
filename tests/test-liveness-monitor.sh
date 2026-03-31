@@ -197,6 +197,100 @@ test_liveness_heartbeat_null_when_unset() {
 }
 
 #===============================================================================
+# UNIT TESTS: API connection detection
+#===============================================================================
+
+test_liveness_api_connection_detection_sources() {
+    log_test "Testing _liveness_has_active_api_connections function exists after sourcing"
+
+    local exit_code=0
+    (
+        # Reset source guard so we can re-source
+        unset _KAPSIS_LIVENESS_MONITOR_LOADED
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        type _liveness_has_active_api_connections &>/dev/null || exit 1
+    ) 2>/dev/null || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Function _liveness_has_active_api_connections should be defined"
+}
+
+test_liveness_api_domains_list_populated() {
+    log_test "Testing _LIVENESS_API_DOMAINS array is populated"
+
+    local exit_code=0
+    (
+        unset _KAPSIS_LIVENESS_MONITOR_LOADED
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        [[ ${#_LIVENESS_API_DOMAINS[@]} -ge 5 ]] || exit 1
+    ) 2>/dev/null || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should have at least 5 API domains defined"
+}
+
+test_liveness_proc_net_tcp_parsing_no_connections() {
+    log_test "Testing /proc/net/tcp parsing returns false when no port 443 connections"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    # Create a mock /proc/net/tcp with no port 443 connections
+    # Port 50 (0032) in ESTABLISHED state (01)
+    cat > "$tmpdir/tcp" << 'EOF'
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:1F90 0100007F:0032 01 00000000:00000000 00:00000000 00000000  1000        0 12345
+EOF
+
+    local result=0
+    # Test the awk pattern directly
+    awk '$4 == "01" && $3 ~ /:01BB$/ {found=1; exit} END {exit !found}' "$tmpdir/tcp" 2>/dev/null || result=$?
+
+    assert_not_equals 0 "$result" "Should return false when no port 443 connections exist"
+
+    rm -rf "$tmpdir"
+}
+
+test_liveness_proc_net_tcp_parsing_with_443_connection() {
+    log_test "Testing /proc/net/tcp parsing detects port 443 (0x01BB) ESTABLISHED connection"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    # Create a mock /proc/net/tcp with an ESTABLISHED connection to port 443
+    # Remote port 01BB = 443, state 01 = ESTABLISHED
+    cat > "$tmpdir/tcp" << 'EOF'
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:C000 68E3A4D2:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 12345
+EOF
+
+    local result=0
+    awk '$4 == "01" && $3 ~ /:01BB$/ {found=1; exit} END {exit !found}' "$tmpdir/tcp" 2>/dev/null || result=$?
+
+    assert_equals 0 "$result" "Should detect ESTABLISHED connection on port 443"
+
+    rm -rf "$tmpdir"
+}
+
+test_liveness_proc_net_tcp_parsing_non_established_443() {
+    log_test "Testing /proc/net/tcp ignores non-ESTABLISHED connections to port 443"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    # State 06 = TIME_WAIT, not ESTABLISHED
+    cat > "$tmpdir/tcp" << 'EOF'
+  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+   0: 0100007F:C000 68E3A4D2:01BB 06 00000000:00000000 00:00000000 00000000  1000        0 12345
+EOF
+
+    local result=0
+    awk '$4 == "01" && $3 ~ /:01BB$/ {found=1; exit} END {exit !found}' "$tmpdir/tcp" 2>/dev/null || result=$?
+
+    assert_not_equals 0 "$result" "Should ignore TIME_WAIT connections on port 443"
+
+    rm -rf "$tmpdir"
+}
+
+#===============================================================================
 # INTEGRATION TESTS: CLI flags
 #===============================================================================
 
@@ -437,6 +531,13 @@ main() {
     run_test test_liveness_config_custom_values
     run_test test_liveness_heartbeat_in_status
     run_test test_liveness_heartbeat_null_when_unset
+
+    # API connection detection tests
+    run_test test_liveness_api_connection_detection_sources
+    run_test test_liveness_api_domains_list_populated
+    run_test test_liveness_proc_net_tcp_parsing_no_connections
+    run_test test_liveness_proc_net_tcp_parsing_with_443_connection
+    run_test test_liveness_proc_net_tcp_parsing_non_established_443
 
     # Integration tests
     run_test test_claude_exit_delay_agent_type_match
