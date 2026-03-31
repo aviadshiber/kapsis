@@ -833,7 +833,9 @@ post_container_git() {
 
     # Commit changes
     log_debug "Committing changes..."
-    local _commit_rc=0
+    local _commit_rc
+    _commit_rc=0
+    # shellcheck disable=SC2034  # false positive: _commit_rc IS used below
     commit_changes "$worktree_path" "$commit_message" "$agent_id" "$co_authors" || _commit_rc=$?
 
     if [[ $_commit_rc -eq 2 ]]; then

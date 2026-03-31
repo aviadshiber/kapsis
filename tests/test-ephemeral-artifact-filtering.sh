@@ -174,6 +174,8 @@ test_commit_changes_returns_2_when_only_ephemeral() {
 
     local remote_dir
     remote_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-test-remote-XXXXXX")
+    # shellcheck disable=SC2064  # We intentionally expand $remote_dir at setup time, not trap time
+    trap "rm -rf '$remote_dir'; cleanup_test_repo" RETURN
     git init --bare --quiet "$remote_dir"
 
     setup_test_repo "rc2-ephem"
@@ -190,9 +192,6 @@ test_commit_changes_returns_2_when_only_ephemeral() {
 
     assert_equals "2" "$exit_code" \
         "commit_changes should return 2 when only ephemeral files are staged"
-
-    rm -rf "$remote_dir"
-    cleanup_test_repo
 }
 
 test_post_container_git_only_ephemeral_is_not_failure() {
@@ -200,6 +199,9 @@ test_post_container_git_only_ephemeral_is_not_failure() {
 
     local remote_dir
     remote_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-test-remote-XXXXXX")
+    local _saved_status="${KAPSIS_STATUS_ENABLED:-}"
+    # shellcheck disable=SC2064  # We intentionally expand variables at setup time, not trap time
+    trap "rm -rf '$remote_dir'; cleanup_test_repo; export KAPSIS_STATUS_ENABLED='$_saved_status'" RETURN
     git init --bare --quiet "$remote_dir"
 
     setup_test_repo "pcg-ephem"
@@ -223,9 +225,6 @@ test_post_container_git_only_ephemeral_is_not_failure() {
 
     assert_equals "0" "$exit_code" \
         "post_container_git should return 0 when only ephemeral changes exist"
-
-    rm -rf "$remote_dir"
-    cleanup_test_repo
 }
 
 #===============================================================================
