@@ -58,12 +58,16 @@ _pattern_to_regex() {
         # Directory-prefix: **/__pycache__/ matches src/__pycache__/foo.pyc
         local dir_name="${p#\*\*/}"
         dir_name="${dir_name%/}"
-        echo "(^|/)${dir_name}/"
+        # Escape literal dots so they don't match any character in grep -E
+        local escaped_dir="${dir_name//./\\.}"
+        echo "(^|/)${escaped_dir}/"
     elif [[ "$p" == "**/"* ]]; then
         local base="${p#\*\*/}"
-        echo "(^|/)${base}$"
+        local escaped_base="${base//./\\.}"
+        echo "(^|/)${escaped_base}$"
     else
-        echo "^${p}$"
+        local escaped_p="${p//./\\.}"
+        echo "^${escaped_p}$"
     fi
 }
 

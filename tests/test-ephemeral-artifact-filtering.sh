@@ -73,7 +73,11 @@ test_pycache_files_are_unstaged() {
 
     local staged_before
     staged_before=$(git diff --cached --name-only | grep "__pycache__" || echo "")
-    assert_not_equals "" "$staged_before" "__pycache__ file should be staged before validation"
+    if [[ -z "$staged_before" ]]; then
+        log_fail "__pycache__ file should be staged before validation"
+        cleanup_test_repo
+        return 1
+    fi
 
     validate_staged_files "$TEST_REPO"
 
@@ -93,6 +97,14 @@ test_pytest_cache_files_are_unstaged() {
     echo "{}" > ".pytest_cache/v/cache/lastfailed"
     git add ".pytest_cache/"
 
+    local staged_before
+    staged_before=$(git diff --cached --name-only | grep "\.pytest_cache" || echo "")
+    if [[ -z "$staged_before" ]]; then
+        log_fail ".pytest_cache file should be staged before validation"
+        cleanup_test_repo
+        return 1
+    fi
+
     validate_staged_files "$TEST_REPO"
 
     local staged_after
@@ -109,6 +121,14 @@ test_coverage_file_is_unstaged() {
 
     echo "coverage data" > ".coverage"
     git add ".coverage"
+
+    local staged_before
+    staged_before=$(git diff --cached --name-only | grep "\.coverage" || echo "")
+    if [[ -z "$staged_before" ]]; then
+        log_fail ".coverage file should be staged before validation"
+        cleanup_test_repo
+        return 1
+    fi
 
     validate_staged_files "$TEST_REPO"
 
@@ -128,11 +148,23 @@ test_legitimate_python_preserved() {
     echo "def main(): pass" > "src/main.py"
     git add "src/main.py"
 
+    local staged_before
+    staged_before=$(git diff --cached --name-only | grep "src/main.py" || echo "")
+    if [[ -z "$staged_before" ]]; then
+        log_fail "src/main.py should be staged before validation"
+        cleanup_test_repo
+        return 1
+    fi
+
     validate_staged_files "$TEST_REPO"
 
     local staged_after
     staged_after=$(git diff --cached --name-only | grep "src/main.py" || echo "")
-    assert_not_equals "" "$staged_after" "src/main.py should still be staged after validation"
+    if [[ -z "$staged_after" ]]; then
+        log_fail "src/main.py should still be staged after validation"
+        cleanup_test_repo
+        return 1
+    fi
 
     cleanup_test_repo
 }
