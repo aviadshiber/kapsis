@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.16.7] - 2026-03-30
+## [2.16.8] - 2026-03-31
+
+### Changed
+- Bump github/codeql-action from 4.34.1 to 4.35.1 in the github-actions group (#228)
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Replace expired RELEASE_TOKEN PAT with GitHub App token in auto-release (#230)
@@ -16,9 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 - Update CLAUDE.md to reflect current codebase state (v2.16.6)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Address ensemble review findings for #221
@@ -718,7 +722,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.7...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.8...HEAD
+[2.16.8]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.8
 [2.16.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.7
 [2.16.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.6
 [2.16.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.5
