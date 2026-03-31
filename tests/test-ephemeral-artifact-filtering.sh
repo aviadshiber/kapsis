@@ -62,6 +62,81 @@ test_ephemeral_patterns_constant_exists() {
         "KAPSIS_DEFAULT_EPHEMERAL_PATTERNS should be defined"
 }
 
+test_pycache_files_are_unstaged() {
+    log_test "__pycache__ files are unstaged by validate_staged_files"
+    setup_test_repo "pycache"
+    cd "$TEST_REPO"
+
+    mkdir -p "src/__pycache__"
+    echo "bytecode" > "src/__pycache__/module.cpython-311.pyc"
+    git add "src/__pycache__/module.cpython-311.pyc"
+
+    local staged_before
+    staged_before=$(git diff --cached --name-only | grep "__pycache__" || echo "")
+    assert_not_equals "" "$staged_before" "__pycache__ file should be staged before validation"
+
+    validate_staged_files "$TEST_REPO"
+
+    local staged_after
+    staged_after=$(git diff --cached --name-only | grep "__pycache__" || echo "")
+    assert_equals "" "$staged_after" "__pycache__ files should be unstaged after validation"
+
+    cleanup_test_repo
+}
+
+test_pytest_cache_files_are_unstaged() {
+    log_test ".pytest_cache files are unstaged by validate_staged_files"
+    setup_test_repo "pytest-cache"
+    cd "$TEST_REPO"
+
+    mkdir -p ".pytest_cache/v/cache"
+    echo "{}" > ".pytest_cache/v/cache/lastfailed"
+    git add ".pytest_cache/"
+
+    validate_staged_files "$TEST_REPO"
+
+    local staged_after
+    staged_after=$(git diff --cached --name-only | grep "\.pytest_cache" || echo "")
+    assert_equals "" "$staged_after" ".pytest_cache files should be unstaged after validation"
+
+    cleanup_test_repo
+}
+
+test_coverage_file_is_unstaged() {
+    log_test ".coverage file is unstaged by validate_staged_files"
+    setup_test_repo "coverage"
+    cd "$TEST_REPO"
+
+    echo "coverage data" > ".coverage"
+    git add ".coverage"
+
+    validate_staged_files "$TEST_REPO"
+
+    local staged_after
+    staged_after=$(git diff --cached --name-only | grep "\.coverage" || echo "")
+    assert_equals "" "$staged_after" ".coverage should be unstaged after validation"
+
+    cleanup_test_repo
+}
+
+test_legitimate_python_preserved() {
+    log_test "Legitimate .py source files are NOT filtered by validate_staged_files"
+    setup_test_repo "legit-py"
+    cd "$TEST_REPO"
+
+    mkdir -p src
+    echo "def main(): pass" > "src/main.py"
+    git add "src/main.py"
+
+    validate_staged_files "$TEST_REPO"
+
+    local staged_after
+    staged_after=$(git diff --cached --name-only | grep "src/main.py" || echo "")
+    assert_not_equals "" "$staged_after" "src/main.py should still be staged after validation"
+
+    cleanup_test_repo
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -71,6 +146,10 @@ main() {
 
     run_test test_push_timeout_constant_exists
     run_test test_ephemeral_patterns_constant_exists
+    run_test test_pycache_files_are_unstaged
+    run_test test_pytest_cache_files_are_unstaged
+    run_test test_coverage_file_is_unstaged
+    run_test test_legitimate_python_preserved
 
     print_summary
     return "$TESTS_FAILED"

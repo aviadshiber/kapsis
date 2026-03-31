@@ -44,6 +44,30 @@ source "$POST_GIT_SCRIPT_DIR/lib/sanitize-files.sh"
 # Note: git remote utilities are provided by lib/git-remote-utils.sh
 
 #===============================================================================
+# PATTERN TO REGEX HELPER
+#
+# Converts a gitignore-style pattern to a grep -E compatible regex.
+# Supports three forms:
+#   **/<dir>/   — matches any file inside <dir>/ at any depth
+#   **/<file>   — matches <file> at any depth
+#   <file>      — exact match at root only
+#===============================================================================
+_pattern_to_regex() {
+    local p="$1"
+    if [[ "$p" == "**/"*"/" ]]; then
+        # Directory-prefix: **/__pycache__/ matches src/__pycache__/foo.pyc
+        local dir_name="${p#\*\*/}"
+        dir_name="${dir_name%/}"
+        echo "(^|/)${dir_name}/"
+    elif [[ "$p" == "**/"* ]]; then
+        local base="${p#\*\*/}"
+        echo "(^|/)${base}$"
+    else
+        echo "^${p}$"
+    fi
+}
+
+#===============================================================================
 # VALIDATE AND CLEAN STAGED FILES
 #
 # Checks for suspicious files that should never be committed and removes them
@@ -51,6 +75,7 @@ source "$POST_GIT_SCRIPT_DIR/lib/sanitize-files.sh"
 # - Literal ~ paths (tilde not expanded, creates directory named "~")
 # - .kapsis/ internal files
 # - Submodule references (mode 160000) that weren't intentional
+# - Ephemeral artifact files (e.g. __pycache__, .pytest_cache, .coverage)
 # - Files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
 #
 # The KAPSIS_COMMIT_EXCLUDE patterns provide user-configurable exclusions
@@ -108,45 +133,52 @@ validate_staged_files() {
         has_issues=1
     fi
 
+    # Pre-compute staged file list for pattern checks below
+    local staged_files
+    staged_files=$(git diff --cached --name-only 2>/dev/null || true)
+
+    # --- Ephemeral artifact patterns (built-in, non-overridable) ---
+    # These are test/build artifacts that are never legitimate to commit.
+    local ephemeral_patterns="${KAPSIS_DEFAULT_EPHEMERAL_PATTERNS:-}"
+    if [[ -n "$ephemeral_patterns" ]] && [[ -n "$staged_files" ]]; then
+        while IFS= read -r pattern; do
+            [[ -z "$pattern" ]] && continue
+            local regex_pattern
+            regex_pattern="$(_pattern_to_regex "$pattern")"
+            local matched_files
+            matched_files=$(echo "$staged_files" | grep -E "$regex_pattern" 2>/dev/null || true)
+            if [[ -n "$matched_files" ]]; then
+                log_info "Found ephemeral artifact files matching '$pattern':"
+                while IFS= read -r f; do
+                    [[ -z "$f" ]] && continue
+                    log_info "  - $f (ephemeral artifact)"
+                    suspicious_files+=("$f")
+                done <<< "$matched_files"
+                has_issues=1
+            fi
+        done <<< "$ephemeral_patterns"
+    fi
+
     # Check for files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
     # This prevents committing files like .gitignore that were modified by Kapsis
     local exclude_patterns="${KAPSIS_COMMIT_EXCLUDE:-$KAPSIS_DEFAULT_COMMIT_EXCLUDE}"
-    if [[ -n "$exclude_patterns" ]]; then
-        local staged_files
-        staged_files=$(git diff --cached --name-only 2>/dev/null || true)
-
-        if [[ -n "$staged_files" ]]; then
-            while IFS= read -r pattern; do
-                [[ -z "$pattern" ]] && continue
-                # Match staged files against pattern
-                # Handle ** glob patterns by converting to regex-compatible form
-                local regex_pattern
-                # Convert gitignore pattern to grep pattern:
-                # - ** matches any path segment(s)
-                # - * matches any characters except /
-                # - Anchor to line start/end for exact matches
-                if [[ "$pattern" == "**/"* ]]; then
-                    # Pattern like **/.gitignore matches at any depth
-                    local base_pattern="${pattern#\*\*/}"
-                    regex_pattern="(^|/)${base_pattern}$"
-                else
-                    # Exact match at root
-                    regex_pattern="^${pattern}$"
-                fi
-
-                local matched_files
-                matched_files=$(echo "$staged_files" | grep -E "$regex_pattern" 2>/dev/null || true)
-                if [[ -n "$matched_files" ]]; then
-                    log_info "Found staged files matching exclude pattern '$pattern':"
-                    while IFS= read -r f; do
-                        [[ -z "$f" ]] && continue
-                        log_info "  - $f (excluded by KAPSIS_COMMIT_EXCLUDE)"
-                        suspicious_files+=("$f")
-                    done <<< "$matched_files"
-                    has_issues=1
-                fi
-            done <<< "$exclude_patterns"
-        fi
+    if [[ -n "$exclude_patterns" ]] && [[ -n "$staged_files" ]]; then
+        while IFS= read -r pattern; do
+            [[ -z "$pattern" ]] && continue
+            local regex_pattern
+            regex_pattern="$(_pattern_to_regex "$pattern")"
+            local matched_files
+            matched_files=$(echo "$staged_files" | grep -E "$regex_pattern" 2>/dev/null || true)
+            if [[ -n "$matched_files" ]]; then
+                log_info "Found staged files matching exclude pattern '$pattern':"
+                while IFS= read -r f; do
+                    [[ -z "$f" ]] && continue
+                    log_info "  - $f (excluded by KAPSIS_COMMIT_EXCLUDE)"
+                    suspicious_files+=("$f")
+                done <<< "$matched_files"
+                has_issues=1
+            fi
+        done <<< "$exclude_patterns"
     fi
 
     # If issues found, unstage the suspicious files
