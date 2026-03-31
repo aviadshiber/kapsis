@@ -482,8 +482,9 @@ verify_push() {
     fi
     log_debug "Local commit: $local_commit"
 
-    # Fetch latest from remote to ensure we have current state
-    if ! git fetch "$remote" "$branch" --quiet 2>/dev/null; then
+    # Fetch latest from remote to ensure we have current state.
+    local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
+    if ! GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git fetch "$remote" "$branch" --quiet 2>/dev/null; then
         log_warn "Could not fetch from remote for verification"
         # Don't fail - the push might have worked even if fetch fails
         status_set_push_info "unverified" "$local_commit" ""
@@ -542,8 +543,11 @@ push_changes() {
     local local_commit
     local_commit=$(git rev-parse HEAD 2>/dev/null)
 
-    # Use refspec to push local branch to (potentially different) remote branch
-    if git push --set-upstream "$remote" "${branch}:${remote_branch}"; then
+    # Use refspec to push local branch to (potentially different) remote branch.
+    # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers.
+    # timeout guards against credential helper hangs (Issue #227).
+    local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
+    if GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git push --set-upstream "$remote" "${branch}:${remote_branch}"; then
         log_success "Push command completed"
 
         # Verify the push actually succeeded
@@ -672,8 +676,9 @@ has_push_access() {
 
     cd "$worktree_path" || return 1
 
-    # Try a dry-run push to check access
-    if git push --dry-run "$remote" "$branch" 2>/dev/null; then
+    # Try a dry-run push to check access.
+    local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
+    if GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git push --dry-run "$remote" "$branch" 2>/dev/null; then
         return 0
     else
         return 1

@@ -227,6 +227,17 @@ test_post_container_git_only_ephemeral_is_not_failure() {
         "post_container_git should return 0 when only ephemeral changes exist"
 }
 
+test_push_timeout_is_applied() {
+    log_test "Push timeout constant has a sane value (10-300 seconds)"
+    # Behavioural hang test requires a blocking credential helper (out of scope for unit tests).
+    # shellcheck disable=SC2016  # Single-quoted strings in assert_true are eval'd, not expanded here
+    assert_true '[[ "${KAPSIS_DEFAULT_PUSH_TIMEOUT}" -ge 10 ]]' \
+        "Push timeout should be at least 10 seconds"
+    # shellcheck disable=SC2016
+    assert_true '[[ "${KAPSIS_DEFAULT_PUSH_TIMEOUT}" -le 300 ]]' \
+        "Push timeout should be at most 300 seconds"
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -242,6 +253,7 @@ main() {
     run_test test_legitimate_python_preserved
     run_test test_commit_changes_returns_2_when_only_ephemeral
     run_test test_post_container_git_only_ephemeral_is_not_failure
+    run_test test_push_timeout_is_applied
 
     print_summary
     return "$TESTS_FAILED"
