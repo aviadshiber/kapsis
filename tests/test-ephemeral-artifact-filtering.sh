@@ -11,8 +11,33 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/test-framework.sh"
 
-# Import constants
+# Import constants and post-container-git
 source "$KAPSIS_ROOT/scripts/lib/constants.sh"
+source "$KAPSIS_ROOT/scripts/post-container-git.sh"
+
+# Global variables
+TEST_REPO=""
+
+#===============================================================================
+# SETUP AND TEARDOWN
+#===============================================================================
+
+setup_test_repo() {
+    TEST_REPO=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-test-ephem-XXXXXX")
+    cd "$TEST_REPO"
+    git init --quiet
+    git config user.email "test@kapsis.local"
+    git config user.name "Kapsis Test"
+    git config commit.gpgsign false
+    echo "# Test Project" > README.md
+    git add README.md
+    git commit --quiet -m "Initial commit"
+}
+
+cleanup_test_repo() {
+    [[ -n "$TEST_REPO" && -d "$TEST_REPO" ]] && rm -rf "$TEST_REPO"
+    TEST_REPO=""
+}
 
 #===============================================================================
 # TEST CASES
