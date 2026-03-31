@@ -169,6 +169,65 @@ test_legitimate_python_preserved() {
     cleanup_test_repo
 }
 
+test_commit_changes_returns_2_when_only_ephemeral() {
+    log_test "commit_changes() returns code 2 when only ephemeral artifacts staged"
+
+    local remote_dir
+    remote_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-test-remote-XXXXXX")
+    git init --bare --quiet "$remote_dir"
+
+    setup_test_repo "rc2-ephem"
+    cd "$TEST_REPO"
+    git remote add origin "$remote_dir"
+    git push --quiet -u origin main 2>/dev/null || git push --quiet -u origin master 2>/dev/null || true
+
+    # Create only ephemeral changes
+    mkdir -p "__pycache__"
+    echo "bytecode" > "__pycache__/main.cpython-311.pyc"
+
+    local exit_code=0
+    commit_changes "$TEST_REPO" "feat: test" "agent-test" "" || exit_code=$?
+
+    assert_equals "2" "$exit_code" \
+        "commit_changes should return 2 when only ephemeral files are staged"
+
+    rm -rf "$remote_dir"
+    cleanup_test_repo
+}
+
+test_post_container_git_only_ephemeral_is_not_failure() {
+    log_test "post_container_git returns 0 (not failure) when only ephemeral changes exist"
+
+    local remote_dir
+    remote_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-test-remote-XXXXXX")
+    git init --bare --quiet "$remote_dir"
+
+    setup_test_repo "pcg-ephem"
+    cd "$TEST_REPO"
+    git remote add origin "$remote_dir"
+    git push --quiet -u origin main 2>/dev/null || git push --quiet -u origin master 2>/dev/null || true
+
+    local branch
+    branch=$(git rev-parse --abbrev-ref HEAD)
+
+    # Disable status writes for this test
+    export KAPSIS_STATUS_ENABLED="false"
+
+    # Create only ephemeral changes
+    mkdir -p "__pycache__"
+    echo "bytecode" > "__pycache__/main.cpython-311.pyc"
+
+    local exit_code=0
+    post_container_git "$TEST_REPO" "$branch" "feat: test" "origin" "false" "agent-test" "" "" "false" "fallback" "$branch" \
+        || exit_code=$?
+
+    assert_equals "0" "$exit_code" \
+        "post_container_git should return 0 when only ephemeral changes exist"
+
+    rm -rf "$remote_dir"
+    cleanup_test_repo
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -182,6 +241,8 @@ main() {
     run_test test_pytest_cache_files_are_unstaged
     run_test test_coverage_file_is_unstaged
     run_test test_legitimate_python_preserved
+    run_test test_commit_changes_returns_2_when_only_ephemeral
+    run_test test_post_container_git_only_ephemeral_is_not_failure
 
     print_summary
     return "$TESTS_FAILED"

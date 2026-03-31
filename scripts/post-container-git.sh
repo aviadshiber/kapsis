@@ -388,10 +388,11 @@ commit_changes() {
         log_info "After sanitization: $post_sanitize_count file(s) staged (was $post_validate_count)"
     fi
 
-    # Final guard: don't attempt commit if nothing staged
+    # Final guard: don't attempt commit if nothing staged after filtering.
+    # Return code 2 (not 1) to signal "ephemeral-only" — not an error, just skip.
     if [[ "$post_sanitize_count" -eq 0 ]]; then
-        log_warn "No files staged after validation and sanitization — nothing to commit"
-        return 1
+        log_info "No files staged after validation and sanitization — all changes were ephemeral artifacts"
+        return 2
     fi
 
     # Show what's being committed
@@ -832,7 +833,18 @@ post_container_git() {
 
     # Commit changes
     log_debug "Committing changes..."
-    if ! commit_changes "$worktree_path" "$commit_message" "$agent_id" "$co_authors"; then
+    local _commit_rc=0
+    commit_changes "$worktree_path" "$commit_message" "$agent_id" "$co_authors" || _commit_rc=$?
+
+    if [[ $_commit_rc -eq 2 ]]; then
+        # All staged files were ephemeral artifacts — treat as "no changes"
+        log_info "No substantive changes to commit (only ephemeral artifacts filtered)"
+        local current_sha
+        current_sha=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "")
+        status_set_commit_info "no_changes" "$current_sha" "0"
+        log_success "Post-container git operations complete (no substantive changes)"
+        return 0
+    elif [[ $_commit_rc -ne 0 ]]; then
         log_warn "Commit failed"
         status_set_commit_info "failed" "" "0"
         return 1
