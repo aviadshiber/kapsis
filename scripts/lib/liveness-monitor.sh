@@ -156,41 +156,170 @@ _LIVENESS_API_DOMAINS=(
     openai.azure.com
 )
 
+# Resolved IP addresses of AI API endpoints (populated once at monitor start
+# by _liveness_resolve_api_ips).  Only connections to these IPs are treated
+# as a valid liveness signal — arbitrary port-443 connections are ignored.
+_LIVENESS_API_IPS=()
+
+# Resolve _LIVENESS_API_DOMAINS to IP addresses and populate _LIVENESS_API_IPS.
+# Called once at the beginning of the monitor loop.  Domains that fail to
+# resolve are silently skipped (the agent may not need all providers).
+_liveness_resolve_api_ips() {
+    _LIVENESS_API_IPS=()
+    local domain
+    for domain in "${_LIVENESS_API_DOMAINS[@]}"; do
+        local ips
+        # getent is available in virtually all Linux containers
+        if command -v getent &>/dev/null; then
+            ips=$(getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | sort -u) || true
+        elif command -v dig &>/dev/null; then
+            ips=$(dig +short A "$domain" 2>/dev/null; dig +short AAAA "$domain" 2>/dev/null) || true
+        elif command -v host &>/dev/null; then
+            ips=$(host "$domain" 2>/dev/null | awk '/has (IPv[46] )?address/ {print $NF}') || true
+        fi
+        local ip
+        for ip in $ips; do
+            # Basic sanity: skip empty/error lines
+            [[ "$ip" =~ ^[0-9a-fA-F.:]+$ ]] && _LIVENESS_API_IPS+=("$ip")
+        done
+    done
+
+    if [[ ${#_LIVENESS_API_IPS[@]} -gt 0 ]]; then
+        _liveness_log "INFO" "Resolved ${#_LIVENESS_API_IPS[@]} API endpoint IPs for liveness checks"
+    else
+        _liveness_log "WARN" "Could not resolve any API endpoint IPs — API connection check will be unavailable"
+    fi
+}
+
+# Convert an IPv4 address to the hex format used in /proc/net/tcp.
+# Example: 104.18.0.1 -> 01001268  (little-endian 32-bit)
+_liveness_ip4_to_proc_hex() {
+    local ip="$1"
+    local IFS='.'
+    local -a octets
+    read -ra octets <<< "$ip"
+    # /proc/net/tcp stores IPv4 in little-endian hex
+    printf '%02X%02X%02X%02X' "${octets[3]}" "${octets[2]}" "${octets[1]}" "${octets[0]}"
+}
+
+# Convert an IPv6 address to the hex format used in /proc/net/tcp6.
+# Expands :: notation and outputs 32 hex chars (groups in little-endian 32-bit words).
+_liveness_ip6_to_proc_hex() {
+    local ip="$1"
+    # Expand IPv6 via printf trick: use python or perl if available, else skip
+    local expanded
+    if command -v python3 &>/dev/null; then
+        expanded=$(python3 -c "import ipaddress; print(ipaddress.ip_address('$ip').exploded)" 2>/dev/null) || return 1
+    else
+        return 1
+    fi
+
+    # Remove colons -> 32 hex chars
+    expanded="${expanded//:/}"
+    # /proc/net/tcp6 stores each 32-bit word in little-endian
+    local result=""
+    local i
+    for i in 0 8 16 24; do
+        local word="${expanded:$i:8}"
+        # Reverse byte order within each 32-bit word
+        result+="${word:6:2}${word:4:2}${word:2:2}${word:0:2}"
+    done
+    echo "$result"
+}
+
 # Check whether the agent (PID 1) has established TCP connections to known
 # AI API endpoints on port 443.  Returns 0 (true) if at least one such
 # connection exists, 1 otherwise.
 #
+# SECURITY: Only matches connections to IPs resolved from _LIVENESS_API_DOMAINS
+# at monitor startup — not arbitrary port-443 traffic.  This prevents a
+# compromised agent from keeping any HTTPS connection open to bypass the
+# liveness kill.
+#
 # Strategy:
 #   1. Preferred: `ss -tn state established` — available in most containers
-#      that include iproute2.
-#   2. Fallback: parse /proc/net/tcp6 (and tcp) directly — always available
-#      on Linux, no extra tooling required.
+#      that include iproute2.  Filters output against resolved API IPs.
+#   2. Fallback: parse /proc/net/tcp{,6} directly — always available on Linux.
+#      Matches hex-encoded API IPs with ESTABLISHED state on port 01BB (443).
 _liveness_has_active_api_connections() {
+    # No resolved IPs means we cannot perform this check
+    if [[ ${#_LIVENESS_API_IPS[@]} -eq 0 ]]; then
+        return 1
+    fi
+
     # --- Method 1: ss (iproute2) -------------------------------------------
     if command -v ss &>/dev/null; then
         local ss_output
         ss_output=$(ss -tn state established 2>/dev/null) || true
         if [[ -n "$ss_output" ]]; then
-            # Check for any connection to port 443 (HTTPS)
-            if echo "$ss_output" | grep -qE ':443\s*$'; then
-                _liveness_log "DEBUG" "Active HTTPS connection(s) detected via ss"
-                return 0
-            fi
+            local ip
+            for ip in "${_LIVENESS_API_IPS[@]}"; do
+                # Match remote address ip:443 — bracket IPv6 in ss output
+                if [[ "$ip" == *:* ]]; then
+                    # IPv6: ss shows [ip]:port
+                    echo "$ss_output" | grep -qF "[${ip}]:443" && {
+                        _liveness_log "DEBUG" "Active API connection to [${ip}]:443 detected via ss"
+                        return 0
+                    }
+                else
+                    # IPv4: ss shows ip:port
+                    echo "$ss_output" | grep -qF "${ip}:443" && {
+                        _liveness_log "DEBUG" "Active API connection to ${ip}:443 detected via ss"
+                        return 0
+                    }
+                fi
+            done
         fi
     fi
 
     # --- Method 2: /proc/net/tcp{,6} ---------------------------------------
-    # Port 443 in hex = 01BB
-    local tcp_file
-    for tcp_file in /proc/net/tcp /proc/net/tcp6; do
-        if [[ -r "$tcp_file" ]]; then
-            # Column 2 = remote address:port, column 4 = state (01 = ESTABLISHED)
-            if awk '$4 == "01" && $3 ~ /:01BB$/ {found=1; exit} END {exit !found}' "$tcp_file" 2>/dev/null; then
-                _liveness_log "DEBUG" "Active HTTPS connection(s) detected via $tcp_file"
-                return 0
-            fi
+    # Build a set of hex-encoded API IPs for fast matching
+    local -a hex_ipv4=()
+    local -a hex_ipv6=()
+    local ip
+    for ip in "${_LIVENESS_API_IPS[@]}"; do
+        if [[ "$ip" == *:* ]]; then
+            local hex
+            hex=$(_liveness_ip6_to_proc_hex "$ip") && [[ -n "$hex" ]] && hex_ipv6+=("$hex")
+        else
+            hex_ipv4+=("$(_liveness_ip4_to_proc_hex "$ip")")
         fi
     done
+
+    # Check /proc/net/tcp (IPv4)
+    if [[ -r /proc/net/tcp && ${#hex_ipv4[@]} -gt 0 ]]; then
+        local hex_pattern
+        hex_pattern=$(IFS='|'; echo "${hex_ipv4[*]}")
+        # Column 3 = remote addr:port, column 4 = state; 01 = ESTABLISHED, 01BB = port 443
+        if awk -v ips="$hex_pattern" '
+            BEGIN { split(ips, arr, "|"); for (i in arr) ipset[arr[i]] = 1 }
+            $4 == "01" && $3 ~ /:01BB$/ {
+                split($3, a, ":");
+                if (a[1] in ipset) { found=1; exit }
+            }
+            END { exit !found }
+        ' /proc/net/tcp 2>/dev/null; then
+            _liveness_log "DEBUG" "Active API connection detected via /proc/net/tcp"
+            return 0
+        fi
+    fi
+
+    # Check /proc/net/tcp6 (IPv6)
+    if [[ -r /proc/net/tcp6 && ${#hex_ipv6[@]} -gt 0 ]]; then
+        local hex_pattern
+        hex_pattern=$(IFS='|'; echo "${hex_ipv6[*]}")
+        if awk -v ips="$hex_pattern" '
+            BEGIN { split(ips, arr, "|"); for (i in arr) ipset[arr[i]] = 1 }
+            $4 == "01" && $3 ~ /:01BB$/ {
+                split($3, a, ":");
+                if (a[1] in ipset) { found=1; exit }
+            }
+            END { exit !found }
+        ' /proc/net/tcp6 2>/dev/null; then
+            _liveness_log "DEBUG" "Active API connection detected via /proc/net/tcp6"
+            return 0
+        fi
+    fi
 
     return 1
 }
@@ -206,6 +335,9 @@ _liveness_monitor_loop() {
     local pid="$_LIVENESS_AGENT_PID"
 
     _liveness_log "INFO" "Starting (timeout=${timeout}s, grace=${grace}s, interval=${interval}s)"
+
+    # Resolve API endpoint IPs once at startup for connection checking
+    _liveness_resolve_api_ips
 
     # Grace period: sleep before starting checks
     if [[ "$grace" -gt 0 ]]; then

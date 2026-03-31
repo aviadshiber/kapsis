@@ -227,67 +227,109 @@ test_liveness_api_domains_list_populated() {
     assert_equals 0 "$exit_code" "Should have at least 5 API domains defined"
 }
 
-test_liveness_proc_net_tcp_parsing_no_connections() {
-    log_test "Testing /proc/net/tcp parsing returns false when no port 443 connections"
+test_liveness_ip4_to_proc_hex() {
+    log_test "Testing IPv4 to /proc/net/tcp hex conversion"
 
-    local tmpdir
-    tmpdir=$(mktemp -d)
+    local exit_code=0
+    (
+        unset _KAPSIS_LIVENESS_MONITOR_LOADED
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        # 104.227.164.210 -> D2A4E368 (little-endian: octets reversed)
+        local result
+        result=$(_liveness_ip4_to_proc_hex "104.227.164.210")
+        [[ "$result" == "D2A4E368" ]] || { echo "Got: $result, expected D2A4E368"; exit 1; }
 
-    # Create a mock /proc/net/tcp with no port 443 connections
-    # Port 50 (0032) in ESTABLISHED state (01)
-    cat > "$tmpdir/tcp" << 'EOF'
-  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
-   0: 0100007F:1F90 0100007F:0032 01 00000000:00000000 00:00000000 00000000  1000        0 12345
-EOF
+        # 127.0.0.1 -> 0100007F
+        result=$(_liveness_ip4_to_proc_hex "127.0.0.1")
+        [[ "$result" == "0100007F" ]] || { echo "Got: $result, expected 0100007F"; exit 1; }
+    ) 2>/dev/null || exit_code=$?
 
-    local result=0
-    # Test the awk pattern directly
-    awk '$4 == "01" && $3 ~ /:01BB$/ {found=1; exit} END {exit !found}' "$tmpdir/tcp" 2>/dev/null || result=$?
-
-    assert_not_equals 0 "$result" "Should return false when no port 443 connections exist"
-
-    rm -rf "$tmpdir"
+    assert_equals 0 "$exit_code" "Should correctly convert IPv4 to little-endian hex"
 }
 
-test_liveness_proc_net_tcp_parsing_with_443_connection() {
-    log_test "Testing /proc/net/tcp parsing detects port 443 (0x01BB) ESTABLISHED connection"
+test_liveness_proc_net_tcp_matching_known_ip() {
+    log_test "Testing /proc/net/tcp matches only known API IPs on port 443"
 
     local tmpdir
     tmpdir=$(mktemp -d)
 
-    # Create a mock /proc/net/tcp with an ESTABLISHED connection to port 443
-    # Remote port 01BB = 443, state 01 = ESTABLISHED
+    # 68E3A4D2 is 104.227.164.210 in little-endian hex
+    # Port 01BB = 443, state 01 = ESTABLISHED
     cat > "$tmpdir/tcp" << 'EOF'
   sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: 0100007F:C000 68E3A4D2:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 12345
 EOF
 
+    # Should match when the IP is in our allowed set
     local result=0
-    awk '$4 == "01" && $3 ~ /:01BB$/ {found=1; exit} END {exit !found}' "$tmpdir/tcp" 2>/dev/null || result=$?
+    awk -v ips="68E3A4D2" '
+        BEGIN { split(ips, arr, "|"); for (i in arr) ipset[arr[i]] = 1 }
+        $4 == "01" && $3 ~ /:01BB$/ {
+            split($3, a, ":");
+            if (a[1] in ipset) { found=1; exit }
+        }
+        END { exit !found }
+    ' "$tmpdir/tcp" 2>/dev/null || result=$?
 
-    assert_equals 0 "$result" "Should detect ESTABLISHED connection on port 443"
+    assert_equals 0 "$result" "Should match ESTABLISHED connection to known API IP"
+
+    # Should NOT match when the IP is not in our allowed set
+    result=0
+    awk -v ips="AABBCCDD" '
+        BEGIN { split(ips, arr, "|"); for (i in arr) ipset[arr[i]] = 1 }
+        $4 == "01" && $3 ~ /:01BB$/ {
+            split($3, a, ":");
+            if (a[1] in ipset) { found=1; exit }
+        }
+        END { exit !found }
+    ' "$tmpdir/tcp" 2>/dev/null || result=$?
+
+    assert_not_equals 0 "$result" "Should NOT match connection to unknown IP"
 
     rm -rf "$tmpdir"
 }
 
-test_liveness_proc_net_tcp_parsing_non_established_443() {
-    log_test "Testing /proc/net/tcp ignores non-ESTABLISHED connections to port 443"
+test_liveness_proc_net_tcp_ignores_non_established() {
+    log_test "Testing /proc/net/tcp ignores non-ESTABLISHED connections even to known IPs"
 
     local tmpdir
     tmpdir=$(mktemp -d)
 
-    # State 06 = TIME_WAIT, not ESTABLISHED
+    # State 06 = TIME_WAIT, not ESTABLISHED (01)
     cat > "$tmpdir/tcp" << 'EOF'
   sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
    0: 0100007F:C000 68E3A4D2:01BB 06 00000000:00000000 00:00000000 00000000  1000        0 12345
 EOF
 
     local result=0
-    awk '$4 == "01" && $3 ~ /:01BB$/ {found=1; exit} END {exit !found}' "$tmpdir/tcp" 2>/dev/null || result=$?
+    awk -v ips="68E3A4D2" '
+        BEGIN { split(ips, arr, "|"); for (i in arr) ipset[arr[i]] = 1 }
+        $4 == "01" && $3 ~ /:01BB$/ {
+            split($3, a, ":");
+            if (a[1] in ipset) { found=1; exit }
+        }
+        END { exit !found }
+    ' "$tmpdir/tcp" 2>/dev/null || result=$?
 
-    assert_not_equals 0 "$result" "Should ignore TIME_WAIT connections on port 443"
+    assert_not_equals 0 "$result" "Should ignore TIME_WAIT connections even to known API IPs"
 
     rm -rf "$tmpdir"
+}
+
+test_liveness_no_ips_returns_false() {
+    log_test "Testing _liveness_has_active_api_connections returns false when no IPs resolved"
+
+    local exit_code=0
+    (
+        unset _KAPSIS_LIVENESS_MONITOR_LOADED
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        # Empty the resolved IPs array
+        _LIVENESS_API_IPS=()
+        _liveness_has_active_api_connections && exit 1
+        exit 0
+    ) 2>/dev/null || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should return false (1) when no API IPs are resolved"
 }
 
 #===============================================================================
@@ -535,9 +577,10 @@ main() {
     # API connection detection tests
     run_test test_liveness_api_connection_detection_sources
     run_test test_liveness_api_domains_list_populated
-    run_test test_liveness_proc_net_tcp_parsing_no_connections
-    run_test test_liveness_proc_net_tcp_parsing_with_443_connection
-    run_test test_liveness_proc_net_tcp_parsing_non_established_443
+    run_test test_liveness_ip4_to_proc_hex
+    run_test test_liveness_proc_net_tcp_matching_known_ip
+    run_test test_liveness_proc_net_tcp_ignores_non_established
+    run_test test_liveness_no_ips_returns_false
 
     # Integration tests
     run_test test_claude_exit_delay_agent_type_match
