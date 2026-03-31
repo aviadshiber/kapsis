@@ -58,6 +58,33 @@ readonly KAPSIS_DEFAULT_COMMIT_EXCLUDE=".gitignore
 **/.gitattributes"
 
 #===============================================================================
+# PUSH TIMEOUT (Issue #227)
+#
+# Maximum seconds to wait for git push/fetch before aborting.
+# Prevents indefinite hangs when credential helpers block on non-TTY contexts.
+# Override with KAPSIS_PUSH_TIMEOUT environment variable.
+#===============================================================================
+
+readonly KAPSIS_DEFAULT_PUSH_TIMEOUT=60
+
+#===============================================================================
+# EPHEMERAL ARTIFACT PATTERNS (Issue #227)
+#
+# Patterns for test/build artifacts that are NEVER legitimate to commit from
+# a sandbox run. These are filtered unconditionally (not user-overridable).
+# Applies to files detected inside common tool cache directories.
+#
+# Pattern semantics (same as KAPSIS_DEFAULT_COMMIT_EXCLUDE):
+#   **/<dir>/  — matches any file anywhere inside <dir>/ at any depth
+#   **/<file>  — matches <file> at any depth
+#===============================================================================
+
+readonly KAPSIS_DEFAULT_EPHEMERAL_PATTERNS="**/__pycache__/
+**/.pytest_cache/
+.coverage
+**/.coverage"
+
+#===============================================================================
 # NETWORK ISOLATION
 #
 # Default network mode for containers. Options: none, filtered, open
