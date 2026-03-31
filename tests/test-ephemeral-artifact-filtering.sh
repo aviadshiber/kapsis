@@ -23,7 +23,8 @@ TEST_REPO=""
 #===============================================================================
 
 setup_test_repo() {
-    TEST_REPO=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-test-ephem-XXXXXX")
+    local test_name="$1"
+    TEST_REPO=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-test-ephem-${test_name}-XXXXXX")
     cd "$TEST_REPO"
     git init --quiet
     git config user.email "test@kapsis.local"
@@ -32,6 +33,7 @@ setup_test_repo() {
     echo "# Test Project" > README.md
     git add README.md
     git commit --quiet -m "Initial commit"
+    echo "$TEST_REPO"
 }
 
 cleanup_test_repo() {
@@ -45,14 +47,17 @@ cleanup_test_repo() {
 
 test_push_timeout_constant_exists() {
     log_test "KAPSIS_DEFAULT_PUSH_TIMEOUT constant exists and is numeric"
+    # shellcheck disable=SC2016  # Single-quoted strings passed to assert_true are eval'd, not expanded here
     assert_true '[[ -n "${KAPSIS_DEFAULT_PUSH_TIMEOUT:-}" ]]' \
         "KAPSIS_DEFAULT_PUSH_TIMEOUT should be defined"
+    # shellcheck disable=SC2016  # Single-quoted strings passed to assert_true are eval'd, not expanded here
     assert_true '[[ "${KAPSIS_DEFAULT_PUSH_TIMEOUT}" =~ ^[0-9]+$ ]]' \
         "KAPSIS_DEFAULT_PUSH_TIMEOUT should be numeric"
 }
 
 test_ephemeral_patterns_constant_exists() {
     log_test "KAPSIS_DEFAULT_EPHEMERAL_PATTERNS constant exists and is non-empty"
+    # shellcheck disable=SC2016  # Single-quoted strings passed to assert_true are eval'd, not expanded here
     assert_true '[[ -n "${KAPSIS_DEFAULT_EPHEMERAL_PATTERNS:-}" ]]' \
         "KAPSIS_DEFAULT_EPHEMERAL_PATTERNS should be defined"
 }
