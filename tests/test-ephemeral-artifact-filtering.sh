@@ -227,7 +227,7 @@ test_post_container_git_only_ephemeral_is_not_failure() {
         "post_container_git should return 0 when only ephemeral changes exist"
 }
 
-test_push_timeout_is_applied() {
+test_push_timeout_constant_bounds() {
     log_test "Push timeout constant has a sane value (10-300 seconds)"
     # Behavioural hang test requires a blocking credential helper (out of scope for unit tests).
     # shellcheck disable=SC2016  # Single-quoted strings in assert_true are eval'd, not expanded here
@@ -253,7 +253,7 @@ main() {
     run_test test_legitimate_python_preserved
     run_test test_commit_changes_returns_2_when_only_ephemeral
     run_test test_post_container_git_only_ephemeral_is_not_failure
-    run_test test_push_timeout_is_applied
+    run_test test_push_timeout_constant_bounds
 
     print_summary
     return "$TESTS_FAILED"

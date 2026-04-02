@@ -482,6 +482,7 @@ verify_push() {
     fi
     log_debug "Local commit: $local_commit"
 
+    # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers (Issue #227).
     # Fetch latest from remote to ensure we have current state.
     local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
     if ! GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git fetch "$remote" "$branch" --quiet 2>/dev/null; then
@@ -547,7 +548,9 @@ push_changes() {
     # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers.
     # timeout guards against credential helper hangs (Issue #227).
     local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
-    if GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git push --set-upstream "$remote" "${branch}:${remote_branch}"; then
+    local _push_exit=0
+    GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git push --set-upstream "$remote" "${branch}:${remote_branch}" || _push_exit=$?
+    if [[ $_push_exit -eq 0 ]]; then
         log_success "Push command completed"
 
         # Verify the push actually succeeded
@@ -564,7 +567,12 @@ push_changes() {
             return 2  # Distinct exit code for verification failure
         fi
     else
-        log_error "Push failed"
+        if [[ $_push_exit -eq 124 ]]; then
+            log_error "Push timed out after ${_push_timeout}s — possible credential helper hang (Issue #227)"
+            log_warn "Set KAPSIS_PUSH_TIMEOUT env var to increase timeout (current: ${_push_timeout}s)"
+        else
+            log_error "Push failed"
+        fi
         status_set_push_info "failed" "$local_commit" ""
         # Set fallback command for agent recovery
         status_set_push_fallback "$worktree_path" "$remote" "$branch" "$remote_branch"
@@ -676,6 +684,7 @@ has_push_access() {
 
     cd "$worktree_path" || return 1
 
+    # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers (Issue #227).
     # Try a dry-run push to check access.
     local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
     if GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git push --dry-run "$remote" "$branch" 2>/dev/null; then
