@@ -6,15 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.16.6] - 2026-03-26
+## [2.16.8] - 2026-03-31
+
+### Changed
+- Bump github/codeql-action from 4.34.1 to 4.35.1 in the github-actions group (#228)
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
+
+### Fixed
+- Replace expired RELEASE_TOKEN PAT with GitHub App token in auto-release (#230)
+- Use RELEASE_TOKEN for checkout in auto-release workflow (#229)
+- Upgrade Node.js from 18.18.0 (EOL) to 24.14.1 LTS (#225)
+
+### Documentation
+- Update CLAUDE.md to reflect current codebase state (v2.16.6)
+
 
 ### Fixed
 - Address ensemble review findings for #221
 - Fast-fail on empty /workspace mount and harden GC safety (#221)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Changed
 - Bump the github-actions group with 2 updates
@@ -709,7 +722,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.6...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.8...HEAD
+[2.16.8]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.8
+[2.16.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.7
 [2.16.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.6
 [2.16.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.5
 [2.16.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.4
