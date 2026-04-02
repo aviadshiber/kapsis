@@ -29,7 +29,7 @@ ARG JAVA_VERSIONS='["17.0.14-zulu","8.0.422-zulu"]'
 ARG JAVA_DEFAULT="17.0.14-zulu"
 
 # Node.js configuration
-ARG NODE_VERSION=25.8.2
+ARG NODE_VERSION=24.14.1
 
 # Rust configuration
 ARG RUST_CHANNEL=stable
@@ -256,7 +256,7 @@ RUN if [ "$ENABLE_NODEJS" = "true" ]; then \
             nvm install '"$NODE_VERSION"' && \
             nvm alias default '"$NODE_VERSION"' && \
             nvm use default && \
-            npm install -g pnpm@10.33.0'; \
+            npm install -g pnpm@9.15.3'; \
     else \
         mkdir -p /opt/nvm; \
     fi

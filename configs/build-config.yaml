@@ -61,11 +61,11 @@ languages:
     enabled: true
     # Versions to install (first is primary)
     versions:
-      - "25.8.2"         # LTS
-    default_version: "25.8.2"
+      - "24.14.1"        # LTS
+    default_version: "24.14.1"
     # Package managers to install globally
     package_managers:
-      pnpm: "10.33.0"
+      pnpm: "9.15.3"
       # yarn: "latest"   # Uncomment to install yarn
 
   #-----------------------------------------------------------------------------
