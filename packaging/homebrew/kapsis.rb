@@ -26,6 +26,7 @@ class Kapsis < Formula
   depends_on "git"
   depends_on "jq"
   depends_on "yq"
+  depends_on "coreutils"  # provides `timeout` for push hang prevention
 
   # Podman is the container runtime - required but not a Homebrew dependency
   # Users must install it separately (brew install podman on macOS)
