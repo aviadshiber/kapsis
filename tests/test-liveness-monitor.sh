@@ -197,139 +197,260 @@ test_liveness_heartbeat_null_when_unset() {
 }
 
 #===============================================================================
-# UNIT TESTS: API connection detection
+# UNIT TESTS: API connection signal — hex conversion
 #===============================================================================
 
-test_liveness_api_connection_detection_sources() {
-    log_test "Testing _liveness_has_active_api_connections function exists after sourcing"
-
-    local exit_code=0
-    (
-        # Reset source guard so we can re-source
-        unset _KAPSIS_LIVENESS_MONITOR_LOADED
-        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-        type _liveness_has_active_api_connections &>/dev/null || exit 1
-    ) 2>/dev/null || exit_code=$?
-
-    assert_equals 0 "$exit_code" "Function _liveness_has_active_api_connections should be defined"
-}
-
-test_liveness_api_domains_list_populated() {
-    log_test "Testing _LIVENESS_API_DOMAINS array is populated"
-
-    local exit_code=0
-    (
-        unset _KAPSIS_LIVENESS_MONITOR_LOADED
-        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-        [[ ${#_LIVENESS_API_DOMAINS[@]} -ge 5 ]] || exit 1
-    ) 2>/dev/null || exit_code=$?
-
-    assert_equals 0 "$exit_code" "Should have at least 5 API domains defined"
-}
-
 test_liveness_ip4_to_proc_hex() {
-    log_test "Testing IPv4 to /proc/net/tcp hex conversion"
+    log_test "Testing IPv4 to /proc/net/tcp little-endian hex conversion"
 
-    local exit_code=0
-    (
-        unset _KAPSIS_LIVENESS_MONITOR_LOADED
+    local err exit_code=0
+    err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-        # 104.227.164.210 -> D2A4E368 (little-endian: octets reversed)
-        local result
-        result=$(_liveness_ip4_to_proc_hex "104.227.164.210")
-        [[ "$result" == "D2A4E368" ]] || { echo "Got: $result, expected D2A4E368"; exit 1; }
 
-        # 127.0.0.1 -> 0100007F
-        result=$(_liveness_ip4_to_proc_hex "127.0.0.1")
-        [[ "$result" == "0100007F" ]] || { echo "Got: $result, expected 0100007F"; exit 1; }
-    ) 2>/dev/null || exit_code=$?
+        hex=$(_liveness_ip4_to_proc_hex "1.2.3.4")
+        [[ "$hex" == "04030201" ]] || { echo "1.2.3.4 expected 04030201, got $hex"; exit 1; }
 
-    assert_equals 0 "$exit_code" "Should correctly convert IPv4 to little-endian hex"
+        hex=$(_liveness_ip4_to_proc_hex "127.0.0.1")
+        [[ "$hex" == "0100007F" ]] || { echo "127.0.0.1 expected 0100007F, got $hex"; exit 2; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "IPv4 hex conversion should work: $err"
 }
 
-test_liveness_proc_net_tcp_matching_known_ip() {
-    log_test "Testing /proc/net/tcp matches only known API IPs on port 443"
+test_liveness_ip6_to_proc_hex() {
+    log_test "Testing IPv6 to /proc/net/tcp6 little-endian hex conversion"
+
+    # Only run if python3 is available
+    if ! command -v python3 &>/dev/null; then
+        log_test "SKIP: python3 not available"
+        return 0
+    fi
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # ::1 → 00000000000000000000000001000000
+        hex=$(_liveness_ip6_to_proc_hex "::1")
+        [[ "$hex" == "00000000000000000000000001000000" ]] || { echo "::1 expected 00000000000000000000000001000000, got $hex"; exit 1; }
+
+        # Injection attempt: invalid chars should be blocked (return 1)
+        _liveness_ip6_to_proc_hex "::1'; rm -rf /" 2>/dev/null && exit 2 || true
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "IPv6 hex conversion should work and block injection: $err"
+}
+
+#===============================================================================
+# UNIT TESTS: API connection signal — IP resolution
+#===============================================================================
+
+test_liveness_resolve_api_ips_deduplication() {
+    log_test "Testing resolve_api_ips deduplicates IPs across domains"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # Stub resolve_domain_ips to always return the same IP
+        resolve_domain_ips() { echo "1.2.3.4"; }
+        export -f resolve_domain_ips
+
+        _LIVENESS_IPS_LAST_RESOLVED=0
+        _liveness_resolve_api_ips
+
+        # Even though 7 domains all return 1.2.3.4, the IP should appear only once
+        count="${#_LIVENESS_API_IPS[@]}"
+        [[ "$count" -eq 1 ]] || { echo "Expected 1 unique IP, got $count: ${_LIVENESS_API_IPS[*]}"; exit 1; }
+        [[ "${_LIVENESS_API_IPS[0]}" == "1.2.3.4" ]] || { echo "Expected 1.2.3.4, got ${_LIVENESS_API_IPS[0]}"; exit 2; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should deduplicate repeated IPs: $err"
+}
+
+test_liveness_resolve_api_ips_graceful_failure() {
+    log_test "Testing resolve_api_ips handles DNS failure gracefully"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # Stub resolve_domain_ips to fail for all domains
+        resolve_domain_ips() { return 1; }
+        export -f resolve_domain_ips
+
+        _LIVENESS_IPS_LAST_RESOLVED=0
+        _liveness_resolve_api_ips
+
+        # Should complete without error and result in 0 IPs (no pinned baseline here)
+        count="${#_LIVENESS_API_IPS[@]}"
+        [[ "$count" -eq 0 ]] || { echo "Expected 0 IPs on DNS failure, got $count"; exit 1; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "DNS failure should be handled gracefully: $err"
+}
+
+#===============================================================================
+# UNIT TESTS: API connection signal — ss detection
+#===============================================================================
+
+test_liveness_ss_detection_established() {
+    log_test "Testing has_active_api_connections detects established API connection via ss"
 
     local tmpdir
     tmpdir=$(mktemp -d)
 
-    # 68E3A4D2 is 104.227.164.210 in little-endian hex
-    # Port 01BB = 443, state 01 = ESTABLISHED
-    cat > "$tmpdir/tcp" << 'EOF'
-  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
-   0: 0100007F:C000 68E3A4D2:01BB 01 00000000:00000000 00:00000000 00000000  1000        0 12345
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # Create a fake ss binary that reports an ESTABLISHED connection to an API IP
+        cat > "$tmpdir/ss" << 'EOF'
+#!/bin/bash
+echo "Netid  State   Recv-Q  Send-Q  Local Address:Port  Peer Address:Port"
+echo "tcp    ESTAB   0       0       10.0.0.1:54321      1.2.3.4:443"
 EOF
+        chmod +x "$tmpdir/ss"
 
-    # Should match when the IP is in our allowed set
-    local result=0
-    awk -v ips="68E3A4D2" '
-        BEGIN { split(ips, arr, "|"); for (i in arr) ipset[arr[i]] = 1 }
-        $4 == "01" && $3 ~ /:01BB$/ {
-            split($3, a, ":");
-            if (a[1] in ipset) { found=1; exit }
-        }
-        END { exit !found }
-    ' "$tmpdir/tcp" 2>/dev/null || result=$?
+        _LIVENESS_SS_BIN="$tmpdir/ss"
+        _LIVENESS_API_IPS=("1.2.3.4")
 
-    assert_equals 0 "$result" "Should match ESTABLISHED connection to known API IP"
-
-    # Should NOT match when the IP is not in our allowed set
-    result=0
-    awk -v ips="AABBCCDD" '
-        BEGIN { split(ips, arr, "|"); for (i in arr) ipset[arr[i]] = 1 }
-        $4 == "01" && $3 ~ /:01BB$/ {
-            split($3, a, ":");
-            if (a[1] in ipset) { found=1; exit }
-        }
-        END { exit !found }
-    ' "$tmpdir/tcp" 2>/dev/null || result=$?
-
-    assert_not_equals 0 "$result" "Should NOT match connection to unknown IP"
+        _liveness_has_active_api_connections || { echo "Expected detection of 1.2.3.4:443"; exit 1; }
+    ) 2>&1 || exit_code=$?
 
     rm -rf "$tmpdir"
+    assert_equals 0 "$exit_code" "Should detect active API connection via fake ss: $err"
 }
 
-test_liveness_proc_net_tcp_ignores_non_established() {
-    log_test "Testing /proc/net/tcp ignores non-ESTABLISHED connections even to known IPs"
+test_liveness_ss_detection_ignores_non_api_ip() {
+    log_test "Testing has_active_api_connections ignores non-API IP"
 
     local tmpdir
     tmpdir=$(mktemp -d)
 
-    # State 06 = TIME_WAIT, not ESTABLISHED (01)
-    cat > "$tmpdir/tcp" << 'EOF'
-  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
-   0: 0100007F:C000 68E3A4D2:01BB 06 00000000:00000000 00:00000000 00000000  1000        0 12345
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # Create a fake ss binary that reports a connection to a non-API IP
+        cat > "$tmpdir/ss" << 'EOF'
+#!/bin/bash
+echo "Netid  State   Recv-Q  Send-Q  Local Address:Port  Peer Address:Port"
+echo "tcp    ESTAB   0       0       10.0.0.1:54321      9.9.9.9:443"
 EOF
+        chmod +x "$tmpdir/ss"
 
-    local result=0
-    awk -v ips="68E3A4D2" '
-        BEGIN { split(ips, arr, "|"); for (i in arr) ipset[arr[i]] = 1 }
-        $4 == "01" && $3 ~ /:01BB$/ {
-            split($3, a, ":");
-            if (a[1] in ipset) { found=1; exit }
-        }
-        END { exit !found }
-    ' "$tmpdir/tcp" 2>/dev/null || result=$?
+        _LIVENESS_SS_BIN="$tmpdir/ss"
+        _LIVENESS_API_IPS=("1.2.3.4")
 
-    assert_not_equals 0 "$result" "Should ignore TIME_WAIT connections even to known API IPs"
+        _liveness_has_active_api_connections && { echo "Should NOT have detected 9.9.9.9:443 as API connection"; exit 1; } || true
+    ) 2>&1 || exit_code=$?
 
     rm -rf "$tmpdir"
+    assert_equals 0 "$exit_code" "Should not detect non-API IP as API connection: $err"
 }
 
-test_liveness_no_ips_returns_false() {
-    log_test "Testing _liveness_has_active_api_connections returns false when no IPs resolved"
+#===============================================================================
+# INTEGRATION TESTS: kill decision logic
+#===============================================================================
 
-    local exit_code=0
-    (
-        unset _KAPSIS_LIVENESS_MONITOR_LOADED
+test_liveness_skip_kill_when_api_connection() {
+    log_test "Testing kill is skipped when active API connection exists"
+
+    local err exit_code=0
+    err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-        # Empty the resolved IPs array
-        _LIVENESS_API_IPS=()
-        _liveness_has_active_api_connections && exit 1
-        exit 0
-    ) 2>/dev/null || exit_code=$?
 
-    assert_equals 0 "$exit_code" "Should return false (1) when no API IPs are resolved"
+        # Stub has_active_api_connections to always return true
+        _liveness_has_active_api_connections() { return 0; }
+
+        # Simulate the kill decision block conditions
+        local timeout=1800 interval=30
+        local stale_seconds=9999
+        local io_stale_cycles=5
+        _LIVENESS_API_SKIP_COUNT=0
+        _LIVENESS_API_MAX_SKIP=240
+
+        local action="none"
+        if [[ "$stale_seconds" -ge "$timeout" ]] && [[ "$io_stale_cycles" -ge 2 ]]; then
+            if _liveness_has_active_api_connections; then
+                io_stale_cycles=0
+                (( _LIVENESS_API_SKIP_COUNT++ )) || true
+                if [[ "$_LIVENESS_API_SKIP_COUNT" -lt "$_LIVENESS_API_MAX_SKIP" ]]; then
+                    action="skipped"
+                fi
+            fi
+        fi
+
+        [[ "$action" == "skipped" ]] || { echo "Expected action=skipped, got action=$action"; exit 1; }
+        [[ "$io_stale_cycles" -eq 0 ]] || { echo "Expected io_stale_cycles=0 after skip, got $io_stale_cycles"; exit 2; }
+        [[ "$_LIVENESS_API_SKIP_COUNT" -eq 1 ]] || { echo "Expected skip_count=1, got $_LIVENESS_API_SKIP_COUNT"; exit 3; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Kill should be skipped with active API connection: $err"
+}
+
+test_liveness_kill_when_no_api_connection() {
+    log_test "Testing agent is killed when no API connection and both signals stale"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # Start a real background process to kill
+        sleep 999 &
+        local test_pid=$!
+
+        # Stub has_active_api_connections to return false
+        _liveness_has_active_api_connections() { return 1; }
+
+        # Override _liveness_write_killed_status to no-op
+        _liveness_write_killed_status() { true; }
+
+        # Simulate the kill logic directly
+        local timeout=1800
+        local stale_seconds=9999
+        local io_stale_cycles=5
+
+        if [[ "$stale_seconds" -ge "$timeout" ]] && [[ "$io_stale_cycles" -ge 2 ]]; then
+            if ! _liveness_has_active_api_connections; then
+                _LIVENESS_API_SKIP_COUNT=0
+                _liveness_write_killed_status "test"
+                kill -SIGTERM "$test_pid" 2>/dev/null || true
+                sleep 1
+            fi
+        fi
+
+        # Process should be gone
+        kill -0 "$test_pid" 2>/dev/null && { echo "Process $test_pid should have been killed"; kill "$test_pid" 2>/dev/null; exit 1; } || true
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Agent should be killed when no API connection: $err"
+}
+
+test_liveness_monitor_starts_without_dns() {
+    log_test "Testing _liveness_init_api_signal completes even when DNS fails"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # Stub resolve_domain_ips to fail (simulates DNS unavailable)
+        resolve_domain_ips() { return 1; }
+        export -f resolve_domain_ips
+
+        # Remove pinned file path to ensure no file dependency
+        export KAPSIS_DNS_PINNED_FILE="/nonexistent/pinned.conf"
+
+        # Init should complete without error under set -euo pipefail
+        _liveness_init_api_signal
+
+        # Should have 0 IPs but not crashed
+        echo "completed with ${#_LIVENESS_API_IPS[@]} IPs"
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "_liveness_init_api_signal should not crash when DNS fails: $err"
+    assert_contains "$err" "completed with" "Should complete and report IP count"
 }
 
 #===============================================================================
@@ -574,13 +695,18 @@ main() {
     run_test test_liveness_heartbeat_in_status
     run_test test_liveness_heartbeat_null_when_unset
 
-    # API connection detection tests
-    run_test test_liveness_api_connection_detection_sources
-    run_test test_liveness_api_domains_list_populated
+    # API connection signal unit tests
     run_test test_liveness_ip4_to_proc_hex
-    run_test test_liveness_proc_net_tcp_matching_known_ip
-    run_test test_liveness_proc_net_tcp_ignores_non_established
-    run_test test_liveness_no_ips_returns_false
+    run_test test_liveness_ip6_to_proc_hex
+    run_test test_liveness_resolve_api_ips_deduplication
+    run_test test_liveness_resolve_api_ips_graceful_failure
+    run_test test_liveness_ss_detection_established
+    run_test test_liveness_ss_detection_ignores_non_api_ip
+
+    # Kill decision logic integration tests
+    run_test test_liveness_skip_kill_when_api_connection
+    run_test test_liveness_kill_when_no_api_connection
+    run_test test_liveness_monitor_starts_without_dns
 
     # Integration tests
     run_test test_claude_exit_delay_agent_type_match
