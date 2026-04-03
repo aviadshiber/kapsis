@@ -418,8 +418,8 @@ test_liveness_kill_when_no_api_connection() {
                 _liveness_write_killed_status "test"
                 kill -SIGTERM "$test_pid" 2>/dev/null || true
                 # Wait up to 5s for process to die (CI environments can be slow)
-                local i
-                for i in 1 2 3 4 5; do
+                local _wait
+                for _wait in 1 2 3 4 5; do
                     kill -0 "$test_pid" 2>/dev/null || break
                     sleep 1
                 done
