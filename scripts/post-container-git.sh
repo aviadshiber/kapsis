@@ -44,6 +44,34 @@ source "$POST_GIT_SCRIPT_DIR/lib/sanitize-files.sh"
 # Note: git remote utilities are provided by lib/git-remote-utils.sh
 
 #===============================================================================
+# PATTERN TO REGEX HELPER
+#
+# Converts a gitignore-style pattern to a grep -E compatible regex.
+# Supports three forms:
+#   **/<dir>/   — matches any file inside <dir>/ at any depth
+#   **/<file>   — matches <file> at any depth
+#   <file>      — exact match at root only
+#===============================================================================
+_pattern_to_regex() {
+    local p="$1"
+    if [[ "$p" == "**/"*"/" ]]; then
+        # Directory-prefix: **/__pycache__/ matches src/__pycache__/foo.pyc
+        local dir_name="${p#\*\*/}"
+        dir_name="${dir_name%/}"
+        # Escape literal dots so they don't match any character in grep -E
+        local escaped_dir="${dir_name//./\\.}"
+        echo "(^|/)${escaped_dir}/"
+    elif [[ "$p" == "**/"* ]]; then
+        local base="${p#\*\*/}"
+        local escaped_base="${base//./\\.}"
+        echo "(^|/)${escaped_base}$"
+    else
+        local escaped_p="${p//./\\.}"
+        echo "^${escaped_p}$"
+    fi
+}
+
+#===============================================================================
 # VALIDATE AND CLEAN STAGED FILES
 #
 # Checks for suspicious files that should never be committed and removes them
@@ -51,6 +79,7 @@ source "$POST_GIT_SCRIPT_DIR/lib/sanitize-files.sh"
 # - Literal ~ paths (tilde not expanded, creates directory named "~")
 # - .kapsis/ internal files
 # - Submodule references (mode 160000) that weren't intentional
+# - Ephemeral artifact files (e.g. __pycache__, .pytest_cache, .coverage)
 # - Files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
 #
 # The KAPSIS_COMMIT_EXCLUDE patterns provide user-configurable exclusions
@@ -108,45 +137,52 @@ validate_staged_files() {
         has_issues=1
     fi
 
+    # Pre-compute staged file list for pattern checks below
+    local staged_files
+    staged_files=$(git diff --cached --name-only 2>/dev/null || true)
+
+    # --- Ephemeral artifact patterns (built-in, non-overridable) ---
+    # These are test/build artifacts that are never legitimate to commit.
+    local ephemeral_patterns="${KAPSIS_DEFAULT_EPHEMERAL_PATTERNS:-}"
+    if [[ -n "$ephemeral_patterns" ]] && [[ -n "$staged_files" ]]; then
+        while IFS= read -r pattern; do
+            [[ -z "$pattern" ]] && continue
+            local regex_pattern
+            regex_pattern="$(_pattern_to_regex "$pattern")"
+            local matched_files
+            matched_files=$(echo "$staged_files" | grep -E "$regex_pattern" 2>/dev/null || true)
+            if [[ -n "$matched_files" ]]; then
+                log_info "Found ephemeral artifact files matching '$pattern':"
+                while IFS= read -r f; do
+                    [[ -z "$f" ]] && continue
+                    log_info "  - $f (ephemeral artifact)"
+                    suspicious_files+=("$f")
+                done <<< "$matched_files"
+                has_issues=1
+            fi
+        done <<< "$ephemeral_patterns"
+    fi
+
     # Check for files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
     # This prevents committing files like .gitignore that were modified by Kapsis
     local exclude_patterns="${KAPSIS_COMMIT_EXCLUDE:-$KAPSIS_DEFAULT_COMMIT_EXCLUDE}"
-    if [[ -n "$exclude_patterns" ]]; then
-        local staged_files
-        staged_files=$(git diff --cached --name-only 2>/dev/null || true)
-
-        if [[ -n "$staged_files" ]]; then
-            while IFS= read -r pattern; do
-                [[ -z "$pattern" ]] && continue
-                # Match staged files against pattern
-                # Handle ** glob patterns by converting to regex-compatible form
-                local regex_pattern
-                # Convert gitignore pattern to grep pattern:
-                # - ** matches any path segment(s)
-                # - * matches any characters except /
-                # - Anchor to line start/end for exact matches
-                if [[ "$pattern" == "**/"* ]]; then
-                    # Pattern like **/.gitignore matches at any depth
-                    local base_pattern="${pattern#\*\*/}"
-                    regex_pattern="(^|/)${base_pattern}$"
-                else
-                    # Exact match at root
-                    regex_pattern="^${pattern}$"
-                fi
-
-                local matched_files
-                matched_files=$(echo "$staged_files" | grep -E "$regex_pattern" 2>/dev/null || true)
-                if [[ -n "$matched_files" ]]; then
-                    log_info "Found staged files matching exclude pattern '$pattern':"
-                    while IFS= read -r f; do
-                        [[ -z "$f" ]] && continue
-                        log_info "  - $f (excluded by KAPSIS_COMMIT_EXCLUDE)"
-                        suspicious_files+=("$f")
-                    done <<< "$matched_files"
-                    has_issues=1
-                fi
-            done <<< "$exclude_patterns"
-        fi
+    if [[ -n "$exclude_patterns" ]] && [[ -n "$staged_files" ]]; then
+        while IFS= read -r pattern; do
+            [[ -z "$pattern" ]] && continue
+            local regex_pattern
+            regex_pattern="$(_pattern_to_regex "$pattern")"
+            local matched_files
+            matched_files=$(echo "$staged_files" | grep -E "$regex_pattern" 2>/dev/null || true)
+            if [[ -n "$matched_files" ]]; then
+                log_info "Found staged files matching exclude pattern '$pattern':"
+                while IFS= read -r f; do
+                    [[ -z "$f" ]] && continue
+                    log_info "  - $f (excluded by KAPSIS_COMMIT_EXCLUDE)"
+                    suspicious_files+=("$f")
+                done <<< "$matched_files"
+                has_issues=1
+            fi
+        done <<< "$exclude_patterns"
     fi
 
     # If issues found, unstage the suspicious files
@@ -352,10 +388,11 @@ commit_changes() {
         log_info "After sanitization: $post_sanitize_count file(s) staged (was $post_validate_count)"
     fi
 
-    # Final guard: don't attempt commit if nothing staged
+    # Final guard: don't attempt commit if nothing staged after filtering.
+    # Return code 2 (not 1) to signal "ephemeral-only" — not an error, just skip.
     if [[ "$post_sanitize_count" -eq 0 ]]; then
-        log_warn "No files staged after validation and sanitization — nothing to commit"
-        return 1
+        log_info "No files staged after validation and sanitization — all changes were ephemeral artifacts"
+        return 2
     fi
 
     # Show what's being committed
@@ -445,8 +482,10 @@ verify_push() {
     fi
     log_debug "Local commit: $local_commit"
 
-    # Fetch latest from remote to ensure we have current state
-    if ! git fetch "$remote" "$branch" --quiet 2>/dev/null; then
+    # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers (Issue #227).
+    # Fetch latest from remote to ensure we have current state.
+    local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
+    if ! GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git fetch "$remote" "$branch" --quiet 2>/dev/null; then
         log_warn "Could not fetch from remote for verification"
         # Don't fail - the push might have worked even if fetch fails
         status_set_push_info "unverified" "$local_commit" ""
@@ -505,8 +544,13 @@ push_changes() {
     local local_commit
     local_commit=$(git rev-parse HEAD 2>/dev/null)
 
-    # Use refspec to push local branch to (potentially different) remote branch
-    if git push --set-upstream "$remote" "${branch}:${remote_branch}"; then
+    # Use refspec to push local branch to (potentially different) remote branch.
+    # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers.
+    # timeout guards against credential helper hangs (Issue #227).
+    local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
+    local _push_exit=0
+    GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git push --set-upstream "$remote" "${branch}:${remote_branch}" || _push_exit=$?
+    if [[ $_push_exit -eq 0 ]]; then
         log_success "Push command completed"
 
         # Verify the push actually succeeded
@@ -523,7 +567,12 @@ push_changes() {
             return 2  # Distinct exit code for verification failure
         fi
     else
-        log_error "Push failed"
+        if [[ $_push_exit -eq 124 ]]; then
+            log_error "Push timed out after ${_push_timeout}s — possible credential helper hang (Issue #227)"
+            log_warn "Set KAPSIS_PUSH_TIMEOUT env var to increase timeout (current: ${_push_timeout}s)"
+        else
+            log_error "Push failed"
+        fi
         status_set_push_info "failed" "$local_commit" ""
         # Set fallback command for agent recovery
         status_set_push_fallback "$worktree_path" "$remote" "$branch" "$remote_branch"
@@ -635,8 +684,10 @@ has_push_access() {
 
     cd "$worktree_path" || return 1
 
-    # Try a dry-run push to check access
-    if git push --dry-run "$remote" "$branch" 2>/dev/null; then
+    # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers (Issue #227).
+    # Try a dry-run push to check access.
+    local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
+    if GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git push --dry-run "$remote" "$branch" 2>/dev/null; then
         return 0
     else
         return 1
@@ -796,7 +847,20 @@ post_container_git() {
 
     # Commit changes
     log_debug "Committing changes..."
-    if ! commit_changes "$worktree_path" "$commit_message" "$agent_id" "$co_authors"; then
+    local _commit_rc
+    _commit_rc=0
+    # shellcheck disable=SC2034  # false positive: _commit_rc IS used below
+    commit_changes "$worktree_path" "$commit_message" "$agent_id" "$co_authors" || _commit_rc=$?
+
+    if [[ $_commit_rc -eq 2 ]]; then
+        # All staged files were ephemeral artifacts — treat as "no changes"
+        log_info "No substantive changes to commit (only ephemeral artifacts filtered)"
+        local current_sha
+        current_sha=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "")
+        status_set_commit_info "no_changes" "$current_sha" "0"
+        log_success "Post-container git operations complete (no substantive changes)"
+        return 0
+    elif [[ $_commit_rc -ne 0 ]]; then
         log_warn "Commit failed"
         status_set_commit_info "failed" "" "0"
         return 1
