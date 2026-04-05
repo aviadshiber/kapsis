@@ -6,14 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.16.9] - 2026-04-03
+## [2.16.10] - 2026-04-05
 
 ### Fixed
-- Prevent spurious commits of test artifacts and git push hangs (#227) (#233)
+- Use retry loop in kill test to fix CI flakiness (#234)
+- Prevent liveness monitor from killing agents waiting on API responses (#232)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Prevent spurious commits of test artifacts and git push hangs (#227) (#233)
+
 
 ### Changed
 - Bump github/codeql-action from 4.34.1 to 4.35.1 in the github-actions group (#228)
@@ -726,7 +731,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.9...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.10...HEAD
+[2.16.10]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.10
 [2.16.9]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.9
 [2.16.8]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.8
 [2.16.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.7
