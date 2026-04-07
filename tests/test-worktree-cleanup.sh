@@ -386,6 +386,52 @@ test_cleanup_worktree_with_branch_deletion() {
     return 0
 }
 
+test_cleanup_worktrees_flag_accepted() {
+    log_test "Testing --worktrees flag is accepted by kapsis-cleanup.sh (Fix #220)"
+
+    local cleanup_script="$KAPSIS_ROOT/scripts/kapsis-cleanup.sh"
+    local content
+    content=$(cat "$cleanup_script")
+
+    # Verify the flag is handled in the arg parser
+    assert_contains "$content" "--worktrees)" "Arg parser should handle --worktrees"
+    assert_contains "$content" "CLEAN_WORKTREES=true" "Should set CLEAN_WORKTREES=true"
+
+    # Verify --worktrees --dry-run does NOT print "Unknown option"
+    local output
+    local exit_code=0
+    output=$("$cleanup_script" --worktrees --dry-run 2>&1) || exit_code=$?
+
+    assert_equals "0" "$exit_code" "--worktrees should not cause exit 1"
+
+    if echo "$output" | grep -q "Unknown option"; then
+        log_fail "--worktrees should not trigger 'Unknown option' error"
+        return 1
+    fi
+
+    return 0
+}
+
+test_cleanup_volumes_and_worktrees_combined() {
+    log_test "Testing --volumes --worktrees combined flags work (Fix #220)"
+
+    local cleanup_script="$KAPSIS_ROOT/scripts/kapsis-cleanup.sh"
+
+    # This is the exact reproduction case from issue #220
+    local exit_code=0
+    local output
+    output=$("$cleanup_script" --volumes --worktrees --dry-run 2>&1) || exit_code=$?
+
+    assert_equals "0" "$exit_code" "--volumes --worktrees should not cause exit 1"
+
+    if echo "$output" | grep -q "Unknown option"; then
+        log_fail "--volumes --worktrees should not trigger 'Unknown option' error"
+        return 1
+    fi
+
+    return 0
+}
+
 test_cleanup_config_env_override() {
     log_test "Testing environment variables override default constants"
 
@@ -446,6 +492,8 @@ main() {
     run_test test_gc_age_preserves_recent_worktrees
     run_test test_gc_age_zero_disables
     run_test test_cleanup_worktree_with_branch_deletion
+    run_test test_cleanup_worktrees_flag_accepted
+    run_test test_cleanup_volumes_and_worktrees_combined
     run_test test_cleanup_config_env_override
 
     # Cleanup

@@ -47,6 +47,7 @@ CLEAN_ALL=false
 CLEAN_VOLUMES=false
 CLEAN_IMAGES=false
 CLEAN_BRANCHES=false
+CLEAN_WORKTREES=false
 PROJECT_FILTER=""
 AGENT_FILTER=""
 
@@ -80,6 +81,7 @@ OPTIONS:
     --logs              Clean log files older than 7 days
     --ssh-cache         Clear cached SSH host keys from keychain
     --branches          Clean stale agent branches (requires --project)
+    --worktrees         Clean git worktrees (included by default, explicit for scripting)
     --force, -f         Skip confirmation prompts
     --help, -h          Show this help message
 
@@ -932,6 +934,10 @@ main() {
                 ;;
             --branches)
                 CLEAN_BRANCHES=true
+                shift
+                ;;
+            --worktrees)
+                CLEAN_WORKTREES=true
                 shift
                 ;;
             --project)
