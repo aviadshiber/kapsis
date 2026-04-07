@@ -241,9 +241,11 @@ inject_gist_instructions() {
 
     # Only inject if gist instructions file exists
     if [[ ! -f "$gist_instructions" ]]; then
-        log_debug "Gist instructions not found: $gist_instructions"
+        log_warn "Gist instructions file not found: $gist_instructions — gist feature will not work"
         return 0
     fi
+
+    log_info "Injecting gist instructions (workspace: $workspace)"
 
     local marker="Kapsis Activity Gist"
     local injected=false

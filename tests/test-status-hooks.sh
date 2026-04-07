@@ -582,6 +582,122 @@ test_inject_skips_without_agent_id() {
     cleanup_inject_test_env
 }
 
+#===============================================================================
+# Test: Gist Injection (inject_gist_instructions)
+#===============================================================================
+
+test_inject_gist_when_enabled() {
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-gist-1"
+    export KAPSIS_INJECT_GIST="true"
+
+    # Create a mock workspace with CLAUDE.md and AGENTS.md
+    local workspace
+    workspace=$(mktemp -d)
+    export KAPSIS_WORKSPACE="$workspace"
+    echo "# Project" > "$workspace/CLAUDE.md"
+    echo "# Agents" > "$workspace/AGENTS.md"
+
+    # Run injection
+    source "$LIB_DIR/inject-status-hooks.sh"
+    inject_gist_instructions >/dev/null 2>&1
+
+    # Verify .kapsis directory was created
+    assert_true "[[ -d '$workspace/.kapsis' ]]" ".kapsis directory should be created"
+
+    # Verify CLAUDE.md has gist instructions
+    assert_contains "$(cat "$workspace/CLAUDE.md")" "Kapsis Activity Gist" "CLAUDE.md should contain gist instructions"
+
+    # Verify AGENTS.md has gist instructions
+    assert_contains "$(cat "$workspace/AGENTS.md")" "Kapsis Activity Gist" "AGENTS.md should contain gist instructions"
+
+    # Verify .kapsis/README.md fallback was created
+    assert_file_exists "$workspace/.kapsis/README.md" ".kapsis/README.md should be created as fallback"
+
+    rm -rf "$workspace"
+    cleanup_inject_test_env
+}
+
+test_inject_gist_when_disabled() {
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-gist-2"
+    unset KAPSIS_INJECT_GIST
+
+    local workspace
+    workspace=$(mktemp -d)
+    export KAPSIS_WORKSPACE="$workspace"
+    echo "# Project" > "$workspace/CLAUDE.md"
+
+    # Run injection (default: disabled)
+    source "$LIB_DIR/inject-status-hooks.sh"
+    inject_gist_instructions >/dev/null 2>&1
+
+    # Verify .kapsis directory was NOT created
+    assert_false "[[ -d '$workspace/.kapsis' ]]" ".kapsis directory should not be created when disabled"
+
+    # Verify CLAUDE.md was NOT modified
+    local content
+    content=$(cat "$workspace/CLAUDE.md")
+    assert_equals "# Project" "$content" "CLAUDE.md should be unchanged when gist disabled"
+
+    rm -rf "$workspace"
+    cleanup_inject_test_env
+}
+
+test_inject_gist_idempotent() {
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-gist-3"
+    export KAPSIS_INJECT_GIST="true"
+
+    local workspace
+    workspace=$(mktemp -d)
+    export KAPSIS_WORKSPACE="$workspace"
+    echo "# Project" > "$workspace/CLAUDE.md"
+
+    # Run injection twice
+    source "$LIB_DIR/inject-status-hooks.sh"
+    inject_gist_instructions >/dev/null 2>&1
+    inject_gist_instructions >/dev/null 2>&1
+
+    # Verify gist instructions appear only once in CLAUDE.md
+    local gist_count
+    gist_count=$(grep -c "Kapsis Activity Gist" "$workspace/CLAUDE.md" || echo "0")
+    assert_equals "1" "$gist_count" "Gist instructions should appear exactly once after double injection"
+
+    rm -rf "$workspace"
+    cleanup_inject_test_env
+}
+
+test_inject_gist_missing_instructions_file() {
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-gist-4"
+    export KAPSIS_INJECT_GIST="true"
+
+    local workspace
+    workspace=$(mktemp -d)
+    export KAPSIS_WORKSPACE="$workspace"
+    # Point to a non-existent lib directory
+    export KAPSIS_LIB="/tmp/nonexistent-kapsis-lib"
+
+    echo "# Project" > "$workspace/CLAUDE.md"
+
+    # Run injection — should warn but not fail
+    source "$LIB_DIR/inject-status-hooks.sh"
+    local stderr_output
+    stderr_output=$(inject_gist_instructions 2>&1 >/dev/null)
+
+    # Verify .kapsis directory IS created (happens before instructions check)
+    assert_true "[[ -d '$workspace/.kapsis' ]]" ".kapsis directory should still be created"
+
+    # Verify CLAUDE.md was NOT modified (no instructions to inject)
+    local content
+    content=$(cat "$workspace/CLAUDE.md")
+    assert_equals "# Project" "$content" "CLAUDE.md should be unchanged when instructions missing"
+
+    rm -rf "$workspace"
+    cleanup_inject_test_env
+}
+
 test_inject_hook_path_uses_kapsis_home() {
     setup_inject_test_env
     export KAPSIS_STATUS_AGENT_ID="test-agent-10"
@@ -733,6 +849,12 @@ run_tests() {
     run_test test_inject_gemini_idempotent
     run_test test_inject_skips_without_agent_id
     run_test test_inject_hook_path_uses_kapsis_home
+
+    log_info "=== Gist Injection ==="
+    run_test test_inject_gist_when_enabled
+    run_test test_inject_gist_when_disabled
+    run_test test_inject_gist_idempotent
+    run_test test_inject_gist_missing_instructions_file
 
     log_info "=== Agent Type Inference ==="
     run_test test_agent_type_inference_from_image_name

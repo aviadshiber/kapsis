@@ -150,6 +150,14 @@ YAML
         value: "${AGENT_ID}"
       - name: KAPSIS_AGENT_TYPE
         value: "${AGENT_NAME}"
+      - name: KAPSIS_STATUS_PROJECT
+        value: "${KAPSIS_STATUS_PROJECT:-}"
+      - name: KAPSIS_STATUS_AGENT_ID
+        value: "${AGENT_ID}"
+      - name: KAPSIS_STATUS_BRANCH
+        value: "${BRANCH:-}"
+      - name: KAPSIS_INJECT_GIST
+        value: "${INJECT_GIST:-false}"
 YAML
 
     # Audit environment variables (if enabled)
