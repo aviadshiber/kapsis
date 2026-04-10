@@ -354,36 +354,55 @@ EOF
 # INTEGRATION TESTS: kill decision logic
 #===============================================================================
 
+test_liveness_should_kill_not_stale() {
+    log_test "Testing _liveness_should_kill returns 1 when stale_seconds < timeout"
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_has_active_api_connections() { return 1; }
+        _liveness_log() { true; }
+
+        local cycles=5
+        _liveness_should_kill 100 1800 cycles && exit 1 || true
+    )
+    assert_equals 0 $? "Should not kill when stale_seconds < timeout"
+}
+
+test_liveness_should_kill_io_active() {
+    log_test "Testing _liveness_should_kill returns 1 when I/O stale cycles < 2"
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_has_active_api_connections() { return 1; }
+        _liveness_log() { true; }
+
+        local cycles=1
+        _liveness_should_kill 9999 1800 cycles && exit 1 || true
+    )
+    assert_equals 0 $? "Should not kill when io_stale_cycles < 2"
+}
+
 test_liveness_skip_kill_when_api_connection() {
-    log_test "Testing kill is skipped when active API connection exists"
+    log_test "Testing _liveness_should_kill spares agent when API connection active"
 
     local err exit_code=0
     err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-
-        # Stub has_active_api_connections to always return true
         _liveness_has_active_api_connections() { return 0; }
+        _liveness_log() { true; }
 
-        # Simulate the kill decision block conditions
-        local timeout=1800 interval=30
-        local stale_seconds=9999
-        local io_stale_cycles=5
         _LIVENESS_API_SKIP_COUNT=0
         _LIVENESS_API_MAX_SKIP=240
 
-        local action="none"
-        if [[ "$stale_seconds" -ge "$timeout" ]] && [[ "$io_stale_cycles" -ge 2 ]]; then
-            if _liveness_has_active_api_connections; then
-                io_stale_cycles=0
-                (( _LIVENESS_API_SKIP_COUNT++ )) || true
-                if [[ "$_LIVENESS_API_SKIP_COUNT" -lt "$_LIVENESS_API_MAX_SKIP" ]]; then
-                    action="skipped"
-                fi
-            fi
+        local cycles=5
+        if _liveness_should_kill 9999 1800 cycles; then
+            echo "ERROR: should_kill returned 0 (kill) but API is active"
+            exit 1
         fi
 
-        [[ "$action" == "skipped" ]] || { echo "Expected action=skipped, got action=$action"; exit 1; }
-        [[ "$io_stale_cycles" -eq 0 ]] || { echo "Expected io_stale_cycles=0 after skip, got $io_stale_cycles"; exit 2; }
+        # io_stale_cycles should be reset to 0
+        [[ "$cycles" -eq 0 ]] || { echo "Expected cycles=0, got $cycles"; exit 2; }
+        # skip count should be incremented
         [[ "$_LIVENESS_API_SKIP_COUNT" -eq 1 ]] || { echo "Expected skip_count=1, got $_LIVENESS_API_SKIP_COUNT"; exit 3; }
     ) 2>&1 || exit_code=$?
 
@@ -391,49 +410,54 @@ test_liveness_skip_kill_when_api_connection() {
 }
 
 test_liveness_kill_when_no_api_connection() {
-    log_test "Testing agent is killed when no API connection and both signals stale"
+    log_test "Testing _liveness_should_kill triggers kill when no API and all stale"
 
     local err exit_code=0
     err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-
-        # Start a real background process to kill
-        sleep 999 &
-        local test_pid=$!
-
-        # Stub has_active_api_connections to return false
         _liveness_has_active_api_connections() { return 1; }
+        _liveness_log() { true; }
 
-        # Override _liveness_write_killed_status to no-op
-        _liveness_write_killed_status() { true; }
+        _LIVENESS_API_SKIP_COUNT=0
 
-        # Simulate the kill logic directly
-        local timeout=1800
-        local stale_seconds=9999
-        local io_stale_cycles=5
-
-        if [[ "$stale_seconds" -ge "$timeout" ]] && [[ "$io_stale_cycles" -ge 2 ]]; then
-            if ! _liveness_has_active_api_connections; then
-                _LIVENESS_API_SKIP_COUNT=0
-                _liveness_write_killed_status "test"
-                kill -SIGTERM "$test_pid" 2>/dev/null || true
-                # Wait up to 5s for process to die (CI environments can be slow)
-                local _wait
-                for _wait in 1 2 3 4 5; do
-                    kill -0 "$test_pid" 2>/dev/null || break
-                    sleep 1
-                done
-                # Force kill if SIGTERM wasn't enough (defensive for slow CI)
-                kill -SIGKILL "$test_pid" 2>/dev/null || true
-                wait "$test_pid" 2>/dev/null || true
-            fi
+        local cycles=5
+        if ! _liveness_should_kill 9999 1800 cycles; then
+            echo "ERROR: should_kill returned 1 (spare) but no API and all stale"
+            exit 1
         fi
 
-        # Process should be gone
-        kill -0 "$test_pid" 2>/dev/null && { echo "Process $test_pid should have been killed"; kill "$test_pid" 2>/dev/null; exit 1; } || true
+        # skip count should be reset to 0
+        [[ "$_LIVENESS_API_SKIP_COUNT" -eq 0 ]] || { echo "Expected skip_count=0, got $_LIVENESS_API_SKIP_COUNT"; exit 2; }
     ) 2>&1 || exit_code=$?
 
     assert_equals 0 "$exit_code" "Agent should be killed when no API connection: $err"
+}
+
+test_liveness_kill_when_api_skip_cap_exceeded() {
+    log_test "Testing _liveness_should_kill triggers kill when API skip cap exceeded"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_has_active_api_connections() { return 0; }
+        _liveness_log() { true; }
+
+        _LIVENESS_API_MAX_SKIP=3
+        _LIVENESS_API_SKIP_COUNT=2  # one more will hit the cap
+
+        local cycles=5
+        if ! _liveness_should_kill 9999 1800 cycles; then
+            echo "ERROR: should_kill returned 1 (spare) but skip cap should be exceeded"
+            exit 1
+        fi
+
+        # io_stale_cycles should be restored to original value
+        [[ "$cycles" -eq 5 ]] || { echo "Expected cycles=5 (restored), got $cycles"; exit 2; }
+        # skip count should be reset after cap exceeded
+        [[ "$_LIVENESS_API_SKIP_COUNT" -eq 0 ]] || { echo "Expected skip_count=0, got $_LIVENESS_API_SKIP_COUNT"; exit 3; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Agent should be killed when API skip cap exceeded: $err"
 }
 
 test_liveness_monitor_starts_without_dns() {
@@ -711,9 +735,12 @@ main() {
     run_test test_liveness_ss_detection_established
     run_test test_liveness_ss_detection_ignores_non_api_ip
 
-    # Kill decision logic integration tests
+    # Kill decision logic unit tests
+    run_test test_liveness_should_kill_not_stale
+    run_test test_liveness_should_kill_io_active
     run_test test_liveness_skip_kill_when_api_connection
     run_test test_liveness_kill_when_no_api_connection
+    run_test test_liveness_kill_when_api_skip_cap_exceeded
     run_test test_liveness_monitor_starts_without_dns
 
     # Integration tests
