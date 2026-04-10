@@ -686,6 +686,9 @@ test_inject_gist_missing_instructions_file() {
     local stderr_output
     stderr_output=$(inject_gist_instructions 2>&1 >/dev/null)
 
+    # Verify warning was logged about missing file
+    assert_contains "$stderr_output" "not found" "Should warn about missing gist instructions file"
+
     # Verify .kapsis directory IS created (happens before instructions check)
     assert_true "[[ -d '$workspace/.kapsis' ]]" ".kapsis directory should still be created"
 

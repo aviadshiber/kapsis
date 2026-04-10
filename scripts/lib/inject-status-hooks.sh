@@ -237,7 +237,10 @@ inject_gist_instructions() {
     local gist_instructions="${KAPSIS_LIB:-/opt/kapsis/lib}/gist-instructions.md"
 
     # Create .kapsis directory in workspace (where gist.txt will be written)
-    mkdir -p "$kapsis_dir"
+    if ! mkdir -p "$kapsis_dir" 2>/dev/null; then
+        log_warn "Could not create $kapsis_dir -- skipping gist injection"
+        return 0
+    fi
 
     # Only inject if gist instructions file exists
     if [[ ! -f "$gist_instructions" ]]; then
