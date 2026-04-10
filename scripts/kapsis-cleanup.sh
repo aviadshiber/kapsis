@@ -47,7 +47,6 @@ CLEAN_ALL=false
 CLEAN_VOLUMES=false
 CLEAN_IMAGES=false
 CLEAN_BRANCHES=false
-CLEAN_WORKTREES=false
 PROJECT_FILTER=""
 AGENT_FILTER=""
 
@@ -937,7 +936,6 @@ main() {
                 shift
                 ;;
             --worktrees)
-                CLEAN_WORKTREES=true
                 shift
                 ;;
             --project)
