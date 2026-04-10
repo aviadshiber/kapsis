@@ -423,6 +423,9 @@ test_liveness_kill_when_no_api_connection() {
                     kill -0 "$test_pid" 2>/dev/null || break
                     sleep 1
                 done
+                # Force kill if SIGTERM wasn't enough (defensive for slow CI)
+                kill -SIGKILL "$test_pid" 2>/dev/null || true
+                wait "$test_pid" 2>/dev/null || true
             fi
         fi
 
