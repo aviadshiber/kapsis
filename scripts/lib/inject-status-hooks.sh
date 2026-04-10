@@ -241,7 +241,7 @@ inject_gist_instructions() {
 
     # Only inject if gist instructions file exists
     if [[ ! -f "$gist_instructions" ]]; then
-        log_warn "Gist instructions file not found: $gist_instructions — gist feature will not work"
+        log_warn "Gist instructions file not found: $gist_instructions -- gist feature will not work"
         return 0
     fi
 

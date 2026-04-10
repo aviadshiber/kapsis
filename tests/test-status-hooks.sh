@@ -698,6 +698,57 @@ test_inject_gist_missing_instructions_file() {
     cleanup_inject_test_env
 }
 
+test_inject_gist_no_markdown_files() {
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-gist-5"
+    export KAPSIS_INJECT_GIST="true"
+
+    # Create workspace WITHOUT CLAUDE.md or AGENTS.md
+    local workspace
+    workspace=$(mktemp -d)
+    export KAPSIS_WORKSPACE="$workspace"
+
+    # Run injection
+    source "$LIB_DIR/inject-status-hooks.sh"
+    inject_gist_instructions >/dev/null 2>&1
+
+    # Verify .kapsis directory was created
+    assert_true "[[ -d '$workspace/.kapsis' ]]" ".kapsis directory should be created"
+
+    # Verify .kapsis/README.md fallback was created (only injection target)
+    assert_file_exists "$workspace/.kapsis/README.md" ".kapsis/README.md fallback should exist"
+    assert_contains "$(cat "$workspace/.kapsis/README.md")" "Kapsis Activity Gist" "README.md should contain gist instructions"
+
+    rm -rf "$workspace"
+    cleanup_inject_test_env
+}
+
+test_inject_gist_explicit_false() {
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-gist-6"
+    export KAPSIS_INJECT_GIST="false"
+
+    local workspace
+    workspace=$(mktemp -d)
+    export KAPSIS_WORKSPACE="$workspace"
+    echo "# Project" > "$workspace/CLAUDE.md"
+
+    # Run injection (explicitly disabled)
+    source "$LIB_DIR/inject-status-hooks.sh"
+    inject_gist_instructions >/dev/null 2>&1
+
+    # Verify .kapsis directory was NOT created
+    assert_false "[[ -d '$workspace/.kapsis' ]]" ".kapsis directory should not be created when explicitly false"
+
+    # Verify CLAUDE.md was NOT modified
+    local content
+    content=$(cat "$workspace/CLAUDE.md")
+    assert_equals "# Project" "$content" "CLAUDE.md should be unchanged when gist explicitly false"
+
+    rm -rf "$workspace"
+    cleanup_inject_test_env
+}
+
 test_inject_hook_path_uses_kapsis_home() {
     setup_inject_test_env
     export KAPSIS_STATUS_AGENT_ID="test-agent-10"
@@ -855,6 +906,8 @@ run_tests() {
     run_test test_inject_gist_when_disabled
     run_test test_inject_gist_idempotent
     run_test test_inject_gist_missing_instructions_file
+    run_test test_inject_gist_no_markdown_files
+    run_test test_inject_gist_explicit_false
 
     log_info "=== Agent Type Inference ==="
     run_test test_agent_type_inference_from_image_name
