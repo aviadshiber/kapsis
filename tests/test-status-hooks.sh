@@ -233,23 +233,26 @@ test_gemini_adapter_parsing() {
 # Test: Agent ID Validation
 #===============================================================================
 test_agent_id_empty_skips_status() {
-    # When KAPSIS_STATUS_AGENT_ID is empty, hook should output "{}" and exit 0
+    # When KAPSIS_STATUS_AGENT_ID is empty, hook should output "{}" and exit 0.
+    # Pass the env var directly to the bash invocation (not just to echo) so the
+    # hook subprocess actually receives the empty value.
     local result exit_code
-    result=$(KAPSIS_STATUS_AGENT_ID="" echo '{"tool_name":"Read"}' | bash "$HOOKS_DIR/kapsis-status-hook.sh" 2>/dev/null)
+    result=$(echo '{"tool_name":"Read"}' | KAPSIS_STATUS_AGENT_ID="" bash "$HOOKS_DIR/kapsis-status-hook.sh" 2>/dev/null)
     exit_code=$?
 
-    assert_equals "$exit_code" "0" "Empty agent_id exits with 0"
-    assert_equals "$result" "{}" "Empty agent_id outputs empty JSON"
+    assert_equals "0" "$exit_code" "Empty agent_id exits with 0"
+    assert_equals "{}" "$result" "Empty agent_id outputs empty JSON"
 }
 
 test_agent_id_unset_skips_status() {
-    # When KAPSIS_STATUS_AGENT_ID is unset, hook should output "{}" and exit 0
+    # When KAPSIS_STATUS_AGENT_ID is unset, hook should output "{}" and exit 0.
+    # Unset the var inside the bash invocation so the hook subprocess sees it unset.
     local result exit_code
-    result=$(unset KAPSIS_STATUS_AGENT_ID && echo '{"tool_name":"Read"}' | bash "$HOOKS_DIR/kapsis-status-hook.sh" 2>/dev/null)
+    result=$(echo '{"tool_name":"Read"}' | env -u KAPSIS_STATUS_AGENT_ID bash "$HOOKS_DIR/kapsis-status-hook.sh" 2>/dev/null)
     exit_code=$?
 
-    assert_equals "$exit_code" "0" "Unset agent_id exits with 0"
-    assert_equals "$result" "{}" "Unset agent_id outputs empty JSON"
+    assert_equals "0" "$exit_code" "Unset agent_id exits with 0"
+    assert_equals "{}" "$result" "Unset agent_id outputs empty JSON"
 }
 
 test_agent_id_invalid_path_traversal_skips() {
@@ -294,19 +297,21 @@ test_agent_id_valid_formats_accepted() {
 }
 
 test_stop_hook_agent_id_validation() {
-    # Stop hook should also validate agent_id
+    # Stop hook should also validate agent_id.
+    # Pass env var directly to bash invocation (not just to echo) so the hook subprocess
+    # actually receives the intended value.
     local result exit_code
-    result=$(KAPSIS_STATUS_AGENT_ID="" echo '{}' | bash "$HOOKS_DIR/kapsis-stop-hook.sh" 2>/dev/null)
+    result=$(echo '{}' | KAPSIS_STATUS_AGENT_ID="" bash "$HOOKS_DIR/kapsis-stop-hook.sh" 2>/dev/null)
     exit_code=$?
 
-    assert_equals "$exit_code" "0" "Stop hook: empty agent_id exits with 0"
-    assert_equals "$result" "{}" "Stop hook: empty agent_id outputs empty JSON"
+    assert_equals "0" "$exit_code" "Stop hook: empty agent_id exits with 0"
+    assert_equals "{}" "$result" "Stop hook: empty agent_id outputs empty JSON"
 
-    result=$(KAPSIS_STATUS_AGENT_ID="../bad" echo '{}' | bash "$HOOKS_DIR/kapsis-stop-hook.sh" 2>/dev/null)
+    result=$(echo '{}' | KAPSIS_STATUS_AGENT_ID="../bad" bash "$HOOKS_DIR/kapsis-stop-hook.sh" 2>/dev/null)
     exit_code=$?
 
-    assert_equals "$exit_code" "0" "Stop hook: invalid agent_id exits with 0"
-    assert_equals "$result" "{}" "Stop hook: invalid agent_id outputs empty JSON"
+    assert_equals "0" "$exit_code" "Stop hook: invalid agent_id exits with 0"
+    assert_equals "{}" "$result" "Stop hook: invalid agent_id outputs empty JSON"
 }
 
 #===============================================================================
