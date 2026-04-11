@@ -357,29 +357,43 @@ EOF
 test_liveness_should_kill_not_stale() {
     log_test "Testing _liveness_should_kill returns 1 when stale_seconds < timeout"
 
-    (
+    local err exit_code=0
+    err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
         _liveness_has_active_api_connections() { return 1; }
         _liveness_log() { true; }
 
         local cycles=5
-        _liveness_should_kill 100 1800 cycles && exit 1 || true
-    )
-    assert_equals 0 $? "Should not kill when stale_seconds < timeout"
+        if _liveness_should_kill 100 1800 cycles; then
+            echo "ERROR: should_kill returned 0 (kill) but stale_seconds < timeout"
+            exit 1
+        fi
+        # cycles should be unchanged (early return before any mutation)
+        [[ "$cycles" -eq 5 ]] || { echo "Expected cycles=5 unchanged, got $cycles"; exit 2; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should not kill when stale_seconds < timeout: $err"
 }
 
 test_liveness_should_kill_io_active() {
     log_test "Testing _liveness_should_kill returns 1 when I/O stale cycles < 2"
 
-    (
+    local err exit_code=0
+    err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
         _liveness_has_active_api_connections() { return 1; }
         _liveness_log() { true; }
 
         local cycles=1
-        _liveness_should_kill 9999 1800 cycles && exit 1 || true
-    )
-    assert_equals 0 $? "Should not kill when io_stale_cycles < 2"
+        if _liveness_should_kill 9999 1800 cycles; then
+            echo "ERROR: should_kill returned 0 (kill) but io_stale_cycles < 2"
+            exit 1
+        fi
+        # cycles should be unchanged (early return before any mutation)
+        [[ "$cycles" -eq 1 ]] || { echo "Expected cycles=1 unchanged, got $cycles"; exit 2; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should not kill when io_stale_cycles < 2: $err"
 }
 
 test_liveness_skip_kill_when_api_connection() {
@@ -428,6 +442,8 @@ test_liveness_kill_when_no_api_connection() {
 
         # skip count should be reset to 0
         [[ "$_LIVENESS_API_SKIP_COUNT" -eq 0 ]] || { echo "Expected skip_count=0, got $_LIVENESS_API_SKIP_COUNT"; exit 2; }
+        # cycles should be unchanged (no-API path does not mutate io_stale_cycles)
+        [[ "$cycles" -eq 5 ]] || { echo "Expected cycles=5 unchanged, got $cycles"; exit 3; }
     ) 2>&1 || exit_code=$?
 
     assert_equals 0 "$exit_code" "Agent should be killed when no API connection: $err"

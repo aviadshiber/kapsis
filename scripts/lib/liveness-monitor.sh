@@ -426,8 +426,8 @@ _liveness_init_api_signal() {
 # Kill Decision
 #===============================================================================
 
-# Pure decision function: returns 0 if the agent should be killed, 1 otherwise.
-# Mutates io_stale_cycles (via nameref) and _LIVENESS_API_SKIP_COUNT as side effects.
+# Kill decision function: returns 0 if the agent should be killed, 1 otherwise.
+# Side effects: mutates io_stale_cycles (via nameref) and _LIVENESS_API_SKIP_COUNT.
 _liveness_should_kill() {
     local stale_seconds="$1"
     local timeout="$2"
@@ -437,7 +437,10 @@ _liveness_should_kill() {
     [[ "$stale_seconds" -ge "$timeout" ]] || return 1
 
     # Signal 2: I/O must be unchanged for at least 2 consecutive cycles
-    [[ "$_io_stale_ref" -ge 2 ]] || return 1
+    if [[ "$_io_stale_ref" -lt 2 ]]; then
+        _liveness_log "DEBUG" "updated_at stale (${stale_seconds}s) but I/O still active (stale_cycles=$_io_stale_ref) — extending"
+        return 1
+    fi
 
     # Signal 3: check for active API connections
     if _liveness_has_active_api_connections; then
@@ -534,8 +537,6 @@ _liveness_monitor_loop() {
         fi
 
         # Decision logic: kill only when all three signals are stale
-        # Save io_stale_cycles before the call — _liveness_should_kill may reset it
-        local io_before_decision="$io_stale_cycles"
         if _liveness_should_kill "$stale_seconds" "$timeout" io_stale_cycles; then
             # All three signals stale (or cap exceeded): agent is hung
             _liveness_log "WARN" "Agent hung detected! updated_at stale for ${stale_seconds}s, I/O unchanged for ${io_stale_cycles} cycles"
@@ -555,8 +556,6 @@ _liveness_monitor_loop() {
 
             _liveness_log "INFO" "Liveness monitor exiting after kill"
             return 0
-        elif [[ "$stale_seconds" -ge "$timeout" ]] && [[ "$io_before_decision" -lt 2 ]]; then
-            _liveness_log "DEBUG" "updated_at stale (${stale_seconds}s) but I/O still active (stale_cycles=$io_before_decision) — extending"
         fi
     done
 }
