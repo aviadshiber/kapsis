@@ -52,7 +52,7 @@ _yaml_escape() {
     s="${s//$'\n'/\\n}"     # newline -> \n
     s="${s//$'\t'/\\t}"     # tab -> \t
     s="${s//$'\r'/\\r}"     # CR -> \r
-    echo "$s"
+    printf '%s\n' "$s"
 }
 
 # Generate YAML env: block from a bash array variable name

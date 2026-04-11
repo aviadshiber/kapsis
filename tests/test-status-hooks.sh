@@ -752,6 +752,39 @@ test_inject_gist_explicit_false() {
     cleanup_inject_test_env
 }
 
+test_inject_gist_readonly_workspace() {
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-gist-7"
+    export KAPSIS_INJECT_GIST="true"
+
+    # Create workspace and make .kapsis creation fail by using a read-only dir
+    local workspace
+    workspace=$(mktemp -d)
+    export KAPSIS_WORKSPACE="$workspace"
+    echo "# Project" > "$workspace/CLAUDE.md"
+
+    # Pre-create .kapsis as a file (not dir) to make mkdir -p fail
+    touch "$workspace/.kapsis"
+    chmod 000 "$workspace/.kapsis"
+
+    # Run injection — should warn and skip gracefully (not crash)
+    source "$LIB_DIR/inject-status-hooks.sh"
+    local exit_code
+    inject_gist_instructions >/dev/null 2>&1
+    exit_code=$?
+
+    assert_equals "0" "$exit_code" "Should exit 0 when mkdir fails (graceful skip)"
+
+    # Verify CLAUDE.md was NOT modified (injection was skipped)
+    local content
+    content=$(cat "$workspace/CLAUDE.md")
+    assert_equals "# Project" "$content" "CLAUDE.md should be unchanged when workspace is read-only"
+
+    chmod 755 "$workspace/.kapsis" 2>/dev/null || true
+    rm -rf "$workspace"
+    cleanup_inject_test_env
+}
+
 test_inject_hook_path_uses_kapsis_home() {
     setup_inject_test_env
     export KAPSIS_STATUS_AGENT_ID="test-agent-10"
@@ -911,6 +944,7 @@ run_tests() {
     run_test test_inject_gist_missing_instructions_file
     run_test test_inject_gist_no_markdown_files
     run_test test_inject_gist_explicit_false
+    run_test test_inject_gist_readonly_workspace
 
     log_info "=== Agent Type Inference ==="
     run_test test_agent_type_inference_from_image_name

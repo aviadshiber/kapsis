@@ -333,6 +333,21 @@ test_yaml_escape_tab() {
     assert_contains "$result" '\t' "Should escape tab to \\t"
 }
 
+test_yaml_escape_echo_flag_values() {
+    log_test "Testing _yaml_escape handles values starting with -n, -e, -E"
+
+    local result_n result_e result_E
+
+    # Values starting with -n, -e, -E could be misinterpreted by echo
+    result_n=$(_run_translator "printf '%s' \"\$(_yaml_escape '-nfoo')\"")
+    result_e=$(_run_translator "printf '%s' \"\$(_yaml_escape '-efoo')\"")
+    result_E=$(_run_translator "printf '%s' \"\$(_yaml_escape '-Efoo')\"")
+
+    assert_equals "-nfoo" "$result_n" "Should preserve -n prefix (not interpret as echo flag)"
+    assert_equals "-efoo" "$result_e" "Should preserve -e prefix (not interpret as echo flag)"
+    assert_equals "-Efoo" "$result_E" "Should preserve -E prefix (not interpret as echo flag)"
+}
+
 test_generate_cr_branch_special_chars_valid_yaml() {
     log_test "Testing CR with special branch name produces valid YAML"
 
@@ -465,6 +480,7 @@ main() {
     run_test test_generate_cr_empty_globals_does_not_crash
     run_test test_yaml_escape_newline_tab
     run_test test_yaml_escape_tab
+    run_test test_yaml_escape_echo_flag_values
     run_test test_generate_cr_branch_special_chars_valid_yaml
     run_test test_generate_env_yaml_cr_integration
 
