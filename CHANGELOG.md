@@ -6,7 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.16.11] - 2026-04-11
+## [2.16.12] - 2026-04-11
+
+### Changed
+- Extract _liveness_should_kill decision function
+- Remove dead CLEAN_WORKTREES variable, simplify tests
+
+### Fixed
+- Fix log_debug set -e trap and test env var scoping
+- Address review findings in _liveness_should_kill
+- Add SIGKILL fallback in liveness kill test for slow CI
+- Accept --worktrees flag in argument parser (#220)
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Changed
 - Bump go.opentelemetry.io/otel/sdk
@@ -17,9 +31,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Apply YAML escaping to K8s env vars and add edge case tests
 - Include gist-instructions.md in container image and add missing K8s env vars (#202)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Use retry loop in kill test to fix CI flakiness (#234)
@@ -741,7 +752,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.11...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.12...HEAD
+[2.16.12]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.12
 [2.16.11]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.11
 [2.16.10]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.10
 [2.16.9]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.9
