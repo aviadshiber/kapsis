@@ -65,7 +65,10 @@ fi
 #===============================================================================
 
 log_debug() {
-    [[ -n "${KAPSIS_DEBUG:-}" ]] && echo "[KAPSIS-HOOK] DEBUG: $*" >&2
+    # Use explicit return to avoid non-zero exit code when KAPSIS_DEBUG is unset,
+    # which would trigger set -e in calling functions.
+    [[ -z "${KAPSIS_DEBUG:-}" ]] && return 0
+    echo "[KAPSIS-HOOK] DEBUG: $*" >&2
 }
 
 log_info() {

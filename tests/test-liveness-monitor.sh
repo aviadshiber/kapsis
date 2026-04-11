@@ -152,8 +152,9 @@ test_liveness_heartbeat_in_status() {
         status_set_heartbeat
         status_phase "running" 50 "Testing"
 
-        # Check status file contains heartbeat_at
-        local status_file="$KAPSIS_STATUS_DIR/kapsis-test-project-test-1.json"
+        # Use _KAPSIS_STATUS_FILE (set by status_init) so the test works in containers
+        # where _status_get_dir() overrides KAPSIS_STATUS_DIR with /kapsis-status.
+        local status_file="$_KAPSIS_STATUS_FILE"
         if [[ -f "$status_file" ]]; then
             grep -q '"heartbeat_at"' "$status_file" || exit 1
             # Should not be null
@@ -164,6 +165,7 @@ test_liveness_heartbeat_in_status() {
             exit 3
         fi
 
+        rm -f "$status_file"
         rm -rf "$KAPSIS_STATUS_DIR"
     ) 2>/dev/null
     local exit_code=$?
@@ -182,13 +184,16 @@ test_liveness_heartbeat_null_when_unset() {
         status_init "test-project" "test-2" "main" "overlay"
         status_phase "running" 25 "Starting"
 
-        local status_file="$KAPSIS_STATUS_DIR/kapsis-test-project-test-2.json"
+        # Use _KAPSIS_STATUS_FILE (set by status_init) so the test works in containers
+        # where _status_get_dir() overrides KAPSIS_STATUS_DIR with /kapsis-status.
+        local status_file="$_KAPSIS_STATUS_FILE"
         if [[ -f "$status_file" ]]; then
             grep -q '"heartbeat_at": null' "$status_file" || exit 1
         else
             exit 2
         fi
 
+        rm -f "$status_file"
         rm -rf "$KAPSIS_STATUS_DIR"
     ) 2>/dev/null
     local exit_code=$?
