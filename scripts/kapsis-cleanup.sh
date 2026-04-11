@@ -47,6 +47,7 @@ CLEAN_ALL=false
 CLEAN_VOLUMES=false
 CLEAN_IMAGES=false
 CLEAN_BRANCHES=false
+CLEAN_VM_HEALTH=false
 PROJECT_FILTER=""
 AGENT_FILTER=""
 
@@ -80,6 +81,7 @@ OPTIONS:
     --logs              Clean log files older than 7 days
     --ssh-cache         Clear cached SSH host keys from keychain
     --branches          Clean stale agent branches (requires --project)
+    --vm-health         Check Podman VM health (inode %, disk %, journal size)
     --worktrees         Clean git worktrees (included by default, explicit for scripting)
     --force, -f         Skip confirmation prompts
     --help, -h          Show this help message
@@ -877,6 +879,179 @@ clean_branches() {
     fi
 }
 
+# Collect VM health metrics via podman machine ssh.
+# Sets VM_* variables with inode, disk, and journal metrics.
+# Returns 1 if collection fails.
+_vm_collect_metrics() {
+    local ssh_timeout="${KAPSIS_CLEANUP_VM_SSH_TIMEOUT:-$KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT}"
+
+    # Inode metrics
+    local inode_output
+    inode_output=$(timeout "$ssh_timeout" podman machine ssh -- 'df -i /' 2>/dev/null | tail -1) || {
+        log_warn "Failed to collect inode metrics (timeout: ${ssh_timeout}s)"
+        return 1
+    }
+
+    # Disk metrics
+    local disk_output
+    disk_output=$(timeout "$ssh_timeout" podman machine ssh -- 'df -h /' 2>/dev/null | tail -1) || {
+        log_warn "Failed to collect disk metrics (timeout: ${ssh_timeout}s)"
+        return 1
+    }
+
+    # Journal size
+    local journal_output
+    journal_output=$(timeout "$ssh_timeout" podman machine ssh -- 'journalctl --disk-usage' 2>&1 || echo "unknown")
+
+    # Parse inode fields: Filesystem Inodes IUsed IFree IUse% Mounted
+    local inode_pct
+    VM_INODE_TOTAL=$(echo "$inode_output" | awk '{print $2}')
+    VM_INODE_USED=$(echo "$inode_output" | awk '{print $3}')
+    VM_INODE_FREE=$(echo "$inode_output" | awk '{print $4}')
+    inode_pct=$(echo "$inode_output" | awk '{print $5}' | tr -d '%')
+    VM_INODE_PCT="$inode_pct"
+
+    # Parse disk fields: Filesystem Size Used Avail Use% Mounted
+    VM_DISK_SIZE=$(echo "$disk_output" | awk '{print $2}')
+    VM_DISK_USED=$(echo "$disk_output" | awk '{print $3}')
+    # shellcheck disable=SC2034  # collected for completeness; may be used by callers
+    VM_DISK_AVAIL=$(echo "$disk_output" | awk '{print $4}')
+    VM_DISK_PCT=$(echo "$disk_output" | awk '{print $5}' | tr -d '%')
+
+    # Parse journal size: "Archived and active journals take up 1.2G in the file system."
+    local journal_size
+    journal_size=$(echo "$journal_output" | grep -oE '[0-9]+(\.[0-9]+)?[KMGTP]' | head -1)
+    [[ -z "$journal_size" ]] && journal_size="unknown"
+    VM_JOURNAL_SIZE="$journal_size"
+}
+
+# Assess VM health based on collected metrics.
+# Sets VM_HEALTH_STATUS to HEALTHY, WARNING, or CRITICAL.
+_vm_assess_health() {
+    local inode_warn="${KAPSIS_CLEANUP_VM_INODE_WARN_PCT:-$KAPSIS_DEFAULT_CLEANUP_VM_INODE_WARN_PCT}"
+    local inode_critical="${KAPSIS_CLEANUP_VM_INODE_CRITICAL_PCT:-$KAPSIS_DEFAULT_CLEANUP_VM_INODE_CRITICAL_PCT}"
+    local disk_warn="${KAPSIS_CLEANUP_VM_DISK_WARN_PCT:-$KAPSIS_DEFAULT_CLEANUP_VM_DISK_WARN_PCT}"
+    local disk_critical="${KAPSIS_CLEANUP_VM_DISK_CRITICAL_PCT:-$KAPSIS_DEFAULT_CLEANUP_VM_DISK_CRITICAL_PCT}"
+
+    VM_HEALTH_STATUS="HEALTHY"
+
+    # Inode assessment
+    if [[ -n "$VM_INODE_PCT" ]] && [[ "$VM_INODE_PCT" =~ ^[0-9]+$ ]]; then
+        if [[ "$VM_INODE_PCT" -ge "$inode_critical" ]]; then
+            VM_HEALTH_STATUS="CRITICAL"
+            log_error "Inode usage CRITICAL: ${VM_INODE_PCT}% (threshold: ${inode_critical}%)"
+        elif [[ "$VM_INODE_PCT" -ge "$inode_warn" ]]; then
+            [[ "$VM_HEALTH_STATUS" == "HEALTHY" ]] && VM_HEALTH_STATUS="WARNING"
+            log_warn "Inode usage elevated: ${VM_INODE_PCT}% (threshold: ${inode_warn}%)"
+        else
+            log_info "Inode usage healthy: ${VM_INODE_PCT}%"
+        fi
+    else
+        log_warn "Could not parse inode percentage"
+    fi
+
+    # Disk assessment
+    if [[ -n "$VM_DISK_PCT" ]] && [[ "$VM_DISK_PCT" =~ ^[0-9]+$ ]]; then
+        if [[ "$VM_DISK_PCT" -ge "$disk_critical" ]]; then
+            VM_HEALTH_STATUS="CRITICAL"
+            log_error "Disk usage CRITICAL: ${VM_DISK_PCT}%"
+        elif [[ "$VM_DISK_PCT" -ge "$disk_warn" ]]; then
+            [[ "$VM_HEALTH_STATUS" == "HEALTHY" ]] && VM_HEALTH_STATUS="WARNING"
+            log_warn "Disk usage elevated: ${VM_DISK_PCT}%"
+        else
+            log_info "Disk usage healthy: ${VM_DISK_PCT}%"
+        fi
+    fi
+}
+
+# Auto-remediate based on health status.
+# Skips all mutations when DRY_RUN=true.
+_vm_remediate() {
+    local vacuum_size="${KAPSIS_CLEANUP_VM_JOURNAL_VACUUM_SIZE:-$KAPSIS_DEFAULT_CLEANUP_VM_JOURNAL_VACUUM_SIZE}"
+    local ssh_timeout="${KAPSIS_CLEANUP_VM_SSH_TIMEOUT:-$KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT}"
+
+    # Auto-trigger image cleanup at CRITICAL inode usage
+    if [[ "$VM_HEALTH_STATUS" == "CRITICAL" ]]; then
+        log_warn "Auto-triggering image cleanup to reclaim inodes..."
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo -e "  ${CYAN}[DRY-RUN]${NC} Would run image cleanup for inode recovery"
+        else
+            clean_images
+            # Re-check after cleanup
+            local new_inode_pct
+            new_inode_pct=$(timeout "$ssh_timeout" podman machine ssh -- "df -i / | tail -1 | awk '{print \$5}' | tr -d '%'" 2>/dev/null || echo "?")
+            log_info "Inode usage after cleanup: ${new_inode_pct}%"
+        fi
+    fi
+
+    # Journal vacuum: when unhealthy OR --force
+    if [[ "$FORCE" == "true" ]] || [[ "$VM_HEALTH_STATUS" != "HEALTHY" ]]; then
+        log_info "Vacuuming systemd journal to ${vacuum_size}..."
+        if [[ "$DRY_RUN" == "true" ]]; then
+            echo -e "  ${CYAN}[DRY-RUN]${NC} Would vacuum journal to ${vacuum_size}"
+        else
+            local vacuum_result
+            vacuum_result=$(timeout "$ssh_timeout" podman machine ssh -- "sudo journalctl --vacuum-size=${vacuum_size}" 2>&1 || echo "vacuum failed")
+            log_info "Journal vacuum: $vacuum_result"
+        fi
+    else
+        log_info "Journal vacuum skipped (system healthy). Use --force to vacuum unconditionally."
+    fi
+}
+
+# Main VM health check entry point.
+vm_health_check() {
+    section "Podman VM Health"
+
+    # Platform guard — podman machine only exists on macOS
+    if is_linux; then
+        log_info "VM health checks are macOS-only (Podman runs natively on Linux)."
+        log_info "Use 'df -i /' and 'journalctl --disk-usage' directly on the host."
+        return 0
+    fi
+
+    # Check Podman machine is running
+    local ssh_timeout="${KAPSIS_CLEANUP_VM_SSH_TIMEOUT:-$KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT}"
+    local machine_state
+    machine_state=$(timeout "$ssh_timeout" podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null || echo "not-found")
+
+    if [[ "$machine_state" != "running" ]]; then
+        log_warn "Podman machine is not running (state: $machine_state). Skipping VM health check."
+        return 1
+    fi
+
+    # Collect metrics
+    if ! _vm_collect_metrics; then
+        log_error "Failed to collect VM metrics. Is the VM responsive?"
+        return 1
+    fi
+
+    # Display report
+    echo ""
+    log_info "Podman VM Health Report"
+    log_info "  Disk:     ${VM_DISK_USED} / ${VM_DISK_SIZE} (${VM_DISK_PCT}%)"
+    log_info "  Inodes:   ${VM_INODE_USED} / ${VM_INODE_TOTAL} (${VM_INODE_PCT}%), ${VM_INODE_FREE} free"
+    log_info "  Journal:  ${VM_JOURNAL_SIZE}"
+
+    # Assess health
+    _vm_assess_health
+
+    # Remediate if needed
+    _vm_remediate
+
+    # Summary line
+    echo ""
+    if [[ "$VM_HEALTH_STATUS" == "HEALTHY" ]]; then
+        log_info "VM health: $VM_HEALTH_STATUS"
+    elif [[ "$VM_HEALTH_STATUS" == "WARNING" ]]; then
+        log_warn "VM health: $VM_HEALTH_STATUS — consider running: kapsis-cleanup --images"
+    else
+        log_error "VM health: $VM_HEALTH_STATUS"
+    fi
+
+    return 0
+}
+
 # Print summary
 print_summary() {
     echo -e "\n${BOLD}${GREEN}=== Summary ===${NC}"
@@ -933,6 +1108,10 @@ main() {
                 ;;
             --branches)
                 CLEAN_BRANCHES=true
+                shift
+                ;;
+            --vm-health)
+                CLEAN_VM_HEALTH=true
                 shift
                 ;;
             --worktrees)
@@ -1008,6 +1187,10 @@ main() {
 
     if [[ "$CLEAN_BRANCHES" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
         clean_branches
+    fi
+
+    if [[ "$CLEAN_VM_HEALTH" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
+        vm_health_check || true
     fi
 
     # Summary
