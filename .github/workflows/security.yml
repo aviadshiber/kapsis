@@ -1,0 +1,115 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Run weekly on Sundays at 00:00 UTC
+    - cron: '0 0 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+  actions: read
+
+jobs:
+  shellcheck-sarif:
+    name: ShellCheck SARIF
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          fetch-depth: 0
+
+
+      - name: Run ShellCheck with SARIF output
+        uses: redhat-plumbers-in-action/differential-shellcheck@d965e66ec0b3b2f821f75c8eff9b12442d9a7d1e  # v5
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          severity: warning
+          # Map schedule/workflow_dispatch events to 'manual' since the action
+          # only supports: merge_group, pull_request, push, manual
+          triggering-event: ${{ github.event_name == 'schedule' && 'manual' || github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}
+
+  container-scan:
+    name: Container Vulnerability Scan
+    runs-on: ubuntu-latest
+    # Only run on merge to main (not on PRs) to save build time
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman fuse-overlayfs slirp4netns
+
+      - name: Configure Podman for rootless
+        run: |
+          mkdir -p ~/.config/containers
+          echo '[storage]' > ~/.config/containers/storage.conf
+          echo 'driver = "overlay"' >> ~/.config/containers/storage.conf
+          podman --version
+
+      - name: Build container image
+        run: |
+          chmod +x ./scripts/build-image.sh
+          ./scripts/build-image.sh --name kapsis --tag scan
+        timeout-minutes: 30
+
+      - name: Export image for scanning
+        run: |
+          podman save kapsis:scan -o kapsis-image.tar
+
+      - name: Run Trivy vulnerability scanner
+        # Security: Pin to specific commit SHA to prevent supply chain attacks
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        with:
+          input: 'kapsis-image.tar'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+          severity: 'CRITICAL,HIGH'
+          vuln-type: 'os,library'
+
+      - name: Upload Trivy scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@c10b8064de6f491fea524254123dbe5e09572f13  # v4.35.1
+        if: always()
+        with:
+          sarif_file: 'trivy-results.sarif'
+          category: 'container-scanning'
+
+      - name: Run Trivy (table output for logs)
+        # Security: Pin to specific commit SHA to prevent supply chain attacks
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1  # v0.35.0
+        with:
+          input: 'kapsis-image.tar'
+          format: 'table'
+          severity: 'CRITICAL,HIGH,MEDIUM'
+          vuln-type: 'os,library'
+
+  # NOTE: Secret Detection is handled by GitHub's built-in Secret Scanning
+  # Enable it in: Settings > Code security and analysis > Secret scanning
+  # This provides:
+  # - Push protection (blocks commits containing secrets)
+  # - Alert notifications for exposed secrets
+  # - No external dependencies (eliminates AGPL-3.0 license concern from TruffleHog)
+  # See: https://docs.github.com/en/code-security/secret-scanning
+
+  dependency-review:
+    name: Dependency Review
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Dependency Review
+        uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48  # v4.9.0
+        with:
+          fail-on-severity: high
+          deny-licenses: GPL-3.0, AGPL-3.0

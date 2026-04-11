@@ -1,0 +1,49 @@
+# Google Gemini CLI Agent Profile
+# Official Google CLI for Gemini code generation
+#
+# Build: ./scripts/build-agent-image.sh gemini-cli --profile full-stack
+# Result: kapsis-gemini-cli:latest
+#
+# NOTE: Gemini CLI is TypeScript-based and requires Node.js runtime.
+# No native binary available (as of Jan 2026).
+# See: https://github.com/google-gemini/gemini-cli
+
+name: gemini-cli
+description: Google Gemini CLI (requires Node.js)
+version: latest
+
+install:
+  npm: "@google/gemini-cli"
+
+dependencies:
+  - nodejs >= 18  # Required - no native binary available
+
+auth:
+  required:
+    - name: GOOGLE_API_KEY
+      description: "Google API key for Gemini"
+      keychain:
+        macos: "google-api-key"
+        linux: "google-api-key"
+  optional:
+    - name: GOOGLE_APPLICATION_CREDENTIALS
+      description: "Path to Google Cloud credentials JSON"
+
+config_mounts:
+  - source: ~/.gemini
+    target: ~/.gemini
+  - source: ~/.config/gcloud
+    target: ~/.config/gcloud
+
+# Gemini CLI command with sandbox mode
+# -s docker: Use Docker/container sandbox for code execution
+command: gemini -s docker
+
+# Hook support
+hooks:
+  supported: true
+  types:
+    - tool_call
+    - completion
+    - error
+  config_path: ~/.gemini/hooks/

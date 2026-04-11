@@ -1,0 +1,17 @@
+# Binaries
+bin/
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test
+cover.out
+
+# Go
+vendor/
+
+# Editor
+*.swp
+*.swo
+*~

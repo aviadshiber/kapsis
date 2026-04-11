@@ -1,0 +1,983 @@
+#!/usr/bin/env bash
+#===============================================================================
+# Kapsis - Post-Container Git Operations
+#
+# Runs on HOST after container exits to handle git commit and push.
+# This runs in a trusted environment with full git access, after the
+# agent has made its changes in the sandboxed worktree.
+#
+# Security Model:
+# - Executes on HOST (not in container)
+# - Full git access for commit/push operations
+# - Validates changes before committing
+# - Generates PR-ready commit messages
+#===============================================================================
+
+set -euo pipefail
+
+# Script directory
+POST_GIT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source logging library (only if not already loaded)
+if [[ -z "${_KAPSIS_LOGGING_LOADED:-}" ]]; then
+    source "$POST_GIT_SCRIPT_DIR/lib/logging.sh"
+    log_init "post-container-git"
+fi
+
+# Source status reporting library (only if not already loaded)
+if [[ -z "${_KAPSIS_STATUS_LOADED:-}" ]]; then
+    source "$POST_GIT_SCRIPT_DIR/lib/status.sh"
+fi
+
+# Source shared constants (provides KAPSIS_DEFAULT_COMMIT_EXCLUDE)
+source "$POST_GIT_SCRIPT_DIR/lib/constants.sh"
+
+# Source git remote utilities (provides generate_pr_url, is_github_repo, etc.)
+source "$POST_GIT_SCRIPT_DIR/lib/git-remote-utils.sh"
+
+# Source file sanitization library (provides sanitize_staged_files)
+source "$POST_GIT_SCRIPT_DIR/lib/sanitize-files.sh"
+
+# Note: logging functions are provided by lib/logging.sh
+# Note: status functions are provided by lib/status.sh
+# Note: constants are provided by lib/constants.sh
+# Note: git remote utilities are provided by lib/git-remote-utils.sh
+
+#===============================================================================
+# PATTERN TO REGEX HELPER
+#
+# Converts a gitignore-style pattern to a grep -E compatible regex.
+# Supports three forms:
+#   **/<dir>/   — matches any file inside <dir>/ at any depth
+#   **/<file>   — matches <file> at any depth
+#   <file>      — exact match at root only
+#===============================================================================
+_pattern_to_regex() {
+    local p="$1"
+    if [[ "$p" == "**/"*"/" ]]; then
+        # Directory-prefix: **/__pycache__/ matches src/__pycache__/foo.pyc
+        local dir_name="${p#\*\*/}"
+        dir_name="${dir_name%/}"
+        # Escape literal dots so they don't match any character in grep -E
+        local escaped_dir="${dir_name//./\\.}"
+        echo "(^|/)${escaped_dir}/"
+    elif [[ "$p" == "**/"* ]]; then
+        local base="${p#\*\*/}"
+        local escaped_base="${base//./\\.}"
+        echo "(^|/)${escaped_base}$"
+    else
+        local escaped_p="${p//./\\.}"
+        echo "^${escaped_p}$"
+    fi
+}
+
+#===============================================================================
+# VALIDATE AND CLEAN STAGED FILES
+#
+# Checks for suspicious files that should never be committed and removes them
+# from staging. This is a safety net to prevent accidental commits of:
+# - Literal ~ paths (tilde not expanded, creates directory named "~")
+# - .kapsis/ internal files
+# - Submodule references (mode 160000) that weren't intentional
+# - Ephemeral artifact files (e.g. __pycache__, .pytest_cache, .coverage)
+# - Files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
+#
+# The KAPSIS_COMMIT_EXCLUDE patterns provide user-configurable exclusions
+# for files that should never be committed, such as .gitignore modifications.
+#
+# Returns: 0 if validation passed (or issues were auto-fixed), 1 if blocking issues
+#===============================================================================
+validate_staged_files() {
+    local worktree_path="$1"
+
+    cd "$worktree_path"
+
+    local has_issues=0
+    local suspicious_files=()
+
+    # Check for literal ~ paths in staged files
+    # These occur when tilde expansion fails inside container
+    local tilde_files
+    tilde_files=$(git diff --cached --name-only 2>/dev/null | grep "^~" || true)
+    if [[ -n "$tilde_files" ]]; then
+        log_warn "Found staged files with literal ~ path (should be ignored):"
+        # Use process substitution to avoid subshell (array would be lost in pipe)
+        while IFS= read -r f; do
+            log_warn "  - $f"
+            suspicious_files+=("$f")
+        done <<< "$tilde_files"
+        has_issues=1
+    fi
+
+    # Check for .kapsis/ internal files
+    local kapsis_files
+    kapsis_files=$(git diff --cached --name-only 2>/dev/null | grep "^\.kapsis/" || true)
+    if [[ -n "$kapsis_files" ]]; then
+        log_warn "Found staged .kapsis/ internal files (should be ignored):"
+        while IFS= read -r f; do
+            log_warn "  - $f"
+            suspicious_files+=("$f")
+        done <<< "$kapsis_files"
+        has_issues=1
+    fi
+
+    # Check for submodule references (mode 160000)
+    # These can happen when a directory with .git is accidentally staged
+    # Pattern :000000 160000 catches NEW submodules being added
+    local submodule_refs
+    submodule_refs=$(git diff --cached --raw 2>/dev/null | grep "160000" || true)
+    if [[ -n "$submodule_refs" ]]; then
+        log_warn "Found new submodule references being added (potential accident):"
+        while IFS= read -r line; do
+            local path
+            path=$(echo "$line" | awk '{print $NF}')
+            log_warn "  - $path (submodule)"
+            suspicious_files+=("$path")
+        done <<< "$submodule_refs"
+        has_issues=1
+    fi
+
+    # Pre-compute staged file list for pattern checks below
+    local staged_files
+    staged_files=$(git diff --cached --name-only 2>/dev/null || true)
+
+    # --- Ephemeral artifact patterns (built-in, non-overridable) ---
+    # These are test/build artifacts that are never legitimate to commit.
+    local ephemeral_patterns="${KAPSIS_DEFAULT_EPHEMERAL_PATTERNS:-}"
+    if [[ -n "$ephemeral_patterns" ]] && [[ -n "$staged_files" ]]; then
+        while IFS= read -r pattern; do
+            [[ -z "$pattern" ]] && continue
+            local regex_pattern
+            regex_pattern="$(_pattern_to_regex "$pattern")"
+            local matched_files
+            matched_files=$(echo "$staged_files" | grep -E "$regex_pattern" 2>/dev/null || true)
+            if [[ -n "$matched_files" ]]; then
+                log_info "Found ephemeral artifact files matching '$pattern':"
+                while IFS= read -r f; do
+                    [[ -z "$f" ]] && continue
+                    log_info "  - $f (ephemeral artifact)"
+                    suspicious_files+=("$f")
+                done <<< "$matched_files"
+                has_issues=1
+            fi
+        done <<< "$ephemeral_patterns"
+    fi
+
+    # Check for files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
+    # This prevents committing files like .gitignore that were modified by Kapsis
+    local exclude_patterns="${KAPSIS_COMMIT_EXCLUDE:-$KAPSIS_DEFAULT_COMMIT_EXCLUDE}"
+    if [[ -n "$exclude_patterns" ]] && [[ -n "$staged_files" ]]; then
+        while IFS= read -r pattern; do
+            [[ -z "$pattern" ]] && continue
+            local regex_pattern
+            regex_pattern="$(_pattern_to_regex "$pattern")"
+            local matched_files
+            matched_files=$(echo "$staged_files" | grep -E "$regex_pattern" 2>/dev/null || true)
+            if [[ -n "$matched_files" ]]; then
+                log_info "Found staged files matching exclude pattern '$pattern':"
+                while IFS= read -r f; do
+                    [[ -z "$f" ]] && continue
+                    log_info "  - $f (excluded by KAPSIS_COMMIT_EXCLUDE)"
+                    suspicious_files+=("$f")
+                done <<< "$matched_files"
+                has_issues=1
+            fi
+        done <<< "$exclude_patterns"
+    fi
+
+    # If issues found, unstage the suspicious files
+    if [[ $has_issues -eq 1 ]]; then
+        log_warn "Removing excluded files from staging..."
+        for file in "${suspicious_files[@]}"; do
+            if [[ -n "$file" ]]; then
+                git reset HEAD -- "$file" 2>/dev/null || true
+                log_info "  Unstaged: $file"
+            fi
+        done
+
+        # Also try to remove literal ~ directory if it exists
+        if [[ -d "~" ]]; then
+            log_warn "Removing literal ~ directory from worktree..."
+            rm -rf "~" 2>/dev/null || true
+        fi
+
+        log_info "Excluded files removed from staging. Continuing with clean files."
+    fi
+
+    return 0
+}
+
+#===============================================================================
+# CHECK FOR CHANGES
+#
+# Returns 0 if there are uncommitted changes, 1 otherwise.
+#===============================================================================
+has_changes() {
+    local worktree_path="$1"
+
+    cd "$worktree_path"
+
+    # Check for any changes (staged, unstaged, or untracked)
+    if git diff --quiet && git diff --cached --quiet && [[ -z "$(git status --porcelain)" ]]; then
+        return 1
+    fi
+    return 0
+}
+
+#===============================================================================
+# GET KAPSIS VERSION
+#
+# Returns the Kapsis version from the version library or package.json
+#===============================================================================
+get_kapsis_version() {
+    local version=""
+    local script_dir
+    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+    # Try to get version from package.json
+    if [[ -f "$script_dir/../package.json" ]]; then
+        version=$(grep -o '"version": *"[^"]*"' "$script_dir/../package.json" 2>/dev/null | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
+    fi
+
+    # Fallback: try git tag
+    if [[ -z "$version" ]] && command -v git &>/dev/null; then
+        version=$(git -C "$script_dir/.." describe --tags --abbrev=0 2>/dev/null || echo "")
+    fi
+
+    echo "${version:-dev}"
+}
+
+#===============================================================================
+# BUILD CO-AUTHOR TRAILERS
+#
+# Generates Co-authored-by trailers with full deduplication:
+#   - Against git config user.email (avoid listing yourself as co-author)
+#   - Against duplicate entries in the co_authors list
+#   - Against co-authors already present in the commit message
+# Arguments:
+#   $1 - Pipe-separated list of co-authors (e.g., "Name1 <email1>|Name2 <email2>")
+#   $2 - Worktree path (for git config lookup)
+#   $3 - Commit message (optional, to check for existing co-authors)
+# Returns: Newline-separated Co-authored-by trailers
+#===============================================================================
+build_coauthor_trailers() {
+    local co_authors_list="$1"
+    local worktree_path="$2"
+    local commit_message="${3:-}"
+
+    [[ -z "$co_authors_list" ]] && return 0
+
+    cd "$worktree_path" || return 1
+
+    # Get current git user email for deduplication
+    local git_user_email
+    git_user_email=$(git config user.email 2>/dev/null || echo "")
+
+    local trailers=""
+    local seen_emails=""  # Track emails we've already processed
+    local IFS='|'
+    for co_author in $co_authors_list; do
+        [[ -z "$co_author" ]] && continue
+
+        # Extract email from co-author string (format: "Name <email>")
+        local email
+        email=$(echo "$co_author" | grep -oE '<[^>]+>' | tr -d '<>')
+
+        # Skip if no email found
+        [[ -z "$email" ]] && continue
+
+        # Skip if this is the same as the git config user (avoid listing yourself as co-author)
+        if [[ "$email" == "$git_user_email" ]]; then
+            log_debug "Skipping co-author (same as git user): $co_author"
+            continue
+        fi
+
+        # Skip if we've already seen this email (duplicate in config)
+        if [[ "$seen_emails" == *"|$email|"* ]]; then
+            log_debug "Skipping duplicate co-author: $co_author"
+            continue
+        fi
+
+        # Skip if this email is already in the commit message (user added manually in template)
+        if [[ -n "$commit_message" && "$commit_message" == *"$email"* ]]; then
+            log_debug "Skipping co-author (already in commit message): $co_author"
+            continue
+        fi
+
+        # Track this email as seen
+        seen_emails+="|$email|"
+
+        trailers+="Co-authored-by: ${co_author}"$'\n'
+    done
+
+    # Remove trailing newline
+    echo -n "${trailers%$'\n'}"
+}
+
+#===============================================================================
+# COMMIT CHANGES
+#
+# Stages and commits all changes in the worktree.
+#===============================================================================
+commit_changes() {
+    local worktree_path="$1"
+    local commit_message="$2"
+    local agent_id="${3:-unknown}"
+    local co_authors="${4:-}"
+
+    cd "$worktree_path"
+
+    # Note: git read-tree HEAD for cache-tree rebuild is handled by
+    # sync_index_from_container(). The duplicate here was removed in
+    # #211 — it caused index inconsistency on large monorepos.
+
+    # Stage changes: prefer explicit paths (targeted), fallback to git add -A (#211)
+    # Uses cut -c4- to strip the 2-char status + space prefix from porcelain output,
+    # which correctly handles filenames with spaces (awk $2 would truncate them).
+    log_info "Staging changes..."
+    local expected_count
+    expected_count=$(git status --porcelain | wc -l | tr -d ' ')
+
+    local changed_files
+    changed_files=$(git status --porcelain | cut -c4-)
+    if [[ -n "$changed_files" ]]; then
+        while IFS= read -r f; do
+            [[ -n "$f" ]] && git add -- "$f" 2>/dev/null || true
+        done <<< "$changed_files"
+    fi
+
+    local staged_count
+    staged_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
+    log_info "Staged $staged_count file(s) via explicit paths"
+
+    # Fallback: if explicit staging missed some files, try git add -A
+    if [[ "$staged_count" -lt "$expected_count" ]]; then
+        log_warn "Only staged $staged_count of $expected_count files — falling back to git add -A"
+        git add -A
+        staged_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
+        log_info "Staged $staged_count file(s) after git add -A fallback"
+    fi
+
+    # If still nothing staged, log diagnostic state and bail
+    if [[ "$staged_count" -eq 0 ]]; then
+        log_error "Failed to stage any files. Diagnostic state:"
+        log_error "  git status --porcelain: $(git status --porcelain | head -10)"
+        log_error "  git diff --stat: $(git diff --stat | tail -5)"
+        return 1
+    fi
+
+    # Validate staged files and remove suspicious ones
+    # This catches literal ~ paths, .kapsis/ files, and accidental submodules
+    validate_staged_files "$worktree_path"
+
+    # Log count after validation
+    local post_validate_count
+    post_validate_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
+    if [[ "$post_validate_count" -ne "$staged_count" ]]; then
+        log_info "After validation: $post_validate_count file(s) staged (was $staged_count)"
+    fi
+
+    # Sanitize staged files - strip dangerous invisible characters
+    # This prevents Trojan Source attacks (CVE-2021-42574) and similar exploits
+    sanitize_staged_files "$worktree_path"
+
+    # Log count after sanitization
+    local post_sanitize_count
+    post_sanitize_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
+    if [[ "$post_sanitize_count" -ne "$post_validate_count" ]]; then
+        log_info "After sanitization: $post_sanitize_count file(s) staged (was $post_validate_count)"
+    fi
+
+    # Final guard: don't attempt commit if nothing staged after filtering.
+    # Return code 2 (not 1) to signal "ephemeral-only" — not an error, just skip.
+    if [[ "$post_sanitize_count" -eq 0 ]]; then
+        log_info "No files staged after validation and sanitization — all changes were ephemeral artifacts"
+        return 2
+    fi
+
+    # Show what's being committed
+    echo ""
+    echo "┌────────────────────────────────────────────────────────────────────┐"
+    echo "│ CHANGES TO COMMIT                                                  │"
+    echo "└────────────────────────────────────────────────────────────────────┘"
+    git status --short
+    echo ""
+
+    # Build co-author trailers (with full deduplication against git user, duplicates, and commit message)
+    local coauthor_trailers=""
+    if [[ -n "$co_authors" ]]; then
+        coauthor_trailers=$(build_coauthor_trailers "$co_authors" "$worktree_path" "$commit_message")
+    fi
+
+    # Get Kapsis version
+    local kapsis_version
+    kapsis_version=$(get_kapsis_version)
+
+    # Generate full commit message with metadata and co-authors
+    local full_message
+    full_message=$(cat << EOF
+${commit_message}
+
+Generated by Kapsis AI Agent Sandbox v${kapsis_version}
+https://github.com/aviadshiber/kapsis
+Agent ID: ${agent_id}
+Worktree: $(basename "$worktree_path")
+EOF
+)
+
+    # Append co-author trailers if present
+    if [[ -n "$coauthor_trailers" ]]; then
+        full_message+=$'\n\n'"${coauthor_trailers}"
+    fi
+
+    # Append sanitization trailer if files were cleaned
+    if [[ -n "${KAPSIS_SANITIZE_SUMMARY:-}" ]]; then
+        full_message+=$'\n\n'"${KAPSIS_SANITIZE_SUMMARY}"
+    fi
+
+    # Commit
+    if git commit -m "$full_message"; then
+        log_success "Changes committed"
+        echo ""
+        log_info "Commit details:"
+        git log --oneline -1
+        echo ""
+        return 0
+    else
+        log_warn "Commit failed or nothing to commit"
+        return 1
+    fi
+}
+
+#===============================================================================
+# VERIFY PUSH
+#
+# Verifies that the push actually succeeded by comparing local and remote HEAD.
+# This addresses the issue where push may report success but commits aren't
+# actually on the remote (network issues, partial failures, etc.).
+#
+# Returns: 0 if verified, 1 if verification failed
+#===============================================================================
+verify_push() {
+    local worktree_path="$1"
+    local remote="${2:-origin}"
+    local branch="${3:-}"
+
+    cd "$worktree_path"
+
+    # Get current branch if not specified
+    if [[ -z "$branch" ]]; then
+        branch=$(git rev-parse --abbrev-ref HEAD)
+    fi
+
+    log_info "Verifying push to ${remote}/${branch}..."
+
+    # Get local HEAD commit
+    local local_commit
+    local_commit=$(git rev-parse HEAD 2>/dev/null)
+    if [[ -z "$local_commit" ]]; then
+        log_error "Could not determine local HEAD commit"
+        status_set_push_info "failed" "" ""
+        return 1
+    fi
+    log_debug "Local commit: $local_commit"
+
+    # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers (Issue #227).
+    # Fetch latest from remote to ensure we have current state.
+    local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
+    if ! GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git fetch "$remote" "$branch" --quiet 2>/dev/null; then
+        log_warn "Could not fetch from remote for verification"
+        # Don't fail - the push might have worked even if fetch fails
+        status_set_push_info "unverified" "$local_commit" ""
+        return 0
+    fi
+
+    # Get remote HEAD commit after fetch
+    local remote_commit
+    remote_commit=$(git rev-parse "${remote}/${branch}" 2>/dev/null)
+    log_debug "Remote commit: ${remote_commit:-unknown}"
+
+    # Compare commits
+    if [[ "$local_commit" == "$remote_commit" ]]; then
+        log_success "Push verified: local and remote HEAD match"
+        log_info "  Commit: ${local_commit:0:12}"
+        status_set_push_info "success" "$local_commit" "$remote_commit"
+        return 0
+    else
+        log_error "Push verification FAILED: commits do not match!"
+        log_error "  Local:  $local_commit"
+        log_error "  Remote: ${remote_commit:-not found}"
+        status_set_push_info "failed" "$local_commit" "${remote_commit:-unknown}"
+        return 1
+    fi
+}
+
+#===============================================================================
+# PUSH CHANGES
+#
+# Pushes the current branch to remote and verifies the push succeeded.
+#===============================================================================
+push_changes() {
+    local worktree_path="$1"
+    local remote="${2:-origin}"
+    local remote_branch="${3:-}"
+
+    cd "$worktree_path"
+
+    local branch
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    # Default remote branch to local branch name
+    remote_branch="${remote_branch:-$branch}"
+
+    echo ""
+    echo "┌────────────────────────────────────────────────────────────────────┐"
+    echo "│ PUSHING TO REMOTE                                                  │"
+    echo "└────────────────────────────────────────────────────────────────────┘"
+    echo "  Remote: $remote"
+    echo "  Local Branch:  $branch"
+    if [[ "$remote_branch" != "$branch" ]]; then
+        echo "  Remote Branch: $remote_branch"
+    fi
+    echo ""
+
+    # Capture local commit before push for verification
+    local local_commit
+    local_commit=$(git rev-parse HEAD 2>/dev/null)
+
+    # Use refspec to push local branch to (potentially different) remote branch.
+    # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers.
+    # timeout guards against credential helper hangs (Issue #227).
+    local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
+    local _push_exit=0
+    GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git push --set-upstream "$remote" "${branch}:${remote_branch}" || _push_exit=$?
+    if [[ $_push_exit -eq 0 ]]; then
+        log_success "Push command completed"
+
+        # Verify the push actually succeeded
+        echo ""
+        if verify_push "$worktree_path" "$remote" "$remote_branch"; then
+            # Show PR instructions only after verified push
+            show_pr_instructions "$worktree_path" "$remote_branch"
+            return 0
+        else
+            log_error "Push reported success but verification failed!"
+            log_error "Commits may not have been pushed to remote."
+            # Set fallback command for agent recovery
+            status_set_push_fallback "$worktree_path" "$remote" "$branch" "$remote_branch"
+            return 2  # Distinct exit code for verification failure
+        fi
+    else
+        if [[ $_push_exit -eq 124 ]]; then
+            log_error "Push timed out after ${_push_timeout}s — possible credential helper hang (Issue #227)"
+            log_warn "Set KAPSIS_PUSH_TIMEOUT env var to increase timeout (current: ${_push_timeout}s)"
+        else
+            log_error "Push failed"
+        fi
+        status_set_push_info "failed" "$local_commit" ""
+        # Set fallback command for agent recovery
+        status_set_push_fallback "$worktree_path" "$remote" "$branch" "$remote_branch"
+        return 1
+    fi
+}
+
+#===============================================================================
+# GENERATE PR URL
+#
+# Outputs a clickable URL to create a PR for the branch.
+# Also sets the global PR_URL variable for status reporting.
+#===============================================================================
+# Global variable for PR URL (set by show_pr_instructions, used by status reporting)
+export PR_URL=""
+
+# Display PR creation instructions with URL
+# Uses generate_pr_url from git-remote-utils.sh
+show_pr_instructions() {
+    local worktree_path="$1"
+    local branch="$2"
+
+    cd "$worktree_path"
+
+    local remote_url
+    remote_url=$(git remote get-url origin 2>/dev/null || echo "")
+
+    if [[ -z "$remote_url" ]]; then
+        return
+    fi
+
+    echo ""
+    echo "┌────────────────────────────────────────────────────────────────────┐"
+    echo "│ CREATE PULL REQUEST                                                │"
+    echo "└────────────────────────────────────────────────────────────────────┘"
+
+    # Use library function to generate PR URL
+    local pr_url
+    pr_url=$(generate_pr_url "$remote_url" "$branch")
+
+    if [[ -n "$pr_url" ]]; then
+        echo "  $pr_url"
+        # Set global variable for status reporting
+        PR_URL="$pr_url"
+    else
+        echo "  (Unable to generate PR URL for this remote)"
+    fi
+
+    echo ""
+}
+
+#===============================================================================
+# SYNC INDEX
+#
+# Copies the updated index from worktree to sanitized git directory
+# so container changes are properly tracked.
+#===============================================================================
+sync_index_from_container() {
+    local worktree_path="$1"
+    local sanitized_git="$2"
+
+    if [[ -f "$sanitized_git/index" ]]; then
+        cd "$worktree_path"
+
+        # Determine the actual git directory
+        local worktree_gitdir
+        if [[ -f "$worktree_path/.git" ]]; then
+            # Worktree: .git is a file containing "gitdir: <path>"
+            local gitdir_content
+            gitdir_content=$(cat "$worktree_path/.git")
+            worktree_gitdir="${gitdir_content#gitdir: }"
+        elif [[ -d "$worktree_path/.git" ]]; then
+            # Regular repo or reused worktree: .git is a directory
+            worktree_gitdir="$worktree_path/.git"
+        else
+            log_warn "No .git file or directory found at $worktree_path"
+            return 0
+        fi
+
+        log_info "Syncing index from container..."
+        local cp_err
+        if ! cp_err=$(cp "$sanitized_git/index" "$worktree_gitdir/index" 2>&1); then
+            log_warn "Failed to copy index from sanitized git to $worktree_gitdir: $cp_err"
+            return 0
+        fi
+
+        # Fix #186: Rebuild index cache-tree to prevent stale object references
+        # The copied index may contain cache-tree entries referencing objects from
+        # the parent repo that aren't valid in the worktree context.
+        log_info "Rebuilding index cache-tree..."
+        local read_tree_err
+        if ! read_tree_err=$(git read-tree HEAD 2>&1); then
+            log_warn "git read-tree HEAD failed — cache-tree may be stale: $read_tree_err"
+        fi
+    fi
+}
+
+# Note: is_github_repo() is provided by lib/git-remote-utils.sh
+
+#===============================================================================
+# CHECK IF USER HAS PUSH ACCESS
+#
+# Attempts a dry-run push to check access. Returns 0 if access, 1 otherwise.
+#===============================================================================
+has_push_access() {
+    local worktree_path="$1"
+    local remote="${2:-origin}"
+    local branch="$3"
+
+    cd "$worktree_path" || return 1
+
+    # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers (Issue #227).
+    # Try a dry-run push to check access.
+    local _push_timeout="${KAPSIS_PUSH_TIMEOUT:-${KAPSIS_DEFAULT_PUSH_TIMEOUT}}"
+    if GIT_TERMINAL_PROMPT=0 timeout "$_push_timeout" git push --dry-run "$remote" "$branch" 2>/dev/null; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+#===============================================================================
+# GENERATE FORK-BASED FALLBACK COMMAND
+#
+# Creates a fallback command that forks the repo and pushes to the fork.
+# Uses GitHub CLI (gh) for forking.
+#===============================================================================
+generate_fork_fallback() {
+    local worktree_path="$1"
+    local branch="$2"
+    local remote="${3:-origin}"
+
+    cd "$worktree_path" || return 1
+
+    local remote_url
+    remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
+
+    # Only for GitHub repos
+    if [[ "$remote_url" != *"github.com"* ]]; then
+        return 1
+    fi
+
+    # Extract repo info (owner/repo) using library function
+    local repo_path
+    repo_path=$(extract_repo_path "$remote_url")
+
+    # Validate repo_path format using library function (security: prevents injection)
+    if ! validate_repo_path "$repo_path"; then
+        log_warn "Invalid repository path format: $repo_path"
+        return 1
+    fi
+
+    # Validate branch name (safe characters only)
+    if [[ ! "$branch" =~ ^[a-zA-Z0-9/_.-]+$ ]]; then
+        log_warn "Invalid branch name format: $branch"
+        return 1
+    fi
+
+    # Use single quotes to prevent shell injection when command is eval'd
+    printf "cd '%s' && gh repo fork '%s' --remote --remote-name fork 2>/dev/null || true && git push -u fork '%s'" \
+        "$worktree_path" "$repo_path" "$branch"
+}
+
+#===============================================================================
+# GENERATE FORK PR URL
+#
+# Creates a PR URL for a fork-based contribution
+#===============================================================================
+generate_fork_pr_url() {
+    local worktree_path="$1"
+    local branch="$2"
+    local remote="${3:-origin}"
+
+    cd "$worktree_path" || return 1
+
+    local remote_url
+    remote_url=$(git remote get-url "$remote" 2>/dev/null || echo "")
+
+    # Only for GitHub repos
+    if [[ "$remote_url" != *"github.com"* ]]; then
+        return 1
+    fi
+
+    # Extract upstream repo info
+    local upstream_repo
+    upstream_repo=$(echo "$remote_url" | sed -E 's|.*github\.com[:/]([^/]+/[^/]+)(\.git)?$|\1|' | sed 's/\.git$//')
+
+    # Get current user (from gh or git config)
+    local github_user=""
+    if command -v gh &>/dev/null; then
+        github_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+    fi
+
+    if [[ -z "$github_user" ]]; then
+        # Try to infer from fork remote if it exists
+        github_user=$(git remote get-url fork 2>/dev/null | sed -E 's|.*github\.com[:/]([^/]+)/.*|\1|' || echo "YOUR_USERNAME")
+    fi
+
+    # Generate cross-fork PR URL
+    echo "https://github.com/${upstream_repo}/compare/main...${github_user}:${branch}?expand=1"
+}
+
+#===============================================================================
+# MAIN POST-CONTAINER WORKFLOW
+#
+# Orchestrates the full post-container git workflow:
+# 1. Check for changes
+# 2. Commit if changes exist
+# 3. Push if requested (with fork fallback support)
+#===============================================================================
+post_container_git() {
+    local worktree_path="$1"
+    local branch="$2"
+    local commit_message="${3:-feat: AI agent changes}"
+    local remote="${4:-origin}"
+    local do_push="${5:-false}"
+    local agent_id="${6:-unknown}"
+    local sanitized_git="${7:-}"
+    local co_authors="${8:-}"
+    local fork_enabled="${9:-false}"
+    local fork_fallback="${10:-fork}"
+    # Remote branch name: defaults to local branch name when not specified
+    local remote_branch="${11:-$branch}"
+
+    log_debug "post_container_git called with:"
+    log_debug "  worktree_path=$worktree_path"
+    log_debug "  branch=$branch"
+    log_debug "  remote_branch=$remote_branch"
+    log_debug "  commit_message=$commit_message"
+    log_debug "  remote=$remote"
+    log_debug "  do_push=$do_push"
+    log_debug "  agent_id=$agent_id"
+    log_debug "  sanitized_git=$sanitized_git"
+    log_debug "  co_authors=$co_authors"
+    log_debug "  fork_enabled=$fork_enabled"
+    log_debug "  fork_fallback=$fork_fallback"
+
+    echo ""
+    echo "┌────────────────────────────────────────────────────────────────────┐"
+    echo "│ POST-CONTAINER GIT OPERATIONS                                      │"
+    echo "└────────────────────────────────────────────────────────────────────┘"
+    echo "  Worktree: $worktree_path"
+    echo "  Branch:   $branch"
+    if [[ "$remote_branch" != "$branch" ]]; then
+        echo "  Remote:   $remote_branch"
+    fi
+    echo ""
+
+    # Sync index if sanitized git provided
+    if [[ -n "$sanitized_git" && -d "$sanitized_git" ]]; then
+        log_debug "Syncing index from sanitized git..."
+        sync_index_from_container "$worktree_path" "$sanitized_git"
+    fi
+
+    # Check for changes
+    log_debug "Checking for uncommitted changes..."
+    if ! has_changes "$worktree_path"; then
+        log_info "No changes to commit"
+        # Record no_changes status (Fix #3)
+        local current_sha
+        current_sha=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "")
+        status_set_commit_info "no_changes" "$current_sha" "0"
+        return 0
+    fi
+    log_debug "Changes detected, proceeding with commit"
+
+    # Update status: committing phase
+    status_phase "committing" 92 "Staging and committing changes"
+
+    # Record pre-commit SHA for verification (Fix #3)
+    status_record_pre_commit "$worktree_path"
+
+    # Commit changes
+    log_debug "Committing changes..."
+    local _commit_rc
+    _commit_rc=0
+    # shellcheck disable=SC2034  # false positive: _commit_rc IS used below
+    commit_changes "$worktree_path" "$commit_message" "$agent_id" "$co_authors" || _commit_rc=$?
+
+    if [[ $_commit_rc -eq 2 ]]; then
+        # All staged files were ephemeral artifacts — treat as "no changes"
+        log_info "No substantive changes to commit (only ephemeral artifacts filtered)"
+        local current_sha
+        current_sha=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "")
+        status_set_commit_info "no_changes" "$current_sha" "0"
+        log_success "Post-container git operations complete (no substantive changes)"
+        return 0
+    elif [[ $_commit_rc -ne 0 ]]; then
+        log_warn "Commit failed"
+        status_set_commit_info "failed" "" "0"
+        return 1
+    fi
+    log_debug "Commit successful"
+
+    # Verify commit was created and no uncommitted changes remain (Fix #3)
+    local verify_result
+    status_verify_commit "$worktree_path"
+    verify_result=$?
+    if [[ $verify_result -eq 2 ]]; then
+        log_warn "Commit created but uncommitted changes remain!"
+        log_warn "Uncommitted files: $(git -C "$worktree_path" status --porcelain | wc -l | tr -d ' ')"
+    elif [[ $verify_result -eq 0 ]]; then
+        log_debug "Commit verified: SHA=$(status_get_commit_sha)"
+    fi
+
+    # Push if enabled (--push flag)
+    if [[ "$do_push" == "true" ]]; then
+        # Update status: pushing phase
+        status_phase "pushing" 97 "Pushing to remote"
+
+        log_debug "Pushing changes to remote..."
+        local push_result
+        push_changes "$worktree_path" "$remote" "$remote_branch"
+        push_result=$?
+
+        if [[ $push_result -eq 0 ]]; then
+            log_debug "Push successful and verified"
+        elif [[ $push_result -eq 2 ]]; then
+            # Push command succeeded but verification failed
+            log_error "Push verification failed! Commits may not be on remote."
+            log_info "To check: cd $worktree_path && git fetch && git log --oneline HEAD ^origin/$remote_branch"
+            return 2
+        else
+            log_warn "Push failed. Changes are committed locally."
+
+            # Check if fork workflow is enabled and this is a GitHub repo
+            if [[ "$fork_fallback" == "fork" ]] && is_github_repo "$worktree_path" "$remote"; then
+                log_info ""
+                log_info "Fork workflow available for GitHub contribution:"
+
+                local fork_cmd
+                fork_cmd=$(generate_fork_fallback "$worktree_path" "$branch" "$remote")
+                if [[ -n "$fork_cmd" ]]; then
+                    echo ""
+                    echo "┌────────────────────────────────────────────────────────────────────┐"
+                    echo "│ FORK WORKFLOW FALLBACK                                             │"
+                    echo "└────────────────────────────────────────────────────────────────────┘"
+                    echo "KAPSIS_FORK_FALLBACK: $fork_cmd"
+                    echo ""
+                    echo "This command will:"
+                    echo "  1. Fork the repository to your GitHub account"
+                    echo "  2. Add the fork as a remote named 'fork'"
+                    echo "  3. Push your branch to the fork"
+                    echo ""
+
+                    # Generate fork PR URL
+                    local fork_pr_url
+                    fork_pr_url=$(generate_fork_pr_url "$worktree_path" "$branch" "$remote")
+                    if [[ -n "$fork_pr_url" ]]; then
+                        echo "Then create a PR at:"
+                        echo "  $fork_pr_url"
+                        echo ""
+                    fi
+                fi
+            else
+                log_info "To push manually: cd $worktree_path && git push -u $remote ${branch}:${remote_branch}"
+            fi
+            return 1
+        fi
+    else
+        log_info "Skipping push (use --push to enable)"
+        log_info "To push manually: cd $worktree_path && git push -u $remote ${branch}:${remote_branch}"
+        # Record that push was skipped with the local commit
+        local local_commit
+        local_commit=$(git -C "$worktree_path" rev-parse HEAD 2>/dev/null || echo "")
+        status_push_skipped "$local_commit"
+    fi
+
+    echo ""
+    log_success "Post-container git operations complete"
+    echo ""
+    echo "To continue working on this branch:"
+    echo "  cd $worktree_path"
+    echo ""
+    echo "Or re-run agent with same branch to continue:"
+    if [[ "$remote_branch" != "$branch" ]]; then
+        echo "  ./launch-agent.sh <id> <project> --branch $branch --remote-branch $remote_branch"
+    else
+        echo "  ./launch-agent.sh <id> <project> --branch $branch"
+    fi
+    echo ""
+
+    return 0
+}
+
+#===============================================================================
+# MAIN (for standalone usage)
+#===============================================================================
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    if [[ $# -lt 2 ]]; then
+        echo "Usage: $0 <worktree-path> <branch> [commit-message] [remote] [no-push] [agent-id] [sanitized-git] [co-authors] [fork-enabled] [fork-fallback] [remote-branch]"
+        echo ""
+        echo "Arguments:"
+        echo "  worktree-path   Path to the git worktree"
+        echo "  branch          Local branch name"
+        echo "  commit-message  Commit message (default: 'feat: AI agent changes')"
+        echo "  remote          Git remote (default: 'origin')"
+        echo "  no-push         Set to 'true' to skip push (default: 'false')"
+        echo "  agent-id        Agent identifier for commit metadata"
+        echo "  remote-branch   Remote branch name (default: same as local branch)"
+        echo ""
+        echo "Example:"
+        echo "  $0 ~/.kapsis/worktrees/myproject-1 feature/DEV-123 'fix: resolve auth bug'"
+        exit 1
+    fi
+
+    post_container_git "$@"
+fi

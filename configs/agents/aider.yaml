@@ -1,0 +1,41 @@
+# Aider AI Agent Profile
+# AI pair programming in your terminal
+#
+# Build: ./scripts/build-agent-image.sh aider --profile full-stack
+# Result: kapsis-aider:latest
+#
+# NOTE: Aider is Python-based and requires Python runtime.
+# No native binary available (as of Jan 2026).
+# See: https://aider.chat/docs/install.html
+
+name: aider
+description: Aider - AI pair programming (requires Python)
+version: latest
+
+install:
+  pip: "aider-chat"
+
+dependencies:
+  - python3 >= 3.9  # Required - no native binary available
+  - git
+
+auth:
+  required:
+    - name: ANTHROPIC_API_KEY
+      description: "Anthropic API key (for Claude models)"
+      keychain:
+        macos: "anthropic-api-key"
+        linux: "anthropic-api-key"
+  optional:
+    - name: OPENAI_API_KEY
+      description: "OpenAI API key (for GPT models)"
+      keychain:
+        macos: "openai-api-key"
+        linux: "openai-api-key"
+
+config_mounts:
+  - source: ~/.aider.conf.yml
+    target: ~/.aider.conf.yml
+    optional: true
+
+command: aider --yes-always

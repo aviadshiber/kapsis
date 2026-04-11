@@ -1,0 +1,27 @@
+Source: kapsis
+Section: devel
+Priority: optional
+Maintainer: Aviad Shiber <aviadshiber@gmail.com>
+Build-Depends: debhelper-compat (= 13)
+Standards-Version: 4.6.0
+Homepage: https://github.com/aviadshiber/kapsis
+Vcs-Browser: https://github.com/aviadshiber/kapsis
+Vcs-Git: https://github.com/aviadshiber/kapsis.git
+Rules-Requires-Root: no
+
+Package: kapsis
+Architecture: all
+Depends: ${misc:Depends}, bash (>= 3.2), git (>= 1:2.0), jq, podman (>= 4.0) | docker.io
+Recommends: yq
+Description: Hermetically isolated AI agent sandbox
+ Kapsis is a sandbox orchestration platform for running multiple AI coding
+ agents (Claude Code, Aider, Codex, Gemini) in parallel with complete
+ isolation via Podman containers and Copy-on-Write filesystems.
+ .
+ Features:
+  - Multi-agent support with parallel execution
+  - Podman-based container isolation with rootless execution
+  - Copy-on-Write filesystem isolation using overlays
+  - Git worktree integration for parallel branch development
+  - Maven isolation with snapshot blocking
+  - Centralized logging and status reporting

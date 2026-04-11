@@ -1,0 +1,413 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Weekly full run on Monday at 06:00 UTC — catches dormant test breakage
+    # that change-detection would otherwise miss (e.g. logic added in one PR
+    # that breaks a test only triggered by a different set of file changes).
+    - cron: '0 6 * * 1'
+
+# Security: Explicitly define minimal permissions
+permissions:
+  contents: read
+
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Check which files changed to determine which tests to run.
+  # Scheduled runs always set both outputs to true so every test category runs.
+  changes:
+    name: Detect Changes
+    runs-on: ubuntu-latest
+    outputs:
+      scripts: ${{ steps.determine.outputs.scripts }}
+      container: ${{ steps.determine.outputs.container }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d  # v4.0.1
+        id: filter
+        if: github.event_name != 'schedule'
+        with:
+          filters: |
+            scripts:
+              - 'scripts/**'
+              - 'tests/**'
+              - 'configs/**'
+              - 'Containerfile'
+              - 'setup.sh'
+              - '.github/workflows/ci.yml'
+            container:
+              - 'Containerfile'
+              - 'scripts/entrypoint.sh'
+              - 'scripts/build-image.sh'
+              - 'scripts/lib/**'
+              - '.github/workflows/ci.yml'
+      - name: Determine test scope
+        id: determine
+        run: |
+          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+            # Scheduled run: always run all tests regardless of what changed
+            echo "scripts=true" >> "$GITHUB_OUTPUT"
+            echo "container=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "scripts=${{ steps.filter.outputs.scripts }}" >> "$GITHUB_OUTPUT"
+            echo "container=${{ steps.filter.outputs.container }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  # All test jobs run in parallel after change detection
+  lint:
+    name: ShellCheck Lint
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Find shell scripts
+        id: find-scripts
+        run: |
+          # Find all shell scripts (by extension and shebang)
+          scripts=$(find . -type f \( -name "*.sh" -o -name "*.bash" \) ! -path "./.git/*" | sort)
+          echo "Found shell scripts:"
+          echo "$scripts"
+          echo "scripts<<EOF" >> $GITHUB_OUTPUT
+          echo "$scripts" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Run ShellCheck
+        run: |
+          # Run ShellCheck on all shell scripts
+          # -S warning: Only fail on warning level and above (not info/style)
+          # Other config from .shellcheckrc
+          failed=0
+
+          while IFS= read -r script; do
+            if [[ -n "$script" ]]; then
+              echo "::group::Checking $script"
+              if ! shellcheck -S warning "$script"; then
+                failed=1
+              fi
+              echo "::endgroup::"
+            fi
+          done <<< "${{ steps.find-scripts.outputs.scripts }}"
+
+          if [[ $failed -eq 1 ]]; then
+            echo "::error::ShellCheck found issues in one or more scripts"
+            exit 1
+          fi
+          echo "All scripts passed ShellCheck!"
+
+  # Verify supply chain pinning for security
+  verify-pinning:
+    name: Verify Supply Chain Pinning
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Verify base image digest pinning
+        run: |
+          echo "Verifying base image supply chain pinning..."
+
+          # 1. Check Containerfile uses digest reference (not floating tag)
+          if grep -qE "^FROM ubuntu:24\.04$" Containerfile; then
+            echo "::error::Base image not pinned to digest in Containerfile"
+            echo "Found: FROM ubuntu:24.04 (unpinned floating tag)"
+            exit 1
+          fi
+
+          if ! grep -q 'FROM ubuntu@\${BASE_IMAGE_DIGEST}' Containerfile; then
+            echo "::error::Containerfile must use FROM ubuntu@\${BASE_IMAGE_DIGEST}"
+            exit 1
+          fi
+          echo "✓ Containerfile uses digest reference"
+
+          # 2. Extract and validate digests from build-image.sh
+          echo ""
+          echo "Extracting pinned digests from build-image.sh..."
+
+          # Extract digests (format: ["linux/amd64"]="sha256:...")
+          digests=$(grep -oE 'sha256:[a-f0-9]{64}' scripts/build-image.sh || true)
+
+          if [[ -z "$digests" ]]; then
+            echo "::error::No valid SHA256 digests found in build-image.sh"
+            exit 1
+          fi
+
+          # 3. Validate format and verify digests exist in Docker registry
+          echo ""
+          echo "Verifying digests..."
+
+          for digest in $digests; do
+            echo -n "  $digest "
+
+            # Verify digest format (sha256: + 64 hex chars)
+            if ! echo "$digest" | grep -qE '^sha256:[a-f0-9]{64}$'; then
+              echo ""
+              echo "::error::Invalid digest format: $digest"
+              exit 1
+            fi
+
+            # Query Docker Registry V2 API to verify digest exists
+            # Get auth token first (required even for public images)
+            token=$(curl -s "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/ubuntu:pull" \
+              --max-time 10 | jq -r '.token' 2>/dev/null || echo "")
+
+            if [[ -z "$token" || "$token" == "null" ]]; then
+              echo "⚠ skipped (auth unavailable)"
+              continue
+            fi
+
+            # Check if digest exists by requesting manifest
+            http_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: Bearer $token" \
+              -H "Accept: application/vnd.docker.distribution.manifest.v2+json" \
+              "https://registry-1.docker.io/v2/library/ubuntu/manifests/$digest" \
+              --max-time 10 || echo "000")
+
+            case "$http_code" in
+              200) echo "✓ exists in registry" ;;
+              404)
+                echo ""
+                echo "::error::Digest not found in Docker Hub: $digest"
+                echo "This digest does not exist or may have been tampered with."
+                exit 1
+                ;;
+              000) echo "⚠ skipped (network timeout)" ;;
+              *)   echo "⚠ skipped (http $http_code)" ;;
+            esac
+          done
+
+          echo ""
+          echo "✓ All base image digests verified"
+
+      - name: Check GitHub Actions pinned
+        run: |
+          echo "Checking workflow files for unpinned actions..."
+          unpinned=$(grep -rE "uses:.*@v[0-9]+$" .github/workflows/ 2>/dev/null || true)
+          if [[ -n "$unpinned" ]]; then
+            echo "::error::Found unpinned GitHub Actions (using floating version tags)"
+            echo "$unpinned"
+            echo ""
+            echo "Actions must be pinned to commit SHAs for security."
+            echo "Example: uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6"
+            exit 1
+          fi
+          echo "✓ All GitHub Actions are pinned to commit SHAs"
+
+  config-validation:
+    name: Config Validation
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq yamllint
+          # Install yq for YAML parsing
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Validate YAML configs
+        run: |
+          chmod +x ./scripts/lib/config-verifier.sh
+          chmod +x ./scripts/hooks/*.sh 2>/dev/null || true
+          chmod +x ./scripts/hooks/agent-adapters/*.sh 2>/dev/null || true
+
+          # Run config verifier with pattern matching tests
+          ./scripts/lib/config-verifier.sh --all --test
+
+  quick-tests:
+    name: Quick Tests
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+          # Install yq for YAML parsing (pinned version with checksum)
+          YQ_VERSION="v4.50.1"
+          YQ_SHA256="c7a1278e6bbc4924f41b56db838086c39d13ee25dcb22089e7fbf16ac901f0d4"
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Configure git for tests
+        run: |
+          # Configure git identity for test commits
+          git config --global user.email "ci@kapsis.test"
+          git config --global user.name "Kapsis CI"
+          # Disable commit signing in CI environment
+          git config --global commit.gpgsign false
+          git config --global tag.gpgsign false
+
+      - name: Run quick tests
+        run: |
+          chmod +x ./tests/run-all-tests.sh
+          chmod +x ./tests/*.sh
+          chmod +x ./tests/lib/*.sh 2>/dev/null || true
+          chmod +x ./scripts/*.sh
+          chmod +x ./scripts/lib/*.sh 2>/dev/null || true
+
+          # Run quick tests (no container required)
+          ./tests/run-all-tests.sh --quick
+        env:
+          KAPSIS_TEST_QUIET: "0"
+
+  container-tests:
+    name: Container Tests
+    runs-on: ubuntu-latest
+    needs: changes
+    # Only run if container-related files changed (Containerfile, entrypoint, build scripts, libs)
+    if: needs.changes.outputs.container == 'true'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Configure git for tests
+        run: |
+          git config --global user.email "ci@kapsis.test"
+          git config --global user.name "Kapsis CI"
+          git config --global commit.gpgsign false
+          git config --global tag.gpgsign false
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman fuse-overlayfs slirp4netns jq
+          # Install yq for YAML parsing (pinned version with checksum)
+          YQ_VERSION="v4.50.1"
+          YQ_SHA256="c7a1278e6bbc4924f41b56db838086c39d13ee25dcb22089e7fbf16ac901f0d4"
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Configure Podman for rootless
+        run: |
+          # Set up rootless Podman
+          mkdir -p ~/.config/containers
+          echo '[storage]' > ~/.config/containers/storage.conf
+          echo 'driver = "overlay"' >> ~/.config/containers/storage.conf
+
+          # Verify Podman installation
+          podman --version
+          podman info --debug 2>&1 | head -20 || true
+
+      - name: Generate cache key
+        id: cache-key
+        run: |
+          # Cache key based on Containerfile, build script, and runner architecture
+          echo "key=kapsis-image-${{ runner.arch }}-${{ hashFiles('Containerfile', 'scripts/build-image.sh', 'scripts/entrypoint.sh', 'scripts/lib/**') }}" >> $GITHUB_OUTPUT
+
+      - name: Restore cached container image
+        id: cache-restore
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5
+        with:
+          path: /tmp/kapsis-image.tar
+          key: ${{ steps.cache-key.outputs.key }}
+
+      - name: Load cached image or build new
+        run: |
+          chmod +x ./scripts/build-image.sh
+          if [[ -f /tmp/kapsis-image.tar ]]; then
+            echo "Loading cached container image..."
+            podman load -i /tmp/kapsis-image.tar
+            echo "Cached image loaded successfully"
+          else
+            echo "No cache found, building fresh image..."
+            ./scripts/build-image.sh --name kapsis-test --tag ci
+          fi
+        timeout-minutes: 30
+
+      - name: Save image to cache
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        run: |
+          echo "Saving image to cache..."
+          podman save kapsis-test:ci -o /tmp/kapsis-image.tar
+
+      - name: Upload image cache
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5
+        with:
+          path: /tmp/kapsis-image.tar
+          key: ${{ steps.cache-key.outputs.key }}
+
+      - name: Run container tests
+        run: |
+          chmod +x ./tests/run-all-tests.sh
+          chmod +x ./tests/*.sh
+          chmod +x ./tests/lib/*.sh 2>/dev/null || true
+          chmod +x ./scripts/*.sh
+          chmod +x ./scripts/lib/*.sh 2>/dev/null || true
+
+          # Run all tests (includes container tests)
+          ./tests/run-all-tests.sh
+        timeout-minutes: 45
+        env:
+          KAPSIS_TEST_QUIET: "0"
+          KAPSIS_IMAGE: "kapsis-test:ci"
+          # Use 'open' network mode in CI - 'filtered' requires dnsmasq which can't run in CI containers
+          KAPSIS_NETWORK_MODE: "open"
+
+  # Summary job that all required checks depend on
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [changes, lint, verify-pinning, config-validation, quick-tests, container-tests]
+    if: always()
+    steps:
+      - name: Check all jobs passed
+        run: |
+          failed=0
+          check() {
+            local name="$1" result="$2" required="$3"
+            if [[ "$required" == "false" ]]; then
+              echo "  skip  $name (not required)"
+            elif [[ "$result" == "success" ]]; then
+              echo "  pass  $name"
+            else
+              echo "  FAIL  $name — expected: success, got: $result"
+              failed=1
+            fi
+          }
+
+          scripts_changed="${{ needs.changes.outputs.scripts }}"
+          container_changed="${{ needs.changes.outputs.container }}"
+
+          if [[ "$scripts_changed" != "true" ]]; then
+            echo "No script changes detected — CI tests skipped (docs/assets only)"
+            exit 0
+          fi
+
+          check "lint"              "${{ needs.lint.result }}"              "true"
+          check "verify-pinning"    "${{ needs.verify-pinning.result }}"    "true"
+          check "config-validation" "${{ needs.config-validation.result }}" "true"
+          check "quick-tests"       "${{ needs.quick-tests.result }}"       "true"
+          check "container-tests"   "${{ needs.container-tests.result }}"   "$container_changed"
+
+          if [[ $failed -eq 1 ]]; then
+            exit 1
+          fi
+          echo "All required CI checks passed!"

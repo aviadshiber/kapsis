@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Kapsis - Isolated Maven Settings
+
+  This settings file enforces hermetic isolation for parallel AI agent builds:
+  1. Uses container-local repository
+  2. Blocks SNAPSHOT downloads from remote
+  3. Blocks deploy operations
+  4. Uses corporate Artifactory mirror for releases
+
+  DO NOT MODIFY unless you understand the isolation implications.
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.2.0
+                              https://maven.apache.org/xsd/settings-1.2.0.xsd">
+
+    <!-- Container-local repository (isolated per agent) -->
+    <localRepository>${user.home}/.m2/repository</localRepository>
+
+    <!-- Offline mode can be enabled via -o flag if needed -->
+    <offline>false</offline>
+
+    <!-- Plugin groups for common plugins -->
+    <pluginGroups>
+        <pluginGroup>org.apache.maven.plugins</pluginGroup>
+        <pluginGroup>org.codehaus.mojo</pluginGroup>
+    </pluginGroups>
+
+    <!--
+      Mirror configuration
+      All repository requests go through the corporate Artifactory mirror
+    -->
+    <mirrors>
+        <mirror>
+            <id>kapsis-artifactory-mirror</id>
+            <name>Kapsis Artifactory Mirror (Releases Only)</name>
+            <mirrorOf>*</mirrorOf>
+            <!-- This URL should be overridden by environment or config -->
+            <url>${env.KAPSIS_MAVEN_MIRROR_URL}</url>
+        </mirror>
+    </mirrors>
+
+    <profiles>
+        <!--
+          Isolation Profile
+          Enforces SNAPSHOT blocking and release-only downloads
+        -->
+        <profile>
+            <id>kapsis-isolation</id>
+
+            <repositories>
+                <repository>
+                    <id>kapsis-central</id>
+                    <name>Kapsis Isolated Central</name>
+                    <url>${env.KAPSIS_MAVEN_MIRROR_URL}</url>
+                    <releases>
+                        <enabled>true</enabled>
+                        <updatePolicy>daily</updatePolicy>
+                        <checksumPolicy>fail</checksumPolicy>
+                    </releases>
+                    <snapshots>
+                        <!--
+                          CRITICAL: SNAPSHOT downloads DISABLED
+                          All SNAPSHOTs must be built locally via reactor
+                          This prevents Agent A's deployed SNAPSHOT from affecting Agent B
+                        -->
+                        <enabled>false</enabled>
+                    </snapshots>
+                </repository>
+            </repositories>
+
+            <pluginRepositories>
+                <pluginRepository>
+                    <id>kapsis-central-plugins</id>
+                    <name>Kapsis Isolated Plugin Repository</name>
+                    <url>${env.KAPSIS_MAVEN_MIRROR_URL}</url>
+                    <releases>
+                        <enabled>true</enabled>
+                    </releases>
+                    <snapshots>
+                        <!-- SNAPSHOT plugins also disabled -->
+                        <enabled>false</enabled>
+                    </snapshots>
+                </pluginRepository>
+            </pluginRepositories>
+
+            <properties>
+                <!-- Disable SNAPSHOT updates even if somehow enabled elsewhere -->
+                <maven.artifact.snapshotPolicy>never</maven.artifact.snapshotPolicy>
+
+                <!-- Enforce reproducible builds -->
+                <project.build.outputTimestamp>1980-01-01T00:00:02Z</project.build.outputTimestamp>
+            </properties>
+        </profile>
+
+        <!--
+          Deploy Blocker Profile
+          Prevents accidental deployment to shared repositories
+        -->
+        <profile>
+            <id>kapsis-block-deploy</id>
+
+            <properties>
+                <!--
+                  These properties cause deploy to fail with clear error
+                  if someone tries to run 'mvn deploy'
+                -->
+                <maven.deploy.skip>true</maven.deploy.skip>
+                <altDeploymentRepository>kapsis-blocked::file:///dev/null</altDeploymentRepository>
+            </properties>
+        </profile>
+
+        <!--
+          Gradle Enterprise Isolation Profile
+          Disables remote build cache
+        -->
+        <profile>
+            <id>kapsis-ge-isolation</id>
+
+            <properties>
+                <!-- Disable GE remote cache -->
+                <gradle.enterprise.buildCache.remote.enabled>false</gradle.enterprise.buildCache.remote.enabled>
+                <gradle.cache.remote.enabled>false</gradle.cache.remote.enabled>
+
+                <!-- Keep local cache per-container -->
+                <gradle.enterprise.buildCache.local.enabled>true</gradle.enterprise.buildCache.local.enabled>
+
+                <!-- Keep build scans for observability -->
+                <gradle.enterprise.buildScan.publish>true</gradle.enterprise.buildScan.publish>
+            </properties>
+        </profile>
+    </profiles>
+
+    <!-- Activate isolation profiles by default -->
+    <activeProfiles>
+        <activeProfile>kapsis-isolation</activeProfile>
+        <activeProfile>kapsis-block-deploy</activeProfile>
+        <activeProfile>kapsis-ge-isolation</activeProfile>
+    </activeProfiles>
+
+    <!--
+      Server credentials
+      These can be overridden via environment variables or mounted settings
+      Format: KAPSIS_MAVEN_SERVER_<ID>_USERNAME and KAPSIS_MAVEN_SERVER_<ID>_PASSWORD
+    -->
+    <servers>
+        <!--
+          Placeholder server config
+          Real credentials should be provided via environment or mounted file
+        -->
+        <server>
+            <id>kapsis-artifactory-mirror</id>
+            <username>${env.KAPSIS_MAVEN_USERNAME}</username>
+            <password>${env.KAPSIS_MAVEN_PASSWORD}</password>
+        </server>
+    </servers>
+
+</settings>

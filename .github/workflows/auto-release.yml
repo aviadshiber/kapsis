@@ -1,0 +1,266 @@
+name: Auto Release
+
+# Automatically creates a release tag on each successful CI run on main
+# Uses Conventional Commits to determine version bump type:
+#   - feat: or feat(scope): → Minor version bump
+#   - fix: or fix(scope): → Patch version bump
+#   - BREAKING CHANGE: or type!: → Major version bump
+#   - Other types (docs, chore, refactor, etc.) → Patch bump
+#
+# Note: Since main is a protected branch, this workflow only creates tags.
+# Git tags are the source of truth for versioning.
+#
+# IMPORTANT: Uses a GitHub App token to push tags so that the Release
+# workflow is triggered. GITHUB_TOKEN doesn't trigger other workflows.
+# GitHub App tokens work like PATs for triggering workflows but don't expire.
+
+on:
+  # Triggered automatically when CI workflow completes on main
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main, master]
+
+  # Manual trigger for ad-hoc releases
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Force version bump type'
+        required: false
+        type: choice
+        options:
+          - auto
+          - patch
+          - minor
+          - major
+        default: auto
+      skip_release:
+        description: 'Skip creating release (just update version)'
+        required: false
+        type: boolean
+        default: false
+
+# Prevent concurrent releases
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # Check if we should create a release
+  check:
+    name: Check Release Conditions
+    runs-on: ubuntu-latest
+    # Only run if CI succeeded (for workflow_run) or manual trigger (workflow_dispatch)
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      last_tag: ${{ steps.check.outputs.last_tag }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859  # v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          fetch-depth: 0
+          # Use GitHub App token — doesn't expire and works in workflow_run context
+          token: ${{ steps.app-token.outputs.token }}
+          # For workflow_run, checkout the commit that triggered CI
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Check release conditions
+        id: check
+        run: |
+          # Skip if this push was from the release workflow or auto-release itself
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          if [[ "$COMMIT_MSG" == *"[skip ci]"* ]] || [[ "$COMMIT_MSG" == *"[auto-release]"* ]]; then
+            echo "Skipping: commit contains skip marker"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Defense-in-depth: also skip release package update commits
+          if [[ "$COMMIT_MSG" == "chore(release): update CHANGELOG and packages"* ]]; then
+            echo "Skipping: package update commit from release workflow"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Skip if this is a tag push (handled by release.yml)
+          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            echo "Skipping: tag push (handled by release.yml)"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Get the last release tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          echo "last_tag=$LAST_TAG" >> $GITHUB_OUTPUT
+
+          if [[ -z "$LAST_TAG" ]]; then
+            echo "No previous tags found - will create initial release"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            # Check if there are commits since the last tag
+            COMMITS_SINCE=$(git rev-list "${LAST_TAG}..HEAD" --count)
+            if [[ "$COMMITS_SINCE" -gt 0 ]]; then
+              echo "Found $COMMITS_SINCE commits since $LAST_TAG"
+              echo "should_release=true" >> $GITHUB_OUTPUT
+            else
+              echo "No new commits since $LAST_TAG"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+  # Determine version bump and create release
+  release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    needs: [check]
+    if: needs.check.outputs.should_release == 'true'
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859  # v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          fetch-depth: 0
+          # Use GitHub App token to push tags — triggers the Release workflow.
+          # GITHUB_TOKEN pushes don't trigger other workflows (prevents loops).
+          # App tokens don't expire unlike PATs.
+          token: ${{ steps.app-token.outputs.token }}
+          ref: main
+
+      - name: Verify we're on the right commit
+        run: |
+          EXPECTED_SHA="${{ github.event.workflow_run.head_sha || github.sha }}"
+          CURRENT_SHA=$(git rev-parse HEAD)
+          if [[ "$EXPECTED_SHA" != "$CURRENT_SHA" ]]; then
+            echo "Warning: HEAD ($CURRENT_SHA) differs from expected ($EXPECTED_SHA)"
+            echo "This can happen if main moved since CI completed"
+          fi
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Get current version
+        id: current
+        run: |
+          # Get version from the last tag (source of truth)
+          LAST_TAG="${{ needs.check.outputs.last_tag }}"
+          if [[ -n "$LAST_TAG" ]]; then
+            # Strip 'v' prefix if present
+            VERSION="${LAST_TAG#v}"
+          else
+            VERSION="0.0.0"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Current version: $VERSION (from tag: ${LAST_TAG:-none})"
+
+      - name: Analyze commits for version bump
+        id: analyze
+        run: |
+          LAST_TAG="${{ needs.check.outputs.last_tag }}"
+          BUMP_TYPE="patch"  # Default to patch
+
+          # If manual trigger with specific bump type
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ inputs.bump_type }}" != "auto" ]]; then
+            BUMP_TYPE="${{ inputs.bump_type }}"
+            echo "Using manual bump type: $BUMP_TYPE"
+            echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Analyze commits since last tag (or all commits if no tag)
+          if [[ -n "$LAST_TAG" ]]; then
+            COMMITS=$(git log "${LAST_TAG}..HEAD" --pretty=format:"%s" --no-merges)
+          else
+            COMMITS=$(git log --pretty=format:"%s" --no-merges -50)
+          fi
+
+          echo "Analyzing commits:"
+          echo "$COMMITS"
+          echo ""
+
+          # Check for breaking changes first (highest priority)
+          if echo "$COMMITS" | grep -qiE "^[a-z]+(\(.+\))?!:|BREAKING[ -]CHANGE"; then
+            BUMP_TYPE="major"
+            echo "Found BREAKING CHANGE - major bump"
+          # Check for features
+          elif echo "$COMMITS" | grep -qiE "^feat(\(.+\))?:"; then
+            BUMP_TYPE="minor"
+            echo "Found feat commits - minor bump"
+          # Everything else is a patch
+          else
+            BUMP_TYPE="patch"
+            echo "No feat or breaking changes - patch bump"
+          fi
+
+          echo "bump_type=$BUMP_TYPE" >> $GITHUB_OUTPUT
+
+      - name: Calculate new version
+        id: newversion
+        run: |
+          CURRENT="${{ steps.current.outputs.version }}"
+          BUMP="${{ steps.analyze.outputs.bump_type }}"
+
+          # Parse current version
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+
+          # Calculate new version
+          case "$BUMP" in
+            major)
+              NEW_VERSION="$((MAJOR + 1)).0.0"
+              ;;
+            minor)
+              NEW_VERSION="${MAJOR}.$((MINOR + 1)).0"
+              ;;
+            patch)
+              NEW_VERSION="${MAJOR}.${MINOR}.$((PATCH + 1))"
+              ;;
+          esac
+
+          echo "new_version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Bumping $CURRENT -> $NEW_VERSION ($BUMP)"
+
+      # Release tag is created from current HEAD. Git tags are the source of truth.
+
+      - name: Create and push tag
+        run: |
+          NEW_VERSION="${{ steps.newversion.outputs.new_version }}"
+
+          # Create annotated tag from current HEAD (no commit needed)
+          git tag -a "v${NEW_VERSION}" -m "Release v${NEW_VERSION}"
+          git push origin "v${NEW_VERSION}"
+
+          echo "Created and pushed tag v${NEW_VERSION}"
+
+      - name: Release Summary
+        run: |
+          NEW_VERSION="${{ steps.newversion.outputs.new_version }}"
+          PREV_VERSION="${{ steps.current.outputs.version }}"
+          BUMP="${{ steps.analyze.outputs.bump_type }}"
+          echo "## Auto-Release Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **New Version**: v${NEW_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Previous Version**: v${PREV_VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Bump Type**: ${BUMP}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Trigger**: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "The release workflow will now build and publish the release." >> $GITHUB_STEP_SUMMARY

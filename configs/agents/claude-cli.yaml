@@ -1,0 +1,37 @@
+# Claude Code CLI Agent Profile
+# Official Anthropic CLI for Claude Code
+#
+# Build: ./scripts/build-agent-image.sh claude-cli
+# Result: kapsis-claude-cli:latest
+#
+# NOTE: Uses native installer (no Node.js required)
+# See: https://docs.anthropic.com/en/docs/claude-code/getting-started
+
+name: claude-cli
+description: Claude Code CLI (official Anthropic)
+version: latest
+
+install:
+  # Native installer - standalone binary, no Node.js needed
+  # Installed to /usr/local/bin/claude for system-wide access
+  script: "curl -fsSL https://claude.ai/install.sh | bash"
+  binary_path: "/usr/local/bin/claude"
+
+dependencies:
+  - git  # Required for git operations
+
+auth:
+  required:
+    - name: ANTHROPIC_API_KEY
+      description: "Anthropic API key for Claude"
+      keychain:
+        macos: "anthropic-api-key"
+        linux: "anthropic-api-key"
+
+config_mounts:
+  - source: ~/.claude.json
+    target: ~/.claude.json
+  - source: ~/.claude
+    target: ~/.claude
+
+command: claude --dangerously-skip-permissions

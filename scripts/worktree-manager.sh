@@ -1,0 +1,1053 @@
+#!/usr/bin/env bash
+#===============================================================================
+# Kapsis - Git Worktree Manager
+#
+# Manages git worktrees for agent sandboxes with security isolation.
+# Creates worktrees on host and prepares sanitized git environments for
+# container mounting.
+#
+# Security Model:
+# - Worktrees created on HOST (trusted environment)
+# - Containers receive sanitized git view (restricted)
+# - Empty hooks directory prevents hook-based attacks
+# - Objects mounted read-only prevents corruption
+# - Per-agent config prevents tampering
+#===============================================================================
+
+set -euo pipefail
+
+# Script directory
+WORKTREE_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source logging library (only if not already loaded)
+if [[ -z "${_KAPSIS_LOGGING_LOADED:-}" ]]; then
+    source "$WORKTREE_SCRIPT_DIR/lib/logging.sh"
+    log_init "worktree-manager"
+fi
+
+#===============================================================================
+# CONFIGURATION
+#===============================================================================
+KAPSIS_WORKTREE_BASE="${KAPSIS_WORKTREE_BASE:-$HOME/.kapsis/worktrees}"
+KAPSIS_SANITIZED_GIT_BASE="${KAPSIS_SANITIZED_GIT_BASE:-$HOME/.kapsis/sanitized-git}"
+
+# Source shared constants (provides CONTAINER_GIT_PATH, CONTAINER_OBJECTS_PATH, etc.)
+source "$WORKTREE_SCRIPT_DIR/lib/constants.sh"
+
+# Note: logging functions are provided by lib/logging.sh
+
+#===============================================================================
+# GIT COMMAND HELPER
+#
+# Runs a git command, captures output, logs it, and returns exit code.
+# Prevents git output from polluting stdout while preserving it in logs.
+#
+# Usage: run_git <command> [args...]
+# Returns: exit code of git command
+#===============================================================================
+run_git() {
+    local git_output
+    local git_exit_code
+
+    # Capture both stdout and stderr
+    git_output=$("$@" 2>&1) && git_exit_code=0 || git_exit_code=$?
+
+    # Log the output (goes to log file, not stdout)
+    if [[ -n "$git_output" ]]; then
+        log_debug "git command: $*"
+        log_debug "git output: $git_output"
+    fi
+
+    # Log failure if non-zero exit
+    if [[ $git_exit_code -ne 0 ]]; then
+        log_debug "git command failed with exit code: $git_exit_code"
+    fi
+
+    return $git_exit_code
+}
+
+#===============================================================================
+# ENSURE GIT EXCLUDES
+#
+# Adds protective patterns to $GIT_DIR/info/exclude to prevent accidental
+# commits of Kapsis internal files and paths with literal ~ characters.
+#
+# IMPORTANT: This uses Git's info/exclude mechanism instead of .gitignore.
+# The info/exclude file is local-only and NEVER committed, making Kapsis's
+# protective patterns completely transparent to the user's repository.
+#
+# This addresses issue #89 where .gitignore modifications were appearing
+# in user PRs, violating the principle of transparent sandbox operations.
+#
+# Patterns added:
+# - .kapsis/           : Internal Kapsis spec/task files
+# - ~                  : Literal tilde directory (failed expansion)
+# - ~/                 : Literal tilde directory with trailing slash
+# - .claude/           : Claude Code config files
+# - .codex/            : Codex CLI config files
+# - .aider/            : Aider config files
+#===============================================================================
+ensure_git_excludes() {
+    local worktree_path="$1"
+
+    # Determine the git directory for this worktree
+    local git_dir=""
+    if [[ -f "$worktree_path/.git" ]]; then
+        # Worktree mode: .git is a file pointing to the actual git dir
+        local gitdir_content
+        gitdir_content=$(cat "$worktree_path/.git")
+        git_dir="${gitdir_content#gitdir: }"
+    elif [[ -d "$worktree_path/.git" ]]; then
+        # Regular repo or overlay mode
+        git_dir="$worktree_path/.git"
+    else
+        log_warn "Cannot determine git directory for: $worktree_path"
+        return 1
+    fi
+
+    local exclude_path="$git_dir/info/exclude"
+
+    # Ensure info directory exists
+    mkdir -p "$git_dir/info"
+
+    # Marker comment to identify Kapsis-added patterns
+    local marker="# Kapsis protective patterns"
+
+    # Check if patterns are already present (idempotency check)
+    if [[ -f "$exclude_path" ]] && grep -qF "$marker" "$exclude_path" 2>/dev/null; then
+        log_debug "Protective exclude patterns already present in info/exclude"
+        return 0
+    fi
+
+    # Build patterns from constants (defined in constants.sh)
+    local patterns
+    patterns=$(printf '\n%s\n\n%s' "$KAPSIS_GIT_EXCLUDE_HEADER" "$KAPSIS_GIT_EXCLUDE_PATTERNS")
+
+    # Append to existing info/exclude or create new
+    if [[ -f "$exclude_path" ]]; then
+        log_debug "Appending protective patterns to existing info/exclude"
+        printf '%s\n' "$patterns" >> "$exclude_path"
+    else
+        log_debug "Creating info/exclude with protective patterns"
+        printf '%s\n' "$patterns" > "$exclude_path"
+    fi
+
+    log_debug "Protective patterns written to $exclude_path"
+}
+
+#===============================================================================
+# FIND WORKTREE FOR BRANCH (Fix #1)
+#
+# Finds which worktree (if any) has a specific branch checked out.
+# This is used to detect resume scenarios where a branch already exists.
+#
+# Arguments:
+#   $1 - project_path
+#   $2 - branch name
+# Returns:
+#   0 + prints worktree path if found
+#   1 if branch not found in any worktree
+#===============================================================================
+find_worktree_for_branch() {
+    local project_path="$1"
+    local branch="$2"
+
+    cd "$project_path" || return 1
+
+    # Use git worktree list --porcelain for reliable parsing
+    # Format:
+    #   worktree /path/to/worktree
+    #   HEAD abc123...
+    #   branch refs/heads/feature/foo
+    #   (blank line)
+    local path=""
+    while IFS= read -r line; do
+        if [[ "$line" == "worktree "* ]]; then
+            path="${line#worktree }"
+        elif [[ "$line" == "branch refs/heads/$branch" ]]; then
+            # Found the branch
+            echo "$path"
+            return 0
+        elif [[ -z "$line" ]]; then
+            # Reset for next entry
+            path=""
+        fi
+    done < <(git worktree list --porcelain 2>/dev/null)
+
+    return 1
+}
+
+#===============================================================================
+# GET WORKTREE METADATA (Fix #1)
+#
+# Returns metadata about a worktree for resume/conflict detection.
+# Output format: JSON-like key=value pairs
+#===============================================================================
+get_worktree_metadata() {
+    local worktree_path="$1"
+
+    if [[ ! -d "$worktree_path" ]]; then
+        return 1
+    fi
+
+    # Extract agent-id from path (assumes format: project-agentid)
+    local agent_id
+    agent_id=$(basename "$worktree_path" | sed 's/.*-//')
+
+    # Get branch
+    local branch
+    branch=$(git -C "$worktree_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+
+    # Get last modified time of worktree
+    local last_modified
+    if [[ "$(uname -s)" == "Darwin" ]]; then
+        last_modified=$(stat -f "%Sm" -t "%Y-%m-%d %H:%M" "$worktree_path" 2>/dev/null || echo "unknown")
+    else
+        last_modified=$(stat -c "%y" "$worktree_path" 2>/dev/null | cut -d. -f1 || echo "unknown")
+    fi
+
+    # Check for uncommitted changes
+    local has_changes="false"
+    if [[ -n "$(git -C "$worktree_path" status --porcelain 2>/dev/null)" ]]; then
+        has_changes="true"
+    fi
+
+    # Get last commit info
+    local last_commit
+    last_commit=$(git -C "$worktree_path" log -1 --format="%h %s" 2>/dev/null | head -c 60 || echo "no commits")
+
+    echo "path=$worktree_path"
+    echo "agent_id=$agent_id"
+    echo "branch=$branch"
+    echo "last_modified=$last_modified"
+    echo "has_changes=$has_changes"
+    echo "last_commit=$last_commit"
+}
+
+#===============================================================================
+# CREATE WORKTREE
+#
+# Creates a git worktree for an agent on the host filesystem.
+# Returns the path to the created worktree.
+#
+# Arguments:
+#   $1 - project_path: Path to the git repository
+#   $2 - agent_id: Unique agent identifier
+#   $3 - branch: Target branch name for the worktree
+#   $4 - base_branch: (Optional) Base branch/tag to create new branch from
+#                     If not specified, uses current HEAD (existing behavior)
+#                     Fix #116: Prevents orphan-like commits from wrong base
+#===============================================================================
+create_worktree() {
+    local project_path="$1"
+    local agent_id="$2"
+    local branch="$3"
+    local base_branch="${4:-}"  # Fix #116: Optional base branch/tag
+    # Remote branch name: defaults to local branch name when not specified
+    local remote_branch="${5:-$branch}"
+
+    log_debug "create_worktree called with:"
+    log_debug "  project_path=$project_path"
+    log_debug "  agent_id=$agent_id"
+    log_debug "  branch=$branch"
+    log_debug "  remote_branch=$remote_branch"
+    log_debug "  base_branch=${base_branch:-<not specified>}"
+
+    # Validate inputs
+    if [[ ! -d "$project_path/.git" ]]; then
+        log_error "Project is not a git repository: $project_path"
+        return 1
+    fi
+
+    local project_name
+    project_name=$(basename "$project_path")
+    local worktree_path="${KAPSIS_WORKTREE_BASE}/${project_name}-${agent_id}"
+    log_debug "Computed worktree_path=$worktree_path"
+
+    # Create base directory
+    mkdir -p "$KAPSIS_WORKTREE_BASE"
+    log_debug "Ensured worktree base dir exists: $KAPSIS_WORKTREE_BASE"
+
+    # Navigate to project
+    cd "$project_path"
+
+    # Check if worktree already exists
+    log_debug "Checking if worktree already exists..."
+    if git worktree list | grep -q "$worktree_path"; then
+        log_info "Reusing existing worktree: $worktree_path"
+        log_debug "Worktree found in: $(git worktree list | grep "$worktree_path")"
+
+        # Ensure we're on the right branch
+        cd "$worktree_path"
+        local current_branch
+        current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        log_debug "Current branch in worktree: $current_branch"
+
+        if [[ "$current_branch" != "$branch" ]]; then
+            log_info "Switching worktree from $current_branch to $branch"
+            run_git git checkout "$branch" || run_git git checkout -b "$branch"
+            log_debug "Branch switch completed"
+        fi
+    else
+        log_info "Creating worktree for branch: $branch"
+
+        # Fetch to ensure we have latest refs
+        log_debug "Fetching from origin to get latest refs..."
+        git fetch origin --prune 2>/dev/null || true
+
+        # Check if branch is already checked out in main working directory
+        local main_branch
+        main_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+        if [[ "$main_branch" == "$branch" ]]; then
+            log_error "Branch '$branch' is currently checked out in the main repository"
+            log_error "Worktrees cannot share a branch with the main working directory"
+            log_error ""
+            log_error "To fix this, either:"
+            log_error "  1. Switch the main repo to a different branch first:"
+            log_error "     cd $project_path && git checkout main"
+            log_error "  2. Or use a different branch name for the worktree"
+            return 1
+        fi
+
+        # Check if branch exists remotely (use remote branch name for lookup)
+        log_debug "Checking if remote branch exists: $remote_branch..."
+        if git ls-remote --exit-code --heads origin "$remote_branch" >/dev/null 2>&1; then
+            # Branch exists remotely - track it (local branch may differ from remote)
+            log_info "Tracking existing remote branch: origin/$remote_branch as local $branch"
+            log_debug "Running: git worktree add $worktree_path -b $branch origin/$remote_branch"
+            run_git git worktree add "$worktree_path" -b "$branch" "origin/$remote_branch" ||
+                run_git git worktree add "$worktree_path" "$branch" || true
+        elif git show-ref --verify --quiet "refs/heads/$branch" 2>/dev/null; then
+            # Branch exists locally
+            log_info "Using existing local branch: $branch"
+            log_debug "Running: git worktree add $worktree_path $branch"
+            run_git git worktree add "$worktree_path" "$branch" || true
+        else
+            # Create new branch - use base_branch if specified (Fix #116)
+            if [[ -n "$base_branch" ]]; then
+                # Verify base_branch exists (as branch, tag, or commit)
+                if ! git rev-parse --verify "$base_branch" >/dev/null 2>&1; then
+                    # Try fetching it from remote
+                    log_info "Fetching base ref: $base_branch"
+                    git fetch origin "$base_branch" --depth=1 2>/dev/null || true
+                    git fetch origin "refs/tags/$base_branch:refs/tags/$base_branch" 2>/dev/null || true
+                fi
+
+                if git rev-parse --verify "$base_branch" >/dev/null 2>&1; then
+                    log_info "Creating new branch: $branch from $base_branch"
+                    log_debug "Running: git worktree add $worktree_path -b $branch $base_branch"
+                    run_git git worktree add "$worktree_path" -b "$branch" "$base_branch" || true
+                else
+                    log_error "Base branch/tag not found: $base_branch"
+                    log_error "Available branches: $(git branch -a | head -10)"
+                    log_error "Available tags: $(git tag -l | head -10)"
+                    return 1
+                fi
+            else
+                # No base specified - use current HEAD (original behavior)
+                log_info "Creating new branch: $branch (from current HEAD)"
+                log_debug "Running: git worktree add $worktree_path -b $branch"
+                run_git git worktree add "$worktree_path" -b "$branch" || true
+            fi
+        fi
+        log_debug "Worktree creation attempt completed"
+    fi
+
+    # Verify worktree was actually created
+    if [[ ! -d "$worktree_path" ]]; then
+        log_error "Worktree directory was not created: $worktree_path"
+        log_error ""
+
+        # Check if another worktree has this branch (Fix #1: enhanced diagnostics)
+        local existing_worktree
+        if existing_worktree=$(find_worktree_for_branch "$project_path" "$branch"); then
+            log_error "FOUND: Branch '$branch' is already checked out in another worktree:"
+            log_error "  → $existing_worktree"
+            log_error ""
+            # Get metadata for the existing worktree
+            local metadata
+            metadata=$(get_worktree_metadata "$existing_worktree")
+            local existing_agent_id last_modified has_changes
+            existing_agent_id=$(echo "$metadata" | grep "^agent_id=" | cut -d= -f2)
+            last_modified=$(echo "$metadata" | grep "^last_modified=" | cut -d= -f2-)
+            has_changes=$(echo "$metadata" | grep "^has_changes=" | cut -d= -f2)
+            log_error "  Agent ID: $existing_agent_id"
+            log_error "  Last modified: $last_modified"
+            [[ "$has_changes" == "true" ]] && log_error "  ⚠ Has uncommitted changes"
+            log_error ""
+            log_error "To resume this worktree:"
+            log_error "  kapsis --agent-id $existing_agent_id ..."
+            log_error ""
+            log_error "To start fresh (removes existing worktree):"
+            log_error "  kapsis --force-clean ..."
+            # Export for use by callers (shellcheck: SC2034 - intentionally exported)
+            export KAPSIS_EXISTING_WORKTREE="$existing_worktree"
+            export KAPSIS_EXISTING_AGENT_ID="$existing_agent_id"
+        else
+            log_error "This can happen when:"
+            log_error "  1. The branch is already checked out in the main repository"
+            log_error "  2. There's a git lock file preventing operations"
+            log_error "  3. Insufficient disk space or permissions"
+            log_error ""
+            log_error "Check 'git worktree list' in $project_path for existing worktrees"
+        fi
+        return 1
+    fi
+
+    if [[ ! -f "$worktree_path/.git" ]]; then
+        log_error "Worktree directory exists but .git file is missing: $worktree_path"
+        log_error "The worktree may be corrupted. Try running:"
+        log_error "  cd $project_path && git worktree prune && git worktree remove $worktree_path --force"
+        return 1
+    fi
+
+    # Ensure worktree is writable by container user (fixes UID mapping in rootless podman)
+    # This is necessary because git worktree creates files with the host user's umask,
+    # which may not be writable when mounted into a container with different UID mapping
+    # Security: Use u+rwX,g+rX instead of a+rwX to avoid world-writable files
+    # With --userns=keep-id, the container user maps to the host user
+    chmod -R u+rwX,g+rX "$worktree_path" 2>/dev/null || true
+
+    # Add protective exclude patterns to $GIT_DIR/info/exclude to prevent
+    # accidental commits of:
+    # - .kapsis/ directory (internal spec/task files)
+    # - Literal ~ paths (tilde not expanded, creates directory named "~")
+    # - Claude/Codex/Aider config files that shouldn't be committed
+    # Using info/exclude instead of .gitignore keeps these patterns local-only
+    # and completely transparent to the user (never committed) - fixes issue #89
+    ensure_git_excludes "$worktree_path"
+
+    log_success "Worktree ready: $worktree_path"
+    echo "$worktree_path"
+}
+
+#===============================================================================
+# PREPARE SANITIZED GIT
+#
+# Creates a sanitized .git directory for container mounting.
+# This prevents hook-based attacks and config tampering while still
+# allowing git operations in the container.
+#
+# Security measures:
+# - Empty hooks directory (prevents execution of malicious hooks)
+# - Minimal config (no credential helpers, fixed identity)
+# - Read-only objects link (prevents object corruption)
+# - Isolated refs (agent only sees its own branch)
+#===============================================================================
+prepare_sanitized_git() {
+    local worktree_path="$1"
+    local agent_id="$2"
+    local project_path="$3"
+
+    log_debug "prepare_sanitized_git called with:"
+    log_debug "  worktree_path=$worktree_path"
+    log_debug "  agent_id=$agent_id"
+    log_debug "  project_path=$project_path"
+
+    local sanitized_dir="${KAPSIS_SANITIZED_GIT_BASE}/${agent_id}"
+    log_debug "sanitized_dir=$sanitized_dir"
+
+    # Clean up any existing sanitized git
+    log_debug "Cleaning up existing sanitized git directory..."
+    rm -rf "$sanitized_dir"
+    mkdir -p "$sanitized_dir"
+
+    # Read the gitdir pointer from worktree's .git file
+    local gitdir_content
+    gitdir_content=$(cat "$worktree_path/.git")
+    local worktree_gitdir="${gitdir_content#gitdir: }"
+    log_debug "worktree_gitdir=$worktree_gitdir"
+
+    # Find the parent .git directory (for shared objects)
+    local parent_git="${project_path}/.git"
+    log_debug "parent_git=$parent_git"
+
+    log_info "Creating sanitized git environment"
+    log_info "  Worktree gitdir: $worktree_gitdir"
+    log_info "  Parent .git: $parent_git"
+
+    # Create directory structure
+    log_debug "Creating sanitized directory structure..."
+    mkdir -p "$sanitized_dir/refs/heads"
+    mkdir -p "$sanitized_dir/refs/remotes/origin"
+    mkdir -p "$sanitized_dir/hooks"  # Empty! Critical for security
+    mkdir -p "$sanitized_dir/info"   # For exclude patterns (issue #89)
+    log_debug "Created refs/heads, refs/remotes/origin, hooks, and info directories"
+
+    # Copy HEAD (current branch pointer)
+    if [[ -f "$worktree_gitdir/HEAD" ]]; then
+        cp "$worktree_gitdir/HEAD" "$sanitized_dir/HEAD"
+    else
+        echo "ref: refs/heads/main" > "$sanitized_dir/HEAD"
+    fi
+
+    # Copy only the agent's branch ref
+    local current_branch
+    current_branch=$(cd "$worktree_path" && git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+
+    # Create parent directory for branch ref (needed for branches like feature/foo)
+    mkdir -p "$sanitized_dir/refs/heads/$(dirname "$current_branch")" 2>/dev/null || true
+
+    if [[ -f "$worktree_gitdir/refs/heads/$current_branch" ]]; then
+        cp "$worktree_gitdir/refs/heads/$current_branch" "$sanitized_dir/refs/heads/$current_branch"
+    elif [[ -f "$parent_git/refs/heads/$current_branch" ]]; then
+        cp "$parent_git/refs/heads/$current_branch" "$sanitized_dir/refs/heads/$current_branch"
+    fi
+
+    # Copy packed-refs if exists (for refs stored in packed format)
+    if [[ -f "$parent_git/packed-refs" ]]; then
+        # Filter to only include the agent's branch and essential refs
+        grep -E "^[0-9a-f]+ refs/(heads/$current_branch|tags/)" "$parent_git/packed-refs" > "$sanitized_dir/packed-refs" 2>/dev/null || true
+    fi
+
+    # Create index file link (needed for staging)
+    if [[ -f "$worktree_gitdir/index" ]]; then
+        cp "$worktree_gitdir/index" "$sanitized_dir/index"
+    fi
+
+    # Create minimal safe config
+    create_safe_git_config "$sanitized_dir/config" "$worktree_path" "$agent_id"
+
+    # Create objects symlink pointing to container mount path
+    # The sanitized git will be mounted at $CONTAINER_GIT_PATH
+    # and objects will be mounted at $CONTAINER_OBJECTS_PATH
+    # This symlink allows git to find objects when running inside the container
+    ln -sfn "$CONTAINER_OBJECTS_PATH" "$sanitized_dir/objects"
+    log_debug "Created objects symlink -> $CONTAINER_OBJECTS_PATH"
+
+    # Create info/exclude with protective patterns (issue #89)
+    # This ensures the container's git operations respect our exclude patterns
+    # even though we're using a sanitized git directory
+    # Patterns are defined in constants.sh for single source of truth
+    printf '%s\n\n%s\n' "$KAPSIS_GIT_EXCLUDE_HEADER" "$KAPSIS_GIT_EXCLUDE_PATTERNS" > "$sanitized_dir/info/exclude"
+    log_debug "Created info/exclude with protective patterns"
+
+    # Create a marker file with paths for container setup
+    cat > "$sanitized_dir/kapsis-meta" << EOF
+# Kapsis Sanitized Git Metadata
+WORKTREE_PATH=$worktree_path
+PROJECT_PATH=$project_path
+PARENT_GIT=$parent_git
+AGENT_ID=$agent_id
+BRANCH=$current_branch
+HOST_OBJECTS_PATH=${project_path}/.git/objects
+EOF
+
+    log_success "Sanitized git ready: $sanitized_dir"
+    log_info "  Hooks directory: EMPTY (security)"
+    log_info "  Config: minimal (no credentials)"
+    log_info "  Excludes: info/exclude with protective patterns"
+    log_info "  Branch: $current_branch"
+
+    echo "$sanitized_dir"
+}
+
+#===============================================================================
+# CREATE SAFE GIT CONFIG
+#
+# Creates a minimal git config without dangerous settings.
+# No credential helpers, hooks, or other attack vectors.
+#===============================================================================
+create_safe_git_config() {
+    local config_path="$1"
+    local worktree_path="$2"
+    local agent_id="$3"
+
+    # Get remote URL from original repo (for pushing)
+    local remote_url=""
+    if cd "$worktree_path" 2>/dev/null; then
+        remote_url=$(git remote get-url origin 2>/dev/null || echo "")
+    fi
+
+    cat > "$config_path" << EOF
+[core]
+    repositoryformatversion = 0
+    filemode = true
+    bare = false
+    # No fsmonitor, no hooks path, no credential helper
+[user]
+    name = Kapsis Agent $agent_id
+    email = kapsis-agent-${agent_id}@localhost
+[init]
+    defaultBranch = main
+[receive]
+    denyCurrentBranch = updateInstead
+EOF
+
+    # Add remote if available (allows push via host post-processing)
+    if [[ -n "$remote_url" ]]; then
+        cat >> "$config_path" << EOF
+[remote "origin"]
+    url = $remote_url
+    fetch = +refs/heads/*:refs/remotes/origin/*
+EOF
+    fi
+
+    # Disable dangerous features
+    cat >> "$config_path" << EOF
+[transfer]
+    fsckObjects = true
+[fetch]
+    fsckObjects = true
+[receive]
+    fsckObjects = true
+[safe]
+    directory = /workspace
+EOF
+}
+
+#===============================================================================
+# GET OBJECTS PATH
+#
+# Returns the path to the shared objects directory.
+# This should be mounted read-only in the container.
+#===============================================================================
+get_objects_path() {
+    local project_path="$1"
+    echo "${project_path}/.git/objects"
+}
+
+#===============================================================================
+# CLEANUP BRANCH (Fix #183)
+#
+# Safely deletes a git branch with multiple safety guards:
+# - Not currently checked out in any worktree
+# - Not the current branch of the main repo
+# - Not matching a protected pattern (configurable)
+# - Fully pushed to remote when require_pushed=true (configurable)
+#
+# Arguments:
+#   $1 - project_path: Path to the git repository
+#   $2 - branch_name:  Name of the branch to delete
+#   $3 - dry_run:      "true" to preview without deleting (default: "false")
+#
+# Returns:
+#   0 - Branch deleted (or would be deleted in dry-run)
+#   1 - Skipped due to safety check
+#   2 - Error during deletion
+#===============================================================================
+cleanup_branch() {
+    local project_path="$1"
+    local branch_name="$2"
+    local dry_run="${3:-false}"
+
+    local protected="${KAPSIS_CLEANUP_BRANCH_PROTECTED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_PROTECTED:-main|master|develop|release/.*|stable/.*}}"
+    local require_pushed="${KAPSIS_CLEANUP_BRANCH_REQUIRE_PUSHED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_REQUIRE_PUSHED:-true}}"
+    local prefixes="${KAPSIS_CLEANUP_BRANCH_PREFIXES:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_PREFIXES:-ai-agent/|kapsis/}}"
+
+    [[ -d "$project_path" ]] || return 2
+
+    # Safety 1: Never delete if branch is checked out in any worktree
+    if git -C "$project_path" worktree list --porcelain 2>/dev/null | grep -q "branch refs/heads/${branch_name}$"; then
+        log_debug "Branch '$branch_name' is checked out in a worktree, skipping"
+        return 1
+    fi
+
+    # Safety 2: Never delete the current branch of the main repo
+    local current_branch
+    current_branch=$(git -C "$project_path" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+    if [[ "$current_branch" == "$branch_name" ]]; then
+        log_debug "Branch '$branch_name' is currently checked out, skipping"
+        return 1
+    fi
+
+    # Safety 3: Check against protected patterns (pipe-separated)
+    local saved_ifs="$IFS"
+    IFS='|'
+    local is_protected=false
+    for pattern in $protected; do
+        # Support glob-like patterns (e.g., release/.*)
+        # shellcheck disable=SC2053
+        if [[ "$branch_name" == $pattern ]] || [[ "$branch_name" =~ ^${pattern}$ ]]; then
+            is_protected=true
+            break
+        fi
+    done
+    IFS="$saved_ifs"
+    if [[ "$is_protected" == "true" ]]; then
+        log_debug "Branch '$branch_name' matches protected pattern, skipping"
+        return 1
+    fi
+
+    # Safety 4: Check if branch has unpushed commits (when require_pushed=true)
+    if [[ "$require_pushed" == "true" ]]; then
+        if git -C "$project_path" rev-parse --verify "origin/$branch_name" &>/dev/null; then
+            local unpushed
+            unpushed=$(git -C "$project_path" log "origin/$branch_name..$branch_name" --oneline 2>/dev/null | wc -l | tr -d ' ')
+            if [[ "$unpushed" -gt 0 ]]; then
+                log_warn "Branch '$branch_name' has $unpushed unpushed commit(s), skipping"
+                return 1
+            fi
+        else
+            # No remote tracking — branch was never pushed
+            log_warn "Branch '$branch_name' has no remote tracking branch, skipping (require_pushed=true)"
+            return 1
+        fi
+    fi
+
+    # Safety 5: Branch must match allowed prefixes (defense-in-depth)
+    if [[ -n "$prefixes" ]]; then
+        local matches_prefix=false
+        saved_ifs="$IFS"
+        IFS='|'
+        for prefix in $prefixes; do
+            if [[ "$branch_name" == "${prefix}"* ]]; then
+                matches_prefix=true
+                break
+            fi
+        done
+        IFS="$saved_ifs"
+        if [[ "$matches_prefix" == "false" ]]; then
+            log_debug "Branch '$branch_name' does not match any allowed prefix ($prefixes), skipping"
+            return 1
+        fi
+    fi
+
+    # Delete (or dry-run)
+    if [[ "$dry_run" == "true" ]]; then
+        log_info "DRY-RUN: Would delete branch '$branch_name'"
+        return 0
+    fi
+
+    log_info "Deleting branch: $branch_name"
+    if git -C "$project_path" branch -d "$branch_name" 2>/dev/null; then
+        log_success "Deleted branch: $branch_name"
+        return 0
+    fi
+
+    # Force delete only if we already verified it's pushed
+    if [[ "$require_pushed" == "true" ]]; then
+        if git -C "$project_path" branch -D "$branch_name" 2>/dev/null; then
+            log_success "Force-deleted branch: $branch_name"
+            return 0
+        fi
+    fi
+
+    log_error "Failed to delete branch: $branch_name"
+    return 2
+}
+
+#===============================================================================
+# CLEANUP WORKTREE
+#
+# Removes a worktree and its associated sanitized git directory.
+# Optionally deletes the associated git branch (Fix #183).
+#
+# Arguments:
+#   $1 - project_path:  Path to the git repository
+#   $2 - agent_id:      Agent identifier
+#   $3 - delete_branch: "true" to also delete the associated branch (default: "false")
+#===============================================================================
+cleanup_worktree() {
+    local project_path="$1"
+    local agent_id="$2"
+    local delete_branch="${3:-false}"
+
+    local project_name
+    project_name=$(basename "$project_path")
+    local worktree_path="${KAPSIS_WORKTREE_BASE}/${project_name}-${agent_id}"
+    local sanitized_dir="${KAPSIS_SANITIZED_GIT_BASE}/${agent_id}"
+
+    log_info "Cleaning up worktree for agent: $agent_id"
+
+    # Extract branch name before removing worktree (for branch cleanup)
+    local branch_name=""
+    if [[ "$delete_branch" == "true" ]]; then
+        # Try status file first
+        local status_file="${HOME}/.kapsis/status/kapsis-${project_name}-${agent_id}.json"
+        if [[ -f "$status_file" ]] && command -v jq &>/dev/null; then
+            branch_name=$(jq -r '.branch // empty' "$status_file" 2>/dev/null) || true
+        fi
+        # Fall back to reading from worktree itself
+        if [[ -z "$branch_name" ]] && [[ -d "$worktree_path" ]]; then
+            branch_name=$(git -C "$worktree_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || true
+        fi
+    fi
+
+    # Remove worktree via git
+    if [[ -d "$worktree_path" ]]; then
+        cd "$project_path"
+        git worktree remove "$worktree_path" --force 2>/dev/null || {
+            log_warn "git worktree remove failed, forcing cleanup"
+            rm -rf "$worktree_path"
+            # Clean up the worktree reference
+            rm -rf "$project_path/.git/worktrees/${project_name}-${agent_id}" 2>/dev/null || true
+        }
+        log_info "Removed worktree: $worktree_path"
+    fi
+
+    # Remove sanitized git directory
+    if [[ -d "$sanitized_dir" ]]; then
+        rm -rf "$sanitized_dir"
+        log_info "Removed sanitized git: $sanitized_dir"
+    fi
+
+    # Delete associated branch if requested (Fix #183)
+    if [[ "$delete_branch" == "true" ]] && [[ -n "$branch_name" ]]; then
+        cleanup_branch "$project_path" "$branch_name" || \
+            log_debug "Branch cleanup skipped or failed for: $branch_name"
+    fi
+
+    log_success "Cleanup complete for agent: $agent_id"
+}
+
+#===============================================================================
+# LIST WORKTREES
+#
+# Lists all Kapsis worktrees for a project.
+#===============================================================================
+list_worktrees() {
+    local project_path="$1"
+
+    if [[ ! -d "$project_path/.git" ]]; then
+        log_error "Not a git repository: $project_path"
+        return 1
+    fi
+
+    cd "$project_path"
+
+    echo ""
+    echo "Kapsis Worktrees for: $(basename "$project_path")"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+
+    git worktree list | while read -r line; do
+        if [[ "$line" == *"$KAPSIS_WORKTREE_BASE"* ]]; then
+            echo "  $line"
+        fi
+    done
+
+    echo ""
+}
+
+#===============================================================================
+# PRUNE STALE WORKTREES
+#
+# Removes worktrees that no longer have valid working directories.
+#===============================================================================
+prune_worktrees() {
+    local project_path="$1"
+
+    if [[ ! -d "$project_path/.git" ]]; then
+        log_error "Not a git repository: $project_path"
+        return 1
+    fi
+
+    cd "$project_path"
+
+    log_info "Pruning stale worktrees..."
+    git worktree prune --verbose
+
+    # Also cleanup orphaned sanitized git directories
+    if [[ -d "$KAPSIS_SANITIZED_GIT_BASE" ]]; then
+        for dir in "$KAPSIS_SANITIZED_GIT_BASE"/*/; do
+            [[ -d "$dir" ]] || continue
+            local agent_id
+            agent_id=$(basename "$dir")
+            local project_name
+            project_name=$(basename "$project_path")
+            local worktree_path="${KAPSIS_WORKTREE_BASE}/${project_name}-${agent_id}"
+
+            if [[ ! -d "$worktree_path" ]]; then
+                log_info "Removing orphaned sanitized git: $dir"
+                rm -rf "$dir"
+            fi
+        done
+    fi
+
+    log_success "Prune complete"
+}
+
+#===============================================================================
+# GC STALE WORKTREES
+#
+# Opportunistic garbage collection: scans status files for completed agents
+# and removes their leftover worktrees. Called at startup to clean up after
+# crashes or runs before auto-cleanup existed (Fix #169).
+#===============================================================================
+gc_stale_worktrees() {
+    local project_path="$1"
+    local exclude_agent_id="${2:-}"  # Fix #221: skip current agent's worktree
+    local project_name
+    project_name=$(basename "$project_path")
+    local status_dir="${HOME}/.kapsis/status"
+    local cleaned=0
+
+    [[ -d "$status_dir" ]] || return 0
+
+    if ! command -v jq &>/dev/null; then
+        log_debug "GC skipped: jq not installed (needed to parse status files)"
+        return 0
+    fi
+
+    log_debug "Running opportunistic GC for stale worktrees..."
+
+    for status_file in "$status_dir"/kapsis-"${project_name}"-*.json; do
+        [[ -f "$status_file" ]] || continue
+
+        # Extract agent_id from filename: kapsis-{project}-{agent_id}.json
+        local basename_file
+        basename_file=$(basename "$status_file" .json)
+        # Use literal prefix stripping (safe from regex injection, handles hyphens)
+        local prefix="kapsis-${project_name}-"
+        local agent_id="${basename_file#"$prefix"}"
+
+        # Validate agent_id (defense-in-depth against path traversal)
+        if [[ ! "$agent_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            log_warn "GC: Skipping invalid agent_id from status file: $status_file"
+            continue
+        fi
+
+        # Fix #221: skip the current agent to prevent self-deletion race
+        if [[ -n "$exclude_agent_id" && "$agent_id" == "$exclude_agent_id" ]]; then
+            log_debug "GC: Skipping current agent $agent_id"
+            continue
+        fi
+
+        # Skip if no worktree exists
+        local worktree_path="${KAPSIS_WORKTREE_BASE}/${project_name}-${agent_id}"
+        [[ -d "$worktree_path" ]] || continue
+
+        # Only clean completed agents
+        local phase
+        phase=$(jq -r '.phase // empty' "$status_file" 2>/dev/null) || continue
+        if [[ "$phase" == "complete" ]]; then
+            log_info "GC: Cleaning stale worktree for completed agent $agent_id"
+            cleanup_worktree "$project_path" "$agent_id"
+            ((cleaned++)) || true
+        fi
+    done
+
+    if [[ "$cleaned" -gt 0 ]]; then
+        log_info "GC: Cleaned $cleaned stale worktree(s)"
+        prune_worktrees "$project_path"
+    fi
+
+    # Also run age-based cleanup for worktrees without status files (Fix #183)
+    gc_stale_worktrees_by_age "$project_path" "" "" "$exclude_agent_id"
+}
+
+#===============================================================================
+# GC STALE WORKTREES BY AGE (Fix #183)
+#
+# Cleans worktrees older than max_age_hours, regardless of status file presence.
+# Scans worktree directories directly to catch orphaned worktrees that have
+# no matching status file (e.g., from crashes or pre-status-tracking runs).
+#
+# Arguments:
+#   $1 - project_path:      Path to the git repository
+#   $2 - max_age_hours:     Max age in hours (default: from env/config/constant)
+#   $3 - delete_branches:   "true"/"false" (default: from env/config/constant)
+#   $4 - exclude_agent_id:  Agent ID to skip (default: empty — skip none) [Fix #221]
+#===============================================================================
+gc_stale_worktrees_by_age() {
+    local project_path="$1"
+    local max_age_hours="${2:-${KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS:-${KAPSIS_DEFAULT_CLEANUP_WORKTREE_MAX_AGE_HOURS:-168}}}"
+    local delete_branches="${3:-${KAPSIS_CLEANUP_BRANCH_ENABLED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_ENABLED:-false}}}"
+    local exclude_agent_id="${4:-}"  # Fix #221: skip current agent's worktree
+
+    # Age-based cleanup disabled
+    if [[ "$max_age_hours" -eq 0 ]] 2>/dev/null; then
+        log_debug "GC-age: Disabled (max_age_hours=0)"
+        return 0
+    fi
+
+    local project_name
+    project_name=$(basename "$project_path")
+    local max_age_secs=$((max_age_hours * 3600))
+    local now
+    now=$(date +%s)
+    local cleaned=0
+
+    # Source compat for get_dir_mtime if not already loaded
+    if ! declare -f get_dir_mtime &>/dev/null; then
+        if [[ -f "$WORKTREE_SCRIPT_DIR/lib/compat.sh" ]]; then
+            source "$WORKTREE_SCRIPT_DIR/lib/compat.sh"
+        else
+            log_debug "GC-age: Skipped (compat.sh not available for get_dir_mtime)"
+            return 0
+        fi
+    fi
+
+    log_debug "GC-age: max_age=${max_age_hours}h for project $project_name"
+
+    # Scan worktree directories directly (catches orphans without status files)
+    if [[ ! -d "$KAPSIS_WORKTREE_BASE" ]]; then
+        return 0
+    fi
+
+    for worktree_dir in "$KAPSIS_WORKTREE_BASE"/"${project_name}"-*/; do
+        [[ -d "$worktree_dir" ]] || continue
+
+        local dir_name
+        dir_name=$(basename "$worktree_dir")
+        local agent_id="${dir_name#"${project_name}-"}"
+
+        # Validate agent_id (defense-in-depth against path traversal)
+        if [[ ! "$agent_id" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+            log_warn "GC-age: Skipping invalid agent_id: $agent_id"
+            continue
+        fi
+
+        # Fix #221: skip the current agent to prevent self-deletion race
+        if [[ -n "$exclude_agent_id" && "$agent_id" == "$exclude_agent_id" ]]; then
+            log_debug "GC-age: Skipping current agent $agent_id"
+            continue
+        fi
+
+        # Get directory age
+        local mtime
+        mtime=$(get_dir_mtime "$worktree_dir") || continue
+        [[ -z "$mtime" ]] && continue
+
+        local age_secs=$((now - mtime))
+        if [[ "$age_secs" -gt "$max_age_secs" ]]; then
+            local age_hours=$((age_secs / 3600))
+            log_info "GC-age: Worktree $dir_name is ${age_hours}h old (max: ${max_age_hours}h)"
+            cleanup_worktree "$project_path" "$agent_id" "$delete_branches"
+            ((cleaned++)) || true
+        fi
+    done
+
+    if [[ "$cleaned" -gt 0 ]]; then
+        log_info "GC-age: Cleaned $cleaned stale worktree(s)"
+        prune_worktrees "$project_path"
+    fi
+}
+
+#===============================================================================
+# MAIN (for standalone testing)
+#===============================================================================
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    case "${1:-}" in
+        create)
+            create_worktree "${2:-.}" "${3:-test-agent}" "${4:-feature/test}"
+            ;;
+        sanitize)
+            prepare_sanitized_git "${2:-.}" "${3:-test-agent}" "${4:-.}"
+            ;;
+        cleanup)
+            cleanup_worktree "${2:-.}" "${3:-test-agent}"
+            ;;
+        list)
+            list_worktrees "${2:-.}"
+            ;;
+        prune)
+            prune_worktrees "${2:-.}"
+            ;;
+        gc)
+            gc_stale_worktrees "${2:-.}"
+            ;;
+        *)
+            echo "Usage: $0 {create|sanitize|cleanup|list|prune|gc} [args...]"
+            echo ""
+            echo "Commands:"
+            echo "  create <project> <agent-id> <branch>  Create worktree"
+            echo "  sanitize <worktree> <agent-id> <project>  Create sanitized git"
+            echo "  cleanup <project> <agent-id>          Remove worktree"
+            echo "  list <project>                        List worktrees"
+            echo "  prune <project>                       Remove stale worktrees"
+            echo "  gc <project>                          GC stale completed worktrees"
+            exit 1
+            ;;
+    esac
+fi

@@ -1,0 +1,16 @@
+# Kapsis protective patterns
+# These patterns prevent accidental commits of internal files
+# This file is local-only and never committed (transparent to user)
+
+# Kapsis internal files
+.kapsis/
+
+# Literal tilde paths (failed tilde expansion creates directory named "~")
+# This is NOT the same as *~ which matches backup files ending in ~
+~
+~/
+
+# AI tool configuration directories (should stay local)
+.claude/
+.codex/
+.aider/

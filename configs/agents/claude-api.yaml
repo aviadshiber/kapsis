@@ -1,0 +1,27 @@
+# Claude API Agent Profile
+# Anthropic Python SDK for programmatic Claude access
+#
+# Build: ./scripts/build-agent-image.sh claude-api
+# Result: kapsis-claude-api:latest
+
+name: claude-api
+description: Anthropic Python SDK for programmatic access
+version: latest
+
+install:
+  pip: "anthropic"
+
+dependencies:
+  - python3 >= 3.9
+
+auth:
+  required:
+    - name: ANTHROPIC_API_KEY
+      description: "Anthropic API key"
+      keychain:
+        macos: "anthropic-api-key"
+        linux: "anthropic-api-key"
+
+config_mounts: []
+
+command: python3 -c "import anthropic; print('Anthropic SDK ready')"

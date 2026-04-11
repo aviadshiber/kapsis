@@ -1,0 +1,12 @@
+# Kapsis Configuration - Test Agent
+# Minimal config for CI tests. Uses passthrough (not keychain) so tests
+# work in environments without a system keychain.
+
+agent:
+  command: "echo test"
+  workdir: /workspace
+
+environment:
+  passthrough:
+    - ANTHROPIC_API_KEY
+    - OPENAI_API_KEY

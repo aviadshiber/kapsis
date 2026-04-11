@@ -1,0 +1,33 @@
+# CODEOWNERS - Defines code ownership for automatic review requests
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+* @aviadshiber
+
+# Core scripts - require owner review
+/scripts/ @aviadshiber
+/scripts/launch-agent.sh @aviadshiber
+/scripts/entrypoint.sh @aviadshiber
+
+# Security-sensitive files
+/scripts/setup-github-protection.sh @aviadshiber
+/SECURITY.md @aviadshiber
+/.github/workflows/security.yml @aviadshiber
+
+# Container configuration
+/Containerfile @aviadshiber
+
+# Tests
+/tests/ @aviadshiber
+
+# Documentation
+/docs/ @aviadshiber
+/README.md @aviadshiber
+/CONTRIBUTING.md @aviadshiber
+
+# CI/CD configuration
+/.github/ @aviadshiber
+
+# Configuration
+/configs/ @aviadshiber
+/agent-sandbox.yaml.template @aviadshiber

@@ -1,0 +1,23 @@
+[core]
+    repositoryformatversion = 0
+    filemode = true
+    bare = false
+    # No fsmonitor, no hooks path, no credential helper
+[user]
+    name = Kapsis Agent 0e01a2
+    email = kapsis-agent-0e01a2@localhost
+[init]
+    defaultBranch = main
+[receive]
+    denyCurrentBranch = updateInstead
+[remote "origin"]
+    url = https://github.com/aviadshiber/kapsis.git
+    fetch = +refs/heads/*:refs/remotes/origin/*
+[transfer]
+    fsckObjects = true
+[fetch]
+    fsckObjects = true
+[receive]
+    fsckObjects = true
+[safe]
+    directory = /workspace

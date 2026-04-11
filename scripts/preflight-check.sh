@@ -1,0 +1,442 @@
+#!/usr/bin/env bash
+#===============================================================================
+# Kapsis - Pre-Flight Validation Script
+#
+# Validates all prerequisites before launching a Kapsis agent.
+# Called automatically by launch-agent.sh when using --branch flag.
+#
+# Exit codes:
+#   0 - All checks pass
+#   1 - Critical failure (blocks launch)
+#   2 - Warnings only (can proceed)
+#
+# Usage:
+#   source preflight-check.sh
+#   preflight_check <project_path> <target_branch> [spec_file]
+#===============================================================================
+
+set -euo pipefail
+
+# Script directory
+PREFLIGHT_SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Source logging library (only if not already loaded)
+if [[ -z "${_KAPSIS_LOGGING_LOADED:-}" ]]; then
+    source "$PREFLIGHT_SCRIPT_DIR/lib/logging.sh"
+    log_init "preflight-check"
+fi
+
+# Source cross-platform compatibility helpers (only if not already loaded)
+if [[ -z "${_KAPSIS_COMPAT_LOADED:-}" ]] && [[ -f "$PREFLIGHT_SCRIPT_DIR/lib/compat.sh" ]]; then
+    source "$PREFLIGHT_SCRIPT_DIR/lib/compat.sh"
+fi
+
+#===============================================================================
+# PREFLIGHT CHECK RESULTS
+#===============================================================================
+_PREFLIGHT_ERRORS=0
+_PREFLIGHT_WARNINGS=0
+
+preflight_error() {
+    log_error "$1"
+    ((_PREFLIGHT_ERRORS++)) || true
+}
+
+preflight_warn() {
+    log_warn "$1"
+    ((_PREFLIGHT_WARNINGS++)) || true
+}
+
+preflight_ok() {
+    log_success "$1"
+}
+
+#===============================================================================
+# INDIVIDUAL CHECKS
+#===============================================================================
+
+# Check if Podman is available and machine is running
+check_podman() {
+    log_info "Checking Podman..."
+
+    if ! command -v podman &>/dev/null; then
+        preflight_error "Podman is not installed or not in PATH"
+        return 1
+    fi
+
+    if ! podman machine inspect podman-machine-default &>/dev/null; then
+        preflight_error "Podman machine 'podman-machine-default' not found"
+        preflight_error "  Run: podman machine init"
+        return 1
+    fi
+
+    local machine_state
+    machine_state=$(podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null || echo "unknown")
+
+    if [[ "$machine_state" != "running" ]]; then
+        preflight_error "Podman machine is not running (state: $machine_state)"
+        preflight_error "  Run: podman machine start"
+        return 1
+    fi
+
+    preflight_ok "Podman machine is running"
+    return 0
+}
+
+# Check if Kapsis images are available
+check_images() {
+    local image_name="${1:-kapsis-sandbox:latest}"
+
+    log_info "Checking Kapsis image: $image_name"
+
+    if ! podman image exists "$image_name" 2>/dev/null; then
+        preflight_error "Kapsis image not found: $image_name"
+        preflight_error "  Run: ~/git/kapsis/scripts/build-image.sh"
+        if [[ "$image_name" == *"claude"* ]]; then
+            preflight_error "  Then: ~/git/kapsis/scripts/build-agent-image.sh claude-cli"
+        fi
+        return 1
+    fi
+
+    preflight_ok "Image available: $image_name"
+    return 0
+}
+
+# Check git status (clean working tree)
+check_git_status() {
+    local project_path="$1"
+
+    log_info "Checking git status..."
+
+    if [[ ! -d "$project_path/.git" ]]; then
+        preflight_error "Not a git repository: $project_path"
+        return 1
+    fi
+
+    cd "$project_path"
+
+    local status
+    status=$(git status --porcelain 2>/dev/null || echo "ERROR")
+
+    if [[ "$status" == "ERROR" ]]; then
+        preflight_error "Failed to check git status in $project_path"
+        return 1
+    fi
+
+    if [[ -n "$status" ]]; then
+        local change_count
+        change_count=$(echo "$status" | wc -l | tr -d ' ')
+        preflight_warn "Git working tree has $change_count uncommitted change(s)"
+        preflight_warn "  Consider: git stash or git commit"
+        # This is a warning, not an error - worktree still works
+        return 0
+    fi
+
+    preflight_ok "Git working tree is clean"
+    return 0
+}
+
+# CRITICAL: Check if main repo is on the target branch
+check_branch_conflict() {
+    local project_path="$1"
+    local target_branch="$2"
+
+    log_info "Checking for branch conflict..."
+
+    cd "$project_path"
+
+    local current_branch
+    current_branch=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "")
+
+    if [[ -z "$current_branch" ]]; then
+        preflight_error "Could not determine current branch in $project_path"
+        return 1
+    fi
+
+    # Normalize branch names (remove feature/ prefix for comparison if needed)
+    local target_normalized="${target_branch#feature/}"
+    local current_normalized="${current_branch#feature/}"
+
+    if [[ "$current_branch" == "$target_branch" ]] || \
+       [[ "$current_normalized" == "$target_normalized" && "$current_branch" == "feature/$target_normalized" ]]; then
+        preflight_error "BRANCH CONFLICT: Main repo is on '$current_branch'"
+        preflight_error ""
+        preflight_error "Git worktrees cannot use a branch already checked out elsewhere."
+        preflight_error ""
+        preflight_error "To fix this, switch the main repo to a different branch:"
+        preflight_error "  cd $project_path"
+        preflight_error "  git checkout main  # or: git checkout stable/trunk"
+        preflight_error "  git stash          # if you have uncommitted changes"
+        preflight_error ""
+        preflight_error "Then retry the Kapsis launch."
+        return 1
+    fi
+
+    preflight_ok "No branch conflict (main repo on: $current_branch)"
+    return 0
+}
+
+# Check if spec file exists (if provided)
+check_spec_file() {
+    local spec_file="$1"
+
+    if [[ -z "$spec_file" ]]; then
+        return 0
+    fi
+
+    log_info "Checking spec file..."
+
+    if [[ ! -f "$spec_file" ]]; then
+        preflight_error "Spec file not found: $spec_file"
+        return 1
+    fi
+
+    local line_count
+    line_count=$(wc -l < "$spec_file" | tr -d ' ')
+
+    if [[ "$line_count" -lt 5 ]]; then
+        preflight_warn "Spec file is very short ($line_count lines) - may need more detail"
+    else
+        preflight_ok "Spec file exists: $spec_file ($line_count lines)"
+    fi
+
+    return 0
+}
+
+# Check for existing worktree that might conflict
+check_existing_worktree() {
+    local project_path="$1"
+    local agent_id="$2"
+
+    log_info "Checking for existing worktree..."
+
+    local project_name
+    project_name=$(basename "$project_path")
+    local worktree_path="${KAPSIS_WORKTREE_BASE:-$HOME/.kapsis/worktrees}/${project_name}-${agent_id}"
+
+    if [[ -d "$worktree_path" ]]; then
+        preflight_warn "Existing worktree found: $worktree_path"
+        preflight_warn "  Will be reused if on compatible branch"
+    else
+        preflight_ok "No conflicting worktree"
+    fi
+
+    return 0
+}
+
+# Check for orphaned Kapsis volumes (Fix #191)
+check_orphan_volumes() {
+    log_info "Checking for orphaned volumes..."
+
+    if ! command -v podman &>/dev/null; then
+        return 0
+    fi
+
+    # Count all kapsis volumes
+    local all_volumes
+    all_volumes=$(podman volume ls --format "{{.Name}}" 2>/dev/null | grep -c "^kapsis-" || true)
+    [[ -z "$all_volumes" ]] && all_volumes=0
+
+    if (( all_volumes == 0 )); then
+        preflight_ok "No orphaned volumes"
+        return 0
+    fi
+
+    # Count volumes in use by running containers
+    local active_volumes=0
+    local running_containers
+    running_containers=$(podman ps --format "{{.Names}}" 2>/dev/null | grep "^kapsis-" || true)
+    if [[ -n "$running_containers" ]]; then
+        # Each running kapsis container uses 3 volumes (m2, gradle, ge)
+        local running_count
+        running_count=$(echo "$running_containers" | wc -l | tr -d ' ')
+        active_volumes=$(( running_count * 3 ))
+    fi
+
+    local orphan_count=$(( all_volumes - active_volumes ))
+    # Guard against over-estimation of active volumes
+    if (( orphan_count < 0 )); then
+        orphan_count=0
+    fi
+
+    if (( orphan_count > 10 )); then
+        preflight_warn "$orphan_count orphaned Kapsis volumes found (wasting disk space)"
+        preflight_warn "  Run: kapsis cleanup --volumes"
+    elif (( orphan_count > 0 )); then
+        log_debug "$orphan_count orphaned volume(s) found (below warning threshold)"
+        preflight_ok "Volumes OK ($orphan_count orphaned, below threshold)"
+    else
+        preflight_ok "No orphaned volumes"
+    fi
+
+    return 0
+}
+
+# Check available disk space (Fix #191)
+check_disk_space() {
+    local warn_mb="${KAPSIS_DISK_WARN_MB:-2048}"    # 2GB default
+    local abort_mb="${KAPSIS_DISK_ABORT_MB:-512}"    # 500MB default
+
+    log_info "Checking disk space..."
+
+    local available_mb
+    if is_macos; then
+        available_mb=$(df -m "$HOME" 2>/dev/null | tail -1 | awk '{print $4}')
+    else
+        available_mb=$(df -BM "$HOME" 2>/dev/null | tail -1 | awk '{print $4}' | tr -d 'M')
+    fi
+
+    if [[ -z "$available_mb" ]] || ! [[ "$available_mb" =~ ^[0-9]+$ ]]; then
+        log_debug "Could not determine available disk space"
+        return 0
+    fi
+
+    if (( available_mb < abort_mb )); then
+        preflight_error "Critically low disk space: ${available_mb}MB available (minimum: ${abort_mb}MB)"
+        preflight_error "  Run: kapsis cleanup --all --volumes --images"
+        return 1
+    elif (( available_mb < warn_mb )); then
+        preflight_warn "Low disk space: ${available_mb}MB available (recommend: ${warn_mb}MB+)"
+        preflight_warn "  Consider: kapsis cleanup --all --volumes --images"
+        return 0
+    fi
+
+    preflight_ok "Disk space OK (${available_mb}MB available)"
+    return 0
+}
+
+#===============================================================================
+# MAIN PREFLIGHT CHECK
+#===============================================================================
+preflight_check() {
+    local project_path="${1:-.}"
+    local target_branch="${2:-}"
+    local spec_file="${3:-}"
+    local image_name="${4:-kapsis-sandbox:latest}"
+    local agent_id="${5:-1}"
+
+    _PREFLIGHT_ERRORS=0
+    _PREFLIGHT_WARNINGS=0
+
+    log_section "Kapsis Pre-Flight Check"
+    echo ""
+
+    # Run all checks
+    check_podman || true
+    check_disk_space || true
+    check_images "$image_name" || true
+
+    if [[ -n "$target_branch" ]]; then
+        check_git_status "$project_path" || true
+        check_branch_conflict "$project_path" "$target_branch" || true
+        check_existing_worktree "$project_path" "$agent_id" || true
+    fi
+
+    if [[ -n "$spec_file" ]]; then
+        check_spec_file "$spec_file" || true
+    fi
+
+    check_orphan_volumes || true
+
+    echo ""
+
+    # Summary
+    if [[ $_PREFLIGHT_ERRORS -gt 0 ]]; then
+        log_error "Pre-flight check FAILED: $_PREFLIGHT_ERRORS error(s), $_PREFLIGHT_WARNINGS warning(s)"
+        echo ""
+        return 1
+    elif [[ $_PREFLIGHT_WARNINGS -gt 0 ]]; then
+        log_warn "Pre-flight check PASSED with $_PREFLIGHT_WARNINGS warning(s)"
+        echo ""
+        return 0  # Warnings don't block launch
+    else
+        log_success "Pre-flight check PASSED: All checks OK"
+        echo ""
+        return 0
+    fi
+}
+
+#===============================================================================
+# STANDALONE EXECUTION
+#===============================================================================
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    # Parse arguments - support both --config and legacy positional args
+    PROJECT_PATH=""
+    TARGET_BRANCH=""
+    SPEC_FILE=""
+    IMAGE_NAME=""
+    AGENT_ID="1"
+    CONFIG_FILE=""
+
+    show_help() {
+        echo "Usage: $0 [--config <file>] <project_path> [target_branch] [spec_file]"
+        echo ""
+        echo "Validates prerequisites before launching a Kapsis agent."
+        echo ""
+        echo "Options:"
+        echo "  --config <file>  Read image from config file (same as launch-agent.sh)"
+        echo "  -h, --help       Show this help message"
+        echo ""
+        echo "Positional arguments:"
+        echo "  project_path   Path to the project directory (default: .)"
+        echo "  target_branch  Git branch for worktree (optional)"
+        echo "  spec_file      Task specification file (optional)"
+        echo "  image_name     Container image (default: from config or kapsis-sandbox:latest)"
+        echo "  agent_id       Agent identifier (default: 1)"
+        echo ""
+        echo "Examples:"
+        echo "  # Recommended: use --config to match launch-agent.sh behavior"
+        echo "  $0 --config ~/git/kapsis/configs/aviad-claude.yaml ~/git/products feature/DEV-123 ./spec.md"
+        echo ""
+        echo "  # Legacy: explicit image name"
+        echo "  $0 ~/git/products feature/DEV-123 ./spec.md kapsis-claude-cli:latest"
+        echo ""
+        echo "Exit codes:"
+        echo "  0 - All checks pass"
+        echo "  1 - Critical failure"
+        exit 0
+    }
+
+    # Parse --config option first
+    POSITIONAL_ARGS=()
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -h|--help)
+                show_help
+                ;;
+            --config)
+                CONFIG_FILE="$2"
+                shift 2
+                ;;
+            *)
+                POSITIONAL_ARGS+=("$1")
+                shift
+                ;;
+        esac
+    done
+    set -- "${POSITIONAL_ARGS[@]}"
+
+    # Parse positional arguments
+    PROJECT_PATH="${1:-.}"
+    TARGET_BRANCH="${2:-}"
+    SPEC_FILE="${3:-}"
+    IMAGE_NAME="${4:-}"
+    AGENT_ID="${5:-1}"
+
+    # Extract image from config file (same logic as launch-agent.sh)
+    if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
+        if ! command -v yq &>/dev/null; then
+            echo "ERROR: yq is required but not installed." >&2
+            echo "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)" >&2
+            exit 1
+        fi
+        CONFIG_IMAGE=$(yq -r '.image.name // "kapsis-sandbox"' "$CONFIG_FILE"):$(yq -r '.image.tag // "latest"' "$CONFIG_FILE")
+        IMAGE_NAME="${CONFIG_IMAGE}"
+    fi
+
+    # Default if no config file provided
+    [[ -z "$IMAGE_NAME" ]] && IMAGE_NAME="kapsis-sandbox:latest"
+
+    preflight_check "$PROJECT_PATH" "$TARGET_BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"
+    exit $?
+fi

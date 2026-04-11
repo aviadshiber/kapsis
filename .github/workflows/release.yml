@@ -1,0 +1,782 @@
+name: Release
+
+# Creates a GitHub release when a version tag is pushed
+# This workflow is typically triggered automatically by auto-release.yml after a merge to main
+# Can also be triggered manually via workflow_dispatch for pre-releases or hotfixes
+#
+# Release notes are auto-generated from conventional commits between tags:
+# - feat: → Features section
+# - fix: → Bug Fixes section
+# - docs: → Documentation section
+# - other types → Other Changes section
+# - type!: or BREAKING CHANGE → Breaking Changes section
+#
+# Note: Git tags are the source of truth for versioning.
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (e.g., 1.0.0)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as pre-release'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  validate:
+    name: Validate Release
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Determine version
+        id: version
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="${GITHUB_REF#refs/tags/v}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Release version: $VERSION"
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y shellcheck jq
+
+      - name: Run ShellCheck
+        run: |
+          find . -name "*.sh" ! -path "./.git/*" -exec shellcheck -x -S warning {} \;
+
+      - name: Run quick tests
+        run: |
+          chmod +x ./tests/run-all-tests.sh ./tests/*.sh ./scripts/*.sh
+          chmod +x ./tests/lib/*.sh ./scripts/lib/*.sh 2>/dev/null || true
+          ./tests/run-all-tests.sh --quick
+
+  build-and-push:
+    name: Build & Push Container Images
+    runs-on: ubuntu-latest
+    needs: validate
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y podman jq
+          # Install yq for agent image builds
+          YQ_VERSION="v4.50.1"
+          YQ_SHA256="c7a1278e6bbc4924f41b56db838086c39d13ee25dcb22089e7fbf16ac901f0d4"
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Log in to ghcr.io
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: echo "${GITHUB_TOKEN}" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Build sandbox image
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          chmod +x ./scripts/build-image.sh ./scripts/lib/*.sh
+          ./scripts/build-image.sh --name kapsis-sandbox --tag "${VERSION}"
+
+      - name: Build claude-cli agent image
+        run: |
+          chmod +x ./scripts/build-agent-image.sh
+          ./scripts/build-agent-image.sh claude-cli
+
+      - name: Tag and push images to ghcr.io
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+        run: |
+          for IMAGE in kapsis-sandbox kapsis-claude-cli; do
+            LOCAL_TAG="${IMAGE}:latest"
+            if [[ "${IMAGE}" == "kapsis-sandbox" ]]; then
+              LOCAL_TAG="${IMAGE}:${VERSION}"
+            fi
+
+            # Tag with version and latest
+            podman tag "${LOCAL_TAG}" "${REGISTRY}/${IMAGE}:${VERSION}"
+            podman tag "${LOCAL_TAG}" "${REGISTRY}/${IMAGE}:latest"
+
+            # Push both tags
+            podman push "${REGISTRY}/${IMAGE}:${VERSION}"
+            podman push "${REGISTRY}/${IMAGE}:latest"
+
+            echo "Pushed ${REGISTRY}/${IMAGE}:${VERSION}"
+          done
+
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [validate, test, build-and-push]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Create source tarball
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          # Create a clean source tarball for the install script
+          mkdir -p "kapsis-${VERSION}"
+          cp -r scripts configs maven *.sh *.md *.yaml.template Containerfile LICENSE "kapsis-${VERSION}/"
+          tar czf "kapsis-${VERSION}.tar.gz" "kapsis-${VERSION}"
+          rm -rf "kapsis-${VERSION}"
+
+      - name: Generate checksums
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+        run: |
+          sha256sum "kapsis-${VERSION}.tar.gz" > checksums.sha256
+
+          echo "Generated checksums:"
+          cat checksums.sha256
+
+      - name: Generate changelog from commits
+        id: changelog
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+
+          # Find the previous tag
+          PREV_TAG=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null || echo "")
+
+          echo "Generating changelog for v${VERSION}"
+          echo "Previous tag: ${PREV_TAG:-none}"
+
+          # Get commits between tags (or all commits for first release)
+          if [[ -n "$PREV_TAG" ]]; then
+            COMMITS=$(git log "${PREV_TAG}..v${VERSION}" --pretty=format:"%s" --no-merges)
+          else
+            COMMITS=$(git log "v${VERSION}" --pretty=format:"%s" --no-merges -50)
+          fi
+
+          # Initialize category files
+          > /tmp/breaking.txt
+          > /tmp/features.txt
+          > /tmp/fixes.txt
+          > /tmp/docs.txt
+          > /tmp/others.txt
+
+          # Parse and categorize commits
+          while IFS= read -r msg; do
+            [[ -z "$msg" ]] && continue
+
+            # Check for breaking changes (type!: or BREAKING CHANGE)
+            if [[ "$msg" =~ ^[a-z]+(\(.+\))?!: ]] || [[ "$msg" =~ BREAKING[\ -]CHANGE ]]; then
+              echo "- $msg" >> /tmp/breaking.txt
+            fi
+
+            # Categorize by conventional commit prefix
+            if [[ "$msg" =~ ^feat(\(.+\))?: ]]; then
+              echo "- $msg" >> /tmp/features.txt
+            elif [[ "$msg" =~ ^fix(\(.+\))?: ]]; then
+              echo "- $msg" >> /tmp/fixes.txt
+            elif [[ "$msg" =~ ^docs(\(.+\))?: ]]; then
+              echo "- $msg" >> /tmp/docs.txt
+            else
+              echo "- $msg" >> /tmp/others.txt
+            fi
+          done <<< "$COMMITS"
+
+          # Generate markdown release notes
+          {
+            echo "## What's Changed"
+            echo ""
+
+            if [[ -s /tmp/breaking.txt ]]; then
+              echo "### ⚠️ Breaking Changes"
+              cat /tmp/breaking.txt
+              echo ""
+            fi
+
+            if [[ -s /tmp/features.txt ]]; then
+              echo "### 🚀 Features"
+              cat /tmp/features.txt
+              echo ""
+            fi
+
+            if [[ -s /tmp/fixes.txt ]]; then
+              echo "### 🐛 Bug Fixes"
+              cat /tmp/fixes.txt
+              echo ""
+            fi
+
+            if [[ -s /tmp/docs.txt ]]; then
+              echo "### 📝 Documentation"
+              cat /tmp/docs.txt
+              echo ""
+            fi
+
+            if [[ -s /tmp/others.txt ]]; then
+              echo "### 🔧 Other Changes"
+              cat /tmp/others.txt
+              echo ""
+            fi
+
+            echo "### 📦 Container Images"
+            echo ""
+            echo "Pull pre-built images from GitHub Container Registry:"
+            echo '```bash'
+            echo "podman pull ghcr.io/${{ github.repository_owner }}/kapsis-sandbox:${VERSION}"
+            echo "podman pull ghcr.io/${{ github.repository_owner }}/kapsis-claude-cli:${VERSION}"
+            echo '```'
+            echo ""
+
+            # Add compare link
+            if [[ -n "$PREV_TAG" ]]; then
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...v${VERSION}"
+            else
+              echo "**Full Changelog**: https://github.com/${{ github.repository }}/commits/v${VERSION}"
+            fi
+          } > release_notes.md
+
+          echo "Generated release notes:"
+          cat release_notes.md
+
+      - name: Create Release
+        uses: softprops/action-gh-release@153bb8e04406b158c6c84fc1615b65b24149a1fe  # v2
+        with:
+          tag_name: v${{ needs.validate.outputs.version }}
+          name: Kapsis v${{ needs.validate.outputs.version }}
+          body_path: release_notes.md
+          draft: false
+          prerelease: ${{ inputs.prerelease || false }}
+          files: |
+            kapsis-${{ needs.validate.outputs.version }}.tar.gz
+            checksums.sha256
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  update-packages:
+    name: Update Package Definitions
+    runs-on: ubuntu-latest
+    needs: [validate, release]
+    if: needs.release.result == 'success'
+    steps:
+      - name: Check if GitHub App is configured
+        id: check-app
+        env:
+          APP_ID: ${{ secrets.RELEASE_APP_ID }}
+          APP_KEY: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$APP_ID" || -z "$APP_KEY" ]]; then
+            echo "::warning::GitHub App not configured. Skipping package updates."
+            echo "::warning::Run ./scripts/setup-release-app.sh to enable automatic package updates."
+            echo "configured=false" >> $GITHUB_OUTPUT
+          else
+            echo "configured=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Generate GitHub App token
+        id: app-token
+        if: steps.check-app.outputs.configured == 'true'
+        uses: actions/create-github-app-token@f8d387b68d61c58ab83c6c016672934102569859  # v2
+        with:
+          app-id: ${{ secrets.RELEASE_APP_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Checkout code
+        if: steps.check-app.outputs.configured == 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          ref: main
+          # Use GitHub App token to bypass branch protection when pushing
+          # The app is configured as a bypass actor in the repository ruleset
+          token: ${{ steps.app-token.outputs.token }}
+          fetch-depth: 0
+
+      - name: Validate inputs
+        if: steps.check-app.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate.outputs.version }}"
+          REPO="${{ github.repository }}"
+
+          # Validate version format (semver)
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Invalid version format: $VERSION (expected: X.Y.Z)"
+            exit 1
+          fi
+
+          # Validate repository format (defense-in-depth against injection)
+          if [[ ! "$REPO" =~ ^[a-zA-Z0-9._-]+/[a-zA-Z0-9._-]+$ ]]; then
+            echo "::error::Invalid repository format: $REPO"
+            exit 1
+          fi
+
+          echo "✓ Inputs validated: version=$VERSION, repo=$REPO"
+
+      - name: Update CHANGELOG.md
+        if: steps.check-app.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate.outputs.version }}"
+          REPO="${{ github.repository }}"
+          CHANGELOG_FILE="CHANGELOG.md"
+          DATE=$(date -u +%Y-%m-%d)
+
+          # Check if this version already exists (idempotency)
+          if grep -q "^## \[${VERSION}\]" "$CHANGELOG_FILE"; then
+            echo "Version ${VERSION} already in CHANGELOG, skipping"
+            exit 0
+          fi
+
+          echo "Updating CHANGELOG.md for v${VERSION} (${DATE})"
+
+          # Find the previous tag to get commits for this release
+          PREV_TAG=$(git describe --tags --abbrev=0 "v${VERSION}^" 2>/dev/null || echo "")
+          echo "Previous tag: ${PREV_TAG:-none}"
+
+          # Get commits between tags (or all commits for first release)
+          if [[ -n "$PREV_TAG" ]]; then
+            COMMITS=$(git log "${PREV_TAG}..v${VERSION}" --pretty=format:"%s" --no-merges)
+          else
+            COMMITS=$(git log "v${VERSION}" --pretty=format:"%s" --no-merges -50)
+          fi
+
+          # Initialize category files for Keep a Changelog format
+          > /tmp/cl_breaking.txt
+          > /tmp/cl_added.txt
+          > /tmp/cl_changed.txt
+          > /tmp/cl_fixed.txt
+          > /tmp/cl_security.txt
+          > /tmp/cl_docs.txt
+
+          # Parse and categorize commits using conventional commit prefixes
+          while IFS= read -r msg; do
+            [[ -z "$msg" ]] && continue
+
+            # Skip auto-generated release commits
+            if [[ "$msg" == *"[skip ci]"* ]] || [[ "$msg" == "chore(release):"* ]]; then
+              continue
+            fi
+
+            # Clean up the commit message for changelog (remove scope parentheses, keep description)
+            # e.g., "feat(ci): add thing" -> "Add thing"
+            # Use awk for portable uppercase conversion (sed \U is GNU-only)
+            clean_msg=$(echo "$msg" | sed -E 's/^[a-z]+!?(\([^)]+\))?:[[:space:]]*//' | awk '{print toupper(substr($0,1,1)) substr($0,2)}')
+
+            # Check for breaking changes first (type!: or BREAKING CHANGE)
+            if [[ "$msg" =~ ^[a-z]+(\(.+\))?!: ]] || [[ "$msg" =~ BREAKING[\ -]CHANGE ]]; then
+              echo "- $clean_msg" >> /tmp/cl_breaking.txt
+            fi
+
+            # Categorize by conventional commit prefix into Keep a Changelog categories
+            if [[ "$msg" =~ ^feat(\(.+\))?!?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_added.txt
+            elif [[ "$msg" =~ ^fix(\(.+\))?!?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_fixed.txt
+            elif [[ "$msg" =~ ^security(\(.+\))?: ]] || [[ "$msg" =~ ^sec(\(.+\))?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_security.txt
+            elif [[ "$msg" =~ ^docs(\(.+\))?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_docs.txt
+            elif [[ "$msg" =~ ^(refactor|perf|style|build|ci|chore|test)(\(.+\))?!?: ]]; then
+              echo "- $clean_msg" >> /tmp/cl_changed.txt
+            fi
+          done <<< "$COMMITS"
+
+          # Create a temporary file for the new changelog
+          {
+            # Keep header lines (title and format description)
+            head -7 "$CHANGELOG_FILE"
+            echo ""
+
+            # Add new version section
+            echo "## [${VERSION}] - ${DATE}"
+            echo ""
+
+            # Check if we have any categorized content
+            HAS_CONTENT=false
+            for f in /tmp/cl_breaking.txt /tmp/cl_added.txt /tmp/cl_changed.txt /tmp/cl_fixed.txt /tmp/cl_security.txt /tmp/cl_docs.txt; do
+              if [[ -s "$f" ]]; then
+                HAS_CONTENT=true
+                break
+              fi
+            done
+
+            if [[ "$HAS_CONTENT" == "true" ]]; then
+              # Output categories in Keep a Changelog order
+              if [[ -s /tmp/cl_breaking.txt ]]; then
+                echo "### BREAKING CHANGES"
+                cat /tmp/cl_breaking.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_added.txt ]]; then
+                echo "### Added"
+                cat /tmp/cl_added.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_changed.txt ]]; then
+                echo "### Changed"
+                cat /tmp/cl_changed.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_fixed.txt ]]; then
+                echo "### Fixed"
+                cat /tmp/cl_fixed.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_security.txt ]]; then
+                echo "### Security"
+                cat /tmp/cl_security.txt
+                echo ""
+              fi
+
+              if [[ -s /tmp/cl_docs.txt ]]; then
+                echo "### Documentation"
+                cat /tmp/cl_docs.txt
+                echo ""
+              fi
+            else
+              # Fallback only if no conventional commits found at all
+              echo "### Changed"
+              echo "- Release v${VERSION}"
+              echo ""
+            fi
+
+            # Add empty [Unreleased] section and rest of changelog (skip old unreleased content)
+            echo "## [Unreleased]"
+            echo ""
+
+            # Get everything after [Unreleased] section's content (starting from next version)
+            sed -n '/^## \[Unreleased\]/,/^## \[/{ /^## \[Unreleased\]/d; /^## \[/p; }' "$CHANGELOG_FILE"
+            sed -n '/^## \[Unreleased\]/,/^## \[/{d}; /^## \[/,$p' "$CHANGELOG_FILE" | tail -n +2
+
+          } > "${CHANGELOG_FILE}.new"
+
+          # Update comparison links at the bottom
+          # Add new version link and update Unreleased link
+          if grep -q "^\[Unreleased\]:" "${CHANGELOG_FILE}.new"; then
+            # Update existing Unreleased link to point to new version
+            sed -i.bak "s|\[Unreleased\]: https://github.com/${REPO}/compare/v[^.]*\.[^.]*\.[^.]*\.\.\.HEAD|\[Unreleased\]: https://github.com/${REPO}/compare/v${VERSION}...HEAD|" "${CHANGELOG_FILE}.new"
+          fi
+
+          # Check if version link already exists, if not add it
+          if ! grep -q "^\[${VERSION}\]:" "${CHANGELOG_FILE}.new"; then
+            # Find the previous version from the changelog
+            PREV_VERSION=$(grep -o '^\[[0-9]*\.[0-9]*\.[0-9]*\]:' "${CHANGELOG_FILE}.new" | head -1 | tr -d '[]:'  || echo "")
+
+            if [[ -n "$PREV_VERSION" ]]; then
+              # Insert new version link before the first version link
+              # Use awk for portability instead of sed -i with newlines
+              awk -v ver="[${VERSION}]: https://github.com/${REPO}/releases/tag/v${VERSION}" \
+                  -v prev="${PREV_VERSION}" \
+                  'BEGIN{printed=0} /^\[/ && $0 ~ prev && !printed {print ver; printed=1} {print}' \
+                  "${CHANGELOG_FILE}.new" > "${CHANGELOG_FILE}.tmp" && mv "${CHANGELOG_FILE}.tmp" "${CHANGELOG_FILE}.new"
+            else
+              # Append at end if no version links exist
+              echo "[${VERSION}]: https://github.com/${REPO}/releases/tag/v${VERSION}" >> "${CHANGELOG_FILE}.new"
+            fi
+          fi
+
+          rm -f "${CHANGELOG_FILE}.new.bak"
+          mv "${CHANGELOG_FILE}.new" "$CHANGELOG_FILE"
+
+          # Validate update succeeded
+          if ! grep -q "^## \[${VERSION}\] - ${DATE}" "$CHANGELOG_FILE"; then
+            echo "::error::Failed to update CHANGELOG.md"
+            exit 1
+          fi
+
+          echo "✓ Updated CHANGELOG.md to v${VERSION}"
+
+      - name: Update Homebrew formula
+        if: steps.check-app.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate.outputs.version }}"
+          REPO="${{ github.repository }}"
+          TARBALL_URL="https://github.com/${REPO}/archive/refs/tags/v${VERSION}.tar.gz"
+          FORMULA_FILE="packaging/homebrew/kapsis.rb"
+
+          # Download tarball with retry and calculate SHA256
+          echo "Downloading tarball from: $TARBALL_URL"
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+
+          while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
+            if SHA256=$(curl -fsSL --retry 3 "$TARBALL_URL" | sha256sum | cut -d' ' -f1); then
+              # Validate SHA256 format (exactly 64 hex characters)
+              if [[ "$SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+                echo "SHA256: $SHA256"
+                break
+              else
+                echo "::warning::Invalid SHA256 format: $SHA256"
+              fi
+            fi
+
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; then
+              echo "Retrying ($RETRY_COUNT/$MAX_RETRIES)..."
+              sleep 10
+            else
+              echo "::error::Failed to calculate valid SHA256 after $MAX_RETRIES attempts"
+              exit 1
+            fi
+          done
+
+          # Update the formula between markers using sed
+          sed -i.bak \
+            -e "/RELEASE_VERSION_MARKER_START/,/RELEASE_VERSION_MARKER_END/{
+              s|url \"https://github.com/.*/archive/refs/tags/v[^\"]*\.tar\.gz\"|url \"https://github.com/${REPO}/archive/refs/tags/v${VERSION}.tar.gz\"|
+              s|sha256 \"[a-f0-9]*\"|sha256 \"${SHA256}\"|
+              s|version \"[^\"]*\"|version \"${VERSION}\"|
+            }" "$FORMULA_FILE"
+
+          rm -f "${FORMULA_FILE}.bak"
+
+          # Validate all updates succeeded
+          if ! grep -q "url \"https://github.com/${REPO}/archive/refs/tags/v${VERSION}\.tar\.gz\"" "$FORMULA_FILE"; then
+            echo "::error::Failed to update Homebrew formula URL"
+            exit 1
+          fi
+          if ! grep -q "sha256 \"${SHA256}\"" "$FORMULA_FILE"; then
+            echo "::error::Failed to update Homebrew formula SHA256"
+            exit 1
+          fi
+          if ! grep -q "version \"${VERSION}\"" "$FORMULA_FILE"; then
+            echo "::error::Failed to update Homebrew formula version"
+            exit 1
+          fi
+
+          echo "✓ Updated Homebrew formula to v${VERSION}"
+
+      - name: Update RPM spec
+        if: steps.check-app.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate.outputs.version }}"
+          SPEC_FILE="packaging/rpm/kapsis.spec"
+
+          # Update version on the line with RELEASE_VERSION_MARKER (inline marker approach)
+          sed -i.bak \
+            -e "s/^Version:[[:space:]]*[^#]*# RELEASE_VERSION_MARKER/Version:        ${VERSION}  # RELEASE_VERSION_MARKER/" \
+            "$SPEC_FILE"
+
+          rm -f "${SPEC_FILE}.bak"
+
+          # Validate update succeeded
+          if ! grep -q "^Version:[[:space:]]*${VERSION}[[:space:]]*# RELEASE_VERSION_MARKER" "$SPEC_FILE"; then
+            echo "::error::Failed to update RPM spec version"
+            exit 1
+          fi
+
+          echo "✓ Updated RPM spec to v${VERSION}"
+
+      - name: Update Debian changelog
+        if: steps.check-app.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate.outputs.version }}"
+          CHANGELOG_FILE="packaging/debian/debian/changelog"
+          DATE=$(date -R)
+
+          # Check if this version already exists (idempotency)
+          if grep -q "^kapsis (${VERSION}-1)" "$CHANGELOG_FILE"; then
+            echo "Version ${VERSION} already in changelog, skipping"
+            exit 0
+          fi
+
+          # Prepend new changelog entry
+          {
+            echo "kapsis (${VERSION}-1) unstable; urgency=medium"
+            echo ""
+            echo "  * Update to v${VERSION}"
+            echo ""
+            echo " -- Aviad Shiber <aviadshiber@gmail.com>  ${DATE}"
+            echo ""
+            cat "$CHANGELOG_FILE"
+          } > "${CHANGELOG_FILE}.new"
+
+          mv "${CHANGELOG_FILE}.new" "$CHANGELOG_FILE"
+
+          # Validate update succeeded
+          if ! head -1 "$CHANGELOG_FILE" | grep -q "^kapsis (${VERSION}-1)"; then
+            echo "::error::Failed to update Debian changelog"
+            exit 1
+          fi
+
+          echo "✓ Updated Debian changelog to v${VERSION}"
+
+      - name: Commit and push package updates
+        if: steps.check-app.outputs.configured == 'true'
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate.outputs.version }}"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add packaging/ CHANGELOG.md
+
+          # Only commit if there are changes
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+            exit 0
+          fi
+
+          git commit -m "chore(release): update CHANGELOG and packages to v${VERSION} [skip ci]"
+
+          # Push with retry logic for concurrent updates
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+
+          while [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; do
+            if git push origin main; then
+              echo "✓ Successfully pushed package updates"
+              exit 0
+            fi
+
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [[ $RETRY_COUNT -lt $MAX_RETRIES ]]; then
+              echo "Push failed, rebasing and retrying ($RETRY_COUNT/$MAX_RETRIES)..."
+              git pull --rebase origin main
+              sleep 5
+            fi
+          done
+
+          echo "::error::Failed to push after $MAX_RETRIES attempts"
+          exit 1
+
+  sync-homebrew-tap:
+    name: Sync Homebrew Tap
+    runs-on: ubuntu-latest
+    needs: [validate, update-packages]
+    if: needs.update-packages.result == 'success'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          ref: main
+          # Need to fetch the updated formula from main
+          fetch-depth: 1
+
+      - name: Sync formula to tap repository
+        env:
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+
+          VERSION="${{ needs.validate.outputs.version }}"
+
+          # Skip if no deploy key configured
+          if [[ -z "${TAP_DEPLOY_KEY:-}" ]]; then
+            echo "::warning::TAP_DEPLOY_KEY not configured. Skipping tap sync."
+            echo "To enable automatic tap updates, run: ./scripts/setup-homebrew-tap-sync.sh"
+            exit 0
+          fi
+
+          # Fetch latest main to get the updated formula
+          git fetch origin main
+          git checkout origin/main -- packaging/homebrew/kapsis.rb
+
+          # Setup SSH for tap repo access
+          mkdir -p ~/.ssh
+          echo "$TAP_DEPLOY_KEY" > ~/.ssh/tap_deploy_key
+          chmod 600 ~/.ssh/tap_deploy_key
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+
+          # Clone tap repo
+          echo "Cloning tap repository..."
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_deploy_key" \
+            git clone git@github.com:aviadshiber/homebrew-kapsis.git /tmp/tap
+
+          # Copy formula
+          cp packaging/homebrew/kapsis.rb /tmp/tap/Formula/kapsis.rb
+
+          cd /tmp/tap
+
+          # Check for changes
+          if git diff --quiet; then
+            echo "No changes to formula"
+            exit 0
+          fi
+
+          # Commit and push
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/kapsis.rb
+          git commit -m "Update kapsis to v${VERSION}"
+
+          GIT_SSH_COMMAND="ssh -i ~/.ssh/tap_deploy_key" git push origin main
+
+          echo "✓ Synced formula v${VERSION} to tap repository"
+
+      - name: Summary
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          echo "## Homebrew Tap Sync" >> $GITHUB_STEP_SUMMARY
+          echo "- Formula version: v${VERSION}" >> $GITHUB_STEP_SUMMARY
+          echo "- Tap: [aviadshiber/homebrew-kapsis](https://github.com/aviadshiber/homebrew-kapsis)" >> $GITHUB_STEP_SUMMARY
+
+  notify:
+    name: Post-Release
+    runs-on: ubuntu-latest
+    needs: [validate, release, update-packages, sync-homebrew-tap]
+    if: always() && needs.release.result == 'success'
+    steps:
+      - name: Release Summary
+        run: |
+          VERSION="${{ needs.validate.outputs.version }}"
+          PACKAGES_STATUS="${{ needs.update-packages.result }}"
+          TAP_STATUS="${{ needs.sync-homebrew-tap.result }}"
+
+          echo "## Release v$VERSION completed!" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ GitHub Release created" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Container images pushed to ghcr.io" >> $GITHUB_STEP_SUMMARY
+          echo "- ✅ Checksums generated" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "$PACKAGES_STATUS" == "success" ]]; then
+            echo "- ✅ CHANGELOG.md updated" >> $GITHUB_STEP_SUMMARY
+            echo "- ✅ All package definitions updated (Homebrew, RPM, Debian)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️ Package updates: $PACKAGES_STATUS" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ "$TAP_STATUS" == "success" ]]; then
+            echo "- ✅ Homebrew tap synced" >> $GITHUB_STEP_SUMMARY
+          elif [[ "$TAP_STATUS" == "skipped" ]]; then
+            echo "- ⏭️ Homebrew tap sync skipped (no deploy key configured)" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️ Homebrew tap sync: $TAP_STATUS" >> $GITHUB_STEP_SUMMARY
+          fi

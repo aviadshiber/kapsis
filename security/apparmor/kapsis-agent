@@ -1,0 +1,266 @@
+#include <tunables/global>
+
+# Kapsis AI Agent Sandbox AppArmor Profile
+#
+# This profile provides mandatory access control for Kapsis containers
+# running AI coding agents (Claude, Codex, Aider, etc.).
+#
+# Installation:
+#   sudo cp kapsis-agent /etc/apparmor.d/
+#   sudo apparmor_parser -r /etc/apparmor.d/kapsis-agent
+#
+# Verification:
+#   sudo aa-status | grep kapsis
+#
+# Usage with Podman:
+#   podman run --security-opt apparmor=kapsis-agent ...
+#
+# Debugging:
+#   sudo aa-complain kapsis-agent  # Log violations without blocking
+#   sudo dmesg | grep DENIED       # View denials
+#   sudo aa-enforce kapsis-agent   # Re-enable enforcement
+
+profile kapsis-agent flags=(attach_disconnected,mediate_deleted) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/ssl_certs>
+
+  #=============================================================================
+  # DENIED OPERATIONS - Container Escape Prevention
+  #=============================================================================
+
+  # Deny kernel parameter modification
+  deny @{PROC}/sys/kernel/** wklx,
+
+  # Deny filesystem-related kernel tuning
+  deny @{PROC}/sys/fs/** wklx,
+
+  # Deny VM configuration
+  deny @{PROC}/sys/vm/** wklx,
+
+  # Deny kernel sysrq trigger (emergency commands)
+  deny @{PROC}/sysrq-trigger rwklx,
+
+  # Deny kernel memory access
+  deny @{PROC}/kcore rwklx,
+
+  # Deny mount operations (handled by capabilities too)
+  deny mount,
+  deny umount,
+
+  # Deny ptrace (handled by seccomp too)
+  deny ptrace,
+
+  # Deny raw device access
+  deny /dev/mem rwklx,
+  deny /dev/kmem rwklx,
+  deny /dev/port rwklx,
+
+  # Deny module loading paths
+  deny /lib/modules/** rwklx,
+
+  # Deny boot configuration
+  deny /boot/** rwklx,
+
+  #=============================================================================
+  # WORKSPACE ACCESS - Project Files
+  #=============================================================================
+
+  # Full access to workspace (project directory)
+  /workspace/** rwkl,
+  /workspace/ r,
+
+  # Git operations within workspace
+  /workspace/.git/** rwkl,
+  /workspace/.git-safe/** rwkl,
+  /workspace/.git-objects/** r,
+
+  #=============================================================================
+  # HOME DIRECTORY - User Configuration and Caches
+  #=============================================================================
+
+  # Developer home directory
+  /home/developer/** rwkl,
+  /home/developer/ r,
+
+  # Maven repository
+  /home/developer/.m2/** rwkl,
+  /home/developer/.m2/ r,
+
+  # Gradle cache
+  /home/developer/.gradle/** rwkl,
+  /home/developer/.gradle/ r,
+
+  # Node.js cache
+  /home/developer/.npm/** rwkl,
+  /home/developer/.cache/node/** rwkl,
+
+  # Agent configuration directories
+  /home/developer/.claude/** rwkl,
+  /home/developer/.claude/ r,
+  /home/developer/.codex/** rwkl,
+  /home/developer/.aider/** rwkl,
+
+  # Git configuration
+  /home/developer/.gitconfig r,
+  /home/developer/.git-credentials r,
+
+  # SSH (read-only for git push)
+  /home/developer/.ssh/** r,
+  /home/developer/.ssh/ r,
+
+  #=============================================================================
+  # TEMPORARY DIRECTORIES
+  #=============================================================================
+
+  # /tmp access (may be noexec via mount options)
+  /tmp/** rwk,
+  /tmp/ r,
+
+  # /var/tmp for persistent temp files
+  /var/tmp/** rwk,
+  /var/tmp/ r,
+
+  # /run for runtime state
+  /run/** rwk,
+  /run/ r,
+
+  #=============================================================================
+  # KAPSIS INFRASTRUCTURE
+  #=============================================================================
+
+  # Kapsis installation
+  /opt/kapsis/** r,
+  /opt/kapsis/entrypoint.sh rix,
+  /opt/kapsis/*.sh rix,
+  /opt/kapsis/lib/*.sh r,
+
+  # Kapsis status reporting
+  /kapsis-status/** rw,
+  /kapsis-status/ r,
+
+  # Kapsis staging directory (read-only config copies)
+  /kapsis-staging/** r,
+  /kapsis-staging/ r,
+
+  # Kapsis overlay directories
+  /kapsis-upper/** rwkl,
+  /kapsis-work/** rwkl,
+
+  #=============================================================================
+  # DEVELOPMENT TOOLS
+  #=============================================================================
+
+  # Java/SDKMAN
+  /opt/sdkman/** rix,
+  /opt/sdkman/ r,
+
+  # Node.js/NVM
+  /opt/nvm/** rix,
+  /opt/nvm/ r,
+
+  # System binaries
+  /usr/bin/* rix,
+  /usr/sbin/* rix,
+  /bin/* rix,
+  /sbin/* rix,
+
+  # Libraries
+  /usr/lib/** rm,
+  /usr/lib64/** rm,
+  /lib/** rm,
+  /lib64/** rm,
+
+  # Git
+  /usr/bin/git rix,
+  /usr/lib/git-core/** rix,
+  /usr/share/git-core/** r,
+
+  # Common development tools
+  /usr/bin/curl rix,
+  /usr/bin/wget rix,
+  /usr/bin/jq rix,
+  /usr/bin/python* rix,
+  /usr/bin/pip* rix,
+  /usr/bin/npm rix,
+  /usr/bin/node rix,
+
+  #=============================================================================
+  # NETWORK ACCESS - Required for AI API calls
+  #=============================================================================
+
+  # TCP/UDP for API access
+  network inet tcp,
+  network inet6 tcp,
+  network inet udp,
+  network inet6 udp,
+
+  # Unix domain sockets
+  network unix stream,
+  network unix dgram,
+
+  # Netlink for interface discovery
+  network netlink raw,
+
+  #=============================================================================
+  # PROC AND SYS ACCESS - Limited
+  #=============================================================================
+
+  # Process information (self only by default)
+  @{PROC}/@{pid}/** r,
+  @{PROC}/self/** r,
+
+  # System information
+  @{PROC}/meminfo r,
+  @{PROC}/cpuinfo r,
+  @{PROC}/stat r,
+  @{PROC}/filesystems r,
+  @{PROC}/version r,
+  @{PROC}/uptime r,
+  @{PROC}/loadavg r,
+
+  # cgroups (for resource limit visibility)
+  /sys/fs/cgroup/** r,
+
+  # CPU information
+  /sys/devices/system/cpu/** r,
+
+  #=============================================================================
+  # DEVICE ACCESS - Minimal
+  #=============================================================================
+
+  # Required devices
+  /dev/null rw,
+  /dev/zero rw,
+  /dev/full rw,
+  /dev/random r,
+  /dev/urandom r,
+  /dev/tty rw,
+  /dev/pts/* rw,
+  /dev/ptmx rw,
+  /dev/shm/** rw,
+  /dev/mqueue/** rw,
+  /dev/fuse rw,
+
+  #=============================================================================
+  # CAPABILITIES - Minimal Set
+  #=============================================================================
+
+  capability chown,
+  capability dac_override,
+  capability fowner,
+  capability fsetid,
+  capability kill,
+  capability setgid,
+  capability setuid,
+  capability sys_nice,
+
+  # Explicitly deny dangerous capabilities
+  deny capability sys_admin,
+  deny capability sys_ptrace,
+  deny capability sys_module,
+  deny capability sys_rawio,
+  deny capability sys_boot,
+  deny capability net_admin,
+  deny capability net_raw,
+}

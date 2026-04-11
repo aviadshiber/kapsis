@@ -1,0 +1,98 @@
+# Pre-commit hooks configuration
+# https://pre-commit.com
+#
+# Install: pip install pre-commit && pre-commit install
+# Run manually: pre-commit run --all-files
+#
+# SECURITY: All hooks are pinned to immutable commit SHAs (not version tags)
+# to prevent supply chain attacks via tag poisoning. When updating, verify
+# the commit SHA corresponds to a signed release tag.
+
+repos:
+  # General file checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: 3e8a8703264a2f4a69428a0aa4dcb512790b2c8c  # v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: \.md$
+      - id: end-of-file-fixer
+      - id: check-yaml
+        args: [--allow-multiple-documents]
+      - id: check-json
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: check-executables-have-shebangs
+      - id: check-shebang-scripts-are-executable
+
+  # Shell script linting
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: 745eface02aef23e168a8afb6b5737818efbea95  # v0.11.0.1
+    hooks:
+      - id: shellcheck
+        args: [-x, -S, warning]
+        types: [shell]
+
+  # Shell script formatting
+  - repo: https://github.com/scop/pre-commit-shfmt
+    rev: 2a30809d16bc7a60d9b97353c797f42b510d3368  # v3.12.0-2
+    hooks:
+      - id: shfmt
+        args: [-i, "4", -ci, -bn]
+        types: [shell]
+
+  # YAML linting
+  - repo: https://github.com/adrienverge/yamllint
+    rev: 79a6b2b1392eaf49cdd32ac4f14be1a809bbd8f7  # v1.37.1
+    hooks:
+      - id: yamllint
+        args: [-c, .yamllint.yml]
+        exclude: ^\.github/ISSUE_TEMPLATE/
+
+  # Markdown linting
+  - repo: https://github.com/igorshubovych/markdownlint-cli
+    rev: 76b3d32d3f4b965e1d6425253c59407420ae2c43  # v0.47.0
+    hooks:
+      - id: markdownlint
+        args: [--fix, --disable, MD013, MD033, MD041, --]
+
+  # Security - detect secrets
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: 68e8b45440415753fff70a312ece8da92ba85b4a  # v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: [--baseline, .secrets.baseline]
+        exclude: package.lock.json
+
+  # Kapsis custom pre-commit hooks
+  - repo: local
+    hooks:
+      - id: kapsis-spellcheck
+        name: Spellcheck
+        entry: scripts/hooks/precommit/spellcheck.sh
+        language: script
+        pass_filenames: false
+        stages: [pre-commit]
+
+      - id: kapsis-check-tests
+        name: Check test coverage
+        entry: scripts/hooks/precommit/check-tests.sh
+        language: script
+        pass_filenames: false
+        files: ^scripts/.*\.sh$
+        stages: [pre-commit]
+
+      - id: kapsis-run-tests
+        name: Run quick tests
+        entry: scripts/hooks/precommit/run-tests.sh
+        language: script
+        pass_filenames: false
+        stages: [pre-commit]
+
+# CI configuration
+ci:
+  autofix_commit_msg: "style: auto-fix from pre-commit hooks"
+  autoupdate_commit_msg: "chore(deps): update pre-commit hooks"
+  skip: [shellcheck]  # ShellCheck in CI workflow has better error reporting

@@ -1,0 +1,55 @@
+# Kapsis Configuration - Interactive Shell
+# Use with: ./scripts/launch-agent.sh ~/project --config configs/interactive.yaml --interactive
+
+agent:
+  # Just drop into bash for manual exploration
+  command: "bash"
+  workdir: /workspace
+
+filesystem:
+  include:
+    - ~/.zshrc
+    - ~/.bashrc
+    - ~/.gitconfig
+    - ~/.ssh
+    - ~/.vimrc
+    # Add any agent configs you might want to test
+    - ~/.claude
+    - ~/.claude.json
+
+environment:
+  passthrough:
+    - ANTHROPIC_API_KEY
+    - OPENAI_API_KEY
+  set:
+    MAVEN_OPTS: "-Xmx4g -XX:+UseG1GC"
+
+resources:
+  memory: 8g
+  cpus: 4
+
+#===============================================================================
+# SECURITY - Container security hardening
+#===============================================================================
+security:
+  profile: standard
+
+  # Additional capabilities needed for specific features
+  capabilities:
+    add:
+      # Required for network.mode: filtered (dnsmasq binds to port 53)
+      - NET_BIND_SERVICE
+
+maven:
+  mirror_url: "https://artifactory.example.org/artifactory/releases"
+  block_remote_snapshots: true
+  block_deploy: true
+
+git:
+  auto_push:
+    enabled: false  # Manual control in interactive mode
+
+  # Files to exclude from commits (if you commit manually)
+  commit_exclude:
+    - ".gitignore"
+    - "**/.gitignore"

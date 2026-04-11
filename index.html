@@ -1,0 +1,2184 @@
+<!DOCTYPE html>
+<html lang="en" class="scroll-smooth">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kapsis | Isolated AI Agent Sandbox</title>
+    <meta name="description" content="Run AI coding agents (Claude, Aider, Codex) in isolated Podman containers or Kubernetes Pods. Full autonomy for the agent. Total safety for your files.">
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://aviadshiber.github.io/kapsis/">
+    <meta property="og:title" content="Kapsis - Run AI Agents Without Fear">
+    <meta property="og:description" content="Run AI coding agents in isolated sandboxes. Full autonomy for the agent. Total safety for your files.">
+    <meta property="og:image" content="https://aviadshiber.github.io/kapsis/assets/kapsis-og.png">
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image">
+    <meta name="twitter:url" content="https://aviadshiber.github.io/kapsis/">
+    <meta name="twitter:title" content="Kapsis - Run AI Agents Without Fear">
+    <meta name="twitter:description" content="Run AI coding agents in isolated sandboxes. Full autonomy for the agent. Total safety for your files.">
+    <meta name="twitter:image" content="https://aviadshiber.github.io/kapsis/assets/kapsis-og.png">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        kapsis: {
+                            dark: '#0f172a',
+                            card: '#1e293b',
+                            neon: '#10b981', // Emerald 500
+                            danger: '#ef4444', // Red 500
+                            stable: '#10b981', // Emerald 500 (stable release)
+                            accent: '#6366f1' // Indigo 500
+                        }
+                    },
+                    fontFamily: {
+                        mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', "Liberation Mono", "Courier New", 'monospace'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .glow-text {
+            text-shadow: 0 0 20px rgba(16, 185, 129, 0.3);
+        }
+        .code-block {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+        }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
+        }
+        /* Mobile menu */
+        .mobile-menu {
+            transform: translateX(100%);
+            transition: transform 0.3s ease-in-out;
+        }
+        .mobile-menu.open {
+            transform: translateX(0);
+        }
+        /* Copy button visibility on touch devices */
+        @media (hover: none) and (pointer: coarse) {
+            .copy-btn {
+                opacity: 1 !important;
+            }
+        }
+        /* Scroll indicator for overflowing code blocks */
+        .code-scroll-container {
+            position: relative;
+        }
+        .code-scroll-container::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 30px;
+            background: linear-gradient(to right, transparent, #0d1117);
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .code-scroll-container.has-overflow::after {
+            opacity: 1;
+        }
+        /* Ensure copy button is above scroll indicator */
+        .copy-btn {
+            z-index: 10;
+        }
+        /* Body scroll lock when mobile menu is open */
+        body.mobile-menu-open {
+            overflow: hidden;
+        }
+        /* Toast notification */
+        .toast {
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease-in-out;
+        }
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        /* Terminal typing animation */
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+        @keyframes typeIn {
+            from { width: 0; }
+            to { width: 100%; }
+        }
+        @keyframes fadeSlideIn {
+            from { opacity: 0; transform: translateY(5px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .terminal-cursor {
+            display: inline-block;
+            width: 8px;
+            height: 16px;
+            background: #10b981;
+            animation: blink 1s infinite;
+            vertical-align: middle;
+            margin-left: 2px;
+        }
+        .terminal-line {
+            opacity: 0;
+        }
+        .terminal-line.visible {
+            animation: fadeSlideIn 0.3s ease-out forwards;
+        }
+        .terminal-typed {
+            overflow: hidden;
+            white-space: nowrap;
+            border-right: none;
+        }
+        .terminal-progress {
+            background: linear-gradient(90deg, #10b981 0%, #10b981 var(--progress), #334155 var(--progress), #334155 100%);
+            height: 4px;
+            border-radius: 2px;
+            transition: --progress 0.5s ease-out;
+        }
+    </style>
+</head>
+<body class="bg-kapsis-dark text-slate-300 font-sans antialiased selection:bg-kapsis-neon selection:text-white">
+
+    <!-- Skip to main content (accessibility) -->
+    <a href="#main-content" class="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[100] focus:bg-kapsis-neon focus:text-slate-900 focus:px-4 focus:py-2 focus:rounded-lg focus:font-medium">
+        Skip to main content
+    </a>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast fixed bottom-6 left-1/2 -translate-x-1/2 z-[100] bg-kapsis-neon text-slate-900 px-4 py-2 rounded-lg font-medium shadow-lg flex items-center gap-2">
+        <i class="fa-solid fa-check"></i>
+        <span id="toast-message">Copied to clipboard!</span>
+    </div>
+
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 bg-kapsis-dark/90 backdrop-blur-md border-b border-slate-800" role="navigation" aria-label="Main navigation">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center gap-3">
+                    <i class="fa-solid fa-box-open text-kapsis-neon text-2xl" aria-hidden="true"></i>
+                    <span class="text-white text-xl font-bold tracking-wider">KAPSIS <span class="text-xs text-kapsis-stable ml-1 border border-kapsis-stable px-1 rounded uppercase">v<span class="version-placeholder">...</span></span></span>
+                </div>
+                <div class="hidden md:block">
+                    <div class="ml-10 flex items-baseline space-x-6" role="menubar">
+                        <a href="#compare" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Why Kapsis?</a>
+                        <a href="#install" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Install</a>
+                        <a href="#docs" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">Docs</a>
+                        <a href="#faq" role="menuitem" class="hover:text-kapsis-neon transition-colors px-3 py-2 rounded-md text-sm font-medium">FAQ</a>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3">
+                    <a href="https://github.com/aviadshiber/kapsis" target="_blank" class="bg-slate-800 hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all border border-slate-700">
+                        <i class="fa-brands fa-github mr-2" aria-hidden="true"></i><span class="hidden sm:inline">GitHub</span>
+                    </a>
+                    <!-- Mobile menu button -->
+                    <button onclick="toggleMobileMenu()" class="md:hidden p-2 text-slate-400 hover:text-white transition-colors" aria-label="Toggle mobile menu" aria-expanded="false" aria-controls="mobile-menu">
+                        <i class="fa-solid fa-bars text-xl" id="mobile-menu-icon"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Mobile menu overlay -->
+    <div id="mobile-menu" class="mobile-menu fixed inset-y-0 right-0 z-[60] w-64 bg-kapsis-dark border-l border-slate-800 md:hidden" aria-hidden="true">
+        <div class="p-6">
+            <button onclick="toggleMobileMenu()" class="absolute top-4 right-4 p-2 text-slate-400 hover:text-white" aria-label="Close menu">
+                <i class="fa-solid fa-xmark text-xl"></i>
+            </button>
+            <nav class="mt-8 flex flex-col space-y-4" role="menu">
+                <a href="#compare" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Why Kapsis?</a>
+                <a href="#install" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Install</a>
+                <a href="#docs" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">Docs</a>
+                <a href="#faq" onclick="toggleMobileMenu()" role="menuitem" class="text-slate-300 hover:text-kapsis-neon transition-colors py-2 text-lg font-medium">FAQ</a>
+                <hr class="border-slate-700 my-2">
+                <a href="https://github.com/aviadshiber/kapsis" target="_blank" class="text-slate-300 hover:text-white transition-colors py-2 text-lg font-medium"><i class="fa-brands fa-github mr-2" aria-hidden="true"></i>GitHub</a>
+            </nav>
+        </div>
+    </div>
+    <div id="mobile-menu-backdrop" onclick="toggleMobileMenu()" class="fixed inset-0 bg-black/50 z-[55] hidden md:hidden"></div>
+
+    <!-- Hero Section -->
+    <main id="main-content">
+    <section class="pt-32 pb-20 relative overflow-hidden">
+        <!-- Background Grid Effect -->
+        <div class="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20"></div>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
+
+            <div class="inline-flex items-center px-4 py-1 rounded-full border border-kapsis-stable/30 bg-kapsis-stable/10 text-kapsis-stable text-sm mb-8">
+                <i class="fa-solid fa-rocket mr-2"></i> v<span class="version-placeholder">...</span> — Production Ready
+            </div>
+
+            <h1 class="text-5xl md:text-7xl font-extrabold text-white mb-6 leading-tight">
+                Run AI Agents <br>
+                <span class="text-transparent bg-clip-text bg-gradient-to-r from-kapsis-neon to-emerald-600 glow-text">Without Fear</span>
+            </h1>
+
+            <p class="mt-4 max-w-2xl mx-auto text-xl text-slate-400">
+                Run multiple AI coding agents in parallel. Total isolation. Zero conflicts.
+                <br>The safest way to let LLMs edit your code.
+            </p>
+
+            <!-- Supported Agents Strip -->
+            <div class="mt-8 flex justify-center flex-wrap gap-3">
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-sm text-slate-300">
+                    <i class="fa-solid fa-robot text-emerald-400"></i> Claude Code
+                </span>
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-sm text-slate-300">
+                    <i class="fa-solid fa-code text-orange-400"></i> Codex CLI
+                </span>
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-sm text-slate-300">
+                    <i class="fa-solid fa-terminal text-blue-400"></i> Aider
+                </span>
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-sm text-slate-300">
+                    <i class="fa-solid fa-gem text-cyan-400"></i> Gemini CLI
+                </span>
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-600 text-sm text-slate-500">
+                    <i class="fa-solid fa-plus"></i> Any CLI agent
+                </span>
+            </div>
+
+            <div class="mt-8 flex justify-center gap-4">
+                <a href="#install" class="px-8 py-3 rounded-lg bg-kapsis-neon hover:bg-emerald-400 text-slate-900 font-bold text-lg transition-all shadow-[0_0_20px_rgba(16,185,129,0.3)]">
+                    Install Now
+                </a>
+                <a href="#docs" class="px-8 py-3 rounded-lg bg-slate-800 hover:bg-slate-700 text-white font-medium text-lg border border-slate-700 transition-all">
+                    Read Docs
+                </a>
+            </div>
+
+            <!-- Animated Terminal Demo -->
+            <div id="terminal-demo" class="mt-16 mx-auto max-w-4xl bg-[#0d1117] rounded-xl border border-slate-700 shadow-2xl overflow-hidden text-left">
+                <div class="flex items-center px-4 py-2 bg-slate-800 border-b border-slate-700">
+                    <div class="flex gap-2">
+                        <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                        <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    </div>
+                    <div class="mx-auto text-xs text-slate-400 font-mono">kapsis — zsh</div>
+                    <button onclick="restartTerminalDemo()" class="text-slate-500 hover:text-white text-xs" title="Replay">
+                        <i class="fa-solid fa-rotate-right"></i>
+                    </button>
+                </div>
+                <div class="p-6 font-mono text-xs min-h-[340px] overflow-x-auto">
+                    <!-- Line 1: Command prompt -->
+                    <div id="term-line-1" class="terminal-line flex mb-2">
+                        <span class="text-emerald-400 mr-2">➜</span>
+                        <span id="term-cmd" class="text-white terminal-typed"></span>
+                        <span id="term-cursor" class="terminal-cursor"></span>
+                    </div>
+                    <!-- Line 2: Banner -->
+                    <div id="term-line-2" class="terminal-line text-cyan-400 mb-1"></div>
+                    <!-- Line 3: Agent Config header -->
+                    <div id="term-line-3" class="terminal-line text-cyan-400 mb-1"></div>
+                    <!-- Line 4-8: Config details -->
+                    <div id="term-line-4" class="terminal-line text-slate-300 mb-0"></div>
+                    <div id="term-line-5" class="terminal-line text-slate-300 mb-0"></div>
+                    <div id="term-line-6" class="terminal-line text-slate-300 mb-0"></div>
+                    <div id="term-line-7" class="terminal-line text-slate-300 mb-0"></div>
+                    <div id="term-line-8" class="terminal-line text-slate-300 mb-2"></div>
+                    <!-- Line 9: Launch box -->
+                    <div id="term-line-9" class="terminal-line text-white mb-1"></div>
+                    <!-- Line 10: Sandbox ready header -->
+                    <div id="term-line-10" class="terminal-line mb-1"></div>
+                    <!-- Line 11: Branch info -->
+                    <div id="term-line-11" class="terminal-line text-slate-300 mb-1"></div>
+                    <!-- Line 12: Separator -->
+                    <div id="term-line-12" class="terminal-line text-slate-600 mb-2"></div>
+                    <!-- Line 13: Progress bar (animated) -->
+                    <div id="term-line-13" class="terminal-line mb-1"></div>
+                    <!-- Line 14: Progress message -->
+                    <div id="term-line-14" class="terminal-line text-slate-500 mb-2"></div>
+                    <!-- Line 15: Agent exited box -->
+                    <div id="term-line-15" class="terminal-line text-white mb-2"></div>
+                    <!-- Line 16: Completion message -->
+                    <div id="term-line-16" class="terminal-line mb-1"></div>
+                    <!-- Line 17: PR link -->
+                    <div id="term-line-17" class="terminal-line mb-2"></div>
+                    <!-- Line 18: Push info -->
+                    <div id="term-line-18" class="terminal-line mb-2"></div>
+                    <!-- Line 19: Next prompt -->
+                    <div id="term-line-19" class="terminal-line flex">
+                        <span class="text-emerald-400 mr-2">➜</span>
+                        <span class="terminal-cursor"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Why Kapsis? Section -->
+    <section id="compare" class="py-16 bg-slate-900/50 border-y border-slate-800">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-4 text-center">Why Kapsis?</h2>
+            <p class="text-slate-400 mb-10 text-center">The problem with running AI agents directly — and how Kapsis solves it</p>
+
+            <!-- Problem → Solution Cards -->
+            <div class="grid md:grid-cols-2 lg:grid-cols-4 gap-4 mb-10">
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-red-400">✗</span>
+                        <span class="text-slate-500">→</span>
+                        <span class="text-emerald-400">✓</span>
+                    </div>
+                    <p class="text-white font-medium text-sm mb-1">"Approve?" ×100</p>
+                    <p class="text-emerald-400 text-sm font-medium">YOLO mode</p>
+                    <p class="text-slate-500 text-xs mt-2">Full autonomy in a safe sandbox</p>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-red-400">✗</span>
+                        <span class="text-slate-500">→</span>
+                        <span class="text-emerald-400">✓</span>
+                    </div>
+                    <p class="text-white font-medium text-sm mb-1">Network anywhere</p>
+                    <p class="text-emerald-400 text-sm font-medium">DNS allowlist</p>
+                    <p class="text-slate-500 text-xs mt-2">Only approved domains reachable</p>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-red-400">✗</span>
+                        <span class="text-slate-500">→</span>
+                        <span class="text-emerald-400">✓</span>
+                    </div>
+                    <p class="text-white font-medium text-sm mb-1">Modifies your files</p>
+                    <p class="text-emerald-400 text-sm font-medium">Isolated sandbox</p>
+                    <p class="text-slate-500 text-xs mt-2">Host files stay untouched</p>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-red-400">✗</span>
+                        <span class="text-slate-500">→</span>
+                        <span class="text-emerald-400">✓</span>
+                    </div>
+                    <p class="text-white font-medium text-sm mb-1">Agent conflicts</p>
+                    <p class="text-emerald-400 text-sm font-medium">Parallel sandboxes</p>
+                    <p class="text-slate-500 text-xs mt-2">Each agent fully isolated</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- What's New Section -->
+    <section class="py-12">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-2xl font-bold text-white mb-6 text-center">
+                <i class="fa-solid fa-sparkles text-yellow-400 mr-2"></i> What's New
+            </h2>
+            <div class="grid md:grid-cols-3 gap-4">
+                <div class="bg-kapsis-card border border-indigo-700/50 rounded-xl p-5 hover:border-indigo-500/50 transition-colors">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-xs bg-indigo-500/20 text-indigo-400 px-2 py-0.5 rounded font-bold">NEW</span>
+                    </div>
+                    <h4 class="text-white font-medium text-sm mb-2"><i class="fa-solid fa-dharmachakra text-indigo-400 mr-1"></i> Kubernetes Backend</h4>
+                    <p class="text-slate-400 text-xs">Run agents as K8s Pods via the <code class="bg-slate-700 px-1 rounded">AgentRequest</code> CRD. Same isolation model, cluster-scale concurrency. NetworkPolicy per pod.</p>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-xs bg-emerald-500/20 text-emerald-400 px-2 py-0.5 rounded font-bold">v2.8.1</span>
+                    </div>
+                    <h4 class="text-white font-medium text-sm mb-2">Atomic Staging</h4>
+                    <p class="text-slate-400 text-xs">Bind-mount staging now uses host-side snapshots to prevent torn reads and race conditions during container launch.</p>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="flex items-center gap-2 mb-3">
+                        <span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded font-bold">5 Agents</span>
+                    </div>
+                    <h4 class="text-white font-medium text-sm mb-2">Gemini CLI Support</h4>
+                    <p class="text-slate-400 text-xs">Full agent profile for Google Gemini CLI joins Claude Code, Codex CLI, and Aider as supported agents out of the box.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Technology Deep Dive (Collapsible) -->
+    <section class="py-10 bg-slate-900/30">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <details class="group">
+                <summary class="flex items-center justify-center gap-2 cursor-pointer list-none text-slate-400 hover:text-white transition-colors">
+                    <i class="fa-solid fa-microscope text-sm"></i>
+                    <span class="text-sm font-medium">Technology Deep Dive: Why we chose Podman over 10+ alternatives</span>
+                    <i class="fa-solid fa-chevron-down text-xs transition-transform group-open:rotate-180"></i>
+                </summary>
+                <div class="mt-8">
+                    <div class="overflow-x-auto">
+                        <table class="w-full text-left border-collapse text-sm">
+                            <thead>
+                                <tr class="border-b border-slate-700 bg-slate-800/50">
+                                    <th class="py-3 px-3 text-slate-400 font-medium">Solution</th>
+                                    <th class="py-3 px-3 text-slate-400 font-medium">Type</th>
+                                    <th class="py-3 px-3 text-center text-slate-400 font-medium">Isolation</th>
+                                    <th class="py-3 px-3 text-center text-slate-400 font-medium">macOS</th>
+                                    <th class="py-3 px-3 text-center text-slate-400 font-medium">Rootless</th>
+                                    <th class="py-3 px-3 text-center text-slate-400 font-medium">Self-Host</th>
+                                    <th class="py-3 px-3 text-slate-400 font-medium">Trade-offs</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr class="border-b border-emerald-900/50 bg-emerald-900/20">
+                                    <td class="py-3 px-3 text-emerald-400 font-medium">Kapsis <span class="text-xs">(Podman)</span></td>
+                                    <td class="py-3 px-3 text-slate-300">Container</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400 font-medium">Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-400">Best for local dev, macOS + Linux</td>
+                                </tr>
+                                <tr class="border-b border-indigo-900/50 bg-indigo-900/20">
+                                    <td class="py-3 px-3 text-indigo-400 font-medium">Kapsis <span class="text-xs">(K8s)</span></td>
+                                    <td class="py-3 px-3 text-slate-300">K8s Pod</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400 font-medium">Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-slate-500">Cluster</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-400">Best for teams, cluster-scale concurrency</td>
+                                </tr>
+                                <tr class="border-b border-slate-800">
+                                    <td class="py-3 px-3 text-slate-300">Docker</td>
+                                    <td class="py-3 px-3 text-slate-400">Container</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-yellow-400">⚠</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-500">Root daemon by default</td>
+                                </tr>
+                                <tr class="border-b border-slate-800">
+                                    <td class="py-3 px-3 text-slate-300">Bubblewrap</td>
+                                    <td class="py-3 px-3 text-slate-400">Namespace</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-yellow-400">Medium</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-500">No network isolation</td>
+                                </tr>
+                                <tr class="border-b border-slate-800">
+                                    <td class="py-3 px-3 text-slate-300">Firecracker</td>
+                                    <td class="py-3 px-3 text-slate-400">MicroVM</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-blue-400 font-medium">Very Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-500">AWS infra, Linux only</td>
+                                </tr>
+                                <tr class="border-b border-slate-800">
+                                    <td class="py-3 px-3 text-slate-300">gVisor</td>
+                                    <td class="py-3 px-3 text-slate-400">User kernel</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-blue-400 font-medium">Very Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">✓</span></td>
+                                    <td class="py-3 px-3 text-slate-500">Syscall overhead</td>
+                                </tr>
+                                <tr class="border-b border-slate-800">
+                                    <td class="py-3 px-3 text-slate-300">E2B</td>
+                                    <td class="py-3 px-3 text-slate-400">Cloud VM</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-slate-500">Cloud</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-slate-500">N/A</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-slate-500">Per-minute pricing</td>
+                                </tr>
+                                <tr>
+                                    <td class="py-3 px-3 text-slate-300">Modal</td>
+                                    <td class="py-3 px-3 text-slate-400">Cloud</td>
+                                    <td class="py-3 px-3 text-center"><span class="text-emerald-400">Strong</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-slate-500">Cloud</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-slate-500">N/A</span></td>
+                                    <td class="py-3 px-3 text-center"><span class="text-red-400">✗</span></td>
+                                    <td class="py-3 px-3 text-slate-500">ML-focused</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- Compact Why Podman -->
+                    <p class="mt-6 text-sm text-slate-500 text-center">
+                        <span class="text-emerald-400">Podman</span>: Rootless containers, macOS native, copy-on-write filesystem. Best for local dev.
+                        <br><span class="text-indigo-400">Kubernetes</span>: Same isolation via CRD operator. Best for teams and cluster-scale workloads.
+                    </p>
+                </div>
+            </details>
+        </div>
+    </section>
+
+    <!-- Performance Section -->
+    <section class="py-16">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-2xl font-bold text-white mb-3 text-center">
+                <i class="fa-solid fa-bolt text-yellow-400 mr-2"></i>Minimal Overhead
+            </h2>
+            <p class="text-slate-400 mb-10 text-center">Kapsis adds negligible overhead to your workflow</p>
+
+            <div class="grid md:grid-cols-4 gap-6 text-center">
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <div class="text-2xl font-bold text-kapsis-neon mb-2">Seconds</div>
+                    <div class="text-slate-400 text-sm">Not minutes to start</div>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <div class="text-2xl font-bold text-kapsis-neon mb-2">Lightweight</div>
+                    <div class="text-slate-400 text-sm">Minimal memory footprint</div>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <div class="text-2xl font-bold text-kapsis-neon mb-2">CoW</div>
+                    <div class="text-slate-400 text-sm">Only changes stored</div>
+                </div>
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <div class="text-2xl font-bold text-kapsis-neon mb-2">Native</div>
+                    <div class="text-slate-400 text-sm">No CPU emulation</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation Section -->
+    <section id="install" class="py-20 bg-slate-800/50">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-8 flex items-center">
+                <i class="fa-solid fa-download text-kapsis-neon mr-3"></i> Installation
+            </h2>
+
+            <!-- Tabbed Installation -->
+            <div class="mb-10">
+                <!-- Tab Buttons -->
+                <div class="flex flex-wrap gap-2 mb-6" role="tablist" aria-label="Installation methods">
+                    <button onclick="switchInstallTab('homebrew')" id="install-tab-homebrew" role="tab" aria-selected="true" aria-controls="install-content-homebrew" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-kapsis-neon text-slate-900 transition-all">
+                        <i class="fa-brands fa-apple mr-1" aria-hidden="true"></i><i class="fa-brands fa-linux mr-2" aria-hidden="true"></i>Homebrew
+                    </button>
+                    <button onclick="switchInstallTab('apt')" id="install-tab-apt" role="tab" aria-selected="false" aria-controls="install-content-apt" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-brands fa-ubuntu mr-1" aria-hidden="true"></i><i class="fa-brands fa-debian mr-2" aria-hidden="true"></i>APT
+                    </button>
+                    <button onclick="switchInstallTab('dnf')" id="install-tab-dnf" role="tab" aria-selected="false" aria-controls="install-content-dnf" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-brands fa-fedora mr-1" aria-hidden="true"></i><i class="fa-brands fa-redhat mr-2" aria-hidden="true"></i>DNF
+                    </button>
+                    <button onclick="switchInstallTab('script')" id="install-tab-script" role="tab" aria-selected="false" aria-controls="install-content-script" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-solid fa-terminal mr-2" aria-hidden="true"></i>Script
+                    </button>
+                    <button onclick="switchInstallTab('manual')" id="install-tab-manual" role="tab" aria-selected="false" aria-controls="install-content-manual" class="install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all">
+                        <i class="fa-solid fa-code-branch mr-2" aria-hidden="true"></i>Git Clone
+                    </button>
+                </div>
+
+                <!-- Tab Contents -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <!-- Homebrew -->
+                    <div id="install-content-homebrew" class="install-content" role="tabpanel" aria-labelledby="install-tab-homebrew">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-kapsis-neon border border-kapsis-neon px-2 py-0.5 rounded">RECOMMENDED</span>
+                            <span class="text-xs text-slate-500">macOS & Linux</span>
+                        </div>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                            <button onclick="copyCode(event, 'cmd-homebrew')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy Homebrew install command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <pre id="cmd-homebrew" class="text-blue-300 whitespace-pre overflow-x-auto">brew tap aviadshiber/kapsis && brew install kapsis</pre>
+                        </div>
+                    </div>
+
+                    <!-- APT -->
+                    <div id="install-content-apt" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-apt">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">APT Repository · <a href="https://aviadshiber.github.io/kapsis/apt" class="text-kapsis-neon hover:underline">browse</a></span>
+                            <span class="text-xs text-slate-500">Debian, Ubuntu, Mint</span>
+                        </div>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-xs overflow-x-auto relative group">
+                            <button onclick="copyCode(event, 'cmd-apt')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy APT install command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <pre id="cmd-apt" class="text-blue-300 whitespace-pre overflow-x-auto"><span class="text-slate-500"># Add GPG key</span>
+curl -fsSL https://aviadshiber.github.io/kapsis/gpg/kapsis.asc | sudo gpg --dearmor -o /etc/apt/keyrings/kapsis.gpg
+
+<span class="text-slate-500"># Add repository</span>
+echo "deb [signed-by=/etc/apt/keyrings/kapsis.gpg] https://aviadshiber.github.io/kapsis/apt stable main" | sudo tee /etc/apt/sources.list.d/kapsis.list
+
+<span class="text-slate-500"># Install</span>
+sudo apt update && sudo apt install kapsis</pre>
+                        </div>
+                    </div>
+
+                    <!-- DNF -->
+                    <div id="install-content-dnf" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-dnf">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">DNF Repository · <a href="https://aviadshiber.github.io/kapsis/rpm/packages" class="text-kapsis-neon hover:underline">browse</a></span>
+                            <span class="text-xs text-slate-500">Fedora, RHEL, CentOS</span>
+                        </div>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-xs overflow-x-auto relative group">
+                            <button onclick="copyCode(event, 'cmd-dnf')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy DNF install command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <pre id="cmd-dnf" class="text-blue-300 whitespace-pre overflow-x-auto"><span class="text-slate-500"># Add repository</span>
+sudo tee /etc/yum.repos.d/kapsis.repo &lt;&lt;EOF
+[kapsis]
+name=Kapsis Repository
+baseurl=https://aviadshiber.github.io/kapsis/rpm/packages
+enabled=1
+gpgcheck=1
+gpgkey=https://aviadshiber.github.io/kapsis/gpg/kapsis.asc
+EOF
+
+<span class="text-slate-500"># Install</span>
+sudo dnf install kapsis</pre>
+                        </div>
+                    </div>
+
+                    <!-- Script -->
+                    <div id="install-content-script" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-script">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">For systems without a package manager</span>
+                            <span class="text-xs text-slate-500">Installs to ~/.local</span>
+                        </div>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                            <button onclick="copyCode(event, 'cmd-script')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy install script command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <pre id="cmd-script" class="text-kapsis-neon whitespace-pre overflow-x-auto">curl -fsSL https://raw.githubusercontent.com/aviadshiber/kapsis/main/scripts/install.sh | bash</pre>
+                        </div>
+                    </div>
+
+                    <!-- Manual -->
+                    <div id="install-content-manual" class="install-content hidden" role="tabpanel" aria-labelledby="install-tab-manual">
+                        <div class="flex items-center justify-between mb-4">
+                            <span class="text-xs text-slate-400">Clone and run setup</span>
+                            <span class="text-xs text-slate-500">Auto-installs dependencies</span>
+                        </div>
+                        <div class="code-block code-scroll-container p-4 rounded-lg font-mono text-sm overflow-x-auto relative group">
+                            <button onclick="copyCode(event, 'cmd-manual')" class="copy-btn absolute top-2 right-2 text-slate-500 hover:text-white bg-slate-800 p-2 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy git clone command">
+                                <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                            </button>
+                            <pre id="cmd-manual" class="text-blue-300 whitespace-pre overflow-x-auto">git clone https://github.com/aviadshiber/kapsis.git && cd kapsis && ./setup.sh --all</pre>
+                        </div>
+                    </div>
+
+                    <!-- Post-install note -->
+                    <div class="mt-4 pt-4 border-t border-slate-700 text-xs text-slate-500">
+                        <strong class="text-slate-400">Post-install:</strong> Run <code class="bg-slate-700 px-1 rounded">kapsis-setup --build</code> to build the container image.
+                    </div>
+
+                    <!-- Security note -->
+                    <div class="mt-3 flex items-start text-xs">
+                        <i class="fa-solid fa-shield-halved text-kapsis-neon mt-0.5 mr-2"></i>
+                        <span class="text-slate-500"><strong class="text-slate-400">Package security:</strong> All packages are <a href="https://aviadshiber.github.io/kapsis/gpg/kapsis.asc" class="text-kapsis-neon hover:underline">GPG signed</a>. Releases include <code class="bg-slate-700 px-1 rounded">checksums.sha256</code> for verification.</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Requirements (compact) -->
+            <div class="flex flex-wrap gap-6 text-sm text-slate-400">
+                <span><i class="fa-solid fa-check text-kapsis-neon mr-2"></i><strong>macOS</strong> (Apple Silicon) or <strong>Linux</strong></span>
+                <span><i class="fa-solid fa-check text-kapsis-neon mr-2"></i><strong>Git</strong> 2.0+</span>
+                <span><i class="fa-solid fa-check text-kapsis-neon mr-2"></i><strong>yq</strong> 4.0+</span>
+                <span><i class="fa-solid fa-check text-kapsis-neon mr-2"></i><strong>Podman</strong> 4.0+ <span class="text-slate-500">(auto-installed by setup)</span></span>
+            </div>
+        </div>
+    </section>
+
+    <!-- YOLO Mode Spotlight -->
+    <section id="yolo" class="py-20 relative">
+        <div class="absolute inset-0 bg-gradient-to-b from-kapsis-dark via-red-900/10 to-kapsis-dark pointer-events-none"></div>
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
+            <div class="bg-gradient-to-r from-slate-900 to-slate-800 rounded-2xl border border-red-500/30 p-8 md:p-12 shadow-[0_0_50px_rgba(239,68,68,0.1)]">
+                <div class="md:flex items-center gap-12">
+                    <div class="md:w-1/2">
+                        <div class="inline-flex items-center px-3 py-1 rounded text-xs font-bold bg-red-500/20 text-red-400 mb-4 border border-red-500/30">
+                            <i class="fa-solid fa-triangle-exclamation mr-2"></i> GAME CHANGER
+                        </div>
+                        <h2 class="text-3xl md:text-4xl font-bold text-white mb-4">
+                            Work in <span class="text-red-500 italic">YOLO Mode</span> safely.
+                        </h2>
+                        <p class="text-slate-300 text-lg mb-6">
+                            Normally, flags like <code class="bg-red-900/30 text-red-400 px-1 py-0.5 rounded text-sm">--dangerously-skip-permissions</code> or <code class="bg-red-900/30 text-red-400 px-1 py-0.5 rounded text-sm">--yes-always</code> are terrifying. They risk your OS and your files.
+                        </p>
+                        <p class="text-slate-300 text-lg mb-6">
+                            With <strong>Kapsis</strong>, they are safe. Every destructive command is trapped inside a disposable container.
+                        </p>
+                        <ul class="space-y-3 mb-8">
+                            <li class="flex items-center text-slate-400">
+                                <i class="fa-solid fa-check text-green-500 mr-3"></i> Agent deletes root? Container dies, Host lives.
+                            </li>
+                            <li class="flex items-center text-slate-400">
+                                <i class="fa-solid fa-check text-green-500 mr-3"></i> Agent installs malware? It's isolated.
+                            </li>
+                            <li class="flex items-center text-slate-400">
+                                <i class="fa-solid fa-check text-green-500 mr-3"></i> Full autonomy without the anxiety.
+                            </li>
+                        </ul>
+                    </div>
+                    <div class="md:w-1/2 mt-8 md:mt-0">
+                        <!-- Visual representation of containment -->
+                        <div class="bg-black rounded-lg border border-red-500/30 p-4 font-mono text-xs relative overflow-hidden">
+                            <div class="absolute top-0 right-0 bg-red-600 text-white text-[10px] px-2 py-1 font-bold rounded-bl">CONTAINER ISOLATION</div>
+                            <div class="text-red-400 mb-2">$ claude --dangerously-skip-permissions</div>
+                            <div class="text-slate-500 italic mb-2">> Agent attempting to delete database config...</div>
+                            <div class="text-slate-500 italic mb-2">> Agent installing unknown npm packages...</div>
+                            <div class="text-slate-500 italic mb-2">> Agent modifying system PATH...</div>
+                            <div class="mt-4 pt-4 border-t border-dashed border-slate-700 text-green-400 font-bold">
+                                [KAPSIS MONITOR]: Host System Integrity: 100% (Safe)
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Complete Workflow Example -->
+    <section id="workflow" class="py-20 bg-gradient-to-b from-slate-800/30 to-kapsis-dark">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-4 text-center">
+                <i class="fa-solid fa-diagram-project text-kapsis-neon mr-3"></i> Complete Workflow Example
+            </h2>
+            <p class="text-center text-slate-400 mb-12 max-w-2xl mx-auto">
+                See exactly how Kapsis works: from task specification to pull request.
+            </p>
+
+            <div class="grid lg:grid-cols-2 gap-8">
+                <!-- Left Column: Input Files -->
+                <div class="space-y-6">
+                    <!-- Step 1: Task Spec -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                        <div class="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
+                            <div class="flex items-center gap-2">
+                                <span class="bg-kapsis-neon text-slate-900 text-xs font-bold px-2 py-0.5 rounded">STEP 1</span>
+                                <span class="text-white text-sm font-mono">specs/rate-limit.md</span>
+                            </div>
+                            <span class="text-xs text-slate-500">Task Specification</span>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto">
+<pre class="text-slate-300"><span class="text-purple-400"># Add Rate Limiting to API Endpoints</span>
+
+<span class="text-cyan-400">## Objective</span>
+Implement rate limiting for all public API endpoints to prevent abuse.
+
+<span class="text-cyan-400">## Requirements</span>
+<span class="text-green-400">- [ ]</span> Add RateLimiter middleware using Redis
+<span class="text-green-400">- [ ]</span> Limit: 100 requests/minute per API key
+<span class="text-green-400">- [ ]</span> Return 429 status with Retry-After header
+
+<span class="text-cyan-400">## Context</span>
+- JIRA: <span class="text-yellow-400">DEV-1234</span>
+- Files: <span class="text-blue-400">src/middleware/</span>, <span class="text-blue-400">src/api/</span>
+
+<span class="text-cyan-400">## Testing</span>
+<span class="text-green-400">- [ ]</span> Unit tests for RateLimiter class
+<span class="text-green-400">- [ ]</span> Integration test with Redis mock</pre>
+                        </div>
+                    </div>
+
+                    <!-- Step 2: Config File (optional) -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                        <div class="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
+                            <div class="flex items-center gap-2">
+                                <span class="bg-indigo-500 text-white text-xs font-bold px-2 py-0.5 rounded">STEP 2</span>
+                                <span class="text-white text-sm font-mono">agent-sandbox.yaml</span>
+                            </div>
+                            <span class="text-xs text-slate-500">Configuration (optional)</span>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto">
+<pre class="text-slate-300"><span class="text-purple-400">agent:</span>
+  <span class="text-slate-400">command:</span> <span class="text-green-400">"claude --dangerously-skip-permissions"</span>
+
+<span class="text-purple-400">environment:</span>
+  <span class="text-slate-400">keychain:</span>
+    <span class="text-cyan-400">ANTHROPIC_API_KEY:</span>
+      <span class="text-slate-400">service:</span> <span class="text-green-400">"Claude Code-credentials"</span>
+
+<span class="text-purple-400">resources:</span>
+  <span class="text-slate-400">memory:</span> <span class="text-yellow-400">8g</span>
+  <span class="text-slate-400">cpus:</span> <span class="text-yellow-400">4</span>
+
+<span class="text-purple-400">git:</span>
+  <span class="text-slate-400">auto_push:</span>
+    <span class="text-slate-400">enabled:</span> <span class="text-yellow-400">true</span></pre>
+                        </div>
+                    </div>
+
+                    <!-- Step 3: Launch Command -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                        <div class="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
+                            <div class="flex items-center gap-2">
+                                <span class="bg-orange-500 text-white text-xs font-bold px-2 py-0.5 rounded">STEP 3</span>
+                                <span class="text-white text-sm font-mono">Terminal</span>
+                            </div>
+                            <span class="text-xs text-slate-500">Launch the Agent</span>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] font-mono text-sm overflow-x-auto">
+                            <div class="flex mb-2">
+                                <span class="text-emerald-400 mr-2">➜</span>
+                                <span class="text-white">kapsis ~/ecommerce-api \</span>
+                            </div>
+                            <div class="text-white pl-6">--spec specs/rate-limit.md \</div>
+                            <div class="text-white pl-6">--branch feature/DEV-1234-rate-limiting</div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <div>✓ Sandbox created with Copy-on-Write filesystem</div>
+                                <div>✓ API key retrieved from keychain</div>
+                                <div>✓ Branch feature/DEV-1234-rate-limiting created</div>
+                                <div class="text-kapsis-neon">▶ Agent running in container...</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: Output -->
+                <div class="space-y-6">
+                    <!-- Real-time Status -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                        <div class="flex items-center justify-between px-4 py-2 bg-slate-800 border-b border-slate-700">
+                            <div class="flex items-center gap-2">
+                                <span class="bg-cyan-500 text-white text-xs font-bold px-2 py-0.5 rounded animate-pulse">LIVE</span>
+                                <span class="text-white text-sm font-mono">kapsis-status --json</span>
+                            </div>
+                            <span class="text-xs text-slate-500">Real-time Progress</span>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto">
+<pre class="text-slate-300">{
+  <span class="text-cyan-400">"agent_id"</span>: <span class="text-green-400">"a3f2b1"</span>,
+  <span class="text-cyan-400">"project"</span>: <span class="text-green-400">"ecommerce-api"</span>,
+  <span class="text-cyan-400">"branch"</span>: <span class="text-green-400">"feature/DEV-1234-rate-limiting"</span>,
+  <span class="text-cyan-400">"phase"</span>: <span class="text-yellow-400">"implementing"</span>,
+  <span class="text-cyan-400">"progress"</span>: <span class="text-yellow-400">52</span>,
+  <span class="text-cyan-400">"message"</span>: <span class="text-green-400">"Writing src/middleware/RateLimiter.ts"</span>,
+  <span class="text-cyan-400">"started_at"</span>: <span class="text-green-400">"2026-02-19T10:30:00Z"</span>,
+  <span class="text-cyan-400">"updated_at"</span>: <span class="text-green-400">"2026-02-19T10:34:22Z"</span>
+}</pre>
+                        </div>
+                    </div>
+
+                    <!-- Final Result -->
+                    <div class="bg-kapsis-card border border-green-500/30 rounded-xl overflow-hidden">
+                        <div class="flex items-center justify-between px-4 py-2 bg-green-900/30 border-b border-green-500/30">
+                            <div class="flex items-center gap-2">
+                                <span class="bg-green-500 text-white text-xs font-bold px-2 py-0.5 rounded">COMPLETE</span>
+                                <span class="text-white text-sm font-mono">Final Result</span>
+                            </div>
+                            <span class="text-xs text-green-400">~8 minutes</span>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto">
+<pre class="text-slate-300">{
+  <span class="text-cyan-400">"phase"</span>: <span class="text-green-400">"complete"</span>,
+  <span class="text-cyan-400">"progress"</span>: <span class="text-green-400">100</span>,
+  <span class="text-cyan-400">"exit_code"</span>: <span class="text-green-400">0</span>,
+  <span class="text-cyan-400">"message"</span>: <span class="text-green-400">"Task completed successfully"</span>,
+  <span class="text-cyan-400">"pr_url"</span>: <span class="text-blue-400">"https://github.com/acme/ecommerce-api/pull/127"</span>,
+  <span class="text-cyan-400">"commits"</span>: [
+    <span class="text-green-400">"feat: add RateLimiter middleware with Redis"</span>,
+    <span class="text-green-400">"test: add unit tests for rate limiting"</span>
+  ],
+  <span class="text-cyan-400">"files_changed"</span>: <span class="text-yellow-400">6</span>
+}</pre>
+                        </div>
+                    </div>
+
+                    <!-- What the Agent Created -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl p-4">
+                        <h4 class="text-white font-bold mb-3 flex items-center text-sm">
+                            <i class="fa-solid fa-code-commit text-kapsis-neon mr-2"></i> Files Created by Agent
+                        </h4>
+                        <div class="space-y-2 text-xs font-mono">
+                            <div class="flex items-center text-slate-300">
+                                <span class="text-green-400 mr-2">+</span>
+                                <span>src/middleware/RateLimiter.ts</span>
+                                <span class="ml-auto text-slate-500">+142 lines</span>
+                            </div>
+                            <div class="flex items-center text-slate-300">
+                                <span class="text-green-400 mr-2">+</span>
+                                <span>src/middleware/RateLimiter.test.ts</span>
+                                <span class="ml-auto text-slate-500">+89 lines</span>
+                            </div>
+                            <div class="flex items-center text-slate-300">
+                                <span class="text-yellow-400 mr-2">~</span>
+                                <span>src/api/routes.ts</span>
+                                <span class="ml-auto text-slate-500">+12 lines</span>
+                            </div>
+                            <div class="flex items-center text-slate-300">
+                                <span class="text-yellow-400 mr-2">~</span>
+                                <span>package.json</span>
+                                <span class="ml-auto text-slate-500">+2 lines</span>
+                            </div>
+                        </div>
+                        <div class="mt-4 pt-3 border-t border-slate-700">
+                            <a href="#" class="text-kapsis-neon hover:underline text-sm flex items-center">
+                                <i class="fa-brands fa-github mr-2"></i>
+                                View Pull Request #127 →
+                            </a>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Feedback Loop Note -->
+            <div class="mt-10 bg-gradient-to-r from-indigo-900/30 to-purple-900/30 border border-indigo-500/30 rounded-xl p-6">
+                <div class="flex items-start gap-4">
+                    <div class="bg-indigo-500/20 p-3 rounded-lg">
+                        <i class="fa-solid fa-arrows-rotate text-indigo-400 text-xl"></i>
+                    </div>
+                    <div>
+                        <h4 class="text-white font-bold mb-2">Feedback Loop: Need changes?</h4>
+                        <p class="text-slate-400 text-sm mb-3">
+                            Review the PR, add comments, then re-run with an updated spec. The agent continues from the current branch state.
+                        </p>
+                        <div class="bg-[#0d1117] rounded-lg p-3 font-mono text-xs text-slate-300">
+                            <span class="text-slate-500"># Update spec with PR feedback, re-run same command</span><br>
+                            <span class="text-emerald-400">➜</span> kapsis ~/ecommerce-api --spec specs/rate-limit-v2.md --branch feature/DEV-1234-rate-limiting<br>
+                            <span class="text-slate-500"># Agent pulls latest, reads feedback, continues work...</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Security Features Section -->
+    <section id="security" class="py-20 bg-slate-900/50">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-4 text-center">
+                <i class="fa-solid fa-shield-halved text-kapsis-neon mr-3"></i> Defense in Depth
+            </h2>
+            <p class="text-center text-slate-400 mb-12 max-w-2xl mx-auto">
+                Multiple layers of isolation protect your host system from rogue AI agents.
+            </p>
+
+            <!-- Network Modes Feature (NEW) -->
+            <div class="mb-12 bg-gradient-to-r from-blue-900/20 to-cyan-900/20 rounded-2xl border border-blue-500/30 p-6 md:p-8">
+                <div class="flex items-center gap-3 mb-6">
+                    <div class="bg-blue-500/20 p-3 rounded-lg">
+                        <i class="fa-solid fa-tower-broadcast text-blue-400 text-2xl"></i>
+                    </div>
+                    <div>
+                        <span class="text-xs font-bold text-blue-400 uppercase tracking-wider">Core Feature</span>
+                        <h3 class="text-white font-bold text-xl">Three Network Isolation Modes</h3>
+                    </div>
+                </div>
+
+                <div class="grid md:grid-cols-3 gap-4 mb-6">
+                    <!-- None Mode -->
+                    <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700 hover:border-red-500/50 transition-colors">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-red-400 font-mono font-bold">none</span>
+                            <span class="text-xs bg-red-500/20 text-red-400 px-2 py-0.5 rounded">Air-Gapped</span>
+                        </div>
+                        <p class="text-slate-400 text-sm mb-3">Complete network isolation. No external connections allowed.</p>
+                        <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-slate-300">--network-mode=none</code>
+                    </div>
+
+                    <!-- Filtered Mode (Default) -->
+                    <div class="bg-slate-800/50 rounded-xl p-4 border-2 border-kapsis-neon/50 hover:border-kapsis-neon transition-colors relative">
+                        <div class="absolute -top-2 -right-2 bg-kapsis-neon text-slate-900 text-[10px] font-bold px-2 py-0.5 rounded">DEFAULT</div>
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-kapsis-neon font-mono font-bold">filtered</span>
+                            <span class="text-xs bg-kapsis-neon/20 text-kapsis-neon px-2 py-0.5 rounded">DNS Allowlist</span>
+                        </div>
+                        <p class="text-slate-400 text-sm mb-3">Only approved domains resolve. Everything else returns NXDOMAIN.</p>
+                        <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-slate-300">--network-mode=filtered</code>
+                    </div>
+
+                    <!-- Open Mode -->
+                    <div class="bg-slate-800/50 rounded-xl p-4 border border-slate-700 hover:border-yellow-500/50 transition-colors">
+                        <div class="flex items-center gap-2 mb-2">
+                            <span class="text-yellow-400 font-mono font-bold">open</span>
+                            <span class="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded">Unrestricted</span>
+                        </div>
+                        <p class="text-slate-400 text-sm mb-3">Full network access. Use only when necessary.</p>
+                        <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-slate-300">--network-mode=open</code>
+                    </div>
+                </div>
+
+                <!-- Allowlist Categories -->
+                <div class="bg-slate-900/50 rounded-xl p-4">
+                    <h4 class="text-white font-bold text-sm mb-3 flex items-center">
+                        <i class="fa-solid fa-list-check text-blue-400 mr-2"></i>
+                        Pre-configured Allowlist Categories
+                    </h4>
+                    <div class="flex flex-wrap gap-2 text-xs">
+                        <span class="bg-purple-500/20 text-purple-300 px-3 py-1 rounded-full"><i class="fa-brands fa-github mr-1"></i>Git Hosts</span>
+                        <span class="bg-orange-500/20 text-orange-300 px-3 py-1 rounded-full"><i class="fa-solid fa-cube mr-1"></i>npm / PyPI / Maven</span>
+                        <span class="bg-cyan-500/20 text-cyan-300 px-3 py-1 rounded-full"><i class="fa-solid fa-robot mr-1"></i>AI APIs (Claude, GPT, Gemini)</span>
+                        <span class="bg-blue-500/20 text-blue-300 px-3 py-1 rounded-full"><i class="fa-brands fa-docker mr-1"></i>Container Registries</span>
+                        <span class="bg-slate-500/20 text-slate-300 px-3 py-1 rounded-full"><i class="fa-solid fa-gear mr-1"></i>Custom Domains</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="grid md:grid-cols-3 gap-8">
+                <!-- DNS Filtering (Enhanced) -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="w-12 h-12 bg-blue-500/20 rounded-lg flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-network-wired text-blue-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-white font-bold text-lg mb-2">DNS-Based Filtering</h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        dnsmasq runs inside the container, blocking unknown hosts at the DNS layer. Includes rebinding attack protection.
+                    </p>
+                    <div class="code-block p-3 rounded text-xs font-mono">
+                        <span class="text-slate-500"># network-allowlist.yaml</span><br>
+                        <span class="text-purple-400">network:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;mode:</span> <span class="text-green-400">filtered</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;allowlist:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;hosts:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">github.com</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">"*.github.com"</span>
+                    </div>
+                </div>
+
+                <!-- SSH Key Verification -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="w-12 h-12 bg-emerald-500/20 rounded-lg flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-key text-emerald-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-white font-bold text-lg mb-2">SSH Key Verification</h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        Host keys are verified against official provider APIs (GitHub, GitLab, Bitbucket) to prevent MITM attacks.
+                    </p>
+                    <div class="code-block p-3 rounded text-xs font-mono">
+                        <span class="text-slate-500"># Verified via API</span><br>
+                        <span class="text-purple-400">ssh:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;verify_hosts:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">github.com</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;&nbsp;&nbsp;-</span> <span class="text-yellow-400">gitlab.com</span>
+                    </div>
+                </div>
+
+                <!-- Container Isolation -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6 hover:border-kapsis-neon/50 transition-colors">
+                    <div class="w-12 h-12 bg-red-500/20 rounded-lg flex items-center justify-center mb-4">
+                        <i class="fa-solid fa-box text-red-400 text-xl"></i>
+                    </div>
+                    <h3 class="text-white font-bold text-lg mb-2">Rootless Containers</h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        Podman runs rootless. K8s Pods use <code class="bg-slate-700 px-1 rounded text-xs">runAsNonRoot</code> with dropped capabilities. Both prevent privilege escalation.
+                    </p>
+                    <div class="code-block p-3 rounded text-xs font-mono">
+                        <span class="text-slate-500"># Copy-on-Write filesystem</span><br>
+                        <span class="text-purple-400">filesystem:</span><br>
+                        <span class="text-slate-400">&nbsp;&nbsp;mode:</span> <span class="text-green-400">overlay</span><br>
+                        <span class="text-slate-500"># Host files unchanged</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Audit Trail Feature (NEW in v2.14.0) -->
+            <div class="mt-12 mb-12 bg-gradient-to-r from-amber-900/20 to-orange-900/20 rounded-2xl border border-amber-500/30 p-6 md:p-8">
+                <div class="flex items-center gap-3 mb-6">
+                    <div class="bg-amber-500/20 p-3 rounded-lg">
+                        <i class="fa-solid fa-scroll text-amber-400 text-2xl"></i>
+                    </div>
+                    <div>
+                        <span class="text-xs font-bold text-amber-400 uppercase tracking-wider">New in v2.14.0</span>
+                        <h3 class="text-white font-bold text-xl">Tamper-Evident Audit Trail</h3>
+                    </div>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-6">
+                    <!-- Left: Description + Features -->
+                    <div>
+                        <p class="text-slate-300 text-sm mb-4">
+                            Every agent action is recorded as a hash-chained JSONL event log. SHA-256 hash links make tampering detectable &mdash; if any event is modified, the chain breaks.
+                        </p>
+                        <div class="space-y-2 text-sm">
+                            <div class="flex items-start">
+                                <i class="fa-solid fa-link text-amber-400 mt-1 mr-3 w-4"></i>
+                                <span class="text-slate-300"><strong>Hash chain</strong> &mdash; Each event links to the previous via SHA-256</span>
+                            </div>
+                            <div class="flex items-start">
+                                <i class="fa-solid fa-eye text-amber-400 mt-1 mr-3 w-4"></i>
+                                <span class="text-slate-300"><strong>Real-time detection</strong> &mdash; Credential exfil, mass deletion, suspicious commands</span>
+                            </div>
+                            <div class="flex items-start">
+                                <i class="fa-solid fa-file-lines text-amber-400 mt-1 mr-3 w-4"></i>
+                                <span class="text-slate-300"><strong>Post-run reports</strong> &mdash; Timeline, statistics, security alerts, chain verification</span>
+                            </div>
+                            <div class="flex items-start">
+                                <i class="fa-solid fa-tags text-amber-400 mt-1 mr-3 w-4"></i>
+                                <span class="text-slate-300"><strong>Auto-classification</strong> &mdash; Events tagged as credential, network, filesystem, git ops</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Code example -->
+                    <div>
+                        <div class="code-block p-4 rounded-lg text-xs font-mono">
+                            <span class="text-slate-500"># Enable audit for an agent run</span><br>
+                            <span class="text-purple-400">audit:</span><br>
+                            <span class="text-slate-400">&nbsp;&nbsp;enabled:</span> <span class="text-green-400">true</span><br>
+                            <br>
+                            <span class="text-slate-500"># Verify chain integrity after run</span><br>
+                            <span class="text-cyan-400">$</span> <span class="text-slate-300">audit-report.sh --latest --verify</span><br>
+                            <span class="text-green-400">&nbsp;&nbsp;Hash chain: VALID (142 events)</span><br>
+                            <span class="text-green-400">&nbsp;&nbsp;Alerts: 0</span><br>
+                            <br>
+                            <span class="text-slate-500"># Each event is hash-linked</span><br>
+                            <span class="text-slate-400">{</span><span class="text-cyan-400">"seq"</span>:<span class="text-orange-400">42</span>, <span class="text-cyan-400">"event_type"</span>:<span class="text-green-400">"tool_use"</span>,<br>
+                            <span class="text-slate-400">&nbsp;</span><span class="text-cyan-400">"tool_name"</span>:<span class="text-green-400">"Bash"</span>,<br>
+                            <span class="text-slate-400">&nbsp;</span><span class="text-cyan-400">"prev_hash"</span>:<span class="text-green-400">"a3f2..."</span>,<br>
+                            <span class="text-slate-400">&nbsp;</span><span class="text-cyan-400">"hash"</span>:<span class="text-green-400">"7b1c..."</span><span class="text-slate-400">}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Security Guarantees -->
+            <div class="mt-12 bg-gradient-to-r from-slate-800 to-slate-900 rounded-xl border border-slate-700 p-6">
+                <h4 class="text-white font-bold mb-4 flex items-center">
+                    <i class="fa-solid fa-check-double text-kapsis-neon mr-2"></i> Security Guarantees
+                </h4>
+                <div class="grid md:grid-cols-2 gap-4 text-sm">
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Data exfiltration blocked</strong> — Unknown hosts return NXDOMAIN</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>DNS rebinding protection</strong> — Private IPs rejected in responses</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>MITM prevention</strong> — SSH keys verified against official APIs</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Fail-safe defaults</strong> — Container aborts if filtering fails</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Host filesystem safe</strong> — Changes trapped in overlay layer</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Credential isolation</strong> — API keys injected at runtime from keychain or K8s Secrets</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>K8s NetworkPolicy</strong> — Per-pod egress rules enforced by the cluster (K8s backend)</span>
+                    </div>
+                    <div class="flex items-start">
+                        <i class="fa-solid fa-check text-green-500 mt-1 mr-3 w-4"></i>
+                        <span class="text-slate-300"><strong>Tamper-evident audit trail</strong> — Hash-chained JSONL logs with real-time pattern detection</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Documentation: Config & Profiles -->
+    <section id="docs" class="py-20">
+        <div class="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-8 text-center">Docs & Agent Profiles</h2>
+            <p class="text-center text-slate-400 mb-12 max-w-2xl mx-auto">
+                Kapsis separates the <strong>Container Environment</strong> (resources, mounts) from the <strong>Agent Logic</strong> (commands, flags).
+            </p>
+
+            <div class="grid lg:grid-cols-2 gap-12">
+
+                <!-- Section 1: Agent Profiles -->
+                <div>
+                    <h3 class="text-xl font-bold text-white mb-4 flex items-center">
+                        <span class="bg-indigo-500/20 text-indigo-400 w-8 h-8 rounded flex items-center justify-center mr-3 text-sm">1</span>
+                        Agent Profiles
+                    </h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        Profiles define <em>what</em> runs inside the container. You can create custom YAML files for any CLI tool.
+                    </p>
+
+                    <!-- Interactive Profile Viewer -->
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                        <div class="flex border-b border-slate-700">
+                            <button onclick="switchDocTab('claude')" id="doc-tab-claude" class="flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white border-r border-slate-700">claude.yaml</button>
+                            <button onclick="switchDocTab('aider')" id="doc-tab-aider" class="flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 border-r border-slate-700">aider.yaml</button>
+                            <button onclick="switchDocTab('codex')" id="doc-tab-codex" class="flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 border-r border-slate-700">codex.yaml</button>
+                            <button onclick="switchDocTab('gemini')" id="doc-tab-gemini" class="flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500">gemini.yaml</button>
+                        </div>
+                        <div class="p-4 bg-[#0d1117] overflow-x-auto h-64">
+                            <!-- Claude Code -->
+                            <pre id="doc-content-claude" class="text-xs font-mono text-green-400">
+agent:
+  command: "claude --dangerously-skip-permissions -p \"$(cat /task-spec.md)\""
+  workdir: /workspace
+
+# API keys injected from host keychain
+# account can be string or array (for fallback)
+environment:
+  keychain:
+    ANTHROPIC_API_KEY:
+      service: "Claude Code-credentials"
+    JIRA_TOKEN:
+      service: "my-jira"
+      account: ["primary@example.com", "${USER}"]
+
+# SSH hosts verified against official APIs
+ssh:
+  verify_hosts:
+    - github.com
+    - gitlab.com</pre>
+
+                            <!-- Aider Code -->
+                            <pre id="doc-content-aider" class="text-xs font-mono text-blue-400 hidden">
+agent:
+  command: "aider --yes-always --message-file /task-spec.md"
+
+# Git behaviors specifically for this agent
+git:
+  auto_push:
+    enabled: true
+    remote: origin
+
+# Additional files to mount from host
+filesystem:
+  include:
+    - ~/.gitconfig
+    - ~/.ssh</pre>
+
+                            <!-- Codex CLI -->
+                            <pre id="doc-content-codex" class="text-xs font-mono text-orange-400 hidden">
+agent:
+  command: "codex --approval-mode full-auto \"$(cat /task-spec.md)\""
+  workdir: /workspace
+
+# OpenAI API key from host keychain
+environment:
+  keychain:
+    OPENAI_API_KEY:
+      service: "openai-api-key"
+
+# Codex config mount
+filesystem:
+  include:
+    - ~/.codex
+    - ~/.gitconfig</pre>
+
+                            <!-- Gemini CLI -->
+                            <pre id="doc-content-gemini" class="text-xs font-mono text-cyan-400 hidden">
+agent:
+  command: "gemini -s docker \"$(cat /task-spec.md)\""
+  workdir: /workspace
+
+# Google API key from host keychain
+environment:
+  keychain:
+    GOOGLE_API_KEY:
+      service: "google-api-key"
+
+# Gemini & GCloud config mounts
+filesystem:
+  include:
+    - ~/.gemini
+    - ~/.config/gcloud
+    - ~/.gitconfig</pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Section 2: Global Configuration -->
+                <div>
+                    <h3 class="text-xl font-bold text-white mb-4 flex items-center">
+                        <span class="bg-orange-500/20 text-orange-400 w-8 h-8 rounded flex items-center justify-center mr-3 text-sm">2</span>
+                        Sandbox Resources
+                    </h3>
+                    <p class="text-slate-400 text-sm mb-4">
+                        The `agent-sandbox.yaml` (or CLI overrides) controls the container's physical limits and isolation rules.
+                    </p>
+
+                    <div class="bg-kapsis-card border border-slate-700 rounded-xl p-4">
+                        <ul class="space-y-4">
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">resources:</div>
+                                <div class="text-slate-500 text-xs">Controls <code>memory</code> (e.g., 8g) and <code>cpus</code> (e.g., 4). Crucial for heavy compile tasks.</div>
+                            </li>
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">network:</div>
+                                <div class="text-slate-500 text-xs">
+                                    <code>mode: filtered</code> (default) enables DNS allowlist via dnsmasq. <code>mode: none</code> for air-gapped. <code>mode: open</code> for unrestricted.
+                                </div>
+                            </li>
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">ssh:</div>
+                                <div class="text-slate-500 text-xs">
+                                    <code>verify_hosts: [github.com]</code> enables MITM-protected SSH via official API verification.
+                                </div>
+                            </li>
+                            <li class="border-b border-slate-700 pb-3">
+                                <div class="text-white font-mono text-sm mb-1">maven:</div>
+                                <div class="text-slate-500 text-xs">
+                                    <code>block_remote_snapshots: true</code> prevents the agent from fetching unstable dependencies.
+                                </div>
+                            </li>
+                            <li>
+                                <div class="text-white font-mono text-sm mb-1">filesystem:</div>
+                                <div class="text-slate-500 text-xs">
+                                    Defines overlay mounts. By default, the project is mounted Read-Only + Copy-On-Write layer.
+                                </div>
+                            </li>
+                        </ul>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Section 3: Security Profiles Spectrum -->
+            <div class="mt-12">
+                <h3 class="text-xl font-bold text-white mb-4 flex items-center justify-center">
+                    <span class="bg-red-500/20 text-red-400 w-8 h-8 rounded flex items-center justify-center mr-3 text-sm">3</span>
+                    Security Profiles
+                </h3>
+                <p class="text-slate-400 text-sm mb-6 text-center max-w-2xl mx-auto">
+                    Choose a security profile based on your threat model. <span class="text-slate-500">Hover or tap a profile to see details.</span>
+                </p>
+
+                <!-- Spectrum Visualization -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-6">
+                    <!-- Spectrum Bar with Interactive Markers -->
+                    <div class="relative mb-4">
+                        <div class="flex items-center justify-between text-xs text-slate-500 mb-2">
+                            <span>Less Secure</span>
+                            <span>More Secure</span>
+                        </div>
+                        <div class="h-3 rounded-full bg-gradient-to-r from-yellow-500 via-green-500 via-blue-500 to-purple-500 relative">
+                            <!-- Profile markers - clickable -->
+                            <button onclick="selectSecurityProfile('minimal')" onmouseenter="selectSecurityProfile('minimal')" class="security-marker absolute -top-1.5 left-[12.5%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-yellow-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="minimal" aria-label="Select minimal profile"></button>
+                            <button onclick="selectSecurityProfile('standard')" onmouseenter="selectSecurityProfile('standard')" class="security-marker absolute -top-1.5 left-[35%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-green-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="standard" aria-label="Select standard profile"></button>
+                            <!-- DEFAULT marker - between standard and strict -->
+                            <button onclick="selectSecurityProfile('default')" onmouseenter="selectSecurityProfile('default')" class="security-marker absolute -top-2 left-[50%] transform -translate-x-1/2 w-7 h-7 rounded-full bg-gradient-to-r from-green-500 to-blue-500 border-2 border-kapsis-neon ring-2 ring-kapsis-neon ring-offset-1 ring-offset-slate-900 hover:scale-125 transition-transform cursor-pointer shadow-[0_0_10px_rgba(16,185,129,0.5)]" data-profile="default" aria-label="Select default configuration"></button>
+                            <button onclick="selectSecurityProfile('strict')" onmouseenter="selectSecurityProfile('strict')" class="security-marker absolute -top-1.5 left-[65%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-blue-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="strict" aria-label="Select strict profile"></button>
+                            <button onclick="selectSecurityProfile('paranoid')" onmouseenter="selectSecurityProfile('paranoid')" class="security-marker absolute -top-1.5 left-[87.5%] transform -translate-x-1/2 w-6 h-6 rounded-full bg-purple-500 border-2 border-slate-900 hover:scale-125 transition-transform cursor-pointer" data-profile="paranoid" aria-label="Select paranoid profile"></button>
+                        </div>
+                        <!-- Labels below -->
+                        <div class="flex justify-between mt-4 text-center">
+                            <button onclick="selectSecurityProfile('minimal')" class="w-[15%] cursor-pointer group">
+                                <span class="text-yellow-400 font-mono text-sm group-hover:underline">minimal</span>
+                            </button>
+                            <button onclick="selectSecurityProfile('standard')" class="w-[20%] cursor-pointer group">
+                                <span class="text-green-400 font-mono text-sm group-hover:underline">standard</span>
+                            </button>
+                            <button onclick="selectSecurityProfile('default')" class="w-[15%] cursor-pointer group">
+                                <span class="text-kapsis-neon font-mono text-sm font-bold group-hover:underline">DEFAULT</span>
+                                <span class="block text-slate-500 text-xs mt-0.5">standard+seccomp</span>
+                            </button>
+                            <button onclick="selectSecurityProfile('strict')" class="w-[20%] cursor-pointer group">
+                                <span class="text-blue-400 font-mono text-sm group-hover:underline">strict</span>
+                            </button>
+                            <button onclick="selectSecurityProfile('paranoid')" class="w-[15%] cursor-pointer group">
+                                <span class="text-purple-400 font-mono text-sm group-hover:underline">paranoid</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Dynamic Profile Detail Box -->
+                    <div id="security-profile-detail" class="bg-slate-800/50 rounded-lg p-4 border border-kapsis-neon/50 transition-all duration-200">
+                        <!-- minimal -->
+                        <div id="profile-minimal" class="profile-content hidden">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-yellow-400 font-bold text-lg">minimal</span>
+                                <span class="text-xs bg-yellow-500/20 text-yellow-400 px-2 py-1 rounded">Trusted Execution</span>
+                            </div>
+                            <p class="text-slate-400 text-sm mb-3">No security restrictions. Full container capabilities retained. Use for fully trusted execution that requires unrestricted access.</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">All capabilities</span>
+                                <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">No PID limit</span>
+                                <span class="bg-slate-700 text-slate-300 px-2 py-1 rounded">No seccomp</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-yellow-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Running fully trusted internal tools that need unrestricted access
+                            </div>
+                            <div class="mt-2 text-yellow-500/80 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i> Only use for fully trusted execution</div>
+                        </div>
+                        <!-- standard -->
+                        <div id="profile-standard" class="profile-content hidden">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-green-400 font-bold text-lg">standard</span>
+                                <span class="text-xs bg-green-500/20 text-green-400 px-2 py-1 rounded">Base Profile</span>
+                            </div>
+                            <p class="text-slate-400 text-sm mb-3">Drops dangerous capabilities and prevents privilege escalation. Good foundation but consider enabling seccomp for additional syscall filtering.</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">Capabilities dropped</span>
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">no-new-privileges</span>
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">PID limit: 1000</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-green-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Base profile for daily development work
+                            </div>
+                        </div>
+                        <!-- default (shown by default) - standard + seccomp -->
+                        <div id="profile-default" class="profile-content">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-kapsis-neon font-bold text-lg">DEFAULT CONFIG</span>
+                                <span class="text-xs bg-kapsis-neon/20 text-kapsis-neon px-2 py-1 rounded">standard + seccomp</span>
+                            </div>
+                            <p class="text-slate-400 text-sm mb-3">The out-of-box configuration. Uses <code class="text-green-400">standard</code> profile with <code class="text-blue-400">seccomp.enabled: true</code>. Balances security and compatibility for typical development.</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">Capabilities dropped</span>
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">no-new-privileges</span>
+                                <span class="bg-green-900/30 text-green-300 px-2 py-1 rounded">PID limit: 1000</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Seccomp filtering</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Blocks ptrace/mount/bpf</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-kapsis-neon mr-1"></i>
+                                <span class="font-medium">When to use:</span> Recommended starting point for most projects
+                            </div>
+                        </div>
+                        <!-- strict -->
+                        <div id="profile-strict" class="profile-content hidden">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-blue-400 font-bold text-lg">strict</span>
+                                <span class="text-xs bg-blue-500/20 text-blue-400 px-2 py-1 rounded">Untrusted Execution</span>
+                            </div>
+                            <p class="text-slate-400 text-sm mb-3">Enhanced protection for running untrusted code or reviewing external PRs. Adds filesystem hardening and tighter resource limits on top of seccomp.</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">All standard protections</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">Seccomp required</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">noexec /tmp</span>
+                                <span class="bg-blue-900/30 text-blue-300 px-2 py-1 rounded">PID limit: 500</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-blue-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Reviewing untrusted PRs or running external code
+                            </div>
+                        </div>
+                        <!-- paranoid -->
+                        <div id="profile-paranoid" class="profile-content hidden">
+                            <div class="flex items-center justify-between mb-3">
+                                <span class="text-purple-400 font-bold text-lg">paranoid</span>
+                                <span class="text-xs bg-purple-500/20 text-purple-400 px-2 py-1 rounded">Maximum Security</span>
+                            </div>
+                            <p class="text-slate-400 text-sm mb-3">Air-gapped style security with immutable system directories and mandatory access control. Requires AppArmor or SELinux on host.</p>
+                            <div class="flex flex-wrap gap-2 text-xs">
+                                <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">All strict protections</span>
+                                <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">Read-only /usr /bin</span>
+                                <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">LSM required</span>
+                                <span class="bg-purple-900/30 text-purple-300 px-2 py-1 rounded">AppArmor/SELinux</span>
+                            </div>
+                            <div class="mt-3 text-slate-500 text-xs">
+                                <i class="fa-solid fa-lightbulb text-purple-400 mr-1"></i>
+                                <span class="font-medium">When to use:</span> Air-gapped or highly sensitive security requirements
+                            </div>
+                            <div class="mt-2 text-purple-500/80 text-xs"><i class="fa-solid fa-triangle-exclamation mr-1"></i> May break some agents - test before using</div>
+                        </div>
+                    </div>
+
+                    <!-- Collapsible Usage Examples -->
+                    <details class="mt-4 group">
+                        <summary class="flex items-center gap-2 cursor-pointer list-none text-slate-400 hover:text-white transition-colors text-sm">
+                            <i class="fa-solid fa-terminal text-xs"></i>
+                            <span>Usage examples</span>
+                            <i class="fa-solid fa-chevron-down text-xs transition-transform group-open:rotate-180"></i>
+                        </summary>
+                        <div class="mt-3 bg-[#0d1117] rounded-lg p-4">
+                            <pre class="text-xs font-mono"><span class="text-slate-500"># Default (standard)</span>
+<span class="text-emerald-400">kapsis</span> ~/project --task "implement feature"
+
+<span class="text-slate-500"># Untrusted code</span>
+<span class="text-emerald-400">kapsis</span> ~/project <span class="text-blue-400">--security-profile strict</span> --task "review PR"
+
+<span class="text-slate-500"># Debug (minimal + isolated network)</span>
+<span class="text-emerald-400">kapsis</span> ~/project <span class="text-yellow-400">--security-profile minimal</span> <span class="text-orange-400">--network-mode none</span> --task "debug"</pre>
+                        </div>
+                    </details>
+                </div>
+            </div>
+
+            <!-- Documentation Links Grid -->
+            <div class="mt-16">
+                <h3 class="text-xl font-bold text-white mb-6 text-center">
+                    <i class="fa-solid fa-book text-kapsis-neon mr-2"></i> Documentation
+                </h3>
+                <div class="grid md:grid-cols-3 lg:grid-cols-4 gap-4">
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/ARCHITECTURE.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-sitemap text-cyan-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Architecture</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">System design, isolation layers, and data flows</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/CONFIG-REFERENCE.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-sliders text-orange-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Config Reference</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Complete YAML configuration options</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/BUILD-CONFIGURATION.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-cubes text-purple-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Build Profiles</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Container build profiles and customization</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/GIT-WORKFLOW.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-code-branch text-green-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Git Workflow</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Branch lifecycle, worktree vs overlay modes</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/SECURITY-HARDENING.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-shield-halved text-red-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Security Hardening</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">AppArmor, seccomp, and container hardening</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/NETWORK-ISOLATION.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-tower-broadcast text-blue-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Network Isolation</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">DNS filtering, IP pinning, and allowlists</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/STATUS-TRACKING.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-chart-line text-yellow-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Status Tracking</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Real-time JSON progress monitoring</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/INSTALL.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-download text-emerald-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Installation</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Detailed setup for all platforms</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/GITHUB-SETUP.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-brands fa-github text-slate-300 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">GitHub Setup</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">GitHub integration and authentication</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/CLEANUP.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-broom text-red-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Cleanup</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Disk space management and reclamation</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/docs/SETUP.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-gear text-slate-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Setup Guide</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Initial setup and dependency configuration</p>
+                    </a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/CONTRIBUTING.md" target="_blank" class="bg-kapsis-card border border-slate-700 rounded-xl p-4 hover:border-kapsis-neon/50 transition-colors group">
+                        <div class="flex items-center gap-2 mb-2">
+                            <i class="fa-solid fa-code-pull-request text-indigo-400 text-sm"></i>
+                            <span class="text-white font-medium text-sm group-hover:text-kapsis-neon transition-colors">Contributing</span>
+                        </div>
+                        <p class="text-slate-500 text-xs">Development guide, testing, and logging</p>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick Start -->
+    <section id="quickstart" class="py-20">
+        <div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl font-bold text-white mb-8 text-center">Quick Start: 3 Steps</h2>
+
+            <div class="grid md:grid-cols-3 gap-6">
+                <!-- Step 1: Create Spec -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                    <div class="px-4 py-3 bg-slate-800 border-b border-slate-700">
+                        <div class="flex items-center gap-2">
+                            <span class="bg-kapsis-neon text-slate-900 text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">1</span>
+                            <span class="text-white font-medium">Create a task spec</span>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto h-48">
+<pre class="text-slate-300"><span class="text-slate-500"># specs/fix-auth.md</span>
+
+<span class="text-purple-400"># Fix Login Bug</span>
+
+<span class="text-cyan-400">## Problem</span>
+Users get 401 errors when
+logging in with email+password
+
+<span class="text-cyan-400">## Requirements</span>
+<span class="text-green-400">- [ ]</span> Fix token validation
+<span class="text-green-400">- [ ]</span> Add error logging
+<span class="text-green-400">- [ ]</span> Add regression test</pre>
+                    </div>
+                </div>
+
+                <!-- Step 2: Run Kapsis -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                    <div class="px-4 py-3 bg-slate-800 border-b border-slate-700">
+                        <div class="flex items-center gap-2">
+                            <span class="bg-kapsis-neon text-slate-900 text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">2</span>
+                            <span class="text-white font-medium">Launch the agent</span>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto h-48">
+<pre class="text-slate-300"><span class="text-emerald-400">➜</span> kapsis ~/my-app \
+    --spec specs/fix-auth.md \
+    --branch fix/login-401
+
+<span class="text-slate-500">Agent ID: <span class="text-cyan-400">b7c3a1</span></span>
+<span class="text-slate-500">Branch: <span class="text-purple-400">fix/login-401</span></span>
+<span class="text-kapsis-neon">▶ Running in isolated container...</span>
+
+<span class="text-slate-600"># Agent reads spec, explores code,
+# makes changes, commits, pushes</span></pre>
+                    </div>
+                </div>
+
+                <!-- Step 3: Monitor & Review -->
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl overflow-hidden">
+                    <div class="px-4 py-3 bg-slate-800 border-b border-slate-700">
+                        <div class="flex items-center gap-2">
+                            <span class="bg-kapsis-neon text-slate-900 text-xs font-bold w-6 h-6 rounded-full flex items-center justify-center">3</span>
+                            <span class="text-white font-medium">Monitor & review PR</span>
+                        </div>
+                    </div>
+                    <div class="p-4 bg-[#0d1117] font-mono text-xs overflow-x-auto h-48">
+<pre class="text-slate-300"><span class="text-emerald-400">➜</span> kapsis-status --watch
+
+<span class="text-cyan-400">b7c3a1</span> │ <span class="text-yellow-400">implementing</span> │ 65%
+       │ Editing AuthService.ts
+
+<span class="text-slate-500"># Few minutes later...</span>
+
+<span class="text-cyan-400">b7c3a1</span> │ <span class="text-green-400">complete</span> │ 100%
+       │ PR: <span class="text-blue-400">github.com/.../pull/42</span></pre>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Additional Options -->
+            <div class="mt-10 grid md:grid-cols-2 gap-6">
+                <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-bold mb-3 flex items-center text-sm">
+                        <i class="fa-solid fa-terminal text-cyan-400 mr-2"></i> Quick inline task
+                    </h4>
+                    <div class="code-block code-scroll-container rounded-lg p-3 font-mono text-xs overflow-x-auto relative group">
+                        <button onclick="copyCode(event, 'inline-task')" class="copy-btn absolute top-1 right-1 text-slate-500 hover:text-white bg-slate-800 p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy command">
+                            <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                        </button>
+                        <pre id="inline-task" class="text-slate-300">kapsis ~/project --task "add input validation to UserForm component"</pre>
+                    </div>
+                    <p class="text-slate-500 text-xs mt-2">For simple tasks, skip the spec file entirely.</p>
+                </div>
+
+                <div class="bg-slate-800/50 border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-bold mb-3 flex items-center text-sm">
+                        <i class="fa-solid fa-dharmachakra text-indigo-400 mr-2"></i> Kubernetes backend
+                    </h4>
+                    <div class="code-block code-scroll-container rounded-lg p-3 font-mono text-xs overflow-x-auto relative group">
+                        <button onclick="copyCode(event, 'k8s-mode')" class="copy-btn absolute top-1 right-1 text-slate-500 hover:text-white bg-slate-800 p-1.5 rounded opacity-0 group-hover:opacity-100 transition-opacity" aria-label="Copy command">
+                            <i class="fa-regular fa-copy" aria-hidden="true"></i>
+                        </button>
+                        <pre id="k8s-mode" class="text-slate-300">kapsis ~/project --backend k8s --task "add input validation"</pre>
+                    </div>
+                    <p class="text-slate-500 text-xs mt-2">Run agents as K8s Pods instead of local containers. Same flags, cluster-scale.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Troubleshooting -->
+    <section class="py-20 border-t border-slate-800 bg-slate-900">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-2xl font-bold text-white mb-6">Troubleshooting & Ops</h2>
+            <div class="grid md:grid-cols-2 gap-6">
+                <div class="bg-slate-800 p-6 rounded-lg border border-slate-700">
+                    <h4 class="text-white font-bold mb-2"><i class="fa-solid fa-magnifying-glass text-indigo-400 mr-2"></i> Debug Logs</h4>
+                    <p class="text-sm text-slate-400 mb-2">View the launch sequence and container output.</p>
+                    <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-indigo-300">tail -f ~/.kapsis/logs/kapsis-launch-agent.log</code>
+                </div>
+                <div class="bg-slate-800 p-6 rounded-lg border border-slate-700">
+                    <h4 class="text-white font-bold mb-2"><i class="fa-solid fa-broom text-red-400 mr-2"></i> Cleanup</h4>
+                    <p class="text-sm text-slate-400 mb-2">Reclaim disk space and kill hanging containers.</p>
+                    <code class="block bg-slate-900 p-2 rounded text-xs font-mono text-red-300">./scripts/kapsis-cleanup.sh --all</code>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- FAQ Section -->
+    <section id="faq" class="py-16 bg-slate-900/50 border-t border-slate-800">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-2xl font-bold text-white mb-10 text-center">
+                <i class="fa-solid fa-circle-question text-kapsis-neon mr-2"></i>Frequently Asked Questions
+            </h2>
+
+            <div class="space-y-4">
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">Does this work with my agent?</h4>
+                    <p class="text-slate-400 text-sm">Yes! Kapsis ships with pre-built profiles for Claude Code, Codex CLI, Aider, and Gemini CLI. Any CLI-based agent that runs in a terminal can be used with a custom profile.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">What about API keys and credentials?</h4>
+                    <p class="text-slate-400 text-sm">Credentials are securely injected at runtime from your macOS Keychain or Linux secret-tool via the secret store integration. They're never written to disk inside the container.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">Can I use my IDE while the agent works?</h4>
+                    <p class="text-slate-400 text-sm">Yes! In worktree mode, changes are written to a real git worktree on your host. Open it in your favorite IDE and watch the agent's progress in real-time.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">Is Kapsis production ready?</h4>
+                    <p class="text-slate-400 text-sm">Yes! Version <span class="version-placeholder">...</span> is a stable release used daily for production development at scale.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">What platforms are supported?</h4>
+                    <p class="text-slate-400 text-sm">macOS (Apple Silicon and Intel) and Linux for the Podman backend. Any Kubernetes cluster for the K8s backend. Use <code class="bg-slate-700 px-1 rounded text-xs">--backend k8s</code> to run agents as Pods.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">Can I run multiple agents in parallel on the same project?</h4>
+                    <p class="text-slate-400 text-sm">Yes! Each agent gets its own isolated container with a separate git worktree and filesystem. Run as many agents as your machine can handle — they cannot interfere with each other.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">How does network isolation work?</h4>
+                    <p class="text-slate-400 text-sm">Kapsis runs a dnsmasq instance inside each container that only resolves domains on the allowlist. Unknown hosts return NXDOMAIN. On K8s, a per-pod NetworkPolicy adds port-level egress filtering on top of DNS filtering. Choose between <code class="bg-slate-700 px-1 rounded text-xs">filtered</code> (default), <code class="bg-slate-700 px-1 rounded text-xs">none</code> (air-gapped), or <code class="bg-slate-700 px-1 rounded text-xs">open</code> modes.</p>
+                </div>
+
+                <div class="bg-kapsis-card border border-slate-700 rounded-xl p-5">
+                    <h4 class="text-white font-medium mb-2">Can I run agents on Kubernetes instead of locally?</h4>
+                    <p class="text-slate-400 text-sm">Yes! Use <code class="bg-slate-700 px-1 rounded text-xs">--backend k8s</code> to run agents as Kubernetes Pods via the AgentRequest CRD. An in-cluster operator manages pod lifecycle, status bridging, and NetworkPolicy enforcement. Same flags, same isolation model, cluster-scale concurrency.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-kapsis-dark border-t border-slate-800 py-12">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="md:flex justify-between items-center">
+                <div class="mb-6 md:mb-0">
+                    <div class="flex items-center gap-2 mb-2">
+                        <i class="fa-solid fa-box-open text-slate-600"></i>
+                        <span class="text-slate-300 font-bold">KAPSIS</span>
+                        <span class="text-xs text-kapsis-stable border border-kapsis-stable px-1 rounded uppercase">v<span class="version-placeholder">...</span></span>
+                    </div>
+                    <p class="text-slate-500 text-sm">The Secure Lab for AI Agents.</p>
+                </div>
+                <div class="flex flex-wrap gap-4 md:gap-6">
+                    <a href="https://github.com/aviadshiber/kapsis" class="text-slate-400 hover:text-white transition-colors"><i class="fa-brands fa-github mr-1"></i>GitHub</a>
+                    <a href="https://github.com/aviadshiber/kapsis/releases" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-tags mr-1"></i>Releases</a>
+                    <a href="https://github.com/aviadshiber/kapsis/issues" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-bug mr-1"></i>Issues</a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/SECURITY.md" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-shield-halved mr-1"></i>Security Policy</a>
+                    <a href="https://github.com/aviadshiber/kapsis/blob/main/LICENSE" class="text-slate-400 hover:text-white transition-colors"><i class="fa-solid fa-scale-balanced mr-1"></i>License</a>
+                </div>
+            </div>
+            <div class="border-t border-slate-800 mt-8 pt-8 text-center text-slate-600 text-sm">
+                <p>&copy; 2026 Kapsis Project. All rights reserved.</p>
+                <p class="mt-2">
+                    Website built by <a href="https://github.com/aviadshiber" target="_blank" class="text-kapsis-neon hover:underline">Aviad Shiber</a>
+                </p>
+                <p class="text-xs mt-1 opacity-50">Powered by Nano Banana Infographics</p>
+            </div>
+        </div>
+    </footer>
+
+    <!-- Scripts -->
+    <script>
+        // Mobile menu toggle
+        function toggleMobileMenu() {
+            const menu = document.getElementById('mobile-menu');
+            const backdrop = document.getElementById('mobile-menu-backdrop');
+            const button = document.querySelector('[aria-controls="mobile-menu"]');
+            const icon = document.getElementById('mobile-menu-icon');
+
+            const isOpen = menu.classList.contains('open');
+
+            if (isOpen) {
+                menu.classList.remove('open');
+                backdrop.classList.add('hidden');
+                button.setAttribute('aria-expanded', 'false');
+                menu.setAttribute('aria-hidden', 'true');
+                icon.className = 'fa-solid fa-bars text-xl';
+                document.body.classList.remove('mobile-menu-open');
+            } else {
+                menu.classList.add('open');
+                backdrop.classList.remove('hidden');
+                button.setAttribute('aria-expanded', 'true');
+                menu.setAttribute('aria-hidden', 'false');
+                icon.className = 'fa-solid fa-xmark text-xl';
+                document.body.classList.add('mobile-menu-open');
+            }
+        }
+
+        // Toast notification
+        let toastTimeout;
+        function showToast(message = 'Copied to clipboard!') {
+            const toast = document.getElementById('toast');
+            const toastMessage = document.getElementById('toast-message');
+
+            // Clear any existing timeout
+            if (toastTimeout) clearTimeout(toastTimeout);
+
+            toastMessage.textContent = message;
+            toast.classList.add('show');
+
+            toastTimeout = setTimeout(() => {
+                toast.classList.remove('show');
+            }, 2000);
+        }
+
+        // Unified copy function with toast and icon feedback
+        function copyCode(e, elementId) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            const element = document.getElementById(elementId);
+            if (!element) return;
+
+            const text = element.innerText;
+            navigator.clipboard.writeText(text).then(() => {
+                // Show toast
+                showToast();
+
+                // Also update button icon
+                const btn = e.target.closest('button');
+                if (btn) {
+                    const icon = btn.querySelector('i');
+                    if (icon) {
+                        const originalClass = icon.className;
+                        icon.className = 'fa-solid fa-check';
+                        setTimeout(() => { icon.className = 'fa-regular fa-copy'; }, 1500);
+                    }
+                }
+            }).catch(err => {
+                showToast('Failed to copy');
+            });
+        }
+
+        // Install tab switching with accessibility
+        function switchInstallTab(tabName) {
+            // Hide all contents and update aria-selected
+            document.querySelectorAll('.install-content').forEach(el => el.classList.add('hidden'));
+            document.querySelectorAll('.install-tab').forEach(el => {
+                el.className = 'install-tab px-4 py-2 rounded-lg text-sm font-medium bg-slate-700 text-slate-300 hover:bg-slate-600 transition-all';
+                el.setAttribute('aria-selected', 'false');
+            });
+
+            // Show selected content and highlight tab
+            document.getElementById('install-content-' + tabName).classList.remove('hidden');
+            const activeTab = document.getElementById('install-tab-' + tabName);
+            activeTab.className = 'install-tab px-4 py-2 rounded-lg text-sm font-medium bg-kapsis-neon text-slate-900 transition-all';
+            activeTab.setAttribute('aria-selected', 'true');
+
+            // Recheck scroll overflow for newly visible content
+            setTimeout(checkScrollOverflow, 50);
+        }
+
+        // Doc tab switching
+        function switchDocTab(tabName) {
+            const docTabs = ['claude', 'aider', 'codex', 'gemini'];
+            docTabs.forEach(tab => {
+                document.getElementById('doc-content-' + tab).classList.add('hidden');
+                document.getElementById('doc-tab-' + tab).className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 border-r border-slate-700 transition-colors";
+            });
+            // Last tab has no right border
+            document.getElementById('doc-tab-gemini').className = "flex-1 py-2 text-xs font-bold text-center bg-slate-900 text-slate-500 transition-colors";
+
+            document.getElementById('doc-content-' + tabName).classList.remove('hidden');
+            const activeBtn = document.getElementById('doc-tab-' + tabName);
+            const hasBorderR = tabName !== 'gemini' ? " border-r border-slate-700" : "";
+            activeBtn.className = "flex-1 py-2 text-xs font-bold text-center bg-slate-800 text-white" + hasBorderR;
+        }
+
+        // Security profile selection
+        const securityProfileColors = {
+            minimal: 'border-yellow-500/50',
+            standard: 'border-green-500/50',
+            default: 'border-kapsis-neon/50',
+            strict: 'border-blue-500/50',
+            paranoid: 'border-purple-500/50'
+        };
+        function selectSecurityProfile(profile) {
+            // Hide all profile contents
+            document.querySelectorAll('.profile-content').forEach(el => el.classList.add('hidden'));
+            // Show selected profile
+            document.getElementById('profile-' + profile).classList.remove('hidden');
+            // Update border color of detail box
+            const detailBox = document.getElementById('security-profile-detail');
+            Object.values(securityProfileColors).forEach(c => detailBox.classList.remove(c));
+            detailBox.classList.add(securityProfileColors[profile]);
+        }
+
+        // Check for horizontal scroll overflow and add indicator
+        function checkScrollOverflow() {
+            document.querySelectorAll('.code-scroll-container').forEach(container => {
+                const pre = container.querySelector('pre');
+                if (pre) {
+                    // Use requestAnimationFrame to ensure layout is complete
+                    requestAnimationFrame(() => {
+                        if (pre.scrollWidth > container.clientWidth) {
+                            container.classList.add('has-overflow');
+                        } else {
+                            container.classList.remove('has-overflow');
+                        }
+                    });
+                }
+            });
+        }
+
+        // Hide scroll indicator when user has scrolled to the end
+        document.querySelectorAll('.code-scroll-container').forEach(container => {
+            container.addEventListener('scroll', function() {
+                const pre = this.querySelector('pre');
+                if (pre) {
+                    const atEnd = this.scrollLeft + this.clientWidth >= pre.scrollWidth - 5;
+                    if (atEnd) {
+                        this.classList.remove('has-overflow');
+                    } else if (pre.scrollWidth > this.clientWidth) {
+                        this.classList.add('has-overflow');
+                    }
+                }
+            });
+        });
+
+        // Keyboard navigation for install tabs
+        document.addEventListener('keydown', function(e) {
+            if (e.target.classList.contains('install-tab')) {
+                const tabs = Array.from(document.querySelectorAll('.install-tab'));
+                const currentIndex = tabs.indexOf(e.target);
+
+                if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    const nextIndex = (currentIndex + 1) % tabs.length;
+                    tabs[nextIndex].focus();
+                    tabs[nextIndex].click();
+                } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    const prevIndex = (currentIndex - 1 + tabs.length) % tabs.length;
+                    tabs[prevIndex].focus();
+                    tabs[prevIndex].click();
+                }
+            }
+        });
+
+        // Close mobile menu on escape key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                const menu = document.getElementById('mobile-menu');
+                if (menu.classList.contains('open')) {
+                    toggleMobileMenu();
+                }
+            }
+        });
+
+        // Fetch latest version from GitHub and update install commands
+        async function fetchLatestVersion() {
+            try {
+                const response = await fetch('https://api.github.com/repos/aviadshiber/kapsis/releases/latest');
+                if (!response.ok) return;
+                const data = await response.json();
+                const version = data.tag_name.replace(/^v/, ''); // Remove 'v' prefix
+
+                // Update all version placeholders
+                document.querySelectorAll('.version-placeholder').forEach(el => {
+                    el.textContent = version;
+                });
+            } catch (error) {
+                console.warn('Failed to fetch latest version:', error);
+            }
+        }
+
+        // Terminal Demo Animation - reflects actual Kapsis output with progress display
+        let terminalTimeouts = [];
+        let spinnerInterval = null;
+        const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+        let spinnerIdx = 0;
+
+        // Helper to render progress bar
+        function renderProgressBar(percent) {
+            const width = 20;
+            const filled = Math.floor(percent * width / 100);
+            const empty = width - filled;
+            return '<span class="text-emerald-400">' + '█'.repeat(filled) + '</span><span class="text-slate-600">' + '░'.repeat(empty) + '</span>';
+        }
+
+        // Helper to render progress line with spinner
+        function renderProgressLine(spinner, phase, percent, color = 'text-cyan-400') {
+            const bar = renderProgressBar(percent);
+            const pct = String(percent).padStart(3, ' ');
+            return `<span class="${color}">${spinner}</span> <span class="text-white">${phase.padEnd(14)}</span> ${bar} <span class="text-slate-400">${pct}%</span>`;
+        }
+
+        const terminalSteps = [
+            { delay: 0, action: 'show', line: 1 },
+            { delay: 300, action: 'type', text: 'kapsis ~/myproject --agent claude --spec fix-auth.md --branch fix/auth-bug' },
+            { delay: 2200, action: 'hideCursor' },
+            // Banner
+            { delay: 2400, action: 'show', line: 2, html: '╔═══════════════════════════════════════════════════════════════════╗' },
+            { delay: 2500, action: 'show', line: 3, html: '[KAPSIS] Agent Configuration:' },
+            // Config details
+            { delay: 2700, action: 'show', line: 4, html: '  Agent:         CLAUDE (claude.yaml)' },
+            { delay: 2800, action: 'show', line: 5, html: '  Instance ID:   <span class="text-cyan-400">c7e3f9</span> (auto-generated)' },
+            { delay: 2900, action: 'show', line: 6, html: '  Project:       ~/myproject' },
+            { delay: 3000, action: 'show', line: 7, html: '  Network Mode:  <span class="text-emerald-400">filtered</span>' },
+            { delay: 3100, action: 'show', line: 8, html: '  Branch:        <span class="text-purple-400">fix/auth-bug</span>' },
+            // Launch box
+            { delay: 3400, action: 'show', line: 9, html: '┌────────────────────────────────────────────────────────────────────┐<br>│ LAUNCHING CLAUDE                                                   │<br>└────────────────────────────────────────────────────────────────────┘' },
+            // New progress display format
+            { delay: 3800, action: 'show', line: 10, html: '<span class="text-emerald-400">✓</span> Sandbox ready · Agent: <span class="text-cyan-400">c7e3f9</span> · 0m 02s' },
+            { delay: 3900, action: 'show', line: 11, html: 'Branch: <span class="text-white font-bold">fix/auth-bug</span> · Network: <span class="text-emerald-400">filtered</span>' },
+            { delay: 4000, action: 'show', line: 12, html: '────────────────────────────────────────────────────────────' },
+            // Animated progress: Exploring phase
+            { delay: 4200, action: 'startProgress', phase: 'Exploring', percent: 25, message: 'Reading project structure...' },
+            { delay: 4800, action: 'updateProgress', phase: 'Exploring', percent: 32, message: 'Analyzing src/auth/login.ts...' },
+            // Implementing phase
+            { delay: 5400, action: 'updateProgress', phase: 'Implementing', percent: 45, message: 'Adding token validation logic...' },
+            { delay: 6000, action: 'updateProgress', phase: 'Implementing', percent: 58, message: 'Writing error handling...' },
+            // Testing phase
+            { delay: 6600, action: 'updateProgress', phase: 'Testing', percent: 72, message: 'Running auth unit tests...' },
+            { delay: 7200, action: 'updateProgress', phase: 'Testing', percent: 85, message: 'All tests passed ✓' },
+            // Committing phase
+            { delay: 7800, action: 'updateProgress', phase: 'Committing', percent: 92, message: 'Creating commit...' },
+            // Complete
+            { delay: 8200, action: 'updateProgress', phase: 'Complete', percent: 100, message: 'Done' },
+            { delay: 8400, action: 'stopProgress' },
+            // Agent exited box
+            { delay: 8600, action: 'show', line: 15, html: '┌────────────────────────────────────────────────────────────────────┐<br>│ AGENT EXITED                                                       │<br>└────────────────────────────────────────────────────────────────────┘' },
+            // Completion message
+            { delay: 9000, action: 'show', line: 16, html: '<span class="text-emerald-400">✓</span> Task completed successfully! (1m 42s)' },
+            { delay: 9400, action: 'show', line: 17, html: '<span class="text-cyan-400">🔗</span> PR: <span class="text-blue-400 underline">https://github.com/acme/myproject/pull/127</span>' },
+            { delay: 10000, action: 'show', line: 19 },
+        ];
+
+        function runTerminalDemo() {
+            // Clear any existing timeouts and intervals
+            terminalTimeouts.forEach(t => clearTimeout(t));
+            terminalTimeouts = [];
+            if (spinnerInterval) {
+                clearInterval(spinnerInterval);
+                spinnerInterval = null;
+            }
+            spinnerIdx = 0;
+
+            // Reset all lines
+            for (let i = 1; i <= 19; i++) {
+                const line = document.getElementById('term-line-' + i);
+                if (line) {
+                    line.classList.remove('visible');
+                    if (i > 1) line.innerHTML = '';
+                }
+            }
+            document.getElementById('term-cmd').textContent = '';
+            document.getElementById('term-cursor').style.display = 'inline-block';
+
+            // Current progress state for spinner animation
+            let currentPhase = '';
+            let currentPercent = 0;
+
+            terminalSteps.forEach(step => {
+                const timeout = setTimeout(() => {
+                    if (step.action === 'show') {
+                        const line = document.getElementById('term-line-' + step.line);
+                        if (line) {
+                            if (step.html) line.innerHTML = step.html;
+                            line.classList.add('visible');
+                        }
+                    } else if (step.action === 'type') {
+                        typeText('term-cmd', step.text, 0);
+                    } else if (step.action === 'hideCursor') {
+                        document.getElementById('term-cursor').style.display = 'none';
+                    } else if (step.action === 'update') {
+                        const line = document.getElementById('term-line-' + step.line);
+                        if (line) line.innerHTML = step.html;
+                    } else if (step.action === 'startProgress') {
+                        currentPhase = step.phase;
+                        currentPercent = step.percent;
+                        const line13 = document.getElementById('term-line-13');
+                        const line14 = document.getElementById('term-line-14');
+                        if (line13) {
+                            line13.innerHTML = renderProgressLine(spinnerFrames[spinnerIdx], currentPhase, currentPercent);
+                            line13.classList.add('visible');
+                        }
+                        if (line14) {
+                            line14.innerHTML = '  <span class="text-slate-500">' + step.message + '</span>';
+                            line14.classList.add('visible');
+                        }
+                        // Start spinner animation
+                        spinnerInterval = setInterval(() => {
+                            spinnerIdx = (spinnerIdx + 1) % spinnerFrames.length;
+                            const line = document.getElementById('term-line-13');
+                            if (line) {
+                                line.innerHTML = renderProgressLine(spinnerFrames[spinnerIdx], currentPhase, currentPercent);
+                            }
+                        }, 80);
+                    } else if (step.action === 'updateProgress') {
+                        currentPhase = step.phase;
+                        currentPercent = step.percent;
+                        const line13 = document.getElementById('term-line-13');
+                        const line14 = document.getElementById('term-line-14');
+                        if (line13) {
+                            const color = step.percent === 100 ? 'text-emerald-400' : 'text-cyan-400';
+                            line13.innerHTML = renderProgressLine(spinnerFrames[spinnerIdx], currentPhase, currentPercent, color);
+                        }
+                        if (line14) {
+                            line14.innerHTML = '  <span class="text-slate-500">' + step.message + '</span>';
+                        }
+                    } else if (step.action === 'stopProgress') {
+                        if (spinnerInterval) {
+                            clearInterval(spinnerInterval);
+                            spinnerInterval = null;
+                        }
+                        // Show final 100% state with checkmark
+                        const line13 = document.getElementById('term-line-13');
+                        if (line13) {
+                            line13.innerHTML = renderProgressLine('✓', 'Complete', 100, 'text-emerald-400');
+                        }
+                    }
+                }, step.delay);
+                terminalTimeouts.push(timeout);
+            });
+        }
+
+        function typeText(elementId, text, index) {
+            if (index < text.length) {
+                document.getElementById(elementId).textContent = text.substring(0, index + 1);
+                const timeout = setTimeout(() => typeText(elementId, text, index + 1), 25);
+                terminalTimeouts.push(timeout);
+            }
+        }
+
+        function restartTerminalDemo() {
+            runTerminalDemo();
+        }
+
+        // Initialize on load
+        window.addEventListener('load', () => {
+            checkScrollOverflow();
+            fetchLatestVersion();
+            // Start terminal demo when it's in view
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        runTerminalDemo();
+                        observer.disconnect();
+                    }
+                });
+            }, { threshold: 0.5 });
+            const terminalDemo = document.getElementById('terminal-demo');
+            if (terminalDemo) observer.observe(terminalDemo);
+        });
+        window.addEventListener('resize', checkScrollOverflow);
+    </script>
+</body>
+</html>
