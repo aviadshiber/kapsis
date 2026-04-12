@@ -247,3 +247,28 @@ readonly KAPSIS_DEFAULT_CLEANUP_BRANCH_REQUIRE_PUSHED="true"
 
 # Lock directory for background GC (prevents concurrent runs)
 readonly KAPSIS_GC_LOCK_DIR="${HOME}/.kapsis/locks"
+
+#===============================================================================
+# VM HEALTH DEFAULTS (Fix #238)
+#
+# Thresholds for Podman VM health monitoring.
+# Override via environment variables (e.g., KAPSIS_CLEANUP_VM_INODE_WARN_PCT=60).
+#===============================================================================
+
+# Inode usage warning threshold (percentage)
+readonly KAPSIS_DEFAULT_CLEANUP_VM_INODE_WARN_PCT=70
+
+# Inode usage critical threshold — triggers auto image cleanup (percentage)
+readonly KAPSIS_DEFAULT_CLEANUP_VM_INODE_CRITICAL_PCT=90
+
+# Disk usage warning threshold (percentage)
+readonly KAPSIS_DEFAULT_CLEANUP_VM_DISK_WARN_PCT=80
+
+# Disk usage critical threshold (percentage)
+readonly KAPSIS_DEFAULT_CLEANUP_VM_DISK_CRITICAL_PCT=95
+
+# Journal vacuum target size
+readonly KAPSIS_DEFAULT_CLEANUP_VM_JOURNAL_VACUUM_SIZE="100M"
+
+# Timeout (seconds) for podman machine ssh commands
+readonly KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT=15
