@@ -576,8 +576,15 @@ network:
 
     # Fallback when resolution fails:
     #   dynamic - Use upstream DNS (degrades security)
-    #   abort   - Fail container launch
+    #   abort   - Fail container launch when failure rate exceeds threshold
     fallback: dynamic
+
+    # DNS failure rate threshold as percentage (0-100, default: 0)
+    # Only applies when fallback=abort. Controls abort sensitivity:
+    #   0   - Abort on any DNS failure (strictest, legacy behavior)
+    #   50  - Tolerate up to 50% failures before aborting
+    #   100 - Never abort (effectively equivalent to fallback=dynamic)
+    failure_threshold: 0
 
     # DNS resolution timeout in seconds
     resolve_timeout: 5

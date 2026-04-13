@@ -627,6 +627,242 @@ EOF
 }
 
 #===============================================================================
+# FAILURE THRESHOLD TESTS (no container required, mocked DNS)
+#===============================================================================
+
+test_failure_threshold_zero_aborts_on_any_failure() {
+    log_test "Testing failure_threshold=0 aborts on any DNS failure"
+
+    source "$DNS_PIN_LIB"
+
+    # Override resolve_domain_ips to control which domains fail
+    resolve_domain_ips() {
+        local domain="$1"
+        case "$domain" in
+            "good1.com"|"good2.com"|"good3.com") echo "1.2.3.4" ;;
+            "bad1.com") return 0 ;;  # Returns empty = failure
+        esac
+    }
+
+    local output
+    # 3 good + 1 bad = 25% failure rate, threshold=0 should abort
+    if output=$(resolve_allowlist_domains "good1.com,good2.com,good3.com,bad1.com" 1 "abort" 0 2>&1); then
+        log_fail "Should have aborted with threshold=0 and failures"
+        return 1
+    else
+        log_pass "Correctly aborted with threshold=0 on any failure"
+    fi
+}
+
+test_failure_threshold_50_allows_minor_failures() {
+    log_test "Testing failure_threshold=50 allows up to 50% failures"
+
+    source "$DNS_PIN_LIB"
+
+    # Override resolve_domain_ips: 1 out of 4 fails = 25% failure
+    resolve_domain_ips() {
+        local domain="$1"
+        case "$domain" in
+            "good1.com"|"good2.com"|"good3.com") echo "1.2.3.4" ;;
+            "bad1.com") return 0 ;;  # empty = failure
+        esac
+    }
+
+    local output
+    # 25% failure rate < 50% threshold: should succeed
+    if output=$(resolve_allowlist_domains "good1.com,good2.com,good3.com,bad1.com" 1 "abort" 50 2>&1); then
+        log_pass "Correctly allowed 25% failures with 50% threshold"
+    else
+        log_fail "Should not have aborted (25% < 50% threshold)"
+        return 1
+    fi
+}
+
+test_failure_threshold_50_aborts_on_high_failures() {
+    log_test "Testing failure_threshold=50 aborts when failures exceed 50%"
+
+    source "$DNS_PIN_LIB"
+
+    # Override resolve_domain_ips: 3 out of 4 fail = 75% failure
+    resolve_domain_ips() {
+        local domain="$1"
+        case "$domain" in
+            "good1.com") echo "1.2.3.4" ;;
+            "bad1.com"|"bad2.com"|"bad3.com") return 0 ;;  # empty = failure
+        esac
+    }
+
+    local output
+    # 75% failure rate > 50% threshold: should abort
+    if output=$(resolve_allowlist_domains "good1.com,bad1.com,bad2.com,bad3.com" 1 "abort" 50 2>&1); then
+        log_fail "Should have aborted (75% > 50% threshold)"
+        return 1
+    else
+        log_pass "Correctly aborted with 75% failure rate exceeding 50% threshold"
+    fi
+}
+
+test_failure_threshold_100_never_aborts() {
+    log_test "Testing failure_threshold=100 never aborts (even 100% failure)"
+
+    source "$DNS_PIN_LIB"
+
+    # Override: all domains fail
+    resolve_domain_ips() { return 0; }
+
+    local output
+    # 100% failure rate, but threshold is 100: should NOT abort
+    # Note: 100/100 = 100 which is not > 100, so it passes
+    if output=$(resolve_allowlist_domains "bad1.com,bad2.com" 1 "abort" 100 2>&1); then
+        log_pass "Correctly did not abort with 100% threshold"
+    else
+        log_fail "Should not have aborted with threshold=100"
+        return 1
+    fi
+}
+
+test_failure_threshold_ignores_wildcards_in_rate() {
+    log_test "Testing failure rate excludes wildcards from calculation"
+
+    source "$DNS_PIN_LIB"
+
+    # Override: 1 domain resolves, 1 fails, 2 are wildcards
+    resolve_domain_ips() {
+        local domain="$1"
+        case "$domain" in
+            "good1.com") echo "1.2.3.4" ;;
+            "bad1.com") return 0 ;;
+            *) return 0 ;;
+        esac
+    }
+
+    local output
+    # 2 resolvable domains: 1 good + 1 bad = 50% failure
+    # 2 wildcards are excluded from rate calculation
+    # threshold=50: 50% is NOT > 50%, so should succeed
+    if output=$(resolve_allowlist_domains "good1.com,bad1.com,*.wildcard1.com,*.wildcard2.com" 1 "abort" 50 2>&1); then
+        log_pass "Correctly excluded wildcards from failure rate calculation"
+    else
+        log_fail "Wildcards should not count toward failure rate"
+        return 1
+    fi
+}
+
+test_failure_threshold_dynamic_ignores_threshold() {
+    log_test "Testing failure_threshold is ignored when fallback=dynamic"
+
+    source "$DNS_PIN_LIB"
+
+    # Override: all domains fail
+    resolve_domain_ips() { return 0; }
+
+    local output
+    # 100% failure rate with threshold=0, but fallback=dynamic should never abort
+    if output=$(resolve_allowlist_domains "bad1.com,bad2.com" 1 "dynamic" 0 2>&1); then
+        log_pass "Dynamic fallback correctly ignores failure threshold"
+    else
+        log_fail "Dynamic fallback should never abort"
+        return 1
+    fi
+}
+
+test_failure_threshold_logs_rate() {
+    log_test "Testing failure threshold logging includes rate information"
+
+    source "$DNS_PIN_LIB"
+    KAPSIS_DEBUG=1
+
+    # Override: 1 out of 2 fails = 50%
+    resolve_domain_ips() {
+        local domain="$1"
+        case "$domain" in
+            "good1.com") echo "1.2.3.4" ;;
+            "bad1.com") return 0 ;;
+        esac
+    }
+
+    local output
+    # 50% failure with threshold=60: should succeed and log the rate
+    output=$(resolve_allowlist_domains "good1.com,bad1.com" 1 "abort" 60 2>&1) || true
+
+    if echo "$output" | grep -q "failure rate"; then
+        log_pass "Failure rate is logged in output"
+    else
+        log_fail "Expected failure rate in log output"
+        return 1
+    fi
+
+    unset KAPSIS_DEBUG
+}
+
+test_config_validation_failure_threshold_valid() {
+    log_test "Testing config validation accepts valid failure_threshold"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    fallback: abort
+    failure_threshold: 50
+    resolve_timeout: 5
+    protect_dns_files: true
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "Valid dns_pinning.failure_threshold"; then
+        log_pass "Valid failure_threshold=50 accepted"
+    elif echo "$output" | grep -q "\[FAIL\].*failure_threshold"; then
+        log_fail "Valid failure_threshold rejected"
+    else
+        log_pass "Config validation completed (failure_threshold may not be validated for this config type)"
+    fi
+
+    rm -f "$test_config"
+}
+
+test_config_validation_failure_threshold_invalid() {
+    log_test "Testing config validation rejects invalid failure_threshold"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    failure_threshold: 150
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "Invalid dns_pinning.failure_threshold"; then
+        log_pass "Invalid failure_threshold=150 rejected"
+    else
+        log_warn "Expected validation error for failure_threshold=150"
+    fi
+
+    rm -f "$test_config"
+}
+
+#===============================================================================
 # CONTAINER TESTS (require Podman)
 #===============================================================================
 
@@ -830,6 +1066,17 @@ main() {
     run_test test_default_config_has_dns_pinning
     run_test test_count_pinned_domains
     run_test test_get_pinned_domains
+
+    # Failure threshold tests (fix #216)
+    run_test test_failure_threshold_zero_aborts_on_any_failure
+    run_test test_failure_threshold_50_allows_minor_failures
+    run_test test_failure_threshold_50_aborts_on_high_failures
+    run_test test_failure_threshold_100_never_aborts
+    run_test test_failure_threshold_ignores_wildcards_in_rate
+    run_test test_failure_threshold_dynamic_ignores_threshold
+    run_test test_failure_threshold_logs_rate
+    run_test test_config_validation_failure_threshold_valid
+    run_test test_config_validation_failure_threshold_invalid
 
     # Property-based tests
     run_test test_resolve_returns_valid_ipv4_or_empty

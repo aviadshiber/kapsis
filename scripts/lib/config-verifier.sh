@@ -510,6 +510,16 @@ validate_network_config() {
         fi
     fi
 
+    local dns_pin_failure_threshold
+    dns_pin_failure_threshold=$(yq -r '.network.dns_pinning.failure_threshold // "null"' "$config_file" 2>/dev/null)
+    if [[ "$dns_pin_failure_threshold" != "null" ]]; then
+        if [[ "$dns_pin_failure_threshold" =~ ^[0-9]+$ ]] && [[ "$dns_pin_failure_threshold" -ge 0 ]] && [[ "$dns_pin_failure_threshold" -le 100 ]]; then
+            log_pass "Valid dns_pinning.failure_threshold: $dns_pin_failure_threshold"
+        else
+            log_error "Invalid dns_pinning.failure_threshold: $dns_pin_failure_threshold (must be 0-100)"
+        fi
+    fi
+
     return 0
 }
 

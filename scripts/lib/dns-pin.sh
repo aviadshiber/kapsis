@@ -48,7 +48,7 @@ type log_success &>/dev/null || log_success() { echo "[DNS-PIN] SUCCESS: $*" >&2
 # DOMAIN RESOLUTION
 #===============================================================================
 
-# resolve_allowlist_domains <comma-domains> [timeout] [fallback]
+# resolve_allowlist_domains <comma-domains> [timeout] [fallback] [failure_threshold]
 #
 # Resolves comma-separated domains to IP addresses on the host.
 # Skips wildcards (emitting security warning) and returns pinned mappings.
@@ -57,24 +57,30 @@ type log_success &>/dev/null || log_success() { echo "[DNS-PIN] SUCCESS: $*" >&2
 #   $1 - Comma-separated list of domains (from KAPSIS_DNS_ALLOWLIST)
 #   $2 - Resolution timeout in seconds (default: 5)
 #   $3 - Fallback behavior: "dynamic" (default) or "abort"
+#   $4 - Failure rate threshold as percentage 0-100 (default: 0 for abort, ignored for dynamic)
+#         When fallback=abort, launch is aborted only if the failure rate exceeds
+#         this threshold. A value of 0 means abort on any failure (legacy behavior).
+#         A value of 50 means tolerate up to 50% failures before aborting.
 #
 # Output:
 #   domain IP1 IP2 ...
 #   (one line per domain with resolved IPs, space-separated)
 #
-# Returns: 0 on success (even partial), 1 on complete failure with abort mode
+# Returns: 0 on success (within threshold), 1 when failure rate exceeds threshold
 resolve_allowlist_domains() {
     local domain_list="$1"
     local timeout="${2:-5}"
     local fallback="${3:-dynamic}"
+    local failure_threshold="${4:-0}"
 
     [[ -z "$domain_list" ]] && return 0
 
     local resolved_count=0
     local failed_count=0
     local wildcard_count=0
+    local total_resolvable=0
 
-    log_debug "Resolving domains with timeout=${timeout}s, fallback=${fallback}"
+    log_debug "Resolving domains with timeout=${timeout}s, fallback=${fallback}, failure_threshold=${failure_threshold}%"
 
     # Split by comma and process each domain
     IFS=',' read -ra domains <<< "$domain_list"
@@ -96,8 +102,11 @@ resolve_allowlist_domains() {
         if [[ "$domain" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
             echo "$domain $domain"
             resolved_count=$((resolved_count + 1))
+            total_resolvable=$((total_resolvable + 1))
             continue
         fi
+
+        total_resolvable=$((total_resolvable + 1))
 
         # Resolve domain
         local ips
@@ -120,8 +129,24 @@ resolve_allowlist_domains() {
 
     # Handle failures based on fallback mode
     if [[ "$failed_count" -gt 0 ]] && [[ "$fallback" == "abort" ]]; then
-        log_error "DNS resolution failed with fallback=abort"
-        return 1
+        # Calculate failure rate as a percentage
+        # Use total_resolvable (excludes wildcards) to avoid penalizing wildcard-heavy configs
+        local failure_rate=0
+        if [[ "$total_resolvable" -gt 0 ]]; then
+            # Integer arithmetic: multiply by 100 first to avoid truncation
+            failure_rate=$(( (failed_count * 100) / total_resolvable ))
+        fi
+
+        log_debug "DNS failure rate: ${failure_rate}% (${failed_count}/${total_resolvable}), threshold: ${failure_threshold}%"
+
+        if [[ "$failure_rate" -gt "$failure_threshold" ]]; then
+            log_error "DNS failure rate ${failure_rate}% exceeds threshold ${failure_threshold}% — aborting launch"
+            log_error "  Failed: ${failed_count}/${total_resolvable} resolvable domains"
+            return 1
+        else
+            log_warn "DNS failure rate ${failure_rate}% is within threshold ${failure_threshold}% — continuing"
+            log_warn "  Failed: ${failed_count}/${total_resolvable} resolvable domains"
+        fi
     fi
 
     return 0
