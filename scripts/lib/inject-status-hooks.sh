@@ -68,7 +68,22 @@ inject_claude_hooks() {
     local tmp_file
     tmp_file=$(mktemp)
 
-    if jq --arg status_hook "$STATUS_HOOK" --arg stop_hook "$STOP_HOOK" '
+    # Attribution: only merge when the env vars are defined (set — including the
+    # empty string, which is a valid "disable" per Claude Code's spec). When
+    # unset, leave any existing user-configured attribution untouched.
+    local attr_commit_set="false"
+    local attr_pr_set="false"
+    [[ -n "${KAPSIS_ATTRIBUTION_COMMIT+x}" ]] && attr_commit_set="true"
+    [[ -n "${KAPSIS_ATTRIBUTION_PR+x}" ]] && attr_pr_set="true"
+
+    if jq \
+        --arg status_hook "$STATUS_HOOK" \
+        --arg stop_hook "$STOP_HOOK" \
+        --arg attr_commit "${KAPSIS_ATTRIBUTION_COMMIT:-}" \
+        --arg attr_pr "${KAPSIS_ATTRIBUTION_PR:-}" \
+        --arg attr_commit_set "$attr_commit_set" \
+        --arg attr_pr_set "$attr_pr_set" \
+        '
         # Ensure hooks object exists
         .hooks //= {} |
 
@@ -91,6 +106,17 @@ inject_claude_hooks() {
             .hooks.Stop += [{
                 "hooks": [{"type": "command", "command": $stop_hook, "timeout": 5}]
             }]
+        else . end |
+
+        # Attribution: Kapsis writes Claude Code native attribution templates.
+        # Empty string is valid ("hide attribution" per Claude Code spec).
+        if $attr_commit_set == "true" then
+            .attribution //= {} |
+            .attribution.commit = $attr_commit
+        else . end |
+        if $attr_pr_set == "true" then
+            .attribution //= {} |
+            .attribution.pr = $attr_pr
         else . end
     ' "$settings_local" > "$tmp_file" 2>/dev/null; then
         mv "$tmp_file" "$settings_local"
