@@ -11,9 +11,9 @@ class Kapsis < Formula
 
   # Stable release - automatically updated by CI on each release
   # RELEASE_VERSION_MARKER_START - Do not remove, used by CI
-  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.16.6.tar.gz"
-  sha256 "ffad311a5617bdc547b49def7c5edff32f0a20a8369a887df759e5573684873e"
-  version "2.16.6"
+  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.16.12.tar.gz"
+  sha256 "dd437771280eb412eb4c7afe4e4d90ab30ecfa366fe2c281e335c8ead2010084"
+  version "2.16.12"
   # RELEASE_VERSION_MARKER_END
 
   # Homebrew livecheck - detects new releases automatically
@@ -26,6 +26,7 @@ class Kapsis < Formula
   depends_on "git"
   depends_on "jq"
   depends_on "yq"
+  depends_on "coreutils"  # provides `timeout` for push hang prevention
 
   # Podman is the container runtime - required but not a Homebrew dependency
   # Users must install it separately (brew install podman on macOS)
