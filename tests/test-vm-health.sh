@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034  # Variables set in subshells are consumed by eval'd cleanup functions
 #===============================================================================
 # Test: VM Health Check (Issue #238)
 #

@@ -927,7 +927,8 @@ _vm_collect_metrics() {
     # Parse disk fields: Filesystem Size Used Avail Use% Mounted
     VM_DISK_SIZE=$(echo "$disk_output" | awk '{print $2}')
     VM_DISK_USED=$(echo "$disk_output" | awk '{print $3}')
-    VM_DISK_AVAIL=$(echo "$disk_output" | awk '{print $4}')  # shellcheck disable=SC2034 (collected for future use)
+    # shellcheck disable=SC2034  # VM_DISK_AVAIL collected for future use
+    VM_DISK_AVAIL=$(echo "$disk_output" | awk '{print $4}')
     VM_DISK_PCT=$(echo "$disk_output" | awk '{print $5}' | tr -d '%')
 
     # Parse journal size: "Archived and active journals take up 1.2G in the file system."
