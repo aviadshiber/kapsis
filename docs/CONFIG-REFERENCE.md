@@ -1867,3 +1867,17 @@ KAPSIS_AUDIT_ENABLED=true ./scripts/launch-agent.sh ~/project --task "implement 
 ## Cleanup
 
 For cleanup configuration and usage, see [CLEANUP.md](CLEANUP.md).
+
+### VM Health Environment Variables (macOS)
+
+These variables tune the `--vm-health` flag thresholds. Set them in the environment or in
+your shell profile to override the built-in defaults.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_CLEANUP_VM_INODE_WARN_PCT` | `70` | Inode warning threshold (%) |
+| `KAPSIS_CLEANUP_VM_INODE_CRITICAL_PCT` | `90` | Inode critical threshold — triggers auto image cleanup (%) |
+| `KAPSIS_CLEANUP_VM_DISK_WARN_PCT` | `80` | Disk usage warning threshold (%) |
+| `KAPSIS_CLEANUP_VM_DISK_CRITICAL_PCT` | `95` | Disk usage critical threshold (%) |
+| `KAPSIS_CLEANUP_VM_JOURNAL_VACUUM_SIZE` | `100M` | Journal vacuum target size |
+| `KAPSIS_CLEANUP_VM_SSH_TIMEOUT` | `15` | Timeout (seconds) for VM SSH commands |
