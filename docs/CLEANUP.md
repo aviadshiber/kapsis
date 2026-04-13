@@ -23,12 +23,16 @@ Reclaim disk space and clean up artifacts after agent work.
 | Option | Description |
 |--------|-------------|
 | `--dry-run` | Show what would be cleaned without removing anything |
-| `--all` | Clean all artifacts (worktrees, sandboxes, status, containers) |
+| `--all` | Clean all artifacts (worktrees, sandboxes, status, containers, images) |
 | `--project <name>` | Clean only artifacts for specific project |
 | `--agent <proj> <id>` | Clean only specific agent's artifacts |
 | `--volumes` | Also clean build cache volumes (Maven, Gradle) |
+| `--images` | Clean Kapsis container images and dangling images |
 | `--containers` | Clean stopped Kapsis containers |
 | `--logs` | Clean log files older than 7 days |
+| `--ssh-cache` | Clear cached SSH host keys from keychain |
+| `--branches` | Clean stale agent branches (requires `--project`) |
+| `--vm-health` | Check Podman VM health: inode %, disk %, journal size (**macOS only**) |
 | `--force`, `-f` | Skip confirmation prompts |
 | `--help`, `-h` | Show help message |
 
@@ -49,6 +53,12 @@ Reclaim disk space and clean up artifacts after agent work.
 
 # Clean only old logs
 ./scripts/kapsis-cleanup.sh --logs
+
+# Check Podman VM health (macOS only)
+./scripts/kapsis-cleanup.sh --vm-health
+
+# Dry-run VM health check (metrics only, no remediation)
+./scripts/kapsis-cleanup.sh --vm-health --dry-run
 ```
 
 ## What Gets Cleaned
@@ -60,8 +70,11 @@ Reclaim disk space and clean up artifacts after agent work.
 | **Status files** | `~/.kapsis/status/` | Default (completed only) |
 | **Sanitized git** | `~/.kapsis/sanitized-git/` | Default |
 | **Containers** | Podman | `--all` or `--containers` |
+| **Images** | Podman | `--all` or `--images` |
 | **Volumes** | Podman | `--volumes` only |
 | **Logs** | `~/.kapsis/logs/` | `--all` or `--logs` |
+| **Audit files** | `~/.kapsis/audit/` | `--all` (TTL-based) |
+| **SSH cache** | System keychain | `--ssh-cache` |
 
 ### Worktrees
 
@@ -103,6 +116,66 @@ podman volume ls | grep kapsis
 
 # Manual cleanup
 podman volume rm kapsis-1-m2 kapsis-1-gradle
+```
+
+## Podman VM Health (macOS)
+
+On macOS, Podman runs inside a Linux VM. The VM's XFS filesystem has a fixed inode pool that
+can be exhausted independently of disk bytes — once inodes run out, no new files can be created,
+even if gigabytes of disk space remain free. The `--vm-health` flag diagnoses this before it
+becomes a problem.
+
+> **Note:** This flag is macOS-only. On Linux, Podman runs natively — use `df -i /` and
+> `journalctl --disk-usage` directly on the host.
+
+### What It Checks
+
+| Metric | Warning | Critical | Auto-action |
+|--------|---------|----------|-------------|
+| Inode usage | ≥ 70% | ≥ 90% | Auto image cleanup at critical |
+| Disk usage | ≥ 80% | ≥ 95% | Report only |
+| Journal size | — | — | Vacuums to 100 MB at critical |
+
+### Usage
+
+```bash
+# Run health check
+./scripts/kapsis-cleanup.sh --vm-health
+
+# Check without making any changes
+./scripts/kapsis-cleanup.sh --vm-health --dry-run
+```
+
+### Sample Output
+
+```
+=== Podman VM Health ===
+[INFO] Podman VM Health Report
+[INFO]   Disk:     12G / 50G (24%)
+[INFO]   Inodes:   2.1M / 3.0M (70%), 900K free
+[INFO]   Journal:  45M
+[WARN] Inode usage elevated: 70% (threshold: 70%)
+[WARN] VM health: WARNING — consider running: kapsis-cleanup --images
+```
+
+### Threshold Configuration
+
+All thresholds can be overridden with environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_CLEANUP_VM_INODE_WARN_PCT` | `70` | Inode warning threshold (%) |
+| `KAPSIS_CLEANUP_VM_INODE_CRITICAL_PCT` | `90` | Inode critical threshold — triggers auto cleanup (%) |
+| `KAPSIS_CLEANUP_VM_DISK_WARN_PCT` | `80` | Disk usage warning threshold (%) |
+| `KAPSIS_CLEANUP_VM_DISK_CRITICAL_PCT` | `95` | Disk usage critical threshold (%) |
+| `KAPSIS_CLEANUP_VM_JOURNAL_VACUUM_SIZE` | `100M` | Journal vacuum target size |
+| `KAPSIS_CLEANUP_VM_SSH_TIMEOUT` | `15` | Timeout (seconds) for VM SSH commands |
+
+Example override:
+
+```bash
+# Lower inode warning threshold to 60%
+KAPSIS_CLEANUP_VM_INODE_WARN_PCT=60 ./scripts/kapsis-cleanup.sh --vm-health
 ```
 
 ## Permission Issues
@@ -176,6 +249,25 @@ When disk space is critically low:
 podman system prune -a --volumes
 ```
 
+### Inode Exhaustion (macOS)
+
+On macOS, Podman's XFS VM filesystem can exhaust its inode pool independently of disk space.
+Symptoms include "no space left on device" errors despite gigabytes of free disk.
+
+```bash
+# Diagnose: check inode and disk usage in the VM
+./scripts/kapsis-cleanup.sh --vm-health
+
+# If inodes are critical: clean container images (primary inode consumer)
+./scripts/kapsis-cleanup.sh --images --force
+
+# Full recovery: clean images + volumes
+./scripts/kapsis-cleanup.sh --images --volumes --force
+```
+
+The `--vm-health` flag auto-triggers image cleanup when inode usage reaches the critical
+threshold (default 90%). Use `--dry-run` to preview what would happen without making changes.
+
 ## Automation
 
 ### Cron Job
@@ -240,6 +332,8 @@ podman volume rm kapsis-1-m2
 
 ## Environment Variables
 
+### General
+
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `KAPSIS_DIR` | `~/.kapsis` | Base directory for Kapsis data |
@@ -247,6 +341,17 @@ podman volume rm kapsis-1-m2
 | `KAPSIS_STATUS_DIR` | `~/.kapsis/status` | Status file directory |
 | `KAPSIS_LOG_DIR` | `~/.kapsis/logs` | Log file directory |
 | `KAPSIS_SANDBOX_DIR` | `~/.ai-sandboxes` | Overlay upper directories |
+
+### VM Health (macOS)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_CLEANUP_VM_INODE_WARN_PCT` | `70` | Inode warning threshold (%) |
+| `KAPSIS_CLEANUP_VM_INODE_CRITICAL_PCT` | `90` | Inode critical threshold — triggers auto image cleanup (%) |
+| `KAPSIS_CLEANUP_VM_DISK_WARN_PCT` | `80` | Disk usage warning threshold (%) |
+| `KAPSIS_CLEANUP_VM_DISK_CRITICAL_PCT` | `95` | Disk usage critical threshold (%) |
+| `KAPSIS_CLEANUP_VM_JOURNAL_VACUUM_SIZE` | `100M` | Journal vacuum target size |
+| `KAPSIS_CLEANUP_VM_SSH_TIMEOUT` | `15` | Timeout (seconds) for VM SSH commands |
 
 ## See Also
 

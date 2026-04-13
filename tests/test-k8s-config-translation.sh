@@ -333,6 +333,21 @@ test_yaml_escape_tab() {
     assert_contains "$result" '\t' "Should escape tab to \\t"
 }
 
+test_yaml_escape_echo_flag_values() {
+    log_test "Testing _yaml_escape handles values starting with -n, -e, -E"
+
+    local result_n result_e result_E
+
+    # Values starting with -n, -e, -E could be misinterpreted by echo
+    result_n=$(_run_translator "printf '%s' \"\$(_yaml_escape '-nfoo')\"")
+    result_e=$(_run_translator "printf '%s' \"\$(_yaml_escape '-efoo')\"")
+    result_E=$(_run_translator "printf '%s' \"\$(_yaml_escape '-Efoo')\"")
+
+    assert_equals "-nfoo" "$result_n" "Should preserve -n prefix (not interpret as echo flag)"
+    assert_equals "-efoo" "$result_e" "Should preserve -e prefix (not interpret as echo flag)"
+    assert_equals "-Efoo" "$result_E" "Should preserve -E prefix (not interpret as echo flag)"
+}
+
 test_generate_cr_branch_special_chars_valid_yaml() {
     log_test "Testing CR with special branch name produces valid YAML"
 
@@ -389,6 +404,34 @@ test_generate_env_yaml_cr_integration() {
     assert_contains "$result" "ANOTHER" "Should contain second extra env var"
 }
 
+test_generate_cr_contains_status_env_vars() {
+    log_test "Testing generated CR contains status and gist env vars"
+
+    local result
+    result=$(_run_translator '
+        AGENT_ID="test123"
+        IMAGE_NAME="kapsis-sandbox:latest"
+        AGENT_NAME="claude-cli"
+        RESOURCE_MEMORY="8g"
+        RESOURCE_CPUS="4"
+        BRANCH="feature/test"
+        TASK_INLINE="test task"
+        INLINE_SPEC_FILE=""
+        NETWORK_MODE="filtered"
+        SECURITY_PROFILE="standard"
+        AGENT_COMMAND="claude --task test"
+        KAPSIS_STATUS_PROJECT="my-project"
+        INJECT_GIST="true"
+        generate_agent_request_cr
+    ')
+
+    assert_contains "$result" "KAPSIS_STATUS_PROJECT" "Should contain KAPSIS_STATUS_PROJECT"
+    assert_contains "$result" "my-project" "Should contain project name value"
+    assert_contains "$result" "KAPSIS_STATUS_AGENT_ID" "Should contain KAPSIS_STATUS_AGENT_ID"
+    assert_contains "$result" "KAPSIS_STATUS_BRANCH" "Should contain KAPSIS_STATUS_BRANCH"
+    assert_contains "$result" "KAPSIS_INJECT_GIST" "Should contain KAPSIS_INJECT_GIST"
+}
+
 test_generate_cr_empty_globals_does_not_crash() {
     log_test "Testing CR generation with empty globals does not crash"
 
@@ -433,9 +476,11 @@ main() {
     run_test test_translate_memory_empty_string
     run_test test_translate_memory_uppercase
     run_test test_generate_cr_special_chars_valid_yaml
+    run_test test_generate_cr_contains_status_env_vars
     run_test test_generate_cr_empty_globals_does_not_crash
     run_test test_yaml_escape_newline_tab
     run_test test_yaml_escape_tab
+    run_test test_yaml_escape_echo_flag_values
     run_test test_generate_cr_branch_special_chars_valid_yaml
     run_test test_generate_env_yaml_cr_integration
 

@@ -52,7 +52,7 @@ _yaml_escape() {
     s="${s//$'\n'/\\n}"     # newline -> \n
     s="${s//$'\t'/\\t}"     # tab -> \t
     s="${s//$'\r'/\\r}"     # CR -> \r
-    echo "$s"
+    printf '%s\n' "$s"
 }
 
 # Generate YAML env: block from a bash array variable name
@@ -150,6 +150,14 @@ YAML
         value: "${AGENT_ID}"
       - name: KAPSIS_AGENT_TYPE
         value: "${AGENT_NAME}"
+      - name: KAPSIS_STATUS_PROJECT
+        value: "$(_yaml_escape "${KAPSIS_STATUS_PROJECT:-}")"
+      - name: KAPSIS_STATUS_AGENT_ID
+        value: "${AGENT_ID}"
+      - name: KAPSIS_STATUS_BRANCH
+        value: "$(_yaml_escape "${BRANCH:-}")"
+      - name: KAPSIS_INJECT_GIST
+        value: "${INJECT_GIST:-false}"
 YAML
 
     # Audit environment variables (if enabled)

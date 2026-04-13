@@ -485,6 +485,7 @@ COPY scripts/lib/status.sh /opt/kapsis/lib/status.sh
 COPY scripts/lib/agent-types.sh /opt/kapsis/lib/agent-types.sh
 COPY scripts/lib/progress-monitor.sh /opt/kapsis/lib/progress-monitor.sh
 COPY scripts/lib/progress-instructions.md /opt/kapsis/lib/progress-instructions.md
+COPY scripts/lib/gist-instructions.md /opt/kapsis/lib/gist-instructions.md
 COPY scripts/lib/status.py /opt/kapsis/lib/status.py
 COPY scripts/lib/inject-status-hooks.sh /opt/kapsis/lib/inject-status-hooks.sh
 COPY scripts/lib/filter-agent-config.sh /opt/kapsis/lib/filter-agent-config.sh

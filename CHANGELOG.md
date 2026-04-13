@@ -6,15 +6,50 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.16.10] - 2026-04-05
+## [2.17.0] - 2026-04-13
+
+### Added
+- Add --vm-health flag for inode and disk monitoring (#238)
+
+### Changed
+- Bump the github-actions group with 3 updates
+
+### Fixed
+- Address ensemble review findings for vm-health
+- Fix SC1126 and SC2034 errors in vm-health code
+
+### Documentation
+- Document --vm-health flag and Podman VM inode monitoring
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
+
+### Changed
+- Extract _liveness_should_kill decision function
+- Remove dead CLEAN_WORKTREES variable, simplify tests
+
+### Fixed
+- Fix log_debug set -e trap and test env var scoping
+- Address review findings in _liveness_should_kill
+- Add SIGKILL fallback in liveness kill test for slow CI
+- Accept --worktrees flag in argument parser (#220)
+
+
+### Changed
+- Bump go.opentelemetry.io/otel/sdk
+
+### Fixed
+- Use printf in _yaml_escape and add missing tests for review findings
+- Handle read-only workspace and assert warning in test
+- Apply YAML escaping to K8s env vars and add edge case tests
+- Include gist-instructions.md in container image and add missing K8s env vars (#202)
+
 
 ### Fixed
 - Use retry loop in kill test to fix CI flakiness (#234)
 - Prevent liveness monitor from killing agents waiting on API responses (#232)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Prevent spurious commits of test artifacts and git push hangs (#227) (#233)
@@ -731,7 +766,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.10...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.17.0...HEAD
+[2.17.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.17.0
+[2.16.12]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.12
+[2.16.11]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.11
 [2.16.10]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.10
 [2.16.9]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.9
 [2.16.8]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.8

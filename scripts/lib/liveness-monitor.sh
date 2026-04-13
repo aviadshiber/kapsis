@@ -423,6 +423,51 @@ _liveness_init_api_signal() {
 }
 
 #===============================================================================
+# Kill Decision
+#===============================================================================
+
+# Kill decision function: returns 0 if the agent should be killed, 1 otherwise.
+# Side effects: mutates io_stale_cycles (via nameref) and _LIVENESS_API_SKIP_COUNT.
+_liveness_should_kill() {
+    local stale_seconds="$1"
+    local timeout="$2"
+    local -n _io_stale_ref="$3"
+
+    # Signal 1: updated_at must be stale for at least $timeout seconds
+    [[ "$stale_seconds" -ge "$timeout" ]] || return 1
+
+    # Signal 2: I/O must be unchanged for at least 2 consecutive cycles
+    if [[ "$_io_stale_ref" -lt 2 ]]; then
+        _liveness_log "DEBUG" "updated_at stale (${stale_seconds}s) but I/O still active (stale_cycles=$_io_stale_ref) — extending"
+        return 1
+    fi
+
+    # Signal 3: check for active API connections
+    if _liveness_has_active_api_connections; then
+        # Agent is waiting on an AI API call — skip kill.
+        # Reset io_stale_cycles so the agent gets a fresh 2-cycle window once
+        # the API call finishes and the TCP connection closes.
+        local prev_io_cycles="$_io_stale_ref"
+        _io_stale_ref=0
+        (( _LIVENESS_API_SKIP_COUNT++ )) || true
+        if [[ "$_LIVENESS_API_SKIP_COUNT" -ge "$_LIVENESS_API_MAX_SKIP" ]]; then
+            # Layer 3: cap exceeded — kill anyway to prevent indefinite bypass
+            _liveness_log "WARN" "API skip cap exceeded (${_LIVENESS_API_SKIP_COUNT}/${_LIVENESS_API_MAX_SKIP}), proceeding with kill"
+            _LIVENESS_API_SKIP_COUNT=0
+            _io_stale_ref="$prev_io_cycles"
+            # fall through — return 0 (kill)
+        else
+            _liveness_log "INFO" "Active API connection — skipping kill (${_LIVENESS_API_SKIP_COUNT}/${_LIVENESS_API_MAX_SKIP})"
+            return 1
+        fi
+    else
+        _LIVENESS_API_SKIP_COUNT=0
+    fi
+
+    return 0
+}
+
+#===============================================================================
 # Monitor Loop
 #===============================================================================
 
@@ -492,52 +537,25 @@ _liveness_monitor_loop() {
         fi
 
         # Decision logic: kill only when all three signals are stale
-        if [[ "$stale_seconds" -ge "$timeout" ]]; then
-            if [[ "$io_stale_cycles" -ge 2 ]]; then
-                if _liveness_has_active_api_connections; then
-                    # Signal 3 active: agent is waiting on an AI API call — skip kill.
-                    # Reset io_stale_cycles so the agent gets a fresh 2-cycle window once
-                    # the API call finishes and the TCP connection closes. Without this
-                    # reset, the agent would be killed immediately when the connection
-                    # drops (io_stale_cycles still ≥ 2 on the very next check cycle).
-                    local prev_io_cycles="$io_stale_cycles"
-                    io_stale_cycles=0
-                    (( _LIVENESS_API_SKIP_COUNT++ )) || true
-                    if [[ "$_LIVENESS_API_SKIP_COUNT" -ge "$_LIVENESS_API_MAX_SKIP" ]]; then
-                        # Layer 3: cap exceeded — kill anyway to prevent indefinite bypass
-                        _liveness_log "WARN" "API skip cap exceeded (${_LIVENESS_API_SKIP_COUNT}/${_LIVENESS_API_MAX_SKIP}), proceeding with kill"
-                        _LIVENESS_API_SKIP_COUNT=0
-                        # fall through to kill block below (use saved cycle count in log)
-                        io_stale_cycles="$prev_io_cycles"
-                    else
-                        _liveness_log "INFO" "Active API connection — skipping kill (${_LIVENESS_API_SKIP_COUNT}/${_LIVENESS_API_MAX_SKIP})"
-                        continue
-                    fi
-                else
-                    _LIVENESS_API_SKIP_COUNT=0
-                fi
+        if _liveness_should_kill "$stale_seconds" "$timeout" io_stale_cycles; then
+            # All three signals stale (or cap exceeded): agent is hung
+            _liveness_log "WARN" "Agent hung detected! updated_at stale for ${stale_seconds}s, I/O unchanged for ${io_stale_cycles} cycles"
+            _liveness_log "WARN" "Sending SIGTERM to PID $pid"
 
-                # All three signals stale (or cap exceeded): agent is hung
-                _liveness_log "WARN" "Agent hung detected! updated_at stale for ${stale_seconds}s, I/O unchanged for ${io_stale_cycles} cycles"
-                _liveness_log "WARN" "Sending SIGTERM to PID $pid"
+            # Write killed status before sending signal
+            _liveness_write_killed_status "No activity for ${stale_seconds}s (updated_at stale, I/O idle)"
 
-                # Write killed status before sending signal
-                _liveness_write_killed_status "No activity for ${stale_seconds}s (updated_at stale, I/O idle)"
+            # SIGTERM first, then SIGKILL after 10s
+            kill -SIGTERM "$pid" 2>/dev/null || true
+            sleep 10
 
-                # SIGTERM first, then SIGKILL after 10s
-                kill -SIGTERM "$pid" 2>/dev/null || true
-                sleep 10
-
-                if kill -0 "$pid" 2>/dev/null; then
-                    _liveness_log "WARN" "Agent did not exit after SIGTERM, sending SIGKILL"
-                    kill -SIGKILL "$pid" 2>/dev/null || true
-                fi
-
-                _liveness_log "INFO" "Liveness monitor exiting after kill"
-                return 0
-            else
-                _liveness_log "DEBUG" "updated_at stale (${stale_seconds}s) but I/O still active (stale_cycles=$io_stale_cycles) — extending"
+            if kill -0 "$pid" 2>/dev/null; then
+                _liveness_log "WARN" "Agent did not exit after SIGTERM, sending SIGKILL"
+                kill -SIGKILL "$pid" 2>/dev/null || true
             fi
+
+            _liveness_log "INFO" "Liveness monitor exiting after kill"
+            return 0
         fi
     done
 }
