@@ -6,7 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.16.12] - 2026-04-11
+## [2.17.0] - 2026-04-13
+
+### Added
+- Add --vm-health flag for inode and disk monitoring (#238)
+
+### Changed
+- Bump the github-actions group with 3 updates
+
+### Fixed
+- Address ensemble review findings for vm-health
+- Fix SC1126 and SC2034 errors in vm-health code
+
+### Documentation
+- Document --vm-health flag and Podman VM inode monitoring
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Changed
 - Extract _liveness_should_kill decision function
@@ -18,9 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add SIGKILL fallback in liveness kill test for slow CI
 - Accept --worktrees flag in argument parser (#220)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Changed
 - Bump go.opentelemetry.io/otel/sdk
@@ -752,7 +766,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.16.12...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.17.0...HEAD
+[2.17.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.17.0
 [2.16.12]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.12
 [2.16.11]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.11
 [2.16.10]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.10
