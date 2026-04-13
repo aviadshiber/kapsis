@@ -13,6 +13,8 @@
 #   - Healthy status at low inode/disk usage
 #   - Warning status at elevated inode usage
 #   - Critical status triggers auto image cleanup
+#   - Critical status actually invokes clean_images remediation
+#   - Exact boundary values (69/70/89/90%) produce correct status
 #   - Linux platform guard skips VM health check
 #   - Dry-run mode collects metrics but skips remediation
 #   - Journal vacuum runs when forced
@@ -42,7 +44,16 @@ setup_podman_mock() {
     cat > "$mock_dir/podman" <<'MOCK'
 #!/usr/bin/env bash
 if [[ "${1:-}" == "machine" ]] && [[ "${2:-}" == "inspect" ]]; then
-    echo "${VM_MOCK_MACHINE_STATE:-running}"
+    # Handle both 'podman machine inspect <name> --format ...' and plain 'podman machine inspect'
+    # When --format is passed, return the state directly (matching Go template output)
+    for arg in "$@"; do
+        if [[ "$arg" == --format* ]] || [[ "$arg" == "{{.State}}" ]]; then
+            echo "${VM_MOCK_MACHINE_STATE:-running}"
+            exit 0
+        fi
+    done
+    # Without --format, return JSON-like output (simplified)
+    echo "{\"State\": \"${VM_MOCK_MACHINE_STATE:-running}\"}"
     exit 0
 fi
 if [[ "${1:-}" == "machine" ]] && [[ "${2:-}" == "ssh" ]]; then
@@ -66,7 +77,10 @@ if [[ "${1:-}" == "machine" ]] && [[ "${2:-}" == "ssh" ]]; then
     exit 0
 fi
 if [[ "${1:-}" == "images" ]] || [[ "${1:-}" == "image" ]] || [[ "${1:-}" == "rmi" ]]; then
-    # Mock image commands for clean_images
+    # Mock image commands for clean_images — write marker for remediation tests
+    if [[ -n "${VM_MOCK_MARKER_DIR:-}" ]]; then
+        touch "${VM_MOCK_MARKER_DIR}/clean_images_called"
+    fi
     exit 0
 fi
 exit 0
@@ -98,6 +112,51 @@ else
 fi
 MOCK
     chmod +x "$mock_dir/uname"
+}
+
+# --- Test Helpers ---
+
+# Helper to run a VM health status test with given inode/disk percentages.
+# Extracts common boilerplate from all status tests.
+# Args: $1=inode_pct, $2=disk_pct, $3=expected_status
+# Returns: output from the subshell (contains STATUS=<value>)
+_run_vm_health_test() {
+    local inode_pct="$1"
+    local disk_pct="$2"
+    local expected_status="$3"
+    local mock_dir
+    mock_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-vm-test.XXXXXX")
+    setup_podman_mock "$mock_dir"
+    setup_platform_mock "$mock_dir" "Darwin"
+
+    local output
+    output=$(
+        export PATH="$mock_dir:$PATH"
+        export VM_MOCK_INODE_PCT="$inode_pct"
+        export VM_MOCK_DISK_PCT="$disk_pct"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh" 2>/dev/null || true
+        source "$KAPSIS_ROOT/scripts/lib/compat.sh" 2>/dev/null || true
+        source "$KAPSIS_ROOT/scripts/lib/constants.sh" 2>/dev/null || true
+        # Globals needed by the functions
+        DRY_RUN=false
+        FORCE=false
+        CLEAN_ALL=false
+        ITEMS_CLEANED=0
+        TOTAL_SIZE_FREED=0
+        # Color variables set to empty for clean test output (avoids ANSI escape
+        # codes that would pollute assertions in non-TTY test environments)
+        GREEN='' YELLOW='' BLUE='' CYAN='' NC='' BOLD=''
+        eval "$(sed -n '/^_vm_collect_metrics/,/^}/p' "$CLEANUP_SCRIPT")"
+        eval "$(sed -n '/^_vm_assess_health/,/^}/p' "$CLEANUP_SCRIPT")"
+        _vm_collect_metrics
+        _vm_assess_health
+        echo "STATUS=$VM_HEALTH_STATUS"
+    ) 2>&1
+
+    assert_contains "$output" "STATUS=$expected_status" \
+        "Should report $expected_status at ${inode_pct}% inode / ${disk_pct}% disk"
+
+    rm -rf "$mock_dir"
 }
 
 # --- Tests ---
@@ -152,135 +211,19 @@ test_vm_health_wired_into_main() {
 }
 
 test_vm_health_healthy_status() {
-    local mock_dir
-    mock_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-vm-test.XXXXXX")
-    setup_podman_mock "$mock_dir"
-    setup_platform_mock "$mock_dir" "Darwin"
-
-    # Source the functions (not execute main)
-    local output
-    output=$(
-        export PATH="$mock_dir:$PATH"
-        export VM_MOCK_INODE_PCT=50
-        export VM_MOCK_DISK_PCT=45
-        # Source the script's dependencies manually to get the functions
-        source "$KAPSIS_ROOT/scripts/lib/logging.sh" 2>/dev/null || true
-        source "$KAPSIS_ROOT/scripts/lib/compat.sh" 2>/dev/null || true
-        source "$KAPSIS_ROOT/scripts/lib/constants.sh" 2>/dev/null || true
-        # Define needed globals
-        DRY_RUN=false
-        FORCE=false
-        CLEAN_ALL=false
-        ITEMS_CLEANED=0
-        TOTAL_SIZE_FREED=0
-        GREEN='' YELLOW='' BLUE='' CYAN='' NC='' BOLD=''
-        # Source script to get function definitions (will exit via main)
-        eval "$(sed -n '/^_vm_collect_metrics/,/^}/p' "$CLEANUP_SCRIPT")"
-        eval "$(sed -n '/^_vm_assess_health/,/^}/p' "$CLEANUP_SCRIPT")"
-        _vm_collect_metrics
-        _vm_assess_health
-        echo "STATUS=$VM_HEALTH_STATUS"
-    ) 2>&1
-
-    assert_contains "$output" "STATUS=HEALTHY" "Should report HEALTHY at 50% inode usage"
-
-    rm -rf "$mock_dir"
+    _run_vm_health_test 50 45 "HEALTHY"
 }
 
 test_vm_health_warning_status() {
-    local mock_dir
-    mock_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-vm-test.XXXXXX")
-    setup_podman_mock "$mock_dir"
-    setup_platform_mock "$mock_dir" "Darwin"
-
-    local output
-    output=$(
-        export PATH="$mock_dir:$PATH"
-        export VM_MOCK_INODE_PCT=75
-        export VM_MOCK_DISK_PCT=45
-        source "$KAPSIS_ROOT/scripts/lib/logging.sh" 2>/dev/null || true
-        source "$KAPSIS_ROOT/scripts/lib/compat.sh" 2>/dev/null || true
-        source "$KAPSIS_ROOT/scripts/lib/constants.sh" 2>/dev/null || true
-        DRY_RUN=false
-        FORCE=false
-        CLEAN_ALL=false
-        ITEMS_CLEANED=0
-        TOTAL_SIZE_FREED=0
-        GREEN='' YELLOW='' BLUE='' CYAN='' NC='' BOLD=''
-        eval "$(sed -n '/^_vm_collect_metrics/,/^}/p' "$CLEANUP_SCRIPT")"
-        eval "$(sed -n '/^_vm_assess_health/,/^}/p' "$CLEANUP_SCRIPT")"
-        _vm_collect_metrics
-        _vm_assess_health
-        echo "STATUS=$VM_HEALTH_STATUS"
-    ) 2>&1
-
-    assert_contains "$output" "STATUS=WARNING" "Should report WARNING at 75% inode usage"
-
-    rm -rf "$mock_dir"
+    _run_vm_health_test 75 45 "WARNING"
 }
 
 test_vm_health_critical_status() {
-    local mock_dir
-    mock_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-vm-test.XXXXXX")
-    setup_podman_mock "$mock_dir"
-    setup_platform_mock "$mock_dir" "Darwin"
-
-    local output
-    output=$(
-        export PATH="$mock_dir:$PATH"
-        export VM_MOCK_INODE_PCT=95
-        export VM_MOCK_DISK_PCT=45
-        source "$KAPSIS_ROOT/scripts/lib/logging.sh" 2>/dev/null || true
-        source "$KAPSIS_ROOT/scripts/lib/compat.sh" 2>/dev/null || true
-        source "$KAPSIS_ROOT/scripts/lib/constants.sh" 2>/dev/null || true
-        DRY_RUN=false
-        FORCE=false
-        CLEAN_ALL=false
-        ITEMS_CLEANED=0
-        TOTAL_SIZE_FREED=0
-        GREEN='' YELLOW='' BLUE='' CYAN='' NC='' BOLD=''
-        eval "$(sed -n '/^_vm_collect_metrics/,/^}/p' "$CLEANUP_SCRIPT")"
-        eval "$(sed -n '/^_vm_assess_health/,/^}/p' "$CLEANUP_SCRIPT")"
-        _vm_collect_metrics
-        _vm_assess_health
-        echo "STATUS=$VM_HEALTH_STATUS"
-    ) 2>&1
-
-    assert_contains "$output" "STATUS=CRITICAL" "Should report CRITICAL at 95% inode usage"
-
-    rm -rf "$mock_dir"
+    _run_vm_health_test 95 45 "CRITICAL"
 }
 
 test_vm_health_disk_warning() {
-    local mock_dir
-    mock_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-vm-test.XXXXXX")
-    setup_podman_mock "$mock_dir"
-    setup_platform_mock "$mock_dir" "Darwin"
-
-    local output
-    output=$(
-        export PATH="$mock_dir:$PATH"
-        export VM_MOCK_INODE_PCT=50
-        export VM_MOCK_DISK_PCT=85
-        source "$KAPSIS_ROOT/scripts/lib/logging.sh" 2>/dev/null || true
-        source "$KAPSIS_ROOT/scripts/lib/compat.sh" 2>/dev/null || true
-        source "$KAPSIS_ROOT/scripts/lib/constants.sh" 2>/dev/null || true
-        DRY_RUN=false
-        FORCE=false
-        CLEAN_ALL=false
-        ITEMS_CLEANED=0
-        TOTAL_SIZE_FREED=0
-        GREEN='' YELLOW='' BLUE='' CYAN='' NC='' BOLD=''
-        eval "$(sed -n '/^_vm_collect_metrics/,/^}/p' "$CLEANUP_SCRIPT")"
-        eval "$(sed -n '/^_vm_assess_health/,/^}/p' "$CLEANUP_SCRIPT")"
-        _vm_collect_metrics
-        _vm_assess_health
-        echo "STATUS=$VM_HEALTH_STATUS"
-    ) 2>&1
-
-    assert_contains "$output" "STATUS=WARNING" "Should report WARNING at 85% disk usage"
-
-    rm -rf "$mock_dir"
+    _run_vm_health_test 50 85 "WARNING"
 }
 
 test_vm_health_linux_guard() {
@@ -346,6 +289,75 @@ test_vm_health_runs_after_cleanup() {
     fi
 }
 
+# Boundary condition tests (issue #7): exact threshold values
+test_vm_health_boundary_inode_69_healthy() {
+    _run_vm_health_test 69 45 "HEALTHY"
+}
+
+test_vm_health_boundary_inode_70_warning() {
+    _run_vm_health_test 70 45 "WARNING"
+}
+
+test_vm_health_boundary_inode_89_warning() {
+    _run_vm_health_test 89 45 "WARNING"
+}
+
+test_vm_health_boundary_inode_90_critical() {
+    _run_vm_health_test 90 45 "CRITICAL"
+}
+
+# Remediation test (issue #3): verify clean_images is actually invoked at CRITICAL
+test_vm_health_critical_triggers_remediation() {
+    local mock_dir
+    mock_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-vm-test.XXXXXX")
+    setup_podman_mock "$mock_dir"
+    setup_platform_mock "$mock_dir" "Darwin"
+
+    local output
+    output=$(
+        export PATH="$mock_dir:$PATH"
+        export VM_MOCK_INODE_PCT=95
+        export VM_MOCK_DISK_PCT=45
+        export VM_MOCK_MARKER_DIR="$mock_dir"
+        source "$KAPSIS_ROOT/scripts/lib/logging.sh" 2>/dev/null || true
+        source "$KAPSIS_ROOT/scripts/lib/compat.sh" 2>/dev/null || true
+        source "$KAPSIS_ROOT/scripts/lib/constants.sh" 2>/dev/null || true
+        DRY_RUN=false
+        FORCE=false
+        CLEAN_ALL=false
+        ITEMS_CLEANED=0
+        TOTAL_SIZE_FREED=0
+        # Color variables set to empty for clean test output (avoids ANSI escape
+        # codes that would pollute assertions in non-TTY test environments)
+        GREEN='' YELLOW='' BLUE='' CYAN='' NC='' BOLD=''
+        eval "$(sed -n '/^_vm_collect_metrics/,/^}/p' "$CLEANUP_SCRIPT")"
+        eval "$(sed -n '/^_vm_assess_health/,/^}/p' "$CLEANUP_SCRIPT")"
+        eval "$(sed -n '/^_vm_remediate/,/^}/p' "$CLEANUP_SCRIPT")"
+        # Define clean_images stub that writes a marker file
+        clean_images() {
+            touch "${VM_MOCK_MARKER_DIR}/clean_images_called"
+        }
+        # Also need section and format_size stubs
+        section() { true; }
+        format_size() { echo "$1"; }
+        print_item() { true; }
+        _vm_collect_metrics
+        _vm_assess_health
+        _vm_remediate
+        echo "STATUS=$VM_HEALTH_STATUS"
+        if [[ -f "${VM_MOCK_MARKER_DIR}/clean_images_called" ]]; then
+            echo "REMEDIATION=triggered"
+        else
+            echo "REMEDIATION=skipped"
+        fi
+    ) 2>&1
+
+    assert_contains "$output" "STATUS=CRITICAL" "Should report CRITICAL at 95% inode usage"
+    assert_contains "$output" "REMEDIATION=triggered" "clean_images should be triggered at CRITICAL status"
+
+    rm -rf "$mock_dir"
+}
+
 # --- Runner ---
 run_test test_vm_health_flag_parsing
 run_test test_vm_health_in_usage_text
@@ -362,5 +374,10 @@ run_test test_vm_health_timeout_wrapping
 run_test test_vm_health_dry_run_safety
 run_test test_vm_health_machine_state_check
 run_test test_vm_health_runs_after_cleanup
+run_test test_vm_health_boundary_inode_69_healthy
+run_test test_vm_health_boundary_inode_70_warning
+run_test test_vm_health_boundary_inode_89_warning
+run_test test_vm_health_boundary_inode_90_critical
+run_test test_vm_health_critical_triggers_remediation
 
 print_summary

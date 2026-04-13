@@ -931,6 +931,16 @@ _vm_collect_metrics() {
     VM_DISK_AVAIL=$(echo "$disk_output" | awk '{print $4}')
     VM_DISK_PCT=$(echo "$disk_output" | awk '{print $5}' | tr -d '%')
 
+    # Validate critical fields are non-empty and numeric
+    if [[ -z "${VM_INODE_PCT:-}" ]] || ! [[ "$VM_INODE_PCT" =~ ^[0-9]+$ ]]; then
+        log_warn "Inode percentage is empty or non-numeric (got: '${VM_INODE_PCT:-}'). Malformed df output?"
+        return 1
+    fi
+    if [[ -z "${VM_DISK_PCT:-}" ]] || ! [[ "$VM_DISK_PCT" =~ ^[0-9]+$ ]]; then
+        log_warn "Disk percentage is empty or non-numeric (got: '${VM_DISK_PCT:-}'). Malformed df output?"
+        return 1
+    fi
+
     # Parse journal size: "Archived and active journals take up 1.2G in the file system."
     local journal_size
     journal_size=$(echo "$journal_output" | grep -oE '[0-9]+(\.[0-9]+)?[KMGTP]' | head -1)
@@ -940,6 +950,9 @@ _vm_collect_metrics() {
 
 # Assess VM health based on collected metrics.
 # Sets VM_HEALTH_STATUS to HEALTHY, WARNING, or CRITICAL.
+# Note: The -ge comparisons below are safe under set -euo pipefail because
+# _vm_collect_metrics() validates that VM_INODE_PCT/VM_DISK_PCT are numeric
+# before this function runs. The [[ ]] regex guard here is a defense-in-depth check.
 _vm_assess_health() {
     local inode_warn="${KAPSIS_CLEANUP_VM_INODE_WARN_PCT:-${KAPSIS_DEFAULT_CLEANUP_VM_INODE_WARN_PCT:-70}}"
     local inode_critical="${KAPSIS_CLEANUP_VM_INODE_CRITICAL_PCT:-${KAPSIS_DEFAULT_CLEANUP_VM_INODE_CRITICAL_PCT:-90}}"
@@ -993,7 +1006,11 @@ _vm_remediate() {
             # Re-check after cleanup
             local new_inode_pct
             new_inode_pct=$(timeout "$ssh_timeout" podman machine ssh -- "df -i / | tail -1 | awk '{print \$5}' | tr -d '%'" 2>/dev/null || echo "?")
-            log_info "Inode usage after cleanup: ${new_inode_pct}%"
+            if [[ "$new_inode_pct" == "?" ]]; then
+                log_warn "Failed to re-check inode usage after cleanup"
+            else
+                log_info "Inode usage after cleanup: ${new_inode_pct}%"
+            fi
         fi
     fi
 
@@ -1005,7 +1022,11 @@ _vm_remediate() {
         else
             local vacuum_result
             vacuum_result=$(timeout "$ssh_timeout" podman machine ssh -- "sudo journalctl --vacuum-size=${vacuum_size}" 2>&1 || echo "vacuum failed")
-            log_info "Journal vacuum: $vacuum_result"
+            if [[ "$vacuum_result" == *"failed"* ]]; then
+                log_warn "Journal vacuum may have failed: $vacuum_result"
+            else
+                log_info "Journal vacuum: $vacuum_result"
+            fi
         fi
     else
         log_info "Journal vacuum skipped (system healthy). Use --force to vacuum unconditionally."
@@ -1027,6 +1048,8 @@ vm_health_check() {
     local ssh_timeout="${KAPSIS_CLEANUP_VM_SSH_TIMEOUT:-${KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT:-15}}"
     local machine_state
     machine_state=$(timeout "$ssh_timeout" podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null || echo "not-found")
+    # Trim whitespace and handle unexpected output (e.g., JSON instead of plain value)
+    machine_state=$(echo "$machine_state" | tr -d '[:space:]' | tr -d '"')
 
     if [[ "$machine_state" != "running" ]]; then
         log_warn "Podman machine is not running (state: $machine_state). Skipping VM health check."
