@@ -963,10 +963,16 @@ parse_config() {
 
     # Substitute placeholders: {version}, {agent_id}, {branch}, {worktree}
     # {worktree} is resolved later once WORKTREE_PATH is known.
-    local kapsis_version_str="${KAPSIS_VERSION:-unknown}"
-    if [[ -z "${KAPSIS_VERSION:-}" ]] && [[ -f "$KAPSIS_ROOT/VERSION" ]]; then
-        kapsis_version_str=$(tr -d '[:space:]' < "$KAPSIS_ROOT/VERSION" 2>/dev/null || echo "unknown")
+    # Version resolution matches get_kapsis_version() in post-container-git.sh:
+    # prefer package.json, fall back to git describe, else "dev".
+    local kapsis_version_str="${KAPSIS_VERSION:-}"
+    if [[ -z "$kapsis_version_str" ]] && [[ -f "$KAPSIS_ROOT/package.json" ]]; then
+        kapsis_version_str=$(grep -o '"version": *"[^"]*"' "$KAPSIS_ROOT/package.json" 2>/dev/null | head -1 | sed 's/.*"\([^"]*\)"$/\1/')
     fi
+    if [[ -z "$kapsis_version_str" ]] && command -v git &>/dev/null; then
+        kapsis_version_str=$(git -C "$KAPSIS_ROOT" describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "")
+    fi
+    [[ -z "$kapsis_version_str" ]] && kapsis_version_str="dev"
     GIT_ATTRIBUTION_COMMIT="${GIT_ATTRIBUTION_COMMIT//\{version\}/$kapsis_version_str}"
     GIT_ATTRIBUTION_COMMIT="${GIT_ATTRIBUTION_COMMIT//\{agent_id\}/$AGENT_ID}"
     GIT_ATTRIBUTION_COMMIT="${GIT_ATTRIBUTION_COMMIT//\{branch\}/${BRANCH:-}}"
