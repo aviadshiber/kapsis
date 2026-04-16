@@ -149,11 +149,28 @@ format_size() {
 }
 
 # Get directory size in bytes
+#
+# Resilient against:
+#   - Permission errors (du returns non-zero) — `|| kb=0` keeps set -e happy
+#   - Empty pipeline output — `${kb:-0}` substitutes 0
+#   - Hanging FUSE/NFS/stale mounts — 10s timeout wrapper (matches the pattern
+#     used in resolve_domain_ips() in compat.sh and SSH calls elsewhere in this file)
 get_dir_size() {
     local dir="$1"
     if [[ -d "$dir" ]]; then
         local kb
-        kb=$(du -sk "$dir" 2>/dev/null | cut -f1)
+        # macOS: use gtimeout if available (from coreutils via `brew install coreutils`).
+        # If unavailable, fall back to no-timeout; `|| kb=0` still catches exit-code failures.
+        # Linux: `timeout` is always available (coreutils).
+        if [[ "${_KAPSIS_OS:-$(uname)}" == "Darwin" ]]; then
+            if command -v gtimeout &>/dev/null; then
+                kb=$(gtimeout 10 du -sk "$dir" 2>/dev/null | cut -f1) || kb=0
+            else
+                kb=$(du -sk "$dir" 2>/dev/null | cut -f1) || kb=0
+            fi
+        else
+            kb=$(timeout 10 du -sk "$dir" 2>/dev/null | cut -f1) || kb=0
+        fi
         echo $((${kb:-0} * 1024))
     else
         echo 0
@@ -288,6 +305,11 @@ clean_sandboxes() {
 
     for sandbox in "$SANDBOX_DIR"/*; do
         [[ -d "$sandbox" ]] || continue
+        # Security: skip symlinks to prevent symlink-following attacks.
+        # A symlink planted under $SANDBOX_DIR pointing at / (or any sensitive
+        # location) would pass the -d test above; `rm -rf` (or `sudo rm -rf`
+        # on macOS) would then follow it. Skip symlinks unconditionally.
+        [[ -L "$sandbox" ]] && continue
         local name
         name=$(basename "$sandbox")
 
@@ -1106,6 +1128,11 @@ main() {
     local clean_containers_flag=false
     local clean_logs_flag=false
     local clean_ssh_cache_flag=false
+    # Track whether the user passed any *action* flag. When true, default
+    # cleanups (worktrees/sandboxes/status/sanitized-git/audit) are NOT run
+    # automatically — only the explicitly-requested action runs. Non-action
+    # flags like --dry-run, --force, --project, --agent do NOT set this.
+    local explicit_action_requested=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -1120,37 +1147,46 @@ main() {
                 ;;
             --all)
                 CLEAN_ALL=true
+                explicit_action_requested=true
                 shift
                 ;;
             --volumes)
                 CLEAN_VOLUMES=true
+                explicit_action_requested=true
                 shift
                 ;;
             --images)
                 CLEAN_IMAGES=true
+                explicit_action_requested=true
                 shift
                 ;;
             --containers)
                 clean_containers_flag=true
+                explicit_action_requested=true
                 shift
                 ;;
             --logs)
                 clean_logs_flag=true
+                explicit_action_requested=true
                 shift
                 ;;
             --ssh-cache)
                 clean_ssh_cache_flag=true
+                explicit_action_requested=true
                 shift
                 ;;
             --branches)
                 CLEAN_BRANCHES=true
+                explicit_action_requested=true
                 shift
                 ;;
             --worktrees)
+                explicit_action_requested=true
                 shift
                 ;;
             --vm-health)
                 CLEAN_VM_HEALTH=true
+                explicit_action_requested=true
                 shift
                 ;;
             --project)
@@ -1190,12 +1226,16 @@ main() {
         fi
     fi
 
-    # Run cleanups
-    clean_worktrees
-    clean_sandboxes
-    clean_status
-    clean_sanitized_git
-    clean_audit
+    # Run default cleanups only on bare invocation (no explicit action flags)
+    # or when --all is requested. This prevents, for example,
+    # `kapsis-cleanup --vm-health` from also clobbering worktrees/sandboxes.
+    if [[ "$explicit_action_requested" != "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
+        clean_worktrees
+        clean_sandboxes
+        clean_status
+        clean_sanitized_git
+        clean_audit
+    fi
 
     if [[ "$clean_containers_flag" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
         clean_containers
