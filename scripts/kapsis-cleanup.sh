@@ -58,6 +58,11 @@ CLEAN_VOLUMES=false
 CLEAN_IMAGES=false
 CLEAN_BRANCHES=false
 CLEAN_VM_HEALTH=false
+CLEAN_WORKTREES=false
+
+# How long to allow `du` to run on a single directory before giving up.
+# Protects against stale FUSE/NFS mounts and slow network filesystems.
+readonly DU_TIMEOUT_SECS=10
 PROJECT_FILTER=""
 AGENT_FILTER=""
 
@@ -148,33 +153,49 @@ format_size() {
     fi
 }
 
-# Get directory size in bytes
+# Pick the best available timeout binary for the current OS.
+# Echoes "timeout <secs>" / "gtimeout <secs>" / empty string.
+#
+# macOS:  `gtimeout` from coreutils (install via `brew install coreutils`).
+# Linux:  `timeout` from coreutils (always present).
+# Other:  empty -> caller falls back to no timeout.
+_du_timeout_cmd() {
+    if is_macos; then
+        if command -v gtimeout &>/dev/null; then
+            echo "gtimeout $DU_TIMEOUT_SECS"
+        fi
+    elif is_linux; then
+        echo "timeout $DU_TIMEOUT_SECS"
+    elif command -v timeout &>/dev/null; then
+        # Unknown OS but GNU coreutils present.
+        echo "timeout $DU_TIMEOUT_SECS"
+    fi
+}
+
+# Get directory size in bytes.
 #
 # Resilient against:
-#   - Permission errors (du returns non-zero) — `|| kb=0` keeps set -e happy
-#   - Empty pipeline output — `${kb:-0}` substitutes 0
-#   - Hanging FUSE/NFS/stale mounts — 10s timeout wrapper (matches the pattern
-#     used in resolve_domain_ips() in compat.sh and SSH calls elsewhere in this file)
+#   - Permission errors (du returns non-zero) -- `|| kb=0` keeps set -e happy
+#   - Empty pipeline output -- `${kb:-0}` substitutes 0
+#   - Hanging FUSE/NFS/stale mounts -- $DU_TIMEOUT_SECS timeout wrapper
+#   - Non-numeric output (locale weirdness, embedded escapes) -- regex validation
 get_dir_size() {
     local dir="$1"
-    if [[ -d "$dir" ]]; then
-        local kb
-        # macOS: use gtimeout if available (from coreutils via `brew install coreutils`).
-        # If unavailable, fall back to no-timeout; `|| kb=0` still catches exit-code failures.
-        # Linux: `timeout` is always available (coreutils).
-        if [[ "${_KAPSIS_OS:-$(uname)}" == "Darwin" ]]; then
-            if command -v gtimeout &>/dev/null; then
-                kb=$(gtimeout 10 du -sk "$dir" 2>/dev/null | cut -f1) || kb=0
-            else
-                kb=$(du -sk "$dir" 2>/dev/null | cut -f1) || kb=0
-            fi
-        else
-            kb=$(timeout 10 du -sk "$dir" 2>/dev/null | cut -f1) || kb=0
-        fi
-        echo $((${kb:-0} * 1024))
+    [[ -d "$dir" ]] || { echo 0; return; }
+
+    local kb timeout_cmd
+    timeout_cmd=$(_du_timeout_cmd)
+
+    if [[ -n "$timeout_cmd" ]]; then
+        # shellcheck disable=SC2086  # timeout_cmd is "<binary> <secs>", must split
+        kb=$($timeout_cmd du -sk "$dir" 2>/dev/null | cut -f1) || kb=0
     else
-        echo 0
+        kb=$(du -sk "$dir" 2>/dev/null | cut -f1) || kb=0
     fi
+
+    # Guard against non-numeric output before arithmetic (would abort under set -e).
+    [[ "$kb" =~ ^[0-9]+$ ]] || kb=0
+    echo $((kb * 1024))
 }
 
 # Confirm action
@@ -214,12 +235,24 @@ clean_worktrees() {
         return
     fi
 
+    # Refuse to traverse a symlinked top-level dir -- an attacker could replace
+    # $WORKTREE_DIR with a symlink to a sensitive directory and the glob would
+    # enumerate its contents.
+    if [[ -L "$WORKTREE_DIR" ]]; then
+        echo -e "  ${YELLOW}Worktree dir is a symlink; refusing to clean${NC}"
+        return
+    fi
+
     local count=0
     local total_size=0
     local -a repos_to_prune=()
 
     for worktree in "$WORKTREE_DIR"/*; do
         [[ -d "$worktree" ]] || continue
+        # Security: skip symlinks. A symlink planted here pointing at / or any
+        # sensitive directory would pass the -d test (which follows links) and
+        # then be followed by rm -rf. Mirrors the guard in clean_sandboxes().
+        [[ -L "$worktree" ]] && continue
         local name
         name=$(basename "$worktree")
 
@@ -296,6 +329,12 @@ clean_sandboxes() {
 
     if [[ ! -d "$SANDBOX_DIR" ]]; then
         echo "  No sandbox directory found"
+        return
+    fi
+
+    # Refuse to traverse a symlinked top-level dir (see clean_worktrees).
+    if [[ -L "$SANDBOX_DIR" ]]; then
+        echo -e "  ${YELLOW}Sandbox dir is a symlink; refusing to clean${NC}"
         return
     fi
 
@@ -458,11 +497,19 @@ clean_sanitized_git() {
         return
     fi
 
+    # Refuse to traverse a symlinked top-level dir (see clean_worktrees).
+    if [[ -L "$SANITIZED_GIT_DIR" ]]; then
+        echo -e "  ${YELLOW}Sanitized git dir is a symlink; refusing to clean${NC}"
+        return
+    fi
+
     local count=0
     local total_size=0
 
     for git_dir in "$SANITIZED_GIT_DIR"/*; do
         [[ -d "$git_dir" ]] || continue
+        # Security: skip symlinks -- see clean_sandboxes() for rationale.
+        [[ -L "$git_dir" ]] && continue
         local name
         name=$(basename "$git_dir")
 
@@ -1181,6 +1228,7 @@ main() {
                 shift
                 ;;
             --worktrees)
+                CLEAN_WORKTREES=true
                 explicit_action_requested=true
                 shift
                 ;;
@@ -1235,6 +1283,10 @@ main() {
         clean_status
         clean_sanitized_git
         clean_audit
+    elif [[ "$CLEAN_WORKTREES" == "true" ]]; then
+        # Selective: `--worktrees` alone -- run only clean_worktrees.
+        # Skipped when --all (already handled by the default block above).
+        clean_worktrees
     fi
 
     if [[ "$clean_containers_flag" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then

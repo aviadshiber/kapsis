@@ -86,12 +86,25 @@ test_default_cleanups_gated_on_explicit_action_requested() {
 }
 
 test_get_dir_size_uses_timeout_wrapper() {
+    # The timeout-binary selection is delegated to `_du_timeout_cmd`, which
+    # emits "timeout $DU_TIMEOUT_SECS" on Linux and "gtimeout $DU_TIMEOUT_SECS"
+    # on macOS (when coreutils is installed). get_dir_size calls that helper
+    # and runs the resulting command in front of `du -sk`.
     local content
     content=$(cat "$CLEANUP_SCRIPT")
-    assert_contains "$content" "timeout 10 du -sk" \
-        "get_dir_size should wrap du in a 10s timeout on Linux"
-    assert_contains "$content" "gtimeout 10 du -sk" \
-        "get_dir_size should prefer gtimeout on macOS when available"
+
+    assert_contains "$content" "readonly DU_TIMEOUT_SECS=" \
+        "DU_TIMEOUT_SECS constant must be declared"
+    assert_contains "$content" "_du_timeout_cmd()" \
+        "_du_timeout_cmd helper must be defined"
+    assert_contains "$content" 'echo "timeout $DU_TIMEOUT_SECS"' \
+        "_du_timeout_cmd should emit a 'timeout' command on Linux"
+    assert_contains "$content" 'echo "gtimeout $DU_TIMEOUT_SECS"' \
+        "_du_timeout_cmd should prefer 'gtimeout' on macOS when available"
+    assert_contains "$content" 'timeout_cmd=$(_du_timeout_cmd)' \
+        "get_dir_size must resolve the timeout binary via _du_timeout_cmd"
+    assert_contains "$content" '$timeout_cmd du -sk' \
+        "get_dir_size must invoke du through the timeout wrapper when available"
 }
 
 test_get_dir_size_handles_pipeline_failure() {
@@ -112,6 +125,26 @@ test_symlink_guard_in_clean_sandboxes() {
     # shellcheck disable=SC2016 # literal substring match, not expansion
     assert_contains "$snippet" '[[ -L "$sandbox" ]] && continue' \
         "clean_sandboxes should skip symlinks to prevent symlink-following attacks"
+}
+
+test_symlink_guard_in_clean_worktrees() {
+    # Same attack vector exists in clean_worktrees() -- rm -rf runs on entries
+    # under $WORKTREE_DIR that pass [[ -d ]]. A symlink must be skipped.
+    local snippet
+    snippet=$(awk '/for worktree in/ {capture=1} capture {print} capture && /basename/ {capture=0}' "$CLEANUP_SCRIPT")
+    # shellcheck disable=SC2016
+    assert_contains "$snippet" '[[ -L "$worktree" ]] && continue' \
+        "clean_worktrees should skip symlinks to prevent symlink-following attacks"
+}
+
+test_symlink_guard_in_clean_sanitized_git() {
+    # Same attack vector in clean_sanitized_git() -- rm -rf runs on entries
+    # under $SANITIZED_GIT_DIR that pass [[ -d ]]. A symlink must be skipped.
+    local snippet
+    snippet=$(awk '/for git_dir in/ {capture=1} capture {print} capture && /basename/ {capture=0}' "$CLEANUP_SCRIPT")
+    # shellcheck disable=SC2016
+    assert_contains "$snippet" '[[ -L "$git_dir" ]] && continue' \
+        "clean_sanitized_git should skip symlinks to prevent symlink-following attacks"
 }
 
 #===============================================================================
@@ -234,6 +267,53 @@ test_all_flag_still_runs_everything() {
     rm -rf "$marker_dir"
 }
 
+# Regression: `--worktrees` alone must invoke clean_worktrees AND NOT run the
+# rest of the default cleanup set. A prior refactor of this file introduced
+# the case branch that flipped explicit_action_requested=true WITHOUT setting
+# a CLEAN_WORKTREES flag, turning `--worktrees` into a silent no-op. Catch
+# that class of bug in the future.
+test_worktrees_flag_alone_runs_only_worktrees() {
+    local marker_dir
+    marker_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-243-wt.XXXXXX")
+
+    _invoke_cleanup "$marker_dir" --worktrees --force --dry-run
+
+    assert_file_exists     "$marker_dir/clean_worktrees"     "--worktrees alone MUST invoke clean_worktrees"
+    assert_file_not_exists "$marker_dir/clean_sandboxes"     "--worktrees alone must NOT trigger clean_sandboxes"
+    assert_file_not_exists "$marker_dir/clean_status"        "--worktrees alone must NOT trigger clean_status"
+    assert_file_not_exists "$marker_dir/clean_sanitized_git" "--worktrees alone must NOT trigger clean_sanitized_git"
+    assert_file_not_exists "$marker_dir/clean_audit"         "--worktrees alone must NOT trigger clean_audit"
+    assert_file_not_exists "$marker_dir/clean_containers"    "--worktrees alone must NOT trigger clean_containers"
+    assert_file_not_exists "$marker_dir/vm_health_check"     "--worktrees alone must NOT trigger vm_health_check"
+
+    rm -rf "$marker_dir"
+}
+
+# Coverage: every individual action flag must invoke its own action and skip
+# the default cleanup set. Parameterizes over the remaining flags not already
+# covered by dedicated tests above.
+test_each_action_flag_alone_skips_defaults() {
+    local -A expected=(
+        [--volumes]=clean_volumes
+        [--images]=clean_images
+        [--logs]=clean_logs
+        [--ssh-cache]=clean_ssh_cache
+        [--branches]=clean_branches
+    )
+    local flag marker_dir
+    for flag in "${!expected[@]}"; do
+        marker_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-243-${flag#--}.XXXXXX")
+        _invoke_cleanup "$marker_dir" "$flag" --force --dry-run
+
+        assert_file_exists     "$marker_dir/${expected[$flag]}"  "$flag should invoke ${expected[$flag]}"
+        assert_file_not_exists "$marker_dir/clean_worktrees"     "$flag alone must NOT trigger clean_worktrees"
+        assert_file_not_exists "$marker_dir/clean_sandboxes"     "$flag alone must NOT trigger clean_sandboxes"
+        assert_file_not_exists "$marker_dir/clean_audit"         "$flag alone must NOT trigger clean_audit"
+
+        rm -rf "$marker_dir"
+    done
+}
+
 #===============================================================================
 # get_dir_size() resilience under set -euo pipefail
 #===============================================================================
@@ -244,8 +324,11 @@ _get_dir_size() {
     local dir="$1"
     bash -c '
         set -euo pipefail
-        # Minimal env to source compat.sh then extract get_dir_size.
+        # Minimal env to source compat.sh then extract the timeout helper,
+        # DU_TIMEOUT_SECS, and get_dir_size itself.
         source "'"$KAPSIS_ROOT"'/scripts/lib/compat.sh" 2>/dev/null || true
+        eval "$(grep -E "^readonly DU_TIMEOUT_SECS=" "'"$CLEANUP_SCRIPT"'")"
+        eval "$(sed -n "/^_du_timeout_cmd()/,/^}/p" "'"$CLEANUP_SCRIPT"'")"
         eval "$(sed -n "/^get_dir_size()/,/^}/p" "'"$CLEANUP_SCRIPT"'")"
         get_dir_size "$1"
     ' -- "$dir"
@@ -283,22 +366,27 @@ test_get_dir_size_survives_permission_denied() {
 }
 
 test_get_dir_size_survives_du_hang() {
-    # Simulate `du` hanging by shadowing it with a fake that sleeps forever.
-    # The timeout wrapper should kick in after 10s — but we don't want the
-    # test itself to wait 10s, so we shadow `timeout` too and make it return
-    # immediately with non-zero (simulating "timed out"). The `|| kb=0`
-    # fallback must then kick in.
+    # Simulate `du` hanging by shadowing the timeout wrapper with a fake that
+    # returns immediately with the "timed out" exit code (124). The `|| kb=0`
+    # fallback must then kick in and print 0.
+    #
+    # We mock BOTH `timeout` (Linux) and `gtimeout` (macOS + coreutils) so the
+    # test is deterministic across platforms. We also extract `_du_timeout_cmd`
+    # alongside `get_dir_size` so the helper resolves inside the subshell.
 
     local mock_dir
     mock_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-243-hang.XXXXXX")
 
-    # Fake `timeout` that always fails with the "timed out" exit code (124).
+    # Fake timeout binaries that always fail with exit 124.
     cat > "$mock_dir/timeout" <<'MOCK'
 #!/usr/bin/env bash
-# Simulate: timeout fired before command finished.
 exit 124
 MOCK
-    chmod +x "$mock_dir/timeout"
+    cat > "$mock_dir/gtimeout" <<'MOCK'
+#!/usr/bin/env bash
+exit 124
+MOCK
+    chmod +x "$mock_dir/timeout" "$mock_dir/gtimeout"
 
     local target="$mock_dir/target"
     mkdir -p "$target"
@@ -309,6 +397,9 @@ MOCK
         bash -c '
             set -euo pipefail
             source "'"$KAPSIS_ROOT"'/scripts/lib/compat.sh" 2>/dev/null || true
+            # Extract the DU_TIMEOUT_SECS constant, the helper, and get_dir_size.
+            eval "$(grep -E "^readonly DU_TIMEOUT_SECS=" "'"$CLEANUP_SCRIPT"'")"
+            eval "$(sed -n "/^_du_timeout_cmd()/,/^}/p" "'"$CLEANUP_SCRIPT"'")"
             eval "$(sed -n "/^get_dir_size()/,/^}/p" "'"$CLEANUP_SCRIPT"'")"
             get_dir_size "$1"
         ' -- "$target"
@@ -409,10 +500,14 @@ run_test test_default_cleanups_gated_on_explicit_action_requested
 run_test test_get_dir_size_uses_timeout_wrapper
 run_test test_get_dir_size_handles_pipeline_failure
 run_test test_symlink_guard_in_clean_sandboxes
+run_test test_symlink_guard_in_clean_worktrees
+run_test test_symlink_guard_in_clean_sanitized_git
 run_test test_bare_invocation_runs_defaults
 run_test test_vm_health_alone_skips_defaults
 run_test test_containers_flag_alone_skips_defaults
 run_test test_all_flag_still_runs_everything
+run_test test_worktrees_flag_alone_runs_only_worktrees
+run_test test_each_action_flag_alone_skips_defaults
 run_test test_get_dir_size_survives_permission_denied
 run_test test_get_dir_size_survives_du_hang
 run_test test_clean_sandboxes_does_not_follow_symlinks
