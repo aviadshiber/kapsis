@@ -783,11 +783,17 @@ parse_config() {
         GLOBAL_INJECT_TO=$(yq -r '.environment.inject_to // "secret_store"' "$CONFIG_FILE" 2>/dev/null || echo "secret_store")
 
         # Parse keychain mappings for secret store lookups
-        # Output format: VAR_NAME|service|account|inject_to_file|mode|inject_to per line
+        # Output format (pipe-delimited, one entry per line):
+        #   VAR_NAME|service|account|inject_to_file|mode|inject_to|keyring_collection|keyring_profile|git_credential_for|inject_file_template_b64
         # inject_to_file: optional file path to write the secret to (agent-agnostic)
         # mode: optional file permissions (default 0600)
         # inject_to: where to inject in container - "secret_store" (default) or "env"
         # account: can be string or array (array joined with comma for fallback support)
+        # inject_file_template_b64: optional base64-encoded template used when writing
+        #   the credential to a file. Use `{{VALUE}}` as the placeholder for the secret
+        #   value — see docs/CONFIG-REFERENCE.md for details. Base64 is used so that
+        #   multi-line templates and reserved characters (`|`, newlines) survive the
+        #   pipe-delimited transport between host and container.
         # KAPSIS_INJECT_DEFAULT is read by yq via strenv()
         # KAPSIS_YQ_KEYCHAIN_EXPR is defined in scripts/lib/constants.sh
         ENV_KEYCHAIN=$(KAPSIS_INJECT_DEFAULT="$GLOBAL_INJECT_TO" yq "$KAPSIS_YQ_KEYCHAIN_EXPR" "$CONFIG_FILE" 2>/dev/null || echo "")
@@ -1424,7 +1430,7 @@ generate_env_vars() {
 
     if [[ -n "$ENV_KEYCHAIN" ]]; then
         log_info "Resolving secrets from system keychain..."
-        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to keyring_collection keyring_profile git_credential_for; do
+        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to keyring_collection keyring_profile git_credential_for inject_file_template_b64; do
             [[ -z "$var_name" || -z "$service" ]] && continue
 
             # Expand variables in account (e.g., ${USER})
@@ -1523,13 +1529,27 @@ generate_env_vars() {
 
                 # Track file injection if specified (orthogonal to inject_to)
                 if [[ -n "$inject_to_file" ]]; then
-                    # Format: VAR_NAME|file_path|mode (comma-separated list)
+                    # Format: VAR_NAME|file_path|mode|template_b64 (comma-separated list)
+                    # template_b64 is the base64-encoded inject_file_template (or empty).
+                    # When non-empty, the entrypoint replaces `{{VALUE}}` with the secret
+                    # value before writing the file; otherwise the raw value is written.
+                    # Base64 lets us embed newlines and `|` characters safely through the
+                    # pipe-delimited CREDENTIAL_FILES metadata channel.
+                    local cred_entry="${var_name}|${inject_to_file}|${file_mode:-0600}|${inject_file_template_b64:-}"
                     if [[ -n "$CREDENTIAL_FILES" ]]; then
-                        CREDENTIAL_FILES="${CREDENTIAL_FILES},${var_name}|${inject_to_file}|${file_mode:-0600}"
+                        CREDENTIAL_FILES="${CREDENTIAL_FILES},${cred_entry}"
                     else
-                        CREDENTIAL_FILES="${var_name}|${inject_to_file}|${file_mode:-0600}"
+                        CREDENTIAL_FILES="${cred_entry}"
                     fi
-                    log_debug "Will inject $var_name to file: $inject_to_file"
+                    if [[ -n "${inject_file_template_b64:-}" ]]; then
+                        log_debug "Will inject $var_name to file: $inject_to_file (templated)"
+                    else
+                        log_debug "Will inject $var_name to file: $inject_to_file"
+                    fi
+                elif [[ -n "${inject_file_template_b64:-}" ]]; then
+                    # Template was specified but there is no file to write it to — warn so
+                    # the user does not silently lose the template.
+                    log_warn "inject_file_template for $var_name ignored — inject_to_file is not set"
                 fi
             else
                 log_warn "Secret not found: $service (for $var_name)"

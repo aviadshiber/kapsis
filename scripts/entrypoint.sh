@@ -105,8 +105,15 @@ fi
 # This is agent-agnostic - works for Claude, Codex, Aider, or any agent
 # that needs file-based credentials.
 #
-# Format: VAR_NAME|file_path|mode (comma-separated for multiple)
-# Example: CLAUDE_OAUTH|~/.claude/.credentials.json|0600,OPENAI_KEY|~/.config/openai/key|0600
+# Format: VAR_NAME|file_path|mode|template_b64 (comma-separated for multiple)
+#   template_b64 is optional and holds a base64-encoded template string. When
+#   set, occurrences of `{{VALUE}}` inside the template are replaced with the
+#   secret value and the resulting text is written to file. When absent or
+#   empty, the raw secret is written (legacy behaviour).
+#
+# Example:
+#   CLAUDE_OAUTH|~/.claude/.credentials.json|0600|,OPENAI_KEY|~/.config/openai/key|0600|
+#   GH_TOKEN|~/.config/gh/hosts.yml|0600|Z2l0aHViLmNvbToKICBvYXV0aF90b2tlbjoge3tWQUxVRX19Cg==
 #===============================================================================
 inject_credential_files() {
     if [[ -z "${KAPSIS_CREDENTIAL_FILES:-}" ]]; then
@@ -120,7 +127,9 @@ inject_credential_files() {
     IFS=',' read -ra creds <<< "$KAPSIS_CREDENTIAL_FILES"
 
     for entry in "${creds[@]}"; do
-        IFS='|' read -r var_name file_path file_mode <<< "$entry"
+        # Parse up to four fields: VAR_NAME|file_path|mode|template_b64.
+        # template_b64 is optional — older metadata with only three fields still works.
+        IFS='|' read -r var_name file_path file_mode template_b64 <<< "$entry"
         [[ -z "$var_name" || -z "$file_path" ]] && continue
 
         # Get the value from the environment variable
@@ -133,6 +142,33 @@ inject_credential_files() {
         # Expand ~ in file path
         file_path="${file_path/#\~/$HOME}"
 
+        # Compute the content to write. When a template is provided, decode it
+        # and substitute every `{{VALUE}}` occurrence with the raw secret value.
+        #
+        # We deliberately avoid bash's `${template//pattern/replacement}` form:
+        # starting with bash 5.2 (patsub_replacement), an unescaped `&` in the
+        # replacement is expanded to the matched text, which would mangle any
+        # secret value containing `&`. A split-and-concatenate loop using the
+        # prefix/suffix operators (`%%`, `#`) does literal substitution and is
+        # safe for arbitrary secret values (including `&`, `|`, `$`, `\`).
+        local content
+        if [[ -n "${template_b64:-}" ]]; then
+            local template
+            if ! template=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null); then
+                log_error "Failed to decode inject_file_template for $var_name — skipping"
+                continue
+            fi
+            content=""
+            local remaining="$template"
+            while [[ "$remaining" == *"{{VALUE}}"* ]]; do
+                content="${content}${remaining%%\{\{VALUE\}\}*}${value}"
+                remaining="${remaining#*\{\{VALUE\}\}}"
+            done
+            content="${content}${remaining}"
+        else
+            content="$value"
+        fi
+
         # Create parent directory with secure permissions
         mkdir -p "$(dirname "$file_path")" 2>/dev/null || true
 
@@ -142,8 +178,10 @@ inject_credential_files() {
         old_umask=$(umask)
         umask 0077
 
-        # Write the credential to file (protected by umask)
-        if ! echo "$value" > "$file_path" 2>/dev/null; then
+        # Write the credential (or templated content) to file using printf so the
+        # content is emitted verbatim with no extra interpretation. A trailing
+        # newline is appended for readability and parser compatibility.
+        if ! printf '%s\n' "$content" > "$file_path" 2>/dev/null; then
             umask "$old_umask"
             log_error "Failed to write credential to $file_path"
             continue
@@ -154,7 +192,11 @@ inject_credential_files() {
 
         # Explicitly set final permissions for clarity
         chmod "${file_mode:-0600}" "$file_path" 2>/dev/null || true
-        log_debug "Injected $var_name to $file_path (mode: ${file_mode:-0600})"
+        if [[ -n "${template_b64:-}" ]]; then
+            log_debug "Injected $var_name to $file_path (mode: ${file_mode:-0600}, templated)"
+        else
+            log_debug "Injected $var_name to $file_path (mode: ${file_mode:-0600})"
+        fi
 
         # Unset the env var so it's not visible to child processes
         # BUT: if this secret is also targeted for secret store injection,

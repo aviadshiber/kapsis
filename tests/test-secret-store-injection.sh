@@ -352,6 +352,189 @@ test_keyring_profile_validation() {
         "launch-agent.sh should validate keyring_profile"
 }
 
+test_inject_file_template_in_yq_pipeline() {
+    log_test "Testing inject_file_template is parsed and base64-encoded (Issue #241)"
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        return 0
+    fi
+
+    if ! command -v base64 &> /dev/null; then
+        log_skip "base64 not available"
+        return 0
+    fi
+
+    local test_config="$TEST_PROJECT/.kapsis-template-yq-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    GH_TOKEN:
+      service: "gh:github.com"
+      account: "testuser"
+      inject_to: "secret_store"
+      inject_to_file: "~/.config/gh/hosts.yml"
+      inject_file_template: |
+        github.com:
+          oauth_token: {{VALUE}}
+          user: testuser
+          git_protocol: https
+      mode: "0600"
+    NO_TEMPLATE:
+      service: "plain"
+      inject_to_file: "~/plain"
+EOF
+
+    local parsed
+    parsed=$(parse_keychain_config "$test_config")
+
+    rm -f "$test_config"
+
+    # The 10th field is the base64-encoded template. Decode it and verify it
+    # contains the {{VALUE}} placeholder — proves the template round-trips
+    # through YQ and base64 intact.
+    local gh_entry
+    gh_entry=$(echo "$parsed" | grep '^GH_TOKEN|')
+    if [[ -z "$gh_entry" ]]; then
+        _log_failure "GH_TOKEN entry missing from YQ output" "$parsed"
+        return 1
+    fi
+
+    local template_b64
+    template_b64=$(echo "$gh_entry" | awk -F'|' '{print $10}')
+    if [[ -z "$template_b64" ]]; then
+        _log_failure "inject_file_template_b64 should be non-empty for GH_TOKEN" "$gh_entry"
+        return 1
+    fi
+
+    local decoded
+    decoded=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null || echo "")
+    assert_contains "$decoded" "{{VALUE}}" "Decoded template should contain {{VALUE}} placeholder"
+    assert_contains "$decoded" "oauth_token" "Decoded template should contain gh YAML structure"
+
+    # When inject_file_template is absent the 10th field is the base64 of an
+    # empty string, which is the empty string itself — no trailing data.
+    local noplain_entry
+    noplain_entry=$(echo "$parsed" | grep '^NO_TEMPLATE|')
+    local noplain_template
+    noplain_template=$(echo "$noplain_entry" | awk -F'|' '{print $10}')
+    assert_equals "" "$noplain_template" "Missing inject_file_template should produce empty 10th field"
+}
+
+test_inject_file_template_warn_without_file() {
+    log_test "Testing inject_file_template without inject_to_file logs a warning (Issue #241)"
+
+    local launch_script="$KAPSIS_ROOT/scripts/launch-agent.sh"
+
+    assert_contains "$(cat "$launch_script")" \
+        "inject_file_template for" \
+        "launch-agent.sh should warn about orphan inject_file_template"
+    assert_contains "$(cat "$launch_script")" \
+        "inject_to_file is not set" \
+        "launch-agent.sh warning should explain the missing inject_to_file"
+}
+
+test_entrypoint_has_template_substitution() {
+    log_test "Testing entrypoint.sh applies {{VALUE}} substitution (Issue #241)"
+
+    local entrypoint_script="$KAPSIS_ROOT/scripts/entrypoint.sh"
+    local content
+    content=$(cat "$entrypoint_script")
+
+    # The entrypoint must accept a 4th pipe-delimited field (template_b64)
+    assert_contains "$content" "template_b64" \
+        "entrypoint.sh should parse template_b64 field"
+    # base64 decoding must happen
+    assert_contains "$content" "base64 -d" \
+        "entrypoint.sh should base64-decode inject_file_template"
+    # The safe split-and-concatenate replacement must be present
+    assert_contains "$content" '{{VALUE}}' \
+        "entrypoint.sh should look for {{VALUE}} placeholder"
+    # shellcheck disable=SC2016  # literal shell snippet asserted against source
+    assert_contains "$content" '${remaining%%\{\{VALUE\}\}*}' \
+        "entrypoint.sh should use prefix/suffix operators (patsub-safe) for substitution"
+}
+
+test_inject_file_template_unit_substitution() {
+    log_test "Testing inject_credential_files performs template substitution (Issue #241)"
+
+    if ! command -v base64 &> /dev/null; then
+        log_skip "base64 not available"
+        return 0
+    fi
+
+    # Build a self-contained harness that sources logging.sh, defines the
+    # inject_credential_files function from entrypoint.sh, and runs it against
+    # a temporary directory. This exercises the real production code path
+    # without requiring a container.
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    # Expand $tmpdir now so the RETURN trap still knows the path after the
+    # function's locals go out of scope (SC2064).
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmpdir'" RETURN
+
+    local template_b64
+    template_b64=$(printf '%s' 'github.com:
+  oauth_token: {{VALUE}}
+  user: alice' | base64 | tr -d '\n')
+
+    local harness="$tmpdir/harness.sh"
+    # Extract only the inject_credential_files function from entrypoint.sh.
+    # The surrounding entrypoint.sh script has top-level side effects we want
+    # to avoid, so we copy just the function body.
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'set -euo pipefail'
+        echo "source '$KAPSIS_ROOT/scripts/lib/logging.sh'"
+        # log_init writes to ~/.kapsis/logs — silence it for tests
+        echo 'KAPSIS_LOG_TO_FILE=false KAPSIS_LOG_CONSOLE=false log_init "test-inject-template" >/dev/null 2>&1 || true'
+        awk '/^inject_credential_files\(\) \{/,/^\}$/' "$KAPSIS_ROOT/scripts/entrypoint.sh"
+        echo 'inject_credential_files'
+    } > "$harness"
+    chmod +x "$harness"
+
+    local target_file="$tmpdir/hosts.yml"
+    # shellcheck disable=SC2016  # intentional literal with metacharacters
+    local secret_value='abc123-secret&with$special|chars'
+
+    # Run the harness with the credential metadata populated. The final `|` in
+    # the entry is the base64 template field.
+    GH_TOKEN="$secret_value" \
+    KAPSIS_CREDENTIAL_FILES="GH_TOKEN|${target_file}|0600|${template_b64}" \
+        bash "$harness" >/dev/null 2>&1 || true
+
+    if [[ ! -f "$target_file" ]]; then
+        _log_failure "Target file was not created" "expected $target_file"
+        return 1
+    fi
+
+    local file_content
+    file_content=$(cat "$target_file")
+
+    assert_contains "$file_content" "oauth_token: $secret_value" \
+        "Rendered file should contain literal secret in templated position"
+    assert_contains "$file_content" "user: alice" \
+        "Rendered file should preserve static template content"
+
+    # The file must not contain the unrendered placeholder.
+    if [[ "$file_content" == *"{{VALUE}}"* ]]; then
+        _log_failure "Rendered file still contains {{VALUE}} placeholder" "$file_content"
+        return 1
+    fi
+
+    # File mode must be restrictive.
+    local mode
+    if stat -c "%a" "$target_file" >/dev/null 2>&1; then
+        mode=$(stat -c "%a" "$target_file")
+    else
+        mode=$(stat -f "%Lp" "$target_file")
+    fi
+    assert_equals "600" "$mode" "Templated file should have 0600 permissions"
+}
+
 test_keyring_field_allowlist_validation() {
     log_test "Testing keyring fields use allowlist validation (not blocklist)"
 
@@ -512,6 +695,12 @@ main() {
     run_test test_keyring_profile_overrides_account
     run_test test_keyring_profile_validation
     run_test test_entrypoint_has_keyring_profile_support
+
+    # inject_file_template tests (Issue #241)
+    run_test test_inject_file_template_in_yq_pipeline
+    run_test test_inject_file_template_warn_without_file
+    run_test test_entrypoint_has_template_substitution
+    run_test test_inject_file_template_unit_substitution
 
     # Security hardening
     run_test test_keyring_field_allowlist_validation

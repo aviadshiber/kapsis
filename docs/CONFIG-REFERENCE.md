@@ -196,6 +196,13 @@ environment:
   #   inject_to_file: (optional) Also write credential to file path in container
   #              Can be combined with inject_to — file injection happens first,
   #              then secret store injection (both receive the secret value).
+  #   inject_file_template: (optional) Template used when writing inject_to_file.
+  #              Use `{{VALUE}}` as the placeholder for the secret value. When
+  #              set, the rendered template is written to the file instead of
+  #              the raw secret — useful for CLI tools that expect structured
+  #              credential files (YAML/JSON/INI). Only meaningful when
+  #              inject_to_file is also set (otherwise the template is ignored
+  #              and a warning is logged). Issue #241.
   #   mode: (optional) File permissions for inject_to_file (default: 0600)
   #   keyring_collection: (optional) D-Bus Secret Service collection label
   #              Required for Go tools using 99designs/keyring (bkt, etc.)
@@ -230,6 +237,23 @@ environment:
     AGENT_OAUTH_CREDENTIALS:
       service: "my-agent-credentials"
       inject_to_file: "~/.config/my-agent/credentials.json"
+      mode: "0600"
+
+    # Example: Structured credential file via template (Issue #241)
+    # The `gh` CLI expects ~/.config/gh/hosts.yml in YAML form — writing the raw
+    # token is not enough. `inject_file_template` renders a populated template
+    # with {{VALUE}} replaced by the secret, keeping the formatting knowledge
+    # in config rather than in a startup command that reads from the keyring.
+    GH_TOKEN:
+      service: "gh:github.com"
+      account: "aviadshiber"
+      inject_to: "secret_store"
+      inject_to_file: "~/.config/gh/hosts.yml"
+      inject_file_template: |
+        github.com:
+          oauth_token: {{VALUE}}
+          user: aviadshiber
+          git_protocol: https
       mode: "0600"
 
     # Example: Fallback accounts (tries each in order until one succeeds)
@@ -1200,6 +1224,49 @@ environment:
 3. For each entry with `inject_to_file`, the credential is written to that file path
 4. The environment variable is then **unset** (so child processes can't read it)
 5. The agent reads credentials from the file as expected
+
+### Formatted Credential Files with `inject_file_template`
+
+Some CLI tools — notably `gh` — require their credential files in a structured
+format (YAML/JSON/INI). Writing the raw token is not enough: `gh` wants the token
+nested inside a host-keyed YAML document at `~/.config/gh/hosts.yml`.
+
+Before `inject_file_template`, the recommended workaround was to add a startup
+command that read the secret from `secret-tool` and wrote the formatted file by
+hand. That coupled the file layout into shell scripts and risked exposing the
+secret in command history or process listings.
+
+Use `inject_file_template` to keep the formatting declarative. `{{VALUE}}` is
+replaced with the secret value (any number of times) before the file is written;
+the raw secret never travels through a shell command line.
+
+```yaml
+environment:
+  keychain:
+    GH_TOKEN:
+      service: "gh:github.com"
+      account: "aviadshiber"
+      inject_to: "secret_store"
+      inject_to_file: "~/.config/gh/hosts.yml"
+      inject_file_template: |
+        github.com:
+          oauth_token: {{VALUE}}
+          user: aviadshiber
+          git_protocol: https
+      mode: "0600"
+```
+
+**Rules:**
+
+- `inject_file_template` is only honoured when `inject_to_file` is also set.
+  A template without a file path is ignored and a warning is logged.
+- The template may contain any number of `{{VALUE}}` placeholders — every
+  occurrence is replaced. Literal substitution is used, so secrets with shell
+  or regex metacharacters (`$`, `&`, `/`, etc.) are safe.
+- Templates can span multiple lines; they are transported to the container
+  base64-encoded to keep newlines and pipe characters intact.
+- The file is still created with a restrictive umask (`0077`) and the mode
+  specified by `mode` (default `0600`) — same guarantees as raw injection.
 
 ### Priority Order
 
