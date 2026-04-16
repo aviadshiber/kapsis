@@ -167,11 +167,22 @@ test_cleanup_with_other_flags() {
 test_cleanup_shows_sections() {
     log_test "Testing cleanup shows expected sections"
 
+    # With --ssh-cache alone, default cleanups (Worktrees/Sandboxes/etc.) are
+    # intentionally skipped — explicit action flags run only the requested
+    # action. Assert that the SSH-focused section and the Summary still appear.
     local output
     output=$("$CLEANUP_SCRIPT" --ssh-cache --dry-run 2>&1 </dev/null) || true
 
-    # Should show standard sections (at minimum Worktrees and Sandboxes)
-    assert_contains "$output" "Worktrees" "Should show Worktrees section"
+    assert_contains "$output" "SSH Host Key Cache" "Should show SSH Host Key Cache section"
+    assert_contains "$output" "Summary" "Should show Summary section"
+
+    # When --all is requested, default cleanups (including Worktrees and
+    # Sandbox Directories) must still run.
+    local all_output
+    all_output=$("$CLEANUP_SCRIPT" --all --dry-run --force 2>&1 </dev/null) || true
+
+    assert_contains "$all_output" "Worktrees" "Should show Worktrees section under --all"
+    assert_contains "$all_output" "Sandbox Directories" "Should show Sandbox Directories section under --all"
 }
 
 #===============================================================================
