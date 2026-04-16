@@ -6,7 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.17.0] - 2026-04-13
+## [2.18.0] - 2026-04-16
+
+### Added
+- AI agent changes
+
+### Changed
+- Update test_cleanup_shows_sections for gated default cleanups
+
+### Fixed
+- Address ensemble review — restore --worktrees, extend symlink guards
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Added
 - Add --vm-health flag for inode and disk monitoring (#238)
@@ -21,9 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Documentation
 - Document --vm-health flag and Podman VM inode monitoring
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Changed
 - Extract _liveness_should_kill decision function
@@ -766,7 +776,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.17.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.18.0...HEAD
+[2.18.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.18.0
 [2.17.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.17.0
 [2.16.12]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.12
 [2.16.11]: https://github.com/aviadshiber/kapsis/releases/tag/v2.16.11
