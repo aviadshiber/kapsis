@@ -470,8 +470,11 @@ _mount_check_probe() {
     # Catches partial mount degradation where listing works but file reads fail
     if [[ "${KAPSIS_SANDBOX_MODE:-overlay}" == "worktree" ]]; then
         local git_safe="${_MOUNT_CHECK_GIT_PATH:-${CONTAINER_GIT_PATH:-/workspace/.git-safe}}"
-        # Use timeout for -d check too — [[ -d ]] can hang on degraded virtio-fs
-        if timeout "$probe_timeout" test -d "$git_safe" 2>/dev/null; then
+        # Use timeout for -d check too — even test -d can hang on severely degraded virtio-fs
+        timeout "$probe_timeout" test -d "$git_safe" 2>/dev/null
+        rc=$?
+        [[ $rc -eq 124 ]] && return $rc  # Hung — report timeout to caller
+        if [[ $rc -eq 0 ]]; then
             timeout "$probe_timeout" stat "$git_safe/HEAD" >/dev/null 2>&1
             rc=$?
             [[ $rc -ne 0 ]] && return $rc
@@ -507,9 +510,15 @@ _mount_check_with_retries() {
     local i
     for (( i=1; i<=retries; i++ )); do
         sleep "$delay"
-        if _mount_check_probe; then
+        _mount_check_probe
+        local retry_rc=$?
+        if [[ "$retry_rc" -eq 0 ]]; then
             _liveness_log "INFO" "Mount check recovered on retry $i"
             return 0
+        fi
+        if [[ "$retry_rc" -eq 124 ]]; then
+            _liveness_log "WARN" "Mount probe timed out on retry $i — aborting retries"
+            return 1
         fi
         _liveness_log "WARN" "Mount check retry $i/$retries failed"
     done

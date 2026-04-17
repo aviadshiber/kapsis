@@ -887,16 +887,10 @@ test_mount_check_probe_returns_124_on_timeout() {
     (
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
 
-        # Mock _mount_check_probe to return 124 (as timeout(1) would)
-        _mount_check_probe() { return 124; }
-
         _MOUNT_CHECK_RETRIES=3
         _MOUNT_CHECK_RETRY_DELAY=0
 
-        # _mount_check_with_retries should skip retries on 124
-        # It returns 1 (failure confirmed) but the key assertion is
-        # that retries are skipped — verified by the function returning
-        # quickly without calling _mount_check_probe 3 more times
+        # Verify _mount_check_with_retries exits immediately on first 124
         local call_count=0
         _mount_check_probe() {
             ((call_count++)) || true
