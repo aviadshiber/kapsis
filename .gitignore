@@ -33,3 +33,8 @@ tests/output/
 
 # Claude Code local settings
 .claude/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
