@@ -152,10 +152,12 @@ inject_credential_files() {
         local tmpl_b64="${!tmpl_var:-}"
 
         if [[ -n "$tmpl_b64" ]]; then
-            # SECURITY INVARIANT: Template substitution MUST use bash parameter
-            # expansion only. NEVER use sed, envsubst, eval, or any mechanism
-            # that interprets the secret value. This prevents secret-content
-            # injection attacks.
+            # SECURITY INVARIANT: Template substitution MUST use the split-and-
+            # rejoin method below. NEVER use sed, envsubst, eval, or bash's
+            # ${var//pat/rep} for this — sed and awk treat & as a backreference,
+            # and bash 5.2+ patsub_replacement also treats & in the replacement
+            # as the matched pattern. The split-and-rejoin approach treats the
+            # secret value as a completely opaque string.
             local template
             if ! template=$(printf '%s' "$tmpl_b64" | base64 -d 2>/dev/null); then
                 umask "$old_umask"
@@ -163,8 +165,16 @@ inject_credential_files() {
                 continue
             fi
 
-            # Substitute all {{VALUE}} placeholders with the secret
-            local content="${template//\{\{VALUE\}\}/$value}"
+            # Substitute all {{VALUE}} placeholders with the secret value.
+            # Uses prefix/suffix stripping to split on {{VALUE}} and rejoin
+            # with the secret — no metacharacter interpretation in any bash version.
+            local content=""
+            local remaining="$template"
+            while [[ "$remaining" == *'{{VALUE}}'* ]]; do
+                content+="${remaining%%\{\{VALUE\}\}*}${value}"
+                remaining="${remaining#*\{\{VALUE\}\}}"
+            done
+            content+="$remaining"
 
             # Write templated content (no trailing newline — template controls whitespace)
             if ! printf '%s' "$content" > "$file_path" 2>/dev/null; then
