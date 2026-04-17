@@ -442,21 +442,26 @@ _liveness_init_api_signal() {
 #===============================================================================
 
 # Check if the workspace mount is still accessible.
-# Returns 0 if mount is healthy, 1 if mount appears dropped.
+# Returns 0 if mount is healthy, 1 if mount appears dropped,
+# 124 if probe timed out (hung I/O — definitive failure).
 _mount_check_probe() {
     # _MOUNT_CHECK_WORKSPACE overrides the readonly CONTAINER_WORKSPACE_PATH for testing
     local workspace="${_MOUNT_CHECK_WORKSPACE:-${CONTAINER_WORKSPACE_PATH:-/workspace}}"
     local probe_timeout="$_MOUNT_CHECK_PROBE_TIMEOUT"
 
     # Primary probe: stat the workspace directory itself
-    # If virtio-fs drops, stat will fail with ENOENT or EIO, or hang
-    if ! timeout "$probe_timeout" stat "$workspace" >/dev/null 2>&1; then
-        return 1
-    fi
+    # If virtio-fs drops, stat will fail with ENOENT or EIO, or hang (exit 124)
+    # Preserve exact exit code so callers can distinguish timeout (124) from error (1)
+    local rc
+    timeout "$probe_timeout" stat "$workspace" >/dev/null 2>&1
+    rc=$?
+    [[ $rc -ne 0 ]] && return $rc
 
     # Secondary probe: verify files are accessible (empty dir = mount dropped)
     local listing
-    listing=$(timeout "$probe_timeout" ls -A "$workspace" 2>/dev/null) || return 1
+    listing=$(timeout "$probe_timeout" ls -A "$workspace" 2>/dev/null)
+    rc=$?
+    [[ $rc -ne 0 ]] && return $rc
     if [[ -z "$listing" ]]; then
         return 1
     fi
@@ -465,8 +470,11 @@ _mount_check_probe() {
     # Catches partial mount degradation where listing works but file reads fail
     if [[ "${KAPSIS_SANDBOX_MODE:-overlay}" == "worktree" ]]; then
         local git_safe="${_MOUNT_CHECK_GIT_PATH:-${CONTAINER_GIT_PATH:-/workspace/.git-safe}}"
-        if [[ -d "$git_safe" ]]; then
-            timeout "$probe_timeout" stat "$git_safe/HEAD" >/dev/null 2>&1 || return 1
+        # Use timeout for -d check too — [[ -d ]] can hang on degraded virtio-fs
+        if timeout "$probe_timeout" test -d "$git_safe" 2>/dev/null; then
+            timeout "$probe_timeout" stat "$git_safe/HEAD" >/dev/null 2>&1
+            rc=$?
+            [[ $rc -ne 0 ]] && return $rc
         fi
     fi
 

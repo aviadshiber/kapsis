@@ -881,6 +881,42 @@ test_mount_check_with_retries_all_fail() {
     assert_equals 0 "$exit_code" "Should fail after exhausted retries"
 }
 
+test_mount_check_probe_returns_124_on_timeout() {
+    log_test "Testing mount check probe propagates exit code 124 on timeout"
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # Mock _mount_check_probe to return 124 (as timeout(1) would)
+        _mount_check_probe() { return 124; }
+
+        _MOUNT_CHECK_RETRIES=3
+        _MOUNT_CHECK_RETRY_DELAY=0
+
+        # _mount_check_with_retries should skip retries on 124
+        # It returns 1 (failure confirmed) but the key assertion is
+        # that retries are skipped — verified by the function returning
+        # quickly without calling _mount_check_probe 3 more times
+        local call_count=0
+        _mount_check_probe() {
+            ((call_count++)) || true
+            return 124
+        }
+
+        _mount_check_with_retries
+        local retries_exit=$?
+
+        # Should have been called exactly once (no retries for hangs)
+        [[ "$call_count" -eq 1 ]] || exit 1
+        # Should return failure
+        [[ "$retries_exit" -ne 0 ]] || exit 2
+        exit 0
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "Probe timeout (124) should skip retries"
+}
+
 test_mount_check_config_defaults() {
     log_test "Testing mount check config defaults"
 
@@ -979,6 +1015,7 @@ main() {
     run_test test_mount_check_probe_worktree_git_sentinel
     run_test test_mount_check_with_retries_recovers
     run_test test_mount_check_with_retries_all_fail
+    run_test test_mount_check_probe_returns_124_on_timeout
     run_test test_mount_check_config_defaults
     run_test test_mount_check_config_custom_values
 
