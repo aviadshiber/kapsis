@@ -1558,8 +1558,13 @@ generate_env_vars() {
 
                     # Skip empty templates (field is base64("") when not specified)
                     if [[ -n "$template_raw" ]]; then
-                        # Reject NUL bytes (would truncate shell strings)
-                        if [[ "$template_raw" == *$'\0'* ]]; then
+                        # Reject NUL bytes (would corrupt template substitution)
+                        # Bash variables silently strip NUL, so [[ == *$'\0'* ]]
+                        # always matches (Bug #251). Check raw byte stream instead.
+                        local _raw_count _clean_count
+                        _raw_count=$(printf '%s' "$inject_file_template_b64" | base64 -d 2>/dev/null | wc -c)
+                        _clean_count=$(printf '%s' "$inject_file_template_b64" | base64 -d 2>/dev/null | tr -d '\0' | wc -c)
+                        if (( _raw_count != _clean_count )); then
                             log_error "inject_file_template for $var_name contains NUL bytes"
                             exit 1
                         fi

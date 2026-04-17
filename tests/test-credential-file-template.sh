@@ -359,6 +359,42 @@ test_template_validation_in_launch_script() {
         "launch-agent.sh should cap marker count"
 }
 
+test_nul_check_no_false_positive() {
+    log_test "Testing NUL byte check does not false-positive on valid template (Bug #251)"
+
+    # The old check [[ "$var" == *$'\0'* ]] always matches because bash
+    # variables cannot hold NUL bytes — $'\0' in a pattern is empty string,
+    # making *$'\0'* equivalent to * (matches everything).
+    # The new check compares raw byte counts via pipe.
+
+    # Valid template — should pass NUL check
+    local template='{"token": "{{VALUE}}"}'
+    local template_b64
+    template_b64=$(printf '%s' "$template" | base64)
+
+    local _raw_count _clean_count
+    _raw_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | wc -c)
+    _clean_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | tr -d '\0' | wc -c)
+
+    assert_equals "$_raw_count" "$_clean_count" \
+        "Valid template should have equal raw and clean byte counts"
+}
+
+test_nul_check_detects_actual_nul() {
+    log_test "Testing NUL byte check detects actual NUL bytes in template"
+
+    # Create a template WITH an embedded NUL byte, base64-encode it
+    local template_b64
+    template_b64=$(printf 'hello\0world' | base64)
+
+    local _raw_count _clean_count
+    _raw_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | wc -c)
+    _clean_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | tr -d '\0' | wc -c)
+
+    assert_true "(( _raw_count != _clean_count ))" \
+        "Template with NUL should have different raw vs clean byte counts"
+}
+
 test_entrypoint_has_security_invariant() {
     log_test "Testing entrypoint.sh has SECURITY INVARIANT comment"
 
@@ -400,6 +436,8 @@ main() {
 
     # Launch-agent validation tests (file content checks)
     run_test test_template_validation_in_launch_script
+    run_test test_nul_check_no_false_positive
+    run_test test_nul_check_detects_actual_nul
     run_test test_entrypoint_has_security_invariant
     run_test test_entrypoint_unsets_credential_files
 
