@@ -731,6 +731,199 @@ test_health_not_found() {
 }
 
 #===============================================================================
+# MOUNT CHECK UNIT TESTS (Issue #248)
+#===============================================================================
+
+test_mount_check_probe_healthy() {
+    log_test "Testing mount check probe returns 0 for populated workspace"
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # Create a fake workspace with content
+        local workspace
+        workspace=$(mktemp -d)
+        mkdir -p "$workspace"
+        echo "test" > "$workspace/file.txt"
+
+        # Override workspace path for testing (CONTAINER_WORKSPACE_PATH is readonly)
+        _MOUNT_CHECK_WORKSPACE="$workspace"
+        _MOUNT_CHECK_PROBE_TIMEOUT=2
+
+        _mount_check_probe || exit 1
+
+        rm -rf "$workspace"
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "Probe should succeed for populated workspace"
+}
+
+test_mount_check_probe_empty_workspace() {
+    log_test "Testing mount check probe returns 1 for empty workspace"
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # Create an empty workspace (simulates mount drop)
+        local workspace
+        workspace=$(mktemp -d)
+
+        _MOUNT_CHECK_WORKSPACE="$workspace"
+        _MOUNT_CHECK_PROBE_TIMEOUT=2
+
+        _mount_check_probe && exit 1  # Should fail
+        exit 0
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "Probe should fail for empty workspace"
+}
+
+test_mount_check_probe_missing_workspace() {
+    log_test "Testing mount check probe returns 1 for missing workspace"
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        _MOUNT_CHECK_WORKSPACE="/nonexistent/workspace/path"
+        _MOUNT_CHECK_PROBE_TIMEOUT=2
+
+        _mount_check_probe && exit 1  # Should fail
+        exit 0
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "Probe should fail for missing workspace"
+}
+
+test_mount_check_probe_worktree_git_sentinel() {
+    log_test "Testing mount check probe checks .git-safe/HEAD in worktree mode"
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        local workspace
+        workspace=$(mktemp -d)
+        echo "test" > "$workspace/file.txt"
+
+        # Create .git-safe/HEAD to simulate worktree mode
+        mkdir -p "$workspace/.git-safe"
+        echo "ref: refs/heads/main" > "$workspace/.git-safe/HEAD"
+
+        _MOUNT_CHECK_WORKSPACE="$workspace"
+        _MOUNT_CHECK_GIT_PATH="$workspace/.git-safe"
+        _MOUNT_CHECK_PROBE_TIMEOUT=2
+        KAPSIS_SANDBOX_MODE=worktree
+
+        _mount_check_probe || exit 1
+
+        # Now remove .git-safe/HEAD - probe should fail
+        rm "$workspace/.git-safe/HEAD"
+        _mount_check_probe && exit 2
+
+        rm -rf "$workspace"
+        exit 0
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "Probe should check .git-safe/HEAD in worktree mode"
+}
+
+test_mount_check_with_retries_recovers() {
+    log_test "Testing mount check recovers on retry"
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        local workspace
+        workspace=$(mktemp -d)
+        _MOUNT_CHECK_WORKSPACE="$workspace"
+        _MOUNT_CHECK_PROBE_TIMEOUT=2
+        _MOUNT_CHECK_RETRIES=2
+        _MOUNT_CHECK_RETRY_DELAY=1
+
+        # First call: workspace is empty (fail), then populate it for retry
+        local call_count=0
+        _mount_check_probe() {
+            ((call_count++)) || true
+            if [[ "$call_count" -le 1 ]]; then
+                return 1  # First call fails
+            fi
+            return 0  # Second call succeeds
+        }
+
+        _mount_check_with_retries || exit 1
+
+        rm -rf "$workspace"
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should recover on retry"
+}
+
+test_mount_check_with_retries_all_fail() {
+    log_test "Testing mount check fails after exhausted retries"
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        _MOUNT_CHECK_WORKSPACE="/nonexistent"
+        _MOUNT_CHECK_PROBE_TIMEOUT=2
+        _MOUNT_CHECK_RETRIES=2
+        _MOUNT_CHECK_RETRY_DELAY=1
+
+        _mount_check_with_retries && exit 1  # Should fail
+        exit 0
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should fail after exhausted retries"
+}
+
+test_mount_check_config_defaults() {
+    log_test "Testing mount check config defaults"
+
+    (
+        unset KAPSIS_MOUNT_CHECK_ENABLED KAPSIS_MOUNT_CHECK_RETRIES
+        unset KAPSIS_MOUNT_CHECK_RETRY_DELAY KAPSIS_MOUNT_CHECK_PROBE_TIMEOUT
+        unset KAPSIS_MOUNT_CHECK_DELAY
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        [[ "$_MOUNT_CHECK_ENABLED" == "false" ]] || exit 1
+        [[ "$_MOUNT_CHECK_RETRIES" == "2" ]] || exit 2
+        [[ "$_MOUNT_CHECK_RETRY_DELAY" == "5" ]] || exit 3
+        [[ "$_MOUNT_CHECK_PROBE_TIMEOUT" == "5" ]] || exit 4
+        [[ "$_MOUNT_CHECK_DELAY" == "30" ]] || exit 5
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should have correct defaults (false/2/5/5/30)"
+}
+
+test_mount_check_config_custom_values() {
+    log_test "Testing mount check config with custom env vars"
+
+    (
+        export KAPSIS_MOUNT_CHECK_ENABLED=true
+        export KAPSIS_MOUNT_CHECK_RETRIES=5
+        export KAPSIS_MOUNT_CHECK_RETRY_DELAY=10
+        export KAPSIS_MOUNT_CHECK_PROBE_TIMEOUT=3
+        export KAPSIS_MOUNT_CHECK_DELAY=60
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        [[ "$_MOUNT_CHECK_ENABLED" == "true" ]] || exit 1
+        [[ "$_MOUNT_CHECK_RETRIES" == "5" ]] || exit 2
+        [[ "$_MOUNT_CHECK_RETRY_DELAY" == "10" ]] || exit 3
+        [[ "$_MOUNT_CHECK_PROBE_TIMEOUT" == "3" ]] || exit 4
+        [[ "$_MOUNT_CHECK_DELAY" == "60" ]] || exit 5
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should accept custom values (true/5/10/3/60)"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -778,6 +971,16 @@ main() {
     run_test test_health_flag_requires_args
     run_test test_health_json_output_valid
     run_test test_health_not_found
+
+    # Mount check tests (Issue #248)
+    run_test test_mount_check_probe_healthy
+    run_test test_mount_check_probe_empty_workspace
+    run_test test_mount_check_probe_missing_workspace
+    run_test test_mount_check_probe_worktree_git_sentinel
+    run_test test_mount_check_with_retries_recovers
+    run_test test_mount_check_with_retries_all_fail
+    run_test test_mount_check_config_defaults
+    run_test test_mount_check_config_custom_values
 
     print_summary
 }

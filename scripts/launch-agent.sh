@@ -809,6 +809,14 @@ parse_config() {
         LIVENESS_GRACE_PERIOD=$(yq -r '.liveness.grace_period // "300"' "$CONFIG_FILE" 2>/dev/null || echo "300")
         LIVENESS_CHECK_INTERVAL=$(yq -r '.liveness.check_interval // "30"' "$CONFIG_FILE" 2>/dev/null || echo "30")
 
+        # Parse mount check configuration (Issue #248)
+        # Defaults to true when liveness section exists, since mount checking is lightweight
+        MOUNT_CHECK_ENABLED=$(yq -r '.liveness.mount_check // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        MOUNT_CHECK_RETRIES=$(yq -r '.liveness.mount_check_retries // "2"' "$CONFIG_FILE" 2>/dev/null || echo "2")
+        MOUNT_CHECK_RETRY_DELAY=$(yq -r '.liveness.mount_check_retry_delay // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
+        MOUNT_CHECK_PROBE_TIMEOUT=$(yq -r '.liveness.mount_check_probe_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
+        MOUNT_CHECK_DELAY=$(yq -r '.liveness.mount_check_delay // "30"' "$CONFIG_FILE" 2>/dev/null || echo "30")
+
         # Parse network mode from config (CLI flag takes precedence)
         # Only read from config if CLI didn't explicitly set the value
         if [[ -z "$CLI_NETWORK_MODE" ]]; then
@@ -1742,6 +1750,15 @@ generate_env_vars() {
         ENV_VARS+=("-e" "KAPSIS_LIVENESS_CHECK_INTERVAL=${LIVENESS_CHECK_INTERVAL:-30}")
     fi
 
+    # Mount check env vars (Issue #248) — independent of liveness enabled
+    if [[ "${MOUNT_CHECK_ENABLED:-false}" == "true" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_MOUNT_CHECK_ENABLED=true")
+        ENV_VARS+=("-e" "KAPSIS_MOUNT_CHECK_RETRIES=${MOUNT_CHECK_RETRIES:-2}")
+        ENV_VARS+=("-e" "KAPSIS_MOUNT_CHECK_RETRY_DELAY=${MOUNT_CHECK_RETRY_DELAY:-5}")
+        ENV_VARS+=("-e" "KAPSIS_MOUNT_CHECK_PROBE_TIMEOUT=${MOUNT_CHECK_PROBE_TIMEOUT:-5}")
+        ENV_VARS+=("-e" "KAPSIS_MOUNT_CHECK_DELAY=${MOUNT_CHECK_DELAY:-30}")
+    fi
+
     # Fix hang-after-completion for Claude agents (anthropics/claude-code#21099)
     # This env var tells Claude CLI to exit after the Stop event when stdout is piped
     # agent_type is set earlier in this function from AGENT_NAME or image inference
@@ -2376,6 +2393,17 @@ main() {
         fi
         log_debug "CONTAINER_ERROR_OUTPUT: $CONTAINER_ERROR_OUTPUT"
     fi
+
+    # Check for mount failure sentinel in container output (Issue #248)
+    # Only honor when container was killed by signal (SIGTERM=143, SIGKILL=137)
+    # to prevent a compromised agent from faking mount failures
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+        if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
+            log_warn "Mount failure detected via sentinel — overriding exit code to 4"
+            EXIT_CODE=4
+        fi
+    fi
+
     rm -f "$container_output"
     # Update status to post_processing (Fix #3: don't report "completed" until commit verified)
     status_phase "post_processing" 85 "Processing agent output (exit code: $EXIT_CODE)"
@@ -2418,7 +2446,16 @@ main() {
     #   1 = Agent failure (container exit code non-zero)
     #   2 = Push failed
     #   3 = Uncommitted changes remain
-    if [[ "$EXIT_CODE" -ne 0 ]]; then
+    if [[ "$EXIT_CODE" -eq 4 ]]; then
+        # Mount failure detected via sentinel (Issue #248)
+        FINAL_EXIT_CODE=4
+        log_finalize 4
+        local mount_error="Workspace mount lost (virtio-fs drop). Recovery: podman machine stop && podman machine start, then re-run."
+        status_complete 4 "$mount_error"
+        _STATUS_COMPLETE_SHOWN=true
+        display_complete 4 "" "$mount_error"
+        _DISPLAY_COMPLETE_SHOWN=true
+    elif [[ "$EXIT_CODE" -ne 0 ]]; then
         FINAL_EXIT_CODE=$EXIT_CODE
         log_finalize "$EXIT_CODE"
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
