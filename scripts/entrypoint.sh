@@ -143,7 +143,9 @@ inject_credential_files() {
         umask 0077
 
         # Write the credential to file (protected by umask)
-        if ! echo "$value" > "$file_path" 2>/dev/null; then
+        # Use printf instead of echo: echo interprets flags (-n, -e, -E) and
+        # backslash sequences, which corrupts secrets starting with those chars.
+        if ! printf '%s\n' "$value" > "$file_path" 2>/dev/null; then
             umask "$old_umask"
             log_error "Failed to write credential to $file_path"
             continue
