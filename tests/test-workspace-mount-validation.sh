@@ -281,11 +281,121 @@ test_gc_callers_pass_agent_id() {
 }
 
 #===============================================================================
+# MOUNT FAILURE DETECTION TESTS (Issue #248)
+#===============================================================================
+
+test_mount_failure_exit_code_constant() {
+    log_test "Testing KAPSIS_EXIT_MOUNT_FAILURE == 4"
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/constants.sh"
+        [[ "$KAPSIS_EXIT_MOUNT_FAILURE" == "4" ]] || exit 1
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "KAPSIS_EXIT_MOUNT_FAILURE should be 4"
+}
+
+test_status_display_exit_code_4() {
+    log_test "Testing kapsis-status shows mount failure guidance for exit code 4"
+
+    local status_dir
+    status_dir=$(make_test_dir)
+    local status_file="$status_dir/kapsis-testproj-mount1.json"
+    cat > "$status_file" << 'EOF'
+{
+  "version": "1.0",
+  "agent_id": "mount1",
+  "project": "testproj",
+  "phase": "complete",
+  "progress": 100,
+  "message": "Workspace mount lost",
+  "exit_code": 4,
+  "error": "Workspace mount lost (virtio-fs drop)",
+  "updated_at": "2026-03-22T10:00:00Z",
+  "started_at": "2026-03-22T09:00:00Z",
+  "branch": null,
+  "worktree_path": null,
+  "pr_url": null,
+  "push_status": null,
+  "push_fallback_command": null,
+  "gist": null,
+  "gist_updated_at": null,
+  "heartbeat_at": null
+}
+EOF
+
+    local output
+    output=$(KAPSIS_STATUS_DIR="$status_dir" "$KAPSIS_ROOT/scripts/kapsis-status.sh" testproj mount1 2>&1) || true
+
+    assert_contains "$output" "mount failure" "Should show 'mount failure' label"
+    assert_contains "$output" "Mount Failure Recovery" "Should show recovery heading"
+    assert_contains "$output" "podman machine stop" "Should show recovery command"
+}
+
+test_launch_agent_sentinel_detection() {
+    log_test "Testing sentinel detection greps for KAPSIS_MOUNT_FAILURE"
+
+    local container_output
+    container_output=$(mktemp)
+
+    cat > "$container_output" << 'EOF'
+[2026-03-22 10:00:00] Starting agent...
+[2026-03-22 10:30:00] ERROR: KAPSIS_MOUNT_FAILURE: /workspace inaccessible (virtio-fs drop)
+EOF
+
+    local EXIT_CODE=143  # SIGTERM
+
+    # Replicate the sentinel detection from launch-agent.sh
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+        if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
+            EXIT_CODE=4
+        fi
+    fi
+
+    assert_equals 4 "$EXIT_CODE" "Should override exit code to 4 when sentinel found"
+
+    rm -f "$container_output"
+}
+
+test_sentinel_only_honored_on_signal_exit() {
+    log_test "Testing sentinel is ignored when exit code is not 143/137"
+
+    local container_output
+    container_output=$(mktemp)
+
+    cat > "$container_output" << 'EOF'
+[2026-03-22 10:00:00] Starting agent...
+[2026-03-22 10:30:00] ERROR: KAPSIS_MOUNT_FAILURE: /workspace inaccessible (virtio-fs drop)
+EOF
+
+    # Test with exit code 1 — sentinel should be ignored
+    local EXIT_CODE=1
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+        if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
+            EXIT_CODE=4
+        fi
+    fi
+    assert_equals 1 "$EXIT_CODE" "Should NOT override exit code when not a signal exit"
+
+    # Test with exit code 0 — sentinel should be ignored
+    EXIT_CODE=0
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+        if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
+            EXIT_CODE=4
+        fi
+    fi
+    assert_equals 0 "$EXIT_CODE" "Should NOT override exit code on success"
+
+    rm -f "$container_output"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
 main() {
-    print_test_header "Workspace Mount Validation (Issue #221)"
+    print_test_header "Workspace Mount Validation (Issues #221, #248)"
 
     log_info "=== Entrypoint Workspace Validation ==="
     run_test test_validate_workspace_not_exists
@@ -304,6 +414,12 @@ main() {
     log_info "=== GC Self-Exclusion ==="
     run_test test_gc_excludes_current_agent
     run_test test_gc_callers_pass_agent_id
+
+    log_info "=== Mount Failure Detection (Issue #248) ==="
+    run_test test_mount_failure_exit_code_constant
+    run_test test_status_display_exit_code_4
+    run_test test_launch_agent_sentinel_detection
+    run_test test_sentinel_only_honored_on_signal_exit
 
     cleanup_test_dirs
 

@@ -247,12 +247,26 @@ get_status() {
             echo ""
             if [[ "$exit_code" == "0" ]]; then
                 echo -e "  Exit Code:    ${GREEN}$exit_code (success)${NC}"
+            elif [[ "$exit_code" == "4" ]]; then
+                echo -e "  Exit Code:    ${RED}$exit_code (mount failure)${NC}"
             else
                 echo -e "  Exit Code:    ${RED}$exit_code (failed)${NC}"
             fi
             [[ -n "$error" && "$error" != "null" ]] && echo -e "  Error:        ${RED}$error${NC}"
             [[ -n "$pr_url" && "$pr_url" != "null" ]] && echo "  PR URL:       $pr_url"
             echo ""
+
+            # Mount failure recovery guidance (Issue #248)
+            if [[ "$exit_code" == "4" ]]; then
+                echo -e "${YELLOW}--- Mount Failure Recovery ---${NC}"
+                echo ""
+                echo "  The /workspace virtio-fs mount was lost during execution."
+                echo "  To recover:"
+                echo "    1. podman machine stop"
+                echo "    2. podman machine start"
+                echo "    3. Re-run the agent"
+                echo ""
+            fi
         fi
 
         [[ -n "$worktree_path" && "$worktree_path" != "null" ]] && echo "  Worktree:     $worktree_path"
@@ -411,7 +425,11 @@ except: print('null')
 
     # Determine health status
     local health="HEALTHY"
-    if [[ "$phase" == "complete" || "$phase" == "killed" ]]; then
+    local health_exit_code
+    health_exit_code=$(json_get_num "$content" "exit_code")
+    if [[ "$health_exit_code" == "4" ]]; then
+        health="MOUNT_FAILURE"
+    elif [[ "$phase" == "complete" || "$phase" == "killed" ]]; then
         health="STOPPED"
     elif [[ "$hook_stale_secs" != "null" && "$hook_stale_secs" -ge 1800 ]]; then
         health="CRITICAL"
@@ -444,7 +462,7 @@ HEALTHJSON
         # Pretty output
         local health_color="$GREEN"
         case "$health" in
-            CRITICAL) health_color="$RED" ;;
+            CRITICAL|MOUNT_FAILURE) health_color="$RED" ;;
             WARNING) health_color="$YELLOW" ;;
             STOPPED) health_color="$NC" ;;
         esac

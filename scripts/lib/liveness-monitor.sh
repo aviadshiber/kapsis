@@ -57,6 +57,13 @@ _LIVENESS_DNS_TIMEOUT="${KAPSIS_LIVENESS_DNS_TIMEOUT:-2}"
 _LIVENESS_MAX_IPS_PER_DOMAIN="${KAPSIS_LIVENESS_MAX_IPS_PER_DOMAIN:-8}"
 _LIVENESS_API_MAX_SKIP="${KAPSIS_LIVENESS_API_MAX_SKIP:-240}"
 
+# Mount check configuration (Issue #248) — independent of liveness timeout kill
+_MOUNT_CHECK_ENABLED="${KAPSIS_MOUNT_CHECK_ENABLED:-false}"
+_MOUNT_CHECK_RETRIES="${KAPSIS_MOUNT_CHECK_RETRIES:-2}"
+_MOUNT_CHECK_RETRY_DELAY="${KAPSIS_MOUNT_CHECK_RETRY_DELAY:-5}"
+_MOUNT_CHECK_PROBE_TIMEOUT="${KAPSIS_MOUNT_CHECK_PROBE_TIMEOUT:-5}"
+_MOUNT_CHECK_DELAY="${KAPSIS_MOUNT_CHECK_DELAY:-30}"
+
 # AI API domains to monitor for active connections
 _LIVENESS_API_DOMAINS=(
     api.anthropic.com
@@ -423,6 +430,141 @@ _liveness_init_api_signal() {
 }
 
 #===============================================================================
+# Mount Check (Issue #248)
+#
+# Detects virtio-fs mount drops on macOS during container execution.
+# The mount can silently disconnect while the agent is running, making all
+# files under /workspace inaccessible. Every probe uses `timeout` because
+# degraded virtio-fs can hang stat/ls calls indefinitely.
+#
+# Signaling: writes a sentinel line to stderr (captured by podman's tee
+# pipeline), since /kapsis-status may also be on the same virtio-fs mount.
+#===============================================================================
+
+# Check if the workspace mount is still accessible.
+# Returns 0 if mount is healthy, 1 if mount appears dropped,
+# 124 if probe timed out (hung I/O — definitive failure).
+_mount_check_probe() {
+    # _MOUNT_CHECK_WORKSPACE overrides the readonly CONTAINER_WORKSPACE_PATH for testing
+    local workspace="${_MOUNT_CHECK_WORKSPACE:-${CONTAINER_WORKSPACE_PATH:-/workspace}}"
+    local probe_timeout="$_MOUNT_CHECK_PROBE_TIMEOUT"
+
+    # Primary probe: stat the workspace directory itself
+    # If virtio-fs drops, stat will fail with ENOENT or EIO, or hang (exit 124)
+    # Preserve exact exit code so callers can distinguish timeout (124) from error (1)
+    local rc
+    timeout "$probe_timeout" stat "$workspace" >/dev/null 2>&1
+    rc=$?
+    [[ $rc -ne 0 ]] && return $rc
+
+    # Secondary probe: verify files are accessible (empty dir = mount dropped)
+    local listing
+    listing=$(timeout "$probe_timeout" ls -A "$workspace" 2>/dev/null)
+    rc=$?
+    [[ $rc -ne 0 ]] && return $rc
+    if [[ -z "$listing" ]]; then
+        return 1
+    fi
+
+    # Tertiary probe (worktree mode only): check git sentinel
+    # Catches partial mount degradation where listing works but file reads fail
+    if [[ "${KAPSIS_SANDBOX_MODE:-overlay}" == "worktree" ]]; then
+        local git_safe="${_MOUNT_CHECK_GIT_PATH:-${CONTAINER_GIT_PATH:-/workspace/.git-safe}}"
+        # Use timeout for -d check too — even test -d can hang on severely degraded virtio-fs
+        timeout "$probe_timeout" test -d "$git_safe" 2>/dev/null
+        rc=$?
+        [[ $rc -eq 124 ]] && return $rc  # Hung — report timeout to caller
+        if [[ $rc -eq 0 ]]; then
+            timeout "$probe_timeout" stat "$git_safe/HEAD" >/dev/null 2>&1
+            rc=$?
+            [[ $rc -ne 0 ]] && return $rc
+        fi
+    fi
+
+    return 0
+}
+
+# Perform mount check with retries.
+# Returns 0 if mount is healthy, 1 if mount failure confirmed.
+# If probe hangs (timeout exit 124), skips retries — a hang is definitive.
+_mount_check_with_retries() {
+    local retries="$_MOUNT_CHECK_RETRIES"
+    local delay="$_MOUNT_CHECK_RETRY_DELAY"
+
+    # First check
+    _mount_check_probe
+    local probe_exit=$?
+
+    if [[ "$probe_exit" -eq 0 ]]; then
+        return 0
+    fi
+
+    # Check if timeout killed the probe (exit 124) — skip retries for hangs
+    if [[ "$probe_exit" -eq 124 ]]; then
+        _liveness_log "WARN" "Mount probe timed out (hung I/O) — skipping retries"
+        return 1
+    fi
+
+    _liveness_log "WARN" "Mount check failed, retrying ${retries} times (delay=${delay}s)"
+
+    local i
+    for (( i=1; i<=retries; i++ )); do
+        sleep "$delay"
+        _mount_check_probe
+        local retry_rc=$?
+        if [[ "$retry_rc" -eq 0 ]]; then
+            _liveness_log "INFO" "Mount check recovered on retry $i"
+            return 0
+        fi
+        if [[ "$retry_rc" -eq 124 ]]; then
+            _liveness_log "WARN" "Mount probe timed out on retry $i — aborting retries"
+            return 1
+        fi
+        _liveness_log "WARN" "Mount check retry $i/$retries failed"
+    done
+
+    return 1
+}
+
+# Write mount-failure status and sentinel line.
+# Status write may fail if /kapsis-status is also on virtio-fs — that's OK,
+# the stderr sentinel reaches the host via podman's pipe regardless.
+_mount_check_write_failed_status() {
+    # Write sentinel to stderr — captured by podman tee pipeline on host
+    _liveness_log "ERROR" "KAPSIS_MOUNT_FAILURE: /workspace inaccessible (virtio-fs drop)"
+
+    # Best-effort status write (may fail if status mount is also gone)
+    if type status_phase &>/dev/null && type status_complete &>/dev/null; then
+        if type status_is_active &>/dev/null && status_is_active; then
+            status_complete 4 "Workspace mount lost: /workspace became inaccessible (virtio-fs drop)" 2>/dev/null || true
+        fi
+    fi
+}
+
+# Kill the agent after confirmed mount failure.
+_mount_check_kill_agent() {
+    local pid="$_LIVENESS_AGENT_PID"
+
+    _liveness_log "ERROR" "MOUNT FAILURE CONFIRMED: /workspace is inaccessible"
+    _liveness_log "ERROR" "Likely cause: macOS Podman VM virtio-fs mount drop"
+    _liveness_log "ERROR" "Killing agent (PID $pid)"
+
+    # Write status + sentinel before killing
+    _mount_check_write_failed_status
+
+    # SIGTERM first, then SIGKILL after 10s (same pattern as liveness kill)
+    kill -SIGTERM "$pid" 2>/dev/null || true
+    sleep 10
+
+    if kill -0 "$pid" 2>/dev/null; then
+        _liveness_log "WARN" "Agent did not exit after SIGTERM, sending SIGKILL"
+        kill -SIGKILL "$pid" 2>/dev/null || true
+    fi
+
+    _liveness_log "INFO" "Mount check: exiting after kill"
+}
+
+#===============================================================================
 # Kill Decision
 #===============================================================================
 
@@ -477,12 +619,20 @@ _liveness_monitor_loop() {
     local interval="$_LIVENESS_INTERVAL"
     local pid="$_LIVENESS_AGENT_PID"
 
-    _liveness_log "INFO" "Starting (timeout=${timeout}s, grace=${grace}s, interval=${interval}s)"
+    # Mount check has its own shorter grace period (Issue #248)
+    local mount_check_active="$_MOUNT_CHECK_ENABLED"
+    local mount_check_delay="$_MOUNT_CHECK_DELAY"
+    local mount_check_elapsed=0
+
+    _liveness_log "INFO" "Starting (timeout=${timeout}s, grace=${grace}s, interval=${interval}s, mount_check=${mount_check_active})"
 
     # Grace period: sleep before starting checks
     if [[ "$grace" -gt 0 ]]; then
         _liveness_log "INFO" "Grace period: sleeping ${grace}s before monitoring"
         sleep "$grace"
+        # Mount check delay is relative to container start, not post-grace
+        # Account for grace period already elapsed
+        ((mount_check_elapsed += grace)) || true
     fi
 
     # State tracking
@@ -504,6 +654,17 @@ _liveness_monitor_loop() {
         if ! kill -0 "$pid" 2>/dev/null; then
             _liveness_log "INFO" "Agent process (PID $pid) no longer running, exiting monitor"
             return 0
+        fi
+
+        # Mount check (Issue #248) — runs before liveness signals, kills immediately
+        if [[ "$mount_check_active" == "true" ]]; then
+            ((mount_check_elapsed += interval)) || true
+            if [[ "$mount_check_elapsed" -ge "$mount_check_delay" ]]; then
+                if ! _mount_check_with_retries; then
+                    _mount_check_kill_agent
+                    return 0
+                fi
+            fi
         fi
 
         # Refresh API IP list (no-op if TTL has not expired)
@@ -561,6 +722,43 @@ _liveness_monitor_loop() {
 }
 
 #===============================================================================
+# Standalone Mount Check Loop (Issue #248)
+#
+# Used when liveness monitoring is disabled but mount checking is enabled.
+# When liveness IS enabled, mount checks are integrated into its loop above.
+#===============================================================================
+
+_mount_check_loop() {
+    local interval="$_LIVENESS_INTERVAL"
+    local delay="$_MOUNT_CHECK_DELAY"
+    local pid="$_LIVENESS_AGENT_PID"
+
+    _liveness_log "INFO" "Mount check starting (interval=${interval}s, delay=${delay}s, retries=${_MOUNT_CHECK_RETRIES})"
+
+    # Grace period before first check
+    if [[ "$delay" -gt 0 ]]; then
+        _liveness_log "INFO" "Mount check: waiting ${delay}s before first probe"
+        sleep "$delay"
+    fi
+
+    while true; do
+        sleep "$interval"
+
+        # Check if agent process is still alive
+        if ! kill -0 "$pid" 2>/dev/null; then
+            _liveness_log "INFO" "Mount check: agent (PID $pid) no longer running, exiting"
+            return 0
+        fi
+
+        # Perform mount check with retries
+        if ! _mount_check_with_retries; then
+            _mount_check_kill_agent
+            return 0
+        fi
+    done
+}
+
+#===============================================================================
 # Public API
 #===============================================================================
 
@@ -581,5 +779,21 @@ start_liveness_monitor() {
     ( _liveness_monitor_loop ) &
     local monitor_pid=$!
 
-    _liveness_log "INFO" "Liveness monitor started (PID: $monitor_pid)"
+    _liveness_log "INFO" "Liveness monitor started (PID: $monitor_pid, mount_check=$_MOUNT_CHECK_ENABLED)"
+}
+
+# Start the standalone mount check monitor as a background process.
+# Used when liveness monitoring is disabled but mount checking is enabled.
+# Must be called before exec (after which PID 1 becomes the agent).
+start_mount_check_monitor() {
+    if [[ "$_MOUNT_CHECK_ENABLED" != "true" ]]; then
+        return 0
+    fi
+
+    _liveness_log "INFO" "Launching standalone mount check monitor"
+
+    ( _mount_check_loop ) &
+    local monitor_pid=$!
+
+    _liveness_log "INFO" "Mount check monitor started (PID: $monitor_pid)"
 }

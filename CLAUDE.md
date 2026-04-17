@@ -364,6 +364,10 @@ KAPSIS_PUSH_FALLBACK: cd /path/to/worktree && git push -u origin branch-name
 
 **In status.json:** The `push_fallback_command` field contains the same command when `push_status` is `"failed"`.
 
+## Mount Failure Detection (Issue #248)
+
+Exit code 4 indicates a virtio-fs mount drop detected mid-run. The agent writes a `KAPSIS_MOUNT_FAILURE:` sentinel to stderr (which flows through podman's pipe, not virtio-fs). Host-side `launch-agent.sh` detects the sentinel and overrides the exit code. Recovery: `podman machine stop && podman machine start`, then re-run.
+
 ## Cross-Platform Notes
 
 - macOS container overlay tests may fail due to virtio-fs limitations — run full test coverage on Linux
