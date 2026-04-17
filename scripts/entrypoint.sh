@@ -161,6 +161,7 @@ inject_credential_files() {
             local template
             if ! template=$(printf '%s' "$tmpl_b64" | base64 -d 2>/dev/null); then
                 umask "$old_umask"
+                unset "$tmpl_var"
                 log_error "Failed to decode template for $var_name — skipping"
                 continue
             fi
@@ -179,6 +180,7 @@ inject_credential_files() {
             # Write templated content (no trailing newline — template controls whitespace)
             if ! printf '%s' "$content" > "$file_path" 2>/dev/null; then
                 umask "$old_umask"
+                unset "$tmpl_var"
                 log_error "Failed to write templated credential to $file_path"
                 continue
             fi

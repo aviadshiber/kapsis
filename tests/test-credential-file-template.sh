@@ -238,9 +238,11 @@ test_template_env_vars_unset_after_injection() {
     # KAPSIS_TMPL_* should be unset
     assert_equals "" "${KAPSIS_TMPL_UNSET_TOKEN:-}" \
         "KAPSIS_TMPL_UNSET_TOKEN should be unset after injection"
+    # Secret env var itself should be unset (prevents leak to agent process)
+    assert_equals "" "${UNSET_TOKEN:-}" \
+        "Secret env var UNSET_TOKEN should be unset after injection"
 
     rm -rf "$output_dir"
-    unset UNSET_TOKEN 2>/dev/null || true
 }
 
 test_template_multiple_value_markers() {
@@ -292,14 +294,44 @@ test_template_bad_base64_skipped() {
     inject_credential_files 2>/dev/null || true
 
     # File should NOT be created (decode failed → skipped)
-    if [[ -f "$output_file" ]]; then
-        log_fail "Bad base64 should not produce a file"
-    else
-        log_pass "Bad base64 correctly skipped — no file created"
-    fi
+    assert_file_not_exists "$output_file" "Bad base64 should not produce a file"
 
     rm -rf "$output_dir"
     unset BAD_TOKEN KAPSIS_TMPL_BAD_TOKEN KAPSIS_CREDENTIAL_FILES 2>/dev/null || true
+}
+
+test_template_without_value_marker_writes_verbatim() {
+    log_test "Testing template without {{VALUE}} writes template verbatim (entrypoint bypass)"
+
+    # When launch-agent.sh is bypassed (e.g., direct container invocation),
+    # a template without {{VALUE}} should write the template content as-is.
+    # The split-and-rejoin loop never iterates, so content = remaining = template.
+    _setup_entrypoint_env
+
+    local output_dir="$TEST_PROJECT/.kapsis-tmpl-nomarker-$$"
+    mkdir -p "$output_dir"
+    local output_file="$output_dir/config.yml"
+
+    local template
+    template=$(printf 'static_key: some-fixed-value\n')
+    local template_b64
+    template_b64=$(printf '%s' "$template" | base64)
+
+    export NOMARKER_TOKEN="secret-unused"
+    export KAPSIS_TMPL_NOMARKER_TOKEN="$template_b64"
+    export KAPSIS_CREDENTIAL_FILES="NOMARKER_TOKEN|${output_file}|0600"
+
+    inject_credential_files
+
+    local content
+    content=$(cat "$output_file")
+    assert_contains "$content" "static_key: some-fixed-value" \
+        "Template without {{VALUE}} should write template content verbatim"
+    assert_not_contains "$content" "secret-unused" \
+        "Secret should not appear when template has no {{VALUE}} marker"
+
+    rm -rf "$output_dir"
+    unset NOMARKER_TOKEN KAPSIS_TMPL_NOMARKER_TOKEN KAPSIS_CREDENTIAL_FILES 2>/dev/null || true
 }
 
 #===============================================================================
@@ -309,19 +341,21 @@ test_template_bad_base64_skipped() {
 test_template_validation_in_launch_script() {
     log_test "Testing inject_file_template validation logic exists in launch-agent.sh"
 
+    # Structural guards — ensures the code paths are not accidentally deleted.
+    # Uses grep -q directly on file to avoid loading entire script into shell arg.
     local launch_script="$KAPSIS_ROOT/scripts/launch-agent.sh"
 
-    assert_contains "$(cat "$launch_script")" "KAPSIS_TMPL_" \
+    assert_true "grep -q 'KAPSIS_TMPL_' '$launch_script'" \
         "launch-agent.sh should reference KAPSIS_TMPL_ env vars"
-    assert_contains "$(cat "$launch_script")" "inject_file_template" \
+    assert_true "grep -q 'inject_file_template' '$launch_script'" \
         "launch-agent.sh should reference inject_file_template"
-    assert_contains "$(cat "$launch_script")" "missing required {{VALUE}}" \
+    assert_true "grep -q 'missing required {{VALUE}}' '$launch_script'" \
         "launch-agent.sh should validate {{VALUE}} marker"
-    assert_contains "$(cat "$launch_script")" "exceeds 64 KB limit" \
+    assert_true "grep -q 'exceeds 64 KB limit' '$launch_script'" \
         "launch-agent.sh should enforce size limit"
-    assert_contains "$(cat "$launch_script")" "contains NUL bytes" \
+    assert_true "grep -q 'contains NUL bytes' '$launch_script'" \
         "launch-agent.sh should reject NUL bytes"
-    assert_contains "$(cat "$launch_script")" "markers (max 5)" \
+    assert_true "grep -q 'markers (max 5)' '$launch_script'" \
         "launch-agent.sh should cap marker count"
 }
 
@@ -330,9 +364,9 @@ test_entrypoint_has_security_invariant() {
 
     local entrypoint="$KAPSIS_ROOT/scripts/entrypoint.sh"
 
-    assert_contains "$(cat "$entrypoint")" "SECURITY INVARIANT" \
+    assert_true "grep -q 'SECURITY INVARIANT' '$entrypoint'" \
         "entrypoint.sh should have SECURITY INVARIANT comment"
-    assert_contains "$(cat "$entrypoint")" "NEVER use sed, envsubst, eval" \
+    assert_true "grep -q 'NEVER use sed, envsubst, eval' '$entrypoint'" \
         "SECURITY INVARIANT should prohibit sed/envsubst/eval"
 }
 
@@ -341,7 +375,7 @@ test_entrypoint_unsets_credential_files() {
 
     local entrypoint="$KAPSIS_ROOT/scripts/entrypoint.sh"
 
-    assert_contains "$(cat "$entrypoint")" "unset KAPSIS_CREDENTIAL_FILES" \
+    assert_true "grep -q 'unset KAPSIS_CREDENTIAL_FILES' '$entrypoint'" \
         "entrypoint.sh should unset KAPSIS_CREDENTIAL_FILES"
 }
 
@@ -362,6 +396,7 @@ main() {
     run_test test_template_env_vars_unset_after_injection
     run_test test_template_multiple_value_markers
     run_test test_template_bad_base64_skipped
+    run_test test_template_without_value_marker_writes_verbatim
 
     # Launch-agent validation tests (file content checks)
     run_test test_template_validation_in_launch_script

@@ -1543,7 +1543,7 @@ generate_env_vars() {
 
                     # Decode template for validation (yq already base64-encoded it)
                     local template_raw
-                    if ! template_raw=$(echo "$inject_file_template_b64" | base64 -d 2>/dev/null); then
+                    if ! template_raw=$(printf '%s' "$inject_file_template_b64" | base64 -d 2>/dev/null); then
                         log_error "Failed to decode inject_file_template for $var_name"
                         exit 1
                     fi
@@ -1570,8 +1570,12 @@ generate_env_vars() {
                         fi
 
                         # Cap {{VALUE}} marker count to prevent heap amplification
-                        local marker_count
-                        marker_count=$(grep -o '{{VALUE}}' <<< "$template_raw" | wc -l)
+                        local marker_count=0
+                        local _marker_tmp="$template_raw"
+                        while [[ "$_marker_tmp" == *'{{VALUE}}'* ]]; do
+                            _marker_tmp="${_marker_tmp#*\{\{VALUE\}\}}"
+                            ((marker_count++)) || true
+                        done
                         if (( marker_count > 5 )); then
                             log_error "inject_file_template for $var_name has $marker_count {{VALUE}} markers (max 5)"
                             exit 1
