@@ -1424,7 +1424,8 @@ generate_env_vars() {
 
     if [[ -n "$ENV_KEYCHAIN" ]]; then
         log_info "Resolving secrets from system keychain..."
-        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to keyring_collection keyring_profile git_credential_for; do
+        # shellcheck disable=SC2034  # inject_file_template_b64 used in template validation block below
+        while IFS='|' read -r var_name service account inject_to_file file_mode inject_to keyring_collection keyring_profile git_credential_for inject_file_template_b64; do
             [[ -z "$var_name" || -z "$service" ]] && continue
 
             # Expand variables in account (e.g., ${USER})
@@ -1530,6 +1531,66 @@ generate_env_vars() {
                         CREDENTIAL_FILES="${var_name}|${inject_to_file}|${file_mode:-0600}"
                     fi
                     log_debug "Will inject $var_name to file: $inject_to_file"
+                fi
+
+                # Validate and pass inject_file_template if specified (Issue #241)
+                if [[ -n "${inject_file_template_b64:-}" ]]; then
+                    # Template requires inject_to_file — fail-loud if absent
+                    if [[ -z "$inject_to_file" ]]; then
+                        log_error "inject_file_template for $var_name requires inject_to_file to be set"
+                        exit 1
+                    fi
+
+                    # Decode template for validation (yq already base64-encoded it)
+                    local template_raw
+                    if ! template_raw=$(printf '%s' "$inject_file_template_b64" | base64 -d 2>/dev/null); then
+                        log_error "Failed to decode inject_file_template for $var_name"
+                        exit 1
+                    fi
+
+                    # Skip empty templates (field is base64("") when not specified)
+                    if [[ -n "$template_raw" ]]; then
+                        # Reject NUL bytes (would truncate shell strings)
+                        if [[ "$template_raw" == *$'\0'* ]]; then
+                            log_error "inject_file_template for $var_name contains NUL bytes"
+                            exit 1
+                        fi
+
+                        # Enforce 64 KB pre-encoding size cap
+                        local template_len=${#template_raw}
+                        if (( template_len > 65536 )); then
+                            log_error "inject_file_template for $var_name exceeds 64 KB limit (${template_len} bytes)"
+                            exit 1
+                        fi
+
+                        # Require {{VALUE}} marker — a template without one is always a misconfiguration
+                        if [[ "$template_raw" != *'{{VALUE}}'* ]]; then
+                            log_error "inject_file_template for $var_name missing required {{VALUE}} placeholder"
+                            exit 1
+                        fi
+
+                        # Cap {{VALUE}} marker count to prevent heap amplification
+                        local marker_count=0
+                        local _marker_tmp="$template_raw"
+                        while [[ "$_marker_tmp" == *'{{VALUE}}'* ]]; do
+                            _marker_tmp="${_marker_tmp#*\{\{VALUE\}\}}"
+                            ((marker_count++)) || true
+                        done
+                        if (( marker_count > 5 )); then
+                            log_error "inject_file_template for $var_name has $marker_count {{VALUE}} markers (max 5)"
+                            exit 1
+                        fi
+
+                        # Warn if secret value itself contains {{VALUE}} (safe for single-pass
+                        # bash parameter expansion, but surprising if mechanism ever changes)
+                        if [[ "$value" == *'{{VALUE}}'* ]]; then
+                            log_warn "Secret value for $var_name contains literal '{{VALUE}}' — substitution is single-pass"
+                        fi
+
+                        # Pass template to container via env-file (avoids ARG_MAX limits)
+                        SECRET_ENV_VARS+=("KAPSIS_TMPL_${var_name}=${inject_file_template_b64}")
+                        log_debug "Will apply template for $var_name (${template_len} bytes)"
+                    fi
                 fi
             else
                 log_warn "Secret not found: $service (for $var_name)"
@@ -2235,7 +2296,7 @@ main() {
         echo ""
         # Sanitize secrets as defense-in-depth (secrets normally go via --env-file,
         # but fallback path may add them as inline -e flags)
-        echo "$(sanitize_secrets "${CONTAINER_CMD[*]}")"
+        sanitize_secrets "${CONTAINER_CMD[*]}"
 
         # Show secrets env-file info if secrets were configured
         if [[ ${#SECRET_ENV_VARS[@]} -gt 0 ]]; then
