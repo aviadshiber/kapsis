@@ -107,6 +107,11 @@ fi
 #
 # Format: VAR_NAME|file_path|mode (comma-separated for multiple)
 # Example: CLAUDE_OAUTH|~/.claude/.credentials.json|0600,OPENAI_KEY|~/.config/openai/key|0600
+#
+# Template support (Issue #241):
+#   If KAPSIS_TMPL_<VAR_NAME> env var exists, it contains a base64-encoded
+#   template. The template's {{VALUE}} placeholders are replaced with the
+#   secret, and the result is written to the file instead of the raw value.
 #===============================================================================
 inject_credential_files() {
     if [[ -z "${KAPSIS_CREDENTIAL_FILES:-}" ]]; then
@@ -142,13 +147,45 @@ inject_credential_files() {
         old_umask=$(umask)
         umask 0077
 
-        # Write the credential to file (protected by umask)
-        # Use printf instead of echo: echo interprets flags (-n, -e, -E) and
-        # backslash sequences, which corrupts secrets starting with those chars.
-        if ! printf '%s\n' "$value" > "$file_path" 2>/dev/null; then
-            umask "$old_umask"
-            log_error "Failed to write credential to $file_path"
-            continue
+        # Check for template (Issue #241)
+        local tmpl_var="KAPSIS_TMPL_${var_name}"
+        local tmpl_b64="${!tmpl_var:-}"
+
+        if [[ -n "$tmpl_b64" ]]; then
+            # SECURITY INVARIANT: Template substitution MUST use bash parameter
+            # expansion only. NEVER use sed, envsubst, eval, or any mechanism
+            # that interprets the secret value. This prevents secret-content
+            # injection attacks.
+            local template
+            if ! template=$(printf '%s' "$tmpl_b64" | base64 -d 2>/dev/null); then
+                umask "$old_umask"
+                log_error "Failed to decode template for $var_name — skipping"
+                continue
+            fi
+
+            # Substitute all {{VALUE}} placeholders with the secret
+            local content="${template//\{\{VALUE\}\}/$value}"
+
+            # Write templated content (no trailing newline — template controls whitespace)
+            if ! printf '%s' "$content" > "$file_path" 2>/dev/null; then
+                umask "$old_umask"
+                log_error "Failed to write templated credential to $file_path"
+                continue
+            fi
+            log_debug "Injected $var_name to $file_path via template (mode: ${file_mode:-0600})"
+
+            # Clean up template intermediate variables
+            unset "$tmpl_var"
+        else
+            # Write raw credential to file (protected by umask)
+            # Use printf instead of echo: echo interprets flags (-n, -e, -E) and
+            # backslash sequences, which corrupts secrets starting with those chars.
+            if ! printf '%s\n' "$value" > "$file_path" 2>/dev/null; then
+                umask "$old_umask"
+                log_error "Failed to write credential to $file_path"
+                continue
+            fi
+            log_debug "Injected $var_name to $file_path (mode: ${file_mode:-0600})"
         fi
 
         # Restore original umask
@@ -156,7 +193,6 @@ inject_credential_files() {
 
         # Explicitly set final permissions for clarity
         chmod "${file_mode:-0600}" "$file_path" 2>/dev/null || true
-        log_debug "Injected $var_name to $file_path (mode: ${file_mode:-0600})"
 
         # Unset the env var so it's not visible to child processes
         # BUT: if this secret is also targeted for secret store injection,
@@ -167,6 +203,10 @@ inject_credential_files() {
             unset "$var_name"
         fi
     done
+
+    # Clean up metadata env var to prevent leaking file paths and template
+    # structure to the agent process (design review finding)
+    unset KAPSIS_CREDENTIAL_FILES
 
     log_success "Credential files injected"
 }
