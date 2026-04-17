@@ -148,6 +148,20 @@ environment:
     #   inject_to_file: "~/.config/my-agent/credentials.json"
     #   mode: "0600"
     #
+    # Formatted credential file with template (Issue #241):
+    # Use inject_file_template to embed the secret inside a structured config file.
+    # {{VALUE}} is replaced with the secret value at container startup.
+    # GH_TOKEN:
+    #   service: "gh:github.com"
+    #   account: "your-github-username"
+    #   inject_to_file: "~/.config/gh/hosts.yml"
+    #   inject_file_template: |
+    #     github.com:
+    #       oauth_token: {{VALUE}}
+    #       user: your-github-username
+    #       git_protocol: https
+    #   mode: "0600"
+    #
     # Example: Token with account name
     # GIT_TOKEN:
     #   service: "my-git-token"

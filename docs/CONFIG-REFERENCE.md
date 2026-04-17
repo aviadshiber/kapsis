@@ -1080,7 +1080,7 @@ By default, keychain secrets are stored in the container's Linux Secret Service 
 
 **Validation:** Unrecognized `inject_to` values (e.g., typos like `"keyring"`) produce a warning and default to `"env"`.
 
-**Combining `inject_to_file` and `inject_to`:** These are orthogonal — both can be specified on the same entry. File injection writes the secret to disk first, then secret store injection stores it in the keyring and unsets the env var. The file and the keyring entry both receive the secret value.
+**Combining `inject_to_file` and `inject_to`:** These are orthogonal — both can be specified on the same entry. File injection writes the secret to disk first, then secret store injection stores it in the keyring and unsets the env var. The file and the keyring entry both receive the secret value. When `inject_file_template` is also specified, the secret is embedded inside the template before writing to the file.
 
 To globally use environment variables instead: set `environment.inject_to: "env"` in your config.
 
@@ -1218,6 +1218,41 @@ environment:
 3. For each entry with `inject_to_file`, the credential is written to that file path
 4. The environment variable is then **unset** (so child processes can't read it)
 5. The agent reads credentials from the file as expected
+
+### Formatted Files with `inject_file_template`
+
+Some CLI tools require credentials embedded inside a structured config file rather than as a raw value. The `inject_file_template` field lets you define the file format inline, with `{{VALUE}}` as the placeholder for the secret:
+
+```yaml
+environment:
+  keychain:
+    GH_TOKEN:
+      service: "gh:github.com"
+      account: "aviadshiber"
+      inject_to: "secret_store"
+      inject_to_file: "~/.config/gh/hosts.yml"
+      inject_file_template: |
+        github.com:
+          oauth_token: {{VALUE}}
+          user: aviadshiber
+          git_protocol: https
+      mode: "0600"
+```
+
+**How it works:**
+1. At launch, the template is base64-encoded and passed to the container via an env var
+2. The entrypoint decodes the template and replaces every `{{VALUE}}` with the secret
+3. The result is written to the `inject_to_file` path with the specified `mode`
+4. No trailing newline is added — the template controls whitespace (use YAML `|` block scalar for a trailing newline)
+
+**Validation rules:**
+- `inject_to_file` is required when `inject_file_template` is set
+- The template must contain at least one `{{VALUE}}` placeholder
+- Maximum 5 `{{VALUE}}` placeholders per template
+- Maximum 64 KB template size (pre-encoding)
+- NUL bytes are rejected
+
+**Without `inject_file_template`:** The raw secret value is written to the file (existing behavior, unchanged).
 
 ### Priority Order
 
