@@ -85,6 +85,85 @@ EOF
         "inject_to and inject_to_file should both be present"
 }
 
+#===============================================================================
+# INJECT FILE TEMPLATE TESTS (Issue #241)
+#===============================================================================
+
+test_yq_expr_includes_inject_file_template() {
+    log_test "Testing YQ expression includes inject_file_template as base64-encoded 10th field"
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        return 0
+    fi
+
+    local test_config="$TEST_PROJECT/.kapsis-tmpl-yq-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    GH_TOKEN:
+      service: "gh:github.com"
+      account: "testuser"
+      inject_to_file: "~/.config/gh/hosts.yml"
+      inject_file_template: |
+        github.com:
+          oauth_token: {{VALUE}}
+          user: testuser
+          git_protocol: https
+      mode: "0600"
+EOF
+
+    local parsed
+    parsed=$(parse_keychain_config "$test_config")
+
+    rm -f "$test_config"
+
+    # The 10th field should be a non-empty base64-encoded string
+    local template_b64
+    template_b64=$(echo "$parsed" | head -1 | cut -d'|' -f10)
+    assert_not_equals "" "$template_b64" "inject_file_template should produce non-empty 10th field"
+
+    # Decode and verify the template content
+    local decoded
+    decoded=$(echo "$template_b64" | base64 -d 2>/dev/null)
+    assert_contains "$decoded" "{{VALUE}}" "Decoded template should contain {{VALUE}} placeholder"
+    assert_contains "$decoded" "oauth_token" "Decoded template should contain oauth_token field"
+}
+
+test_yq_expr_empty_template_produces_empty_base64() {
+    log_test "Testing YQ expression produces base64 of empty string when no template specified"
+
+    if ! command -v yq &> /dev/null; then
+        log_skip "yq not available"
+        return 0
+    fi
+
+    local test_config="$TEST_PROJECT/.kapsis-tmpl-empty-test.yaml"
+    cat > "$test_config" << 'EOF'
+agent:
+  command: "echo test"
+environment:
+  keychain:
+    PLAIN_TOKEN:
+      service: "plain-service"
+      inject_to_file: "~/.config/plain/token"
+EOF
+
+    local parsed
+    parsed=$(parse_keychain_config "$test_config")
+
+    rm -f "$test_config"
+
+    # The 10th field should be base64("") which decodes to empty
+    local template_b64
+    template_b64=$(echo "$parsed" | head -1 | cut -d'|' -f10)
+    local decoded
+    decoded=$(echo "$template_b64" | base64 -d 2>/dev/null || true)
+    assert_equals "" "$decoded" "Empty template should decode to empty string"
+}
+
 test_secret_store_entries_dry_run() {
     log_test "Testing KAPSIS_SECRET_STORE_ENTRIES appears in dry-run when inject_to: secret_store"
 
@@ -490,6 +569,8 @@ main() {
     # Config parsing tests (no container required)
     run_test test_inject_to_field_in_yq_pipeline
     run_test test_inject_to_with_inject_to_file_coexist
+    run_test test_yq_expr_includes_inject_file_template
+    run_test test_yq_expr_empty_template_produces_empty_base64
     run_test test_secret_store_entries_dry_run
     run_test test_build_config_secret_store_toggle
     run_test test_build_config_minimal_no_secret_store
