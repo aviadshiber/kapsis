@@ -167,6 +167,18 @@ Configuration is stored in `configs/tool-phase-mapping.yaml`.
 }
 ```
 
+### Exit Codes
+
+| Code | Meaning | Recovery |
+|------|---------|----------|
+| 0 | Success | — |
+| 1 | Agent failure | Check container logs |
+| 2 | Push failed | Run push fallback command |
+| 3 | Uncommitted changes | Manually commit from worktree |
+| 4 | Mount failure (virtio-fs drop) | `podman machine stop && start`, re-run |
+| 137 | Killed by liveness monitor (SIGKILL) | Check agent for hangs |
+| 143 | Killed by liveness monitor (SIGTERM) | Check agent for hangs |
+
 ## Agent Gist (Live Activity Summary)
 
 During long "thinking" periods, the standard status message may become stale. The **gist** feature provides a signaling file that agents can update in real-time to communicate what they're currently working on.
