@@ -372,11 +372,11 @@ test_nul_check_no_false_positive() {
     local template_b64
     template_b64=$(printf '%s' "$template" | base64)
 
-    local _raw_count _clean_count
-    _raw_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | wc -c)
-    _clean_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | tr -d '\0' | wc -c)
+    local raw_byte_count clean_byte_count
+    raw_byte_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | wc -c)
+    clean_byte_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | tr -d '\0' | wc -c)
 
-    assert_equals "$_raw_count" "$_clean_count" \
+    assert_equals "$raw_byte_count" "$clean_byte_count" \
         "Valid template should have equal raw and clean byte counts"
 }
 
@@ -387,11 +387,11 @@ test_nul_check_detects_actual_nul() {
     local template_b64
     template_b64=$(printf 'hello\0world' | base64)
 
-    local _raw_count _clean_count
-    _raw_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | wc -c)
-    _clean_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | tr -d '\0' | wc -c)
+    local raw_byte_count clean_byte_count
+    raw_byte_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | wc -c)
+    clean_byte_count=$(printf '%s' "$template_b64" | base64 -d 2>/dev/null | tr -d '\0' | wc -c)
 
-    assert_true "(( _raw_count != _clean_count ))" \
+    assert_true "(( raw_byte_count != clean_byte_count ))" \
         "Template with NUL should have different raw vs clean byte counts"
 }
 
