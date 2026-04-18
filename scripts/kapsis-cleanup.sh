@@ -399,12 +399,11 @@ clean_sandboxes() {
             else
                 local cleaned=false
                 # Try fixing permissions first (overlay mount corruption leaves root-owned files)
-                # Use find to avoid following symlinks in subtree
-                if find "$sandbox" -not -type l -exec chmod u+rwX {} + 2>/dev/null; then
-                    if rm -rf "$sandbox" 2>/dev/null; then
-                        print_item "sandbox" "$name" "$size_human (via chmod fix)"
-                        cleaned=true
-                    fi
+                # Use find -xdev to avoid crossing filesystem boundaries, -not -type l to skip symlinks
+                find "$sandbox" -xdev -not -type l -exec chmod u+rwX {} + 2>/dev/null || true
+                if rm -rf "$sandbox" 2>/dev/null; then
+                    print_item "sandbox" "$name" "$size_human (via chmod fix)"
+                    cleaned=true
                 fi
                 # Escalate to podman unshare (Linux) or sudo (macOS)
                 if [[ "$cleaned" != "true" ]] && command -v podman &>/dev/null; then
@@ -573,12 +572,6 @@ clean_containers() {
         return
     fi
 
-    # Quick store health check before attempting individual removals
-    if ! podman system check --quick 2>/dev/null; then
-        log_warn "Podman store health check failed — store may be corrupted"
-        STORE_CORRUPTED=true
-    fi
-
     local count=0
     local corruption_count=0
 
@@ -591,6 +584,14 @@ clean_containers() {
         return
     fi
 
+    # Quick store health check before attempting individual removals (skip in dry-run)
+    if [[ "$DRY_RUN" != "true" ]]; then
+        if ! podman system check --quick 2>/dev/null; then
+            log_warn "Podman store health check failed — store may be corrupted"
+            STORE_CORRUPTED=true
+        fi
+    fi
+
     while IFS= read -r container; do
         [[ -z "$container" ]] && continue
 
@@ -601,19 +602,21 @@ clean_containers() {
 
         if [[ "$DRY_RUN" == "true" ]]; then
             print_item "container" "$container" "N/A"
+            ((count++)) || true
         else
             local rm_output
-            rm_output=$(podman rm "$container" 2>&1) || {
+            if rm_output=$(timeout 30 podman rm "$container" 2>&1); then
+                print_item "container" "$container" "N/A"
+                ((count++)) || true
+            else
                 if [[ "$rm_output" == *"not known"* ]] || [[ "$rm_output" == *"no such"* ]]; then
                     ((corruption_count++)) || true
                     log_warn "Container '$container' — store corruption detected"
                 else
-                    log_debug "podman rm '$container' failed: $rm_output"
+                    log_warn "Container '$container' removal failed: $rm_output"
                 fi
-            }
-            print_item "container" "$container" "N/A"
+            fi
         fi
-        ((count++)) || true
     done <<< "$containers"
 
     # Report corruption if detected
@@ -1218,8 +1221,9 @@ repair_store() {
 
     # Verify podman machine is running
     local ssh_timeout="${KAPSIS_CLEANUP_VM_SSH_TIMEOUT:-${KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT:-15}}"
+    local machine_name="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
     local machine_state
-    machine_state=$(timeout "$ssh_timeout" podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null || echo "not-found")
+    machine_state=$(timeout "$ssh_timeout" podman machine inspect "$machine_name" --format '{{.State}}' 2>/dev/null || echo "not-found")
     machine_state=$(echo "$machine_state" | tr -d '[:space:]' | tr -d '"')
 
     if [[ "$machine_state" != "running" ]]; then
@@ -1232,17 +1236,15 @@ repair_store() {
 
     if [[ "$DRY_RUN" == "true" ]]; then
         echo -e "  ${CYAN}[DRY-RUN]${NC} Would run: podman system check --repair --force"
-        echo -e "  ${CYAN}[DRY-RUN]${NC} Would run sanity check: podman run --rm alpine echo ok"
+        echo -e "  ${CYAN}[DRY-RUN]${NC} Would run sanity check: podman info"
         return 0
     fi
 
-    local repair_output
-    repair_output=$(podman system check --repair --force 2>&1) || true
-    log_info "Repair output: $repair_output"
+    podman system check --repair --force 2>&1 | tee -a "${KAPSIS_LOG_FILE:-/dev/null}" || true
 
-    # Sanity check — can we run a basic container?
+    # Sanity check — verify store is accessible
     log_info "Running post-repair sanity check..."
-    if podman run --rm alpine echo "store-ok" &>/dev/null; then
+    if podman info --format '{{.Store.GraphRoot}}' &>/dev/null; then
         log_success "Store repair successful — Podman is functional"
         return 0
     fi
@@ -1262,13 +1264,13 @@ repair_store() {
     fi
 
     log_info "Removing and recreating Podman machine..."
-    podman machine rm -f 2>&1 || true
-    podman machine init 2>&1 || {
+    podman machine rm -f "$machine_name" 2>&1 || true
+    podman machine init "$machine_name" 2>&1 || {
         log_error "Failed to initialize new Podman machine"
         log_error "Manual recovery: podman machine init && podman machine start"
         return 1
     }
-    podman machine start 2>&1 || {
+    podman machine start "$machine_name" 2>&1 || {
         log_error "Failed to start new Podman machine"
         log_error "Manual recovery: podman machine start"
         return 1
@@ -1276,7 +1278,7 @@ repair_store() {
 
     # Post-reset sanity check
     log_info "Running post-reset sanity check..."
-    if podman run --rm alpine echo "store-ok" &>/dev/null; then
+    if podman info --format '{{.Store.GraphRoot}}' &>/dev/null; then
         log_success "VM reset successful — Podman is functional"
         log_warn "All Kapsis images must be rebuilt: scripts/build-image.sh"
     else
