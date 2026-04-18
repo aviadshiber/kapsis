@@ -59,6 +59,10 @@ CLEAN_IMAGES=false
 CLEAN_BRANCHES=false
 CLEAN_VM_HEALTH=false
 CLEAN_WORKTREES=false
+CLEAN_REPAIR=false
+
+# Module-level corruption tracking (set by clean_containers when store errors detected)
+STORE_CORRUPTED=false
 
 # How long to allow `du` to run on a single directory before giving up.
 # Protects against stale FUSE/NFS mounts and slow network filesystems.
@@ -99,6 +103,9 @@ OPTIONS:
     --worktrees         Clean git worktrees (included by default, explicit for scripting)
     --vm-health         Check Podman VM health (inode %, disk %, journal size)
                         Warns at 70% inodes, auto-cleans images at 90%
+    --repair            Repair corrupted Podman container store
+                        Stage 1: podman system check --repair --force
+                        Stage 2 (if needed): full VM reset (requires --force)
     --force, -f         Skip confirmation prompts
     --help, -h          Show this help message
 
@@ -114,6 +121,7 @@ WHAT GETS CLEANED:
     Logs            Old log files (with --logs)
     SSH cache       Cached SSH host keys (with --ssh-cache)
     Branches        Agent-created git branches (with --branches or --all)
+    Store repair    Podman container store corruption (with --repair)
 
 EXAMPLES:
     # See what would be cleaned
@@ -136,6 +144,12 @@ EXAMPLES:
 
     # Clear SSH host key cache (after key rotation)
     $cmd_name --ssh-cache
+
+    # Repair corrupted container store (after mount drop)
+    $cmd_name --repair
+
+    # Force repair with full VM reset if needed
+    $cmd_name --repair --force
 EOF
 }
 
@@ -383,10 +397,17 @@ clean_sandboxes() {
             if rm -rf "$sandbox" 2>/dev/null; then
                 print_item "sandbox" "$name" "$size_human"
             else
-                # Try podman unshare (Linux) or other elevated methods
                 local cleaned=false
-                if command -v podman &>/dev/null; then
-                    # Check if we're on macOS (remote podman)
+                # Try fixing permissions first (overlay mount corruption leaves root-owned files)
+                # Use find to avoid following symlinks in subtree
+                if find "$sandbox" -not -type l -exec chmod u+rwX {} + 2>/dev/null; then
+                    if rm -rf "$sandbox" 2>/dev/null; then
+                        print_item "sandbox" "$name" "$size_human (via chmod fix)"
+                        cleaned=true
+                    fi
+                fi
+                # Escalate to podman unshare (Linux) or sudo (macOS)
+                if [[ "$cleaned" != "true" ]] && command -v podman &>/dev/null; then
                     if [[ "$(uname)" == "Darwin" ]]; then
                         # On macOS, overlay dirs owned by VM - try sudo
                         if sudo rm -rf "$sandbox" 2>/dev/null; then
@@ -552,7 +573,14 @@ clean_containers() {
         return
     fi
 
+    # Quick store health check before attempting individual removals
+    if ! podman system check --quick 2>/dev/null; then
+        log_warn "Podman store health check failed — store may be corrupted"
+        STORE_CORRUPTED=true
+    fi
+
     local count=0
+    local corruption_count=0
 
     # Get stopped kapsis containers
     local containers
@@ -574,11 +602,26 @@ clean_containers() {
         if [[ "$DRY_RUN" == "true" ]]; then
             print_item "container" "$container" "N/A"
         else
-            podman rm "$container" &>/dev/null || true
+            local rm_output
+            rm_output=$(podman rm "$container" 2>&1) || {
+                if [[ "$rm_output" == *"not known"* ]] || [[ "$rm_output" == *"no such"* ]]; then
+                    ((corruption_count++)) || true
+                    log_warn "Container '$container' — store corruption detected"
+                else
+                    log_debug "podman rm '$container' failed: $rm_output"
+                fi
+            }
             print_item "container" "$container" "N/A"
         fi
         ((count++)) || true
     done <<< "$containers"
+
+    # Report corruption if detected
+    if (( corruption_count > 0 )); then
+        STORE_CORRUPTED=true
+        echo -e "  ${YELLOW}Store corruption: $corruption_count container(s) not removable${NC}"
+        echo -e "  ${CYAN}Run: kapsis-cleanup --repair${NC}"
+    fi
 
     if (( count == 0 )); then
         echo "  No containers to clean"
@@ -1157,6 +1200,94 @@ vm_health_check() {
     return 0
 }
 
+# Repair corrupted Podman container store (Fix #249)
+repair_store() {
+    section "Store Repair"
+
+    if ! command -v podman &>/dev/null; then
+        echo "  Podman not available"
+        return 1
+    fi
+
+    # Platform guard — podman machine only exists on macOS
+    if is_linux; then
+        log_info "On Linux, repair the store directly:"
+        log_info "  podman system check --repair --force"
+        return 0
+    fi
+
+    # Verify podman machine is running
+    local ssh_timeout="${KAPSIS_CLEANUP_VM_SSH_TIMEOUT:-${KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT:-15}}"
+    local machine_state
+    machine_state=$(timeout "$ssh_timeout" podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null || echo "not-found")
+    machine_state=$(echo "$machine_state" | tr -d '[:space:]' | tr -d '"')
+
+    if [[ "$machine_state" != "running" ]]; then
+        log_error "Podman machine is not running (state: $machine_state). Start it first: podman machine start"
+        return 1
+    fi
+
+    # Stage 1: Use Podman's first-party repair tool
+    log_info "Stage 1: Running podman system check --repair --force..."
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "  ${CYAN}[DRY-RUN]${NC} Would run: podman system check --repair --force"
+        echo -e "  ${CYAN}[DRY-RUN]${NC} Would run sanity check: podman run --rm alpine echo ok"
+        return 0
+    fi
+
+    local repair_output
+    repair_output=$(podman system check --repair --force 2>&1) || true
+    log_info "Repair output: $repair_output"
+
+    # Sanity check — can we run a basic container?
+    log_info "Running post-repair sanity check..."
+    if podman run --rm alpine echo "store-ok" &>/dev/null; then
+        log_success "Store repair successful — Podman is functional"
+        return 0
+    fi
+
+    log_warn "Stage 1 repair did not fully restore the store"
+
+    # Stage 2: Nuclear option — full VM reset
+    log_warn "Stage 2: Full VM reset required"
+    log_warn "This will DESTROY all container images, volumes, and build caches"
+    log_warn "You will need to rebuild all Kapsis images (est. 10-30 min)"
+
+    if [[ "$FORCE" != "true" ]]; then
+        if ! confirm "Proceed with full VM reset?"; then
+            echo "  Aborted. Run with --force to skip confirmation."
+            return 1
+        fi
+    fi
+
+    log_info "Removing and recreating Podman machine..."
+    podman machine rm -f 2>&1 || true
+    podman machine init 2>&1 || {
+        log_error "Failed to initialize new Podman machine"
+        log_error "Manual recovery: podman machine init && podman machine start"
+        return 1
+    }
+    podman machine start 2>&1 || {
+        log_error "Failed to start new Podman machine"
+        log_error "Manual recovery: podman machine start"
+        return 1
+    }
+
+    # Post-reset sanity check
+    log_info "Running post-reset sanity check..."
+    if podman run --rm alpine echo "store-ok" &>/dev/null; then
+        log_success "VM reset successful — Podman is functional"
+        log_warn "All Kapsis images must be rebuilt: scripts/build-image.sh"
+    else
+        log_error "Podman still not functional after VM reset"
+        log_error "Manual investigation required"
+        return 1
+    fi
+
+    return 0
+}
+
 # Print summary
 print_summary() {
     echo -e "\n${BOLD}${GREEN}=== Summary ===${NC}"
@@ -1167,6 +1298,10 @@ print_summary() {
     else
         echo -e "  Cleaned: $ITEMS_CLEANED items"
         echo -e "  Space freed: $(format_size $TOTAL_SIZE_FREED)"
+    fi
+    if [[ "$STORE_CORRUPTED" == "true" ]]; then
+        echo -e "\n  ${YELLOW}WARNING: Container store corruption detected${NC}"
+        echo -e "  ${CYAN}Run: kapsis-cleanup --repair${NC}"
     fi
 }
 
@@ -1234,6 +1369,11 @@ main() {
                 ;;
             --vm-health)
                 CLEAN_VM_HEALTH=true
+                explicit_action_requested=true
+                shift
+                ;;
+            --repair)
+                CLEAN_REPAIR=true
                 explicit_action_requested=true
                 shift
                 ;;
@@ -1319,6 +1459,10 @@ main() {
 
     if [[ "$CLEAN_VM_HEALTH" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
         vm_health_check || true
+    fi
+
+    if [[ "$CLEAN_REPAIR" == "true" ]]; then
+        repair_store || true
     fi
 
     # Summary
