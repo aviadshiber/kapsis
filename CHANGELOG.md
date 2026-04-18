@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.20.1] - 2026-04-18
+## [2.20.2] - 2026-04-18
 
 ### Fixed
-- Resolve inject_file_template NUL bytes false positive (#252)
+- Detect and repair corrupted Podman container store (#253)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Resolve inject_file_template NUL bytes false positive (#252)
+
 
 ### Added
 - Detect /workspace virtio-fs mount drop mid-run (#250)
@@ -788,7 +792,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.20.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.20.2...HEAD
+[2.20.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.2
 [2.20.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.1
 [2.20.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.0
 [2.19.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.19.0
