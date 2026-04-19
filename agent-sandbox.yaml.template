@@ -224,6 +224,31 @@ sandbox:
   interactive_merge: true
 
 #===============================================================================
+# LIVENESS MONITORING (Issue #257)
+#===============================================================================
+# Detects hung agents and auto-kills them after timeout.
+# Monitors: status.json hook updates, /proc I/O activity, API TCP connections.
+# All three signals must be stale to trigger kill.
+liveness:
+  # Enable liveness monitoring (default: true)
+  enabled: true
+
+  # Kill after N seconds of no activity (default: 900)
+  timeout: 900
+
+  # Skip checks for N seconds after start (default: 300)
+  grace_period: 300
+
+  # Check every N seconds (default: 30)
+  check_interval: 30
+
+  # Post-completion timeout: shorter timeout when agent reports done (default: 120)
+  completion_timeout: 120
+
+  # Mount check: detect virtio-fs drops on macOS (default: true)
+  mount_check: true
+
+#===============================================================================
 # GIT WORKFLOW (Auto-Push to Branch for PR Review)
 #===============================================================================
 git:

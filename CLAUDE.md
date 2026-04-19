@@ -364,9 +364,41 @@ KAPSIS_PUSH_FALLBACK: cd /path/to/worktree && git push -u origin branch-name
 
 **In status.json:** The `push_fallback_command` field contains the same command when `push_status` is `"failed"`.
 
+## Exit Codes
+
+| Code | Meaning | Detection |
+|------|---------|-----------|
+| 0 | Success (changes committed or no changes) | Normal exit |
+| 1 | Agent failure | Container exit non-zero |
+| 2 | Push failed | Post-container push failure |
+| 3 | Uncommitted changes remain | Commit status check |
+| 4 | Mount failure (virtio-fs drop, Issue #248) | `KAPSIS_MOUNT_FAILURE:` sentinel in stderr |
+| 5 | Agent completed but process hung (Issue #257) | Liveness monitor kills + status.json phase is "complete" |
+
 ## Mount Failure Detection (Issue #248)
 
 Exit code 4 indicates a virtio-fs mount drop detected mid-run. The agent writes a `KAPSIS_MOUNT_FAILURE:` sentinel to stderr (which flows through podman's pipe, not virtio-fs). Host-side `launch-agent.sh` detects the sentinel and overrides the exit code. Recovery: `podman machine stop && podman machine start`, then re-run.
+
+## Hung Agent Detection (Issue #257)
+
+Liveness monitoring is **enabled by default** (timeout: 900s). It detects hung agents via three signals: `updated_at` staleness, process tree I/O activity, and active API TCP connections. When all signals are stale, the agent is killed.
+
+Key features:
+- **Descendant I/O monitoring**: Sums I/O across all container processes, not just PID 1
+- **Post-completion short timeout**: 120s when agent reports done but process hasn't exited
+- **API staleness override**: Kills after 1800s even with active API connection (stuck tool call scenario)
+- **Auto-diagnostics**: Captures process tree, FDs, TCP connections before kill
+- **Exit code 5**: Written when agent completed work but process hung (e.g., stuck MCP server or tool call)
+
+Configuration in `agent-sandbox.yaml`:
+```yaml
+liveness:
+  enabled: true          # default: true
+  timeout: 900           # default: 900s
+  completion_timeout: 120  # default: 120s (post-completion)
+  grace_period: 300      # default: 300s
+  check_interval: 30     # default: 30s
+```
 
 ## Cross-Platform Notes
 

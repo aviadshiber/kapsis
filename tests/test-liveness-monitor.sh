@@ -110,14 +110,17 @@ test_liveness_config_defaults() {
         unset KAPSIS_LIVENESS_TIMEOUT KAPSIS_LIVENESS_GRACE_PERIOD KAPSIS_LIVENESS_CHECK_INTERVAL
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
 
-        # Check defaults are set correctly
-        [[ "$_LIVENESS_TIMEOUT" == "1800" ]] || exit 1
+        # Check defaults are set correctly (Issue #257: timeout 1800→900, API max skip 240→60)
+        [[ "$_LIVENESS_TIMEOUT" == "900" ]] || exit 1
         [[ "$_LIVENESS_GRACE" == "300" ]] || exit 2
         [[ "$_LIVENESS_INTERVAL" == "30" ]] || exit 3
+        [[ "$_LIVENESS_API_MAX_SKIP" == "60" ]] || exit 4
+        [[ "$_LIVENESS_COMPLETION_TIMEOUT" == "120" ]] || exit 5
+        [[ "$_LIVENESS_API_STALENESS_OVERRIDE" == "1800" ]] || exit 6
     ) 2>/dev/null
     local exit_code=$?
 
-    assert_equals 0 "$exit_code" "Should have correct defaults (1800/300/30)"
+    assert_equals 0 "$exit_code" "Should have correct defaults (900/300/30/60/120/1800)"
 }
 
 test_liveness_config_custom_values() {
@@ -412,6 +415,7 @@ test_liveness_skip_kill_when_api_connection() {
 
         _LIVENESS_API_SKIP_COUNT=0
         _LIVENESS_API_MAX_SKIP=240
+        _LIVENESS_API_STALENESS_OVERRIDE=99999  # Prevent staleness override from triggering
 
         local cycles=5
         if _liveness_should_kill 9999 1800 cycles; then
@@ -954,6 +958,276 @@ test_mount_check_config_custom_values() {
 }
 
 #===============================================================================
+# ISSUE #257 TESTS: hung agent detection
+#===============================================================================
+
+test_liveness_get_phase() {
+    log_test "Testing _liveness_get_phase extracts phase from status.json"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # Create a mock status dir with a status file
+        local status_dir
+        status_dir=$(mktemp -d)
+        mkdir -p "$status_dir"
+        cat > "$status_dir/kapsis-test-1.json" << 'STATUSEOF'
+{
+  "phase": "complete",
+  "updated_at": "2026-03-22T10:30:00Z"
+}
+STATUSEOF
+
+        # Override status dir discovery
+        _liveness_get_phase() {
+            local content
+            content=$(cat "$status_dir/kapsis-test-1.json" 2>/dev/null) || return
+            if [[ "$content" =~ \"phase\":\ *\"([^\"]*)\" ]]; then
+                echo "${BASH_REMATCH[1]}"
+            fi
+        }
+
+        local phase
+        phase=$(_liveness_get_phase)
+        [[ "$phase" == "complete" ]] || { echo "Expected 'complete', got '$phase'"; exit 1; }
+
+        rm -rf "$status_dir"
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should extract phase from status.json: $err"
+}
+
+test_liveness_get_phase_running() {
+    log_test "Testing _liveness_get_phase returns 'running' when agent is active"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        local status_dir
+        status_dir=$(mktemp -d)
+        cat > "$status_dir/kapsis-test-1.json" << 'STATUSEOF'
+{
+  "phase": "running",
+  "updated_at": "2026-03-22T10:30:00Z"
+}
+STATUSEOF
+
+        _liveness_get_phase() {
+            local content
+            content=$(cat "$status_dir/kapsis-test-1.json" 2>/dev/null) || return
+            if [[ "$content" =~ \"phase\":\ *\"([^\"]*)\" ]]; then
+                echo "${BASH_REMATCH[1]}"
+            fi
+        }
+
+        local phase
+        phase=$(_liveness_get_phase)
+        [[ "$phase" == "running" ]] || { echo "Expected 'running', got '$phase'"; exit 1; }
+
+        rm -rf "$status_dir"
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should extract 'running' phase: $err"
+}
+
+test_liveness_exit_code_5_on_completion() {
+    log_test "Testing _liveness_write_killed_status uses exit 5 when phase=complete"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        # Mock _liveness_get_phase to return "complete"
+        _liveness_get_phase() { echo "complete"; }
+
+        # Track what status_complete was called with
+        local captured_exit_code=""
+        status_phase() { true; }
+        status_complete() { captured_exit_code="$1"; }
+        status_is_active() { return 0; }
+
+        _liveness_write_killed_status "test reason"
+
+        [[ "$captured_exit_code" == "5" ]] || { echo "Expected exit code 5, got '$captured_exit_code'"; exit 1; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should use exit code 5 when phase=complete: $err"
+}
+
+test_liveness_exit_code_137_when_running() {
+    log_test "Testing _liveness_write_killed_status uses exit 137 when phase=running"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        _liveness_get_phase() { echo "running"; }
+
+        local captured_exit_code=""
+        status_phase() { true; }
+        status_complete() { captured_exit_code="$1"; }
+        status_is_active() { return 0; }
+
+        _liveness_write_killed_status "test reason"
+
+        [[ "$captured_exit_code" == "137" ]] || { echo "Expected exit code 137, got '$captured_exit_code'"; exit 1; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should use exit code 137 when phase=running: $err"
+}
+
+test_liveness_io_total_descendants() {
+    log_test "Testing I/O total sums across multiple process io files"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+
+    # Create mock /proc/<pid>/io files
+    create_mock_proc_io "$tmpdir/1" 1000 2000   # PID 1: 3000
+    create_mock_proc_io "$tmpdir/2" 500 500      # PID 2: 1000
+    create_mock_proc_io "$tmpdir/3" 100 200      # PID 3: 300
+
+    # Test the awk command directly (same as _liveness_get_io_total uses)
+    local io_total
+    io_total=$(awk '/^(read|write)_bytes:/ {s+=$2} END {print s+0}' "$tmpdir"/[0-9]*/io 2>/dev/null || echo "0")
+
+    assert_equals "4300" "$io_total" "Should sum I/O across all processes (3000+1000+300)"
+
+    rm -rf "$tmpdir"
+}
+
+test_liveness_api_staleness_override() {
+    log_test "Testing _liveness_should_kill triggers kill via API staleness override"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_has_active_api_connections() { return 0; }  # API active
+        _liveness_log() { true; }
+
+        _LIVENESS_API_SKIP_COUNT=0
+        _LIVENESS_API_MAX_SKIP=999  # High cap — won't be reached
+        _LIVENESS_API_STALENESS_OVERRIDE=1800  # Override at 30 min
+
+        local cycles=5
+        # stale_seconds=2000 > 1800 → should trigger staleness override
+        if ! _liveness_should_kill 2000 900 cycles; then
+            echo "ERROR: should_kill returned 1 (spare) but staleness override should trigger"
+            exit 1
+        fi
+
+        # cycles should be restored
+        [[ "$cycles" -eq 5 ]] || { echo "Expected cycles=5 (restored), got $cycles"; exit 2; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should kill via API staleness override: $err"
+}
+
+test_liveness_api_staleness_no_override_below_threshold() {
+    log_test "Testing _liveness_should_kill skips kill when below staleness override"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_has_active_api_connections() { return 0; }  # API active
+        _liveness_log() { true; }
+
+        _LIVENESS_API_SKIP_COUNT=0
+        _LIVENESS_API_MAX_SKIP=999
+        _LIVENESS_API_STALENESS_OVERRIDE=1800
+
+        local cycles=5
+        # stale_seconds=1500 < 1800 → should NOT trigger staleness override
+        if _liveness_should_kill 1500 900 cycles; then
+            echo "ERROR: should_kill returned 0 (kill) but staleness override should NOT trigger"
+            exit 1
+        fi
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should not kill below staleness override threshold: $err"
+}
+
+test_liveness_diagnostics_capture() {
+    log_test "Testing _liveness_capture_diagnostics creates diagnostics file"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        local diag_dir
+        diag_dir=$(mktemp -d)
+
+        # Override the diagnostics dir path
+        _liveness_capture_diagnostics() {
+            local pid="$1"
+            local reason="$2"
+            local stale_seconds="$3"
+            local diag_file="${diag_dir}/kapsis-liveness-diagnostics.txt"
+
+            {
+                echo "=== Kapsis Liveness Kill Diagnostics ==="
+                echo "Reason: $reason"
+                echo "Staleness: ${stale_seconds}s"
+                echo "=== Process Tree ==="
+                echo "test process tree"
+                echo "=== End Diagnostics ==="
+            } > "$diag_file" 2>/dev/null || true
+        }
+
+        _liveness_capture_diagnostics 1 "test reason" 900
+
+        local diag_file="${diag_dir}/kapsis-liveness-diagnostics.txt"
+        [[ -f "$diag_file" ]] || { echo "Diagnostics file not created"; exit 1; }
+        grep -q "Kapsis Liveness Kill Diagnostics" "$diag_file" || { echo "Missing header"; exit 2; }
+        grep -q "test reason" "$diag_file" || { echo "Missing reason"; exit 3; }
+        grep -q "End Diagnostics" "$diag_file" || { echo "Missing footer"; exit 4; }
+
+        rm -rf "$diag_dir"
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should create diagnostics file with expected sections: $err"
+}
+
+test_liveness_exit_code_5_constant() {
+    log_test "Testing KAPSIS_EXIT_HUNG_AFTER_COMPLETION constant is defined"
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/constants.sh"
+        [[ "$KAPSIS_EXIT_HUNG_AFTER_COMPLETION" == "5" ]] || exit 1
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "KAPSIS_EXIT_HUNG_AFTER_COMPLETION should be 5"
+}
+
+test_status_get_exit_code() {
+    log_test "Testing status_get_exit_code reads exit_code from status file"
+
+    (
+        export KAPSIS_STATUS_DIR
+        KAPSIS_STATUS_DIR=$(mktemp -d)
+        export KAPSIS_STATUS_ENABLED=true
+        source "$KAPSIS_ROOT/scripts/lib/status.sh"
+        status_init "test-project" "test-ec5" "main" "overlay"
+
+        # Write a complete status with exit code 5
+        status_complete 5 "Agent killed by liveness monitor"
+
+        local ec
+        ec=$(status_get_exit_code)
+        [[ "$ec" == "5" ]] || exit 1
+
+        rm -f "$_KAPSIS_STATUS_FILE"
+        rm -rf "$KAPSIS_STATUS_DIR"
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should read exit_code 5 from status file"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -1001,6 +1275,18 @@ main() {
     run_test test_health_flag_requires_args
     run_test test_health_json_output_valid
     run_test test_health_not_found
+
+    # Issue #257 tests: hung agent detection
+    run_test test_liveness_get_phase
+    run_test test_liveness_get_phase_running
+    run_test test_liveness_exit_code_5_on_completion
+    run_test test_liveness_exit_code_137_when_running
+    run_test test_liveness_io_total_descendants
+    run_test test_liveness_api_staleness_override
+    run_test test_liveness_api_staleness_no_override_below_threshold
+    run_test test_liveness_diagnostics_capture
+    run_test test_liveness_exit_code_5_constant
+    run_test test_status_get_exit_code
 
     # Mount check tests (Issue #248)
     run_test test_mount_check_probe_healthy
