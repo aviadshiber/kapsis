@@ -42,7 +42,7 @@ backend_validate() {
     log_debug "Podman found at: $(command -v podman)"
 
     # Check Podman machine is running (macOS only)
-    if [[ "$(uname)" == "Darwin" ]]; then
+    if is_macos 2>/dev/null || [[ "$(uname)" == "Darwin" ]]; then
         log_debug "Checking Podman machine status..."
         if ! podman machine inspect podman-machine-default &>/dev/null || \
            [[ "$(podman machine inspect podman-machine-default --format '{{.State}}')" != "running" ]]; then
@@ -54,6 +54,25 @@ backend_validate() {
             log_success "Podman machine started"
         else
             log_debug "Podman machine is running"
+        fi
+
+        # Verify SSH tunnel is functional (Issue #255)
+        # Machine may report "running" but SSH tunnel is dead after reboot/sleep.
+        # Skip if preflight already verified (avoids double probing).
+        if [[ "${KAPSIS_SSH_PROBE_PASSED:-}" != "1" ]] && declare -f _recover_podman_ssh_tunnel &>/dev/null; then
+            local probe_timeout="${KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_PROBE_TIMEOUT:-10}}"
+            local max_retries="${KAPSIS_PREFLIGHT_SSH_RECOVERY_RETRIES:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_RETRIES:-2}}"
+            local retry_delay="${KAPSIS_PREFLIGHT_SSH_RECOVERY_DELAY:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_DELAY:-3}}"
+
+            log_debug "Probing Podman SSH tunnel..."
+            if _recover_podman_ssh_tunnel "$probe_timeout" "$max_retries" "$retry_delay"; then
+                log_debug "Podman SSH tunnel is functional"
+            else
+                log_error "Podman SSH tunnel is broken. Run: podman machine stop && podman machine start"
+                return 1
+            fi
+        else
+            log_debug "SSH probe already passed — skipping"
         fi
     fi
 

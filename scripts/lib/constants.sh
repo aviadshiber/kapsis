@@ -276,6 +276,23 @@ readonly KAPSIS_DEFAULT_CLEANUP_VM_JOURNAL_VACUUM_SIZE="100M"
 readonly KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT=15
 
 #===============================================================================
+# SSH PROBE DEFAULTS (Issue #255)
+#
+# Pre-flight connectivity check for Podman SSH tunnel (macOS only).
+# After reboot/sleep, the machine may report "running" while SSH is dead.
+# Override via environment variables (e.g., KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT=5).
+#===============================================================================
+
+# Timeout (seconds) for the `podman info` SSH connectivity probe
+readonly KAPSIS_DEFAULT_PREFLIGHT_SSH_PROBE_TIMEOUT=10
+
+# Max retries after stop/start recovery attempt
+readonly KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_RETRIES=2
+
+# Delay (seconds) between recovery retries
+readonly KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_DELAY=3
+
+#===============================================================================
 # EXIT CODES (Issue #248)
 #
 # Standard exit codes returned by Kapsis agent containers.
