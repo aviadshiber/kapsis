@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.20.3] - 2026-04-19
+## [2.20.4] - 2026-04-19
 
 ### Changed
-- Skip ShellCheck SARIF on scheduled security scans (#254)
+- Release v2.20.4
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Changed
+- Skip ShellCheck SARIF on scheduled security scans (#254)
+
 
 ### Fixed
 - Detect and repair corrupted Podman container store (#253)
@@ -796,7 +800,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.20.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.20.4...HEAD
+[2.20.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.4
 [2.20.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.3
 [2.20.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.2
 [2.20.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.1
