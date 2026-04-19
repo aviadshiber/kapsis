@@ -427,16 +427,17 @@ EOF
 
     rm -f "$test_config"
 
-    # In interactive mode, command should be just "bash", not the agent command
+    # In interactive mode, command should be just "bash", not the agent command.
+    # Env var values may contain literal newlines, so join from "podman run" onward.
     local cmd_line
-    cmd_line=$(echo "$output" | grep "^podman run")
+    cmd_line=$(echo "$output" | sed -n '/^podman run/,$ p' | tr '\n' ' ')
 
     if echo "$cmd_line" | grep -q "my-custom-agent"; then
         log_fail "Agent command should not appear in interactive mode"
         return 1
     fi
 
-    if echo "$cmd_line" | grep -q "$KAPSIS_TEST_IMAGE bash$"; then
+    if echo "$cmd_line" | grep -q "$KAPSIS_TEST_IMAGE bash"; then
         return 0
     else
         log_fail "Interactive mode should use bash"
