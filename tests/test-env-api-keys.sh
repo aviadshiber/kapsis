@@ -353,9 +353,10 @@ EOF
 
     rm -f "$test_config"
 
-    # Extract the podman command
+    # Extract the podman command — env var values may contain literal newlines
+    # (e.g. KAPSIS_ATTRIBUTION_COMMIT), so join all lines from "podman run" onward.
     local cmd_line
-    cmd_line=$(echo "$output" | grep "^podman run")
+    cmd_line=$(echo "$output" | sed -n '/^podman run/,$ p' | tr '\n' ' ')
 
     if [[ -z "$cmd_line" ]]; then
         log_fail "Could not find podman command in dry-run output"
