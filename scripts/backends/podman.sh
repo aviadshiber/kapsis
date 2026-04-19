@@ -42,7 +42,7 @@ backend_validate() {
     log_debug "Podman found at: $(command -v podman)"
 
     # Check Podman machine is running (macOS only)
-    if [[ "$(uname)" == "Darwin" ]]; then
+    if is_macos 2>/dev/null || [[ "$(uname)" == "Darwin" ]]; then
         log_debug "Checking Podman machine status..."
         if ! podman machine inspect podman-machine-default &>/dev/null || \
            [[ "$(podman machine inspect podman-machine-default --format '{{.State}}')" != "running" ]]; then
@@ -58,37 +58,21 @@ backend_validate() {
 
         # Verify SSH tunnel is functional (Issue #255)
         # Machine may report "running" but SSH tunnel is dead after reboot/sleep.
-        if declare -f _podman_ssh_probe &>/dev/null; then
+        # Skip if preflight already verified (avoids double probing).
+        if [[ "${KAPSIS_SSH_PROBE_PASSED:-}" != "1" ]] && declare -f _recover_podman_ssh_tunnel &>/dev/null; then
             local probe_timeout="${KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_PROBE_TIMEOUT:-10}}"
             local max_retries="${KAPSIS_PREFLIGHT_SSH_RECOVERY_RETRIES:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_RETRIES:-2}}"
             local retry_delay="${KAPSIS_PREFLIGHT_SSH_RECOVERY_DELAY:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_DELAY:-3}}"
 
             log_debug "Probing Podman SSH tunnel..."
-            if ! _podman_ssh_probe "$probe_timeout"; then
-                log_warn "Podman SSH tunnel is stale. Attempting recovery (stop + start)..."
-                podman machine stop podman-machine-default &>/dev/null || true
-                podman machine start podman-machine-default &>/dev/null || true
-
-                local i
-                local recovered=false
-                for (( i=1; i<=max_retries; i++ )); do
-                    sleep "$retry_delay"
-                    if _podman_ssh_probe "$probe_timeout"; then
-                        recovered=true
-                        break
-                    fi
-                    log_warn "SSH recovery retry $i/$max_retries failed"
-                done
-
-                if [[ "$recovered" == "true" ]]; then
-                    log_success "Podman SSH tunnel recovered after restart"
-                else
-                    log_error "Podman SSH tunnel is broken. Run: podman machine stop && podman machine start"
-                    return 1
-                fi
-            else
+            if _recover_podman_ssh_tunnel "$probe_timeout" "$max_retries" "$retry_delay"; then
                 log_debug "Podman SSH tunnel is functional"
+            else
+                log_error "Podman SSH tunnel is broken. Run: podman machine stop && podman machine start"
+                return 1
             fi
+        else
+            log_debug "SSH probe already passed — skipping"
         fi
     fi
 

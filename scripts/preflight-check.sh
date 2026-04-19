@@ -88,37 +88,21 @@ check_podman() {
 
     # Verify SSH tunnel is functional (macOS only — Issue #255)
     # After reboot/sleep, machine reports "running" but SSH tunnel may be dead.
-    if is_macos && declare -f _podman_ssh_probe &>/dev/null; then
+    if ! is_linux && declare -f _recover_podman_ssh_tunnel &>/dev/null; then
         local probe_timeout="${KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_PROBE_TIMEOUT:-10}}"
         local max_retries="${KAPSIS_PREFLIGHT_SSH_RECOVERY_RETRIES:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_RETRIES:-2}}"
         local retry_delay="${KAPSIS_PREFLIGHT_SSH_RECOVERY_DELAY:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_DELAY:-3}}"
 
         log_info "Verifying Podman SSH tunnel..."
 
-        if _podman_ssh_probe "$probe_timeout"; then
-            preflight_ok "Podman SSH tunnel is functional"
-        else
-            log_warn "Podman SSH tunnel is stale, attempting recovery (stop + start)..."
-            podman machine stop podman-machine-default &>/dev/null || true
-            podman machine start podman-machine-default &>/dev/null || true
-
-            local i
-            local recovered=false
-            for (( i=1; i<=max_retries; i++ )); do
-                sleep "$retry_delay"
-                if _podman_ssh_probe "$probe_timeout"; then
-                    recovered=true
-                    break
-                fi
-                log_warn "SSH recovery retry $i/$max_retries failed"
-            done
-
-            if [[ "$recovered" == "true" ]]; then
-                preflight_ok "Podman SSH tunnel recovered after restart"
-            else
-                preflight_error "Podman SSH tunnel is broken — run: podman machine stop && podman machine start"
-                return 1
+        if _recover_podman_ssh_tunnel "$probe_timeout" "$max_retries" "$retry_delay"; then
+            if [[ "${KAPSIS_SSH_PROBE_PASSED:-}" == "1" ]]; then
+                preflight_ok "Podman SSH tunnel is functional"
             fi
+        else
+            # preflight_error does not return non-zero; explicit return required
+            preflight_error "Podman SSH tunnel is broken — run: podman machine stop && podman machine start"
+            return 1
         fi
     fi
 

@@ -432,82 +432,22 @@ test_preflight_error_messages_actionable() {
 # TEST CASES: SSH Tunnel Connectivity (Issue #255)
 #===============================================================================
 
-test_check_podman_verifies_ssh_connectivity() {
-    log_test "Testing check_podman verifies SSH connectivity on macOS"
+# Helper: create a mock podman script for SSH tests
+# Args: $1=mock_dir, $2=info_behavior ("fail"|"succeed"|"fail_then_succeed")
+_create_ssh_mock_podman() {
+    local mock_dir="$1"
+    local info_behavior="${2:-fail}"
 
-    local content
-    content=$(cat "$PREFLIGHT_SCRIPT")
+    # State file for fail_then_succeed mode
+    local call_count_file="$mock_dir/.podman_info_calls"
+    echo "0" > "$call_count_file"
 
-    assert_contains "$content" "_podman_ssh_probe" \
-        "check_podman should call _podman_ssh_probe"
-    assert_contains "$content" "SSH tunnel is broken" \
-        "check_podman should report SSH tunnel broken on probe failure"
-    assert_contains "$content" "is_macos" \
-        "SSH probe should be gated on macOS platform check"
-}
-
-test_ssh_probe_defined_in_compat() {
-    log_test "Testing _podman_ssh_probe is defined in compat.sh"
-
-    local compat_file="$KAPSIS_ROOT/scripts/lib/compat.sh"
-    local content
-    content=$(cat "$compat_file")
-
-    assert_contains "$content" "_podman_ssh_probe()" \
-        "_podman_ssh_probe function should be defined in compat.sh"
-    assert_contains "$content" "podman info" \
-        "_podman_ssh_probe should use 'podman info' as connectivity check"
-    assert_contains "$content" "is_linux" \
-        "_podman_ssh_probe should skip on Linux (native Podman)"
-}
-
-test_ssh_probe_constants_exist() {
-    log_test "Testing SSH probe constants exist in constants.sh"
-
-    local constants_file="$KAPSIS_ROOT/scripts/lib/constants.sh"
-    local content
-    content=$(cat "$constants_file")
-
-    assert_contains "$content" "KAPSIS_DEFAULT_PREFLIGHT_SSH_PROBE_TIMEOUT" \
-        "SSH probe timeout constant should exist"
-    assert_contains "$content" "KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_RETRIES" \
-        "SSH recovery retries constant should exist"
-    assert_contains "$content" "KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_DELAY" \
-        "SSH recovery delay constant should exist"
-}
-
-test_backend_validate_has_ssh_recovery() {
-    log_test "Testing backend_validate includes SSH recovery logic"
-
-    local backend_file="$KAPSIS_ROOT/scripts/backends/podman.sh"
-    local content
-    content=$(cat "$backend_file")
-
-    assert_contains "$content" "_podman_ssh_probe" \
-        "backend_validate should call _podman_ssh_probe"
-    assert_contains "$content" "SSH tunnel is stale" \
-        "backend_validate should detect stale SSH tunnel"
-    assert_contains "$content" "podman machine stop" \
-        "backend_validate should attempt stop as part of recovery"
-    assert_contains "$content" "SSH tunnel recovered" \
-        "backend_validate should report successful recovery"
-    assert_contains "$content" "SSH tunnel is broken" \
-        "backend_validate should report if recovery fails"
-}
-
-test_check_podman_fails_on_stale_ssh() {
-    log_test "Testing check_podman fails when SSH tunnel is stale"
-
-    local mock_dir
-    mock_dir=$(mktemp -d)
-
-    # Mock podman: machine inspect returns "running" but podman info fails
-    cat > "$mock_dir/podman" <<'MOCK'
+    cat > "$mock_dir/podman" <<MOCK
 #!/usr/bin/env bash
-if [[ "${1:-}" == "machine" ]]; then
-    if [[ "${2:-}" == "inspect" ]]; then
-        for arg in "$@"; do
-            if [[ "$arg" == *"{{.State}}"* ]]; then
+if [[ "\${1:-}" == "machine" ]]; then
+    if [[ "\${2:-}" == "inspect" ]]; then
+        for arg in "\$@"; do
+            if [[ "\$arg" == *"{{.State}}"* ]]; then
                 echo "running"
                 exit 0
             fi
@@ -518,116 +458,201 @@ if [[ "${1:-}" == "machine" ]]; then
     # machine stop / machine start — succeed silently
     exit 0
 fi
-if [[ "${1:-}" == "info" ]]; then
-    # Simulate stale SSH: podman info fails
-    exit 125
-fi
-exit 0
-MOCK
-    chmod +x "$mock_dir/podman"
-
-    # Mock timeout to just pass through
-    cat > "$mock_dir/timeout" <<'MOCK'
-#!/usr/bin/env bash
-shift  # skip timeout value
-exec "$@"
-MOCK
-    chmod +x "$mock_dir/timeout"
-
-    # Run in a fresh bash process to avoid readonly variable inheritance
-    local test_script="$mock_dir/run-test.sh"
-    cat > "$test_script" <<TESTEOF
-#!/usr/bin/env bash
-set -euo pipefail
-export PATH="$mock_dir:\$PATH"
-source "$KAPSIS_ROOT/scripts/lib/logging.sh"
-log_init "test"
-source "$KAPSIS_ROOT/scripts/lib/compat.sh"
-source "$KAPSIS_ROOT/scripts/lib/constants.sh"
-# Force macOS detection for CI environments
-_KAPSIS_OS="Darwin"
-source "$PREFLIGHT_SCRIPT"
-_PREFLIGHT_ERRORS=0
-_PREFLIGHT_WARNINGS=0
-KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT=2
-KAPSIS_PREFLIGHT_SSH_RECOVERY_RETRIES=1
-KAPSIS_PREFLIGHT_SSH_RECOVERY_DELAY=0
-check_podman
-TESTEOF
-    chmod +x "$test_script"
-
-    local output
-    local result=0
-    output=$(bash "$test_script" 2>&1) || result=$?
-
-    rm -rf "$mock_dir"
-
-    assert_not_equals 0 "$result" "check_podman should fail when SSH tunnel is stale"
-    assert_contains "$output" "SSH tunnel is broken" "Should report broken SSH tunnel"
-}
-
-test_check_podman_passes_on_healthy_ssh() {
-    log_test "Testing check_podman passes when SSH tunnel is healthy"
-
-    local mock_dir
-    mock_dir=$(mktemp -d)
-
-    # Mock podman: both inspect and info succeed
-    cat > "$mock_dir/podman" <<'MOCK'
-#!/usr/bin/env bash
-if [[ "${1:-}" == "machine" ]] && [[ "${2:-}" == "inspect" ]]; then
-    for arg in "$@"; do
-        if [[ "$arg" == *"{{.State}}"* ]]; then
-            echo "running"
+if [[ "\${1:-}" == "info" ]]; then
+    case "$info_behavior" in
+        fail)
+            exit 125
+            ;;
+        succeed)
+            echo "host:"
             exit 0
-        fi
-    done
-    echo "{}"
-    exit 0
-fi
-if [[ "${1:-}" == "info" ]]; then
-    echo "host:"
-    exit 0
+            ;;
+        fail_then_succeed)
+            count=\$(cat "$call_count_file")
+            count=\$((count + 1))
+            echo "\$count" > "$call_count_file"
+            if [[ \$count -le 1 ]]; then
+                exit 125  # first call fails
+            else
+                echo "host:"
+                exit 0    # subsequent calls succeed
+            fi
+            ;;
+    esac
 fi
 exit 0
 MOCK
     chmod +x "$mock_dir/podman"
 
+    # Mock timeout to pass through (strips timeout arg)
     cat > "$mock_dir/timeout" <<'MOCK'
 #!/usr/bin/env bash
 shift
 exec "$@"
 MOCK
     chmod +x "$mock_dir/timeout"
+}
 
-    # Run in a fresh bash process to avoid readonly variable inheritance
+# Helper: create a test script that sources libraries and runs check_podman
+# Args: $1=mock_dir, $2...=extra lines to add before check_podman
+_create_ssh_test_script() {
+    local mock_dir="$1"
+    shift
+    local extra_lines=("$@")
+
     local test_script="$mock_dir/run-test.sh"
-    cat > "$test_script" <<TESTEOF
-#!/usr/bin/env bash
-set -euo pipefail
-export PATH="$mock_dir:\$PATH"
-source "$KAPSIS_ROOT/scripts/lib/logging.sh"
-log_init "test"
-source "$KAPSIS_ROOT/scripts/lib/compat.sh"
-source "$KAPSIS_ROOT/scripts/lib/constants.sh"
-# Force macOS detection for CI environments
-_KAPSIS_OS="Darwin"
-source "$PREFLIGHT_SCRIPT"
-_PREFLIGHT_ERRORS=0
-_PREFLIGHT_WARNINGS=0
-KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT=2
-check_podman
-TESTEOF
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'set -euo pipefail'
+        echo "export PATH=\"$mock_dir:\$PATH\""
+        echo "source \"$KAPSIS_ROOT/scripts/lib/logging.sh\""
+        echo 'log_init "test"'
+        echo "source \"$KAPSIS_ROOT/scripts/lib/compat.sh\""
+        echo "source \"$KAPSIS_ROOT/scripts/lib/constants.sh\""
+        echo '_KAPSIS_OS="Darwin"'
+        echo "source \"$PREFLIGHT_SCRIPT\""
+        echo '_PREFLIGHT_ERRORS=0'
+        echo '_PREFLIGHT_WARNINGS=0'
+        echo 'KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT=2'
+        for line in "${extra_lines[@]}"; do
+            echo "$line"
+        done
+        echo 'check_podman'
+        # shellcheck disable=SC2016
+        echo 'echo "ERRORS=$_PREFLIGHT_ERRORS"'
+    } > "$test_script"
     chmod +x "$test_script"
+}
 
-    local output
-    local result=0
-    output=$(bash "$test_script" 2>&1) || result=$?
+# Smoke test: key integration points exist in source
+test_ssh_probe_source_integration() {
+    log_test "Testing SSH probe integration points exist in source"
 
+    local compat_content preflight_content backend_content constants_content
+    compat_content=$(cat "$KAPSIS_ROOT/scripts/lib/compat.sh")
+    preflight_content=$(cat "$PREFLIGHT_SCRIPT")
+    backend_content=$(cat "$KAPSIS_ROOT/scripts/backends/podman.sh")
+    constants_content=$(cat "$KAPSIS_ROOT/scripts/lib/constants.sh")
+
+    # Probe and recovery functions defined in compat.sh
+    assert_contains "$compat_content" "_podman_ssh_probe()" \
+        "_podman_ssh_probe should be defined in compat.sh"
+    assert_contains "$compat_content" "_recover_podman_ssh_tunnel()" \
+        "_recover_podman_ssh_tunnel should be defined in compat.sh"
+    assert_contains "$compat_content" "podman info" \
+        "Probe should use 'podman info' as connectivity check"
+
+    # Callers use shared recovery function
+    assert_contains "$preflight_content" "_recover_podman_ssh_tunnel" \
+        "preflight should call shared recovery function"
+    assert_contains "$backend_content" "_recover_podman_ssh_tunnel" \
+        "backend should call shared recovery function"
+
+    # Constants defined
+    assert_contains "$constants_content" "KAPSIS_DEFAULT_PREFLIGHT_SSH_PROBE_TIMEOUT=10" \
+        "SSH probe timeout constant should exist with default 10"
+    assert_contains "$constants_content" "KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_RETRIES=2" \
+        "SSH recovery retries constant should exist with default 2"
+    assert_contains "$constants_content" "KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_DELAY=3" \
+        "SSH recovery delay constant should exist with default 3"
+
+    # Backend skips if probe already passed
+    assert_contains "$backend_content" "KAPSIS_SSH_PROBE_PASSED" \
+        "backend should check KAPSIS_SSH_PROBE_PASSED to avoid double probing"
+}
+
+# Behavioral: check_podman fails when SSH tunnel is permanently stale
+test_check_podman_fails_on_stale_ssh() {
+    log_test "Testing check_podman fails when SSH tunnel is stale"
+
+    local mock_dir
+    mock_dir=$(mktemp -d)
+    _create_ssh_mock_podman "$mock_dir" "fail"
+    _create_ssh_test_script "$mock_dir" \
+        'KAPSIS_PREFLIGHT_SSH_RECOVERY_RETRIES=1' \
+        'KAPSIS_PREFLIGHT_SSH_RECOVERY_DELAY=0'
+
+    local output result=0
+    output=$(bash "$mock_dir/run-test.sh" 2>&1) || result=$?
+    rm -rf "$mock_dir"
+
+    assert_not_equals 0 "$result" "check_podman should fail when SSH tunnel is stale"
+    assert_contains "$output" "SSH tunnel is broken" "Should report broken SSH tunnel"
+    assert_not_contains "$output" "SSH tunnel is functional" "Should NOT report functional"
+}
+
+# Behavioral: check_podman passes when SSH tunnel is healthy
+test_check_podman_passes_on_healthy_ssh() {
+    log_test "Testing check_podman passes when SSH tunnel is healthy"
+
+    local mock_dir
+    mock_dir=$(mktemp -d)
+    _create_ssh_mock_podman "$mock_dir" "succeed"
+    _create_ssh_test_script "$mock_dir"
+
+    local output result=0
+    output=$(bash "$mock_dir/run-test.sh" 2>&1) || result=$?
     rm -rf "$mock_dir"
 
     assert_equals 0 "$result" "check_podman should pass when SSH tunnel is healthy"
     assert_contains "$output" "SSH tunnel is functional" "Should report functional SSH tunnel"
+    assert_contains "$output" "ERRORS=0" "Should have zero preflight errors"
+}
+
+# Behavioral: recovery succeeds on retry after initial failure
+test_check_podman_recovers_on_retry() {
+    log_test "Testing check_podman recovers when SSH tunnel heals after restart"
+
+    local mock_dir
+    mock_dir=$(mktemp -d)
+    _create_ssh_mock_podman "$mock_dir" "fail_then_succeed"
+    _create_ssh_test_script "$mock_dir" \
+        'KAPSIS_PREFLIGHT_SSH_RECOVERY_RETRIES=2' \
+        'KAPSIS_PREFLIGHT_SSH_RECOVERY_DELAY=0'
+
+    local output result=0
+    output=$(bash "$mock_dir/run-test.sh" 2>&1) || result=$?
+    rm -rf "$mock_dir"
+
+    assert_equals 0 "$result" "check_podman should succeed after recovery"
+    assert_contains "$output" "SSH tunnel is functional" "Should report functional after recovery"
+    assert_not_contains "$output" "SSH tunnel is broken" "Should NOT report broken"
+    assert_contains "$output" "ERRORS=0" "Should have zero preflight errors"
+}
+
+# Behavioral: SSH probe is skipped on Linux
+test_check_podman_skips_ssh_on_linux() {
+    log_test "Testing check_podman skips SSH probe on Linux"
+
+    local mock_dir
+    mock_dir=$(mktemp -d)
+    # Use fail behavior — but on Linux, probe should never run
+    _create_ssh_mock_podman "$mock_dir" "fail"
+
+    local test_script="$mock_dir/run-test.sh"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'set -euo pipefail'
+        echo "export PATH=\"$mock_dir:\$PATH\""
+        echo "source \"$KAPSIS_ROOT/scripts/lib/logging.sh\""
+        echo 'log_init "test"'
+        echo "source \"$KAPSIS_ROOT/scripts/lib/compat.sh\""
+        echo "source \"$KAPSIS_ROOT/scripts/lib/constants.sh\""
+        echo '_KAPSIS_OS="Linux"'
+        echo "source \"$PREFLIGHT_SCRIPT\""
+        echo '_PREFLIGHT_ERRORS=0'
+        echo '_PREFLIGHT_WARNINGS=0'
+        echo 'KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT=2'
+        echo 'check_podman'
+    } > "$test_script"
+    chmod +x "$test_script"
+
+    local output result=0
+    output=$(bash "$test_script" 2>&1) || result=$?
+    rm -rf "$mock_dir"
+
+    assert_equals 0 "$result" "check_podman should pass on Linux (no SSH probe)"
+    assert_not_contains "$output" "SSH tunnel" "Should not mention SSH tunnel on Linux"
 }
 
 #===============================================================================
@@ -668,12 +693,11 @@ main() {
     run_test test_preflight_error_messages_actionable
 
     # SSH connectivity tests (Issue #255)
-    run_test test_check_podman_verifies_ssh_connectivity
-    run_test test_ssh_probe_defined_in_compat
-    run_test test_ssh_probe_constants_exist
-    run_test test_backend_validate_has_ssh_recovery
+    run_test test_ssh_probe_source_integration
     run_test test_check_podman_fails_on_stale_ssh
     run_test test_check_podman_passes_on_healthy_ssh
+    run_test test_check_podman_recovers_on_retry
+    run_test test_check_podman_skips_ssh_on_linux
 
     # Summary
     print_summary

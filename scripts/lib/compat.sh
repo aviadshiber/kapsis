@@ -263,6 +263,18 @@ sha256_hash() {
 }
 
 #-------------------------------------------------------------------------------
+# Timeout command cache — detected once at source time.
+# Used by _podman_ssh_probe and _recover_podman_ssh_tunnel.
+#-------------------------------------------------------------------------------
+if command -v timeout &>/dev/null; then
+    _KAPSIS_TIMEOUT_CMD="timeout"
+elif command -v gtimeout &>/dev/null; then
+    _KAPSIS_TIMEOUT_CMD="gtimeout"
+else
+    _KAPSIS_TIMEOUT_CMD=""
+fi
+
+#-------------------------------------------------------------------------------
 # _podman_ssh_probe [timeout_seconds]
 #
 # Verifies that the Podman SSH tunnel is functional (macOS only).
@@ -279,18 +291,84 @@ _podman_ssh_probe() {
         return 0
     fi
 
-    # Find a timeout command (macOS may have gtimeout from coreutils)
-    local timeout_cmd=""
-    if command -v timeout &>/dev/null; then
-        timeout_cmd="timeout"
-    elif command -v gtimeout &>/dev/null; then
-        timeout_cmd="gtimeout"
+    # Validate timeout is a positive integer within sane bounds (1-120)
+    if ! [[ "$timeout_secs" =~ ^[0-9]+$ ]] || (( timeout_secs < 1 || timeout_secs > 120 )); then
+        timeout_secs=10
     fi
 
     # Probe: `podman info` validates CLI → SSH → VM → daemon
-    if [[ -n "$timeout_cmd" ]]; then
-        "$timeout_cmd" "$timeout_secs" podman info &>/dev/null
+    if [[ -n "$_KAPSIS_TIMEOUT_CMD" ]]; then
+        "$_KAPSIS_TIMEOUT_CMD" "$timeout_secs" podman info &>/dev/null
     else
+        # No timeout binary — podman info could hang on stale SSH tunnel.
+        # Install coreutils (brew install coreutils) for gtimeout support.
         podman info &>/dev/null
     fi
+}
+
+#-------------------------------------------------------------------------------
+# _recover_podman_ssh_tunnel [probe_timeout] [max_retries] [retry_delay]
+#
+# Probes the Podman SSH tunnel and attempts recovery if stale (macOS only).
+# On Linux, always returns 0 (no SSH tunnel).
+#
+# Recovery: podman machine stop + start, then retry probe with backoff.
+# Sets KAPSIS_SSH_PROBE_PASSED=1 on success to avoid redundant probes.
+#
+# Returns: 0 if tunnel is healthy (or recovered), 1 if broken.
+#-------------------------------------------------------------------------------
+# shellcheck disable=SC2034
+_recover_podman_ssh_tunnel() {
+    # Linux — no SSH tunnel to recover
+    if is_linux; then
+        KAPSIS_SSH_PROBE_PASSED=1
+        return 0
+    fi
+
+    local probe_timeout="${1:-10}"
+    local max_retries="${2:-2}"
+    local retry_delay="${3:-3}"
+
+    # Validate inputs — cap at sane upper bounds
+    if ! [[ "$max_retries" =~ ^[0-9]+$ ]] || (( max_retries > 5 )); then
+        max_retries=2
+    fi
+    if ! [[ "$retry_delay" =~ ^[0-9]+$ ]] || (( retry_delay > 30 )); then
+        retry_delay=3
+    fi
+
+    # Probe SSH tunnel
+    if _podman_ssh_probe "$probe_timeout"; then
+        KAPSIS_SSH_PROBE_PASSED=1
+        return 0
+    fi
+
+    # Tunnel is stale — attempt recovery via stop + start
+    if [[ -n "$_KAPSIS_TIMEOUT_CMD" ]]; then
+        "$_KAPSIS_TIMEOUT_CMD" 30 podman machine stop podman-machine-default &>/dev/null || true
+        if ! "$_KAPSIS_TIMEOUT_CMD" 60 podman machine start podman-machine-default 2>/dev/null; then
+            # Log start failure for diagnosis (visible with KAPSIS_DEBUG=1)
+            declare -f log_debug &>/dev/null && log_debug "podman machine start failed during SSH recovery"
+        fi
+    else
+        podman machine stop podman-machine-default &>/dev/null || true
+        if ! podman machine start podman-machine-default 2>/dev/null; then
+            declare -f log_debug &>/dev/null && log_debug "podman machine start failed during SSH recovery"
+        fi
+    fi
+
+    # Retry probe after recovery
+    local i
+    for (( i=1; i<=max_retries; i++ )); do
+        if (( i > 1 )); then
+            sleep "$retry_delay"
+        fi
+        if _podman_ssh_probe "$probe_timeout"; then
+            KAPSIS_SSH_PROBE_PASSED=1
+            return 0
+        fi
+        declare -f log_warn &>/dev/null && log_warn "SSH recovery retry $i/$max_retries failed"
+    done
+
+    return 1
 }
