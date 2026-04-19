@@ -897,7 +897,42 @@ kapsis-status --health <project> <agent-id>
 kapsis-status --health --json <project> <agent-id>
 ```
 
-Shows process state, I/O activity, TCP connections, memory/CPU, hook staleness, and overall health status (HEALTHY / WARNING / CRITICAL / STOPPED).
+Shows process state, I/O activity, TCP connections, memory/CPU, hook staleness, and overall health status (HEALTHY / WARNING / CRITICAL / STOPPED / MOUNT_FAILURE).
+
+### Mount Health Check (Issue #248)
+
+Detects mid-run virtio-fs mount drops on macOS (Apple Hypervisor). The mount works at startup but can disconnect silently ~30 minutes in, making all `/workspace` files inaccessible.
+
+```yaml
+liveness:
+  enabled: true
+  mount_check: true             # Enable workspace mount health check (default: true when liveness enabled)
+  mount_check_retries: 2        # Retries before declaring failure (default: 2)
+  mount_check_retry_delay: 5    # Seconds between retries (default: 5)
+  mount_check_probe_timeout: 5  # Seconds before probe times out (default: 5)
+  mount_check_delay: 30         # Grace period before first check (default: 30s)
+```
+
+**How it works:**
+
+1. Periodic probe runs `timeout <probe_timeout> stat /workspace` + checks workspace is non-empty + (worktree mode) verifies `.git-safe/HEAD` exists
+2. A hung probe (degraded virtio-fs) counts as immediate failure — no retries
+3. On confirmed failure: writes `KAPSIS_MOUNT_FAILURE:` sentinel to stderr, kills agent (SIGTERM → 10s → SIGKILL)
+4. Host-side `launch-agent.sh` detects the sentinel in captured container output and overrides exit code to 4
+5. Sentinel is only honored when container exit code is 143 (SIGTERM) or 137 (SIGKILL) — prevents a compromised agent from faking mount failures
+
+**Integration with liveness:**
+
+- When liveness IS enabled: mount probe runs inside the liveness loop (one loop, two concerns)
+- When liveness is NOT enabled: standalone mount check loop via `KAPSIS_MOUNT_CHECK_ENABLED=true` env var
+
+**Recovery:**
+
+```bash
+podman machine stop
+podman machine start
+# Re-run the agent
+```
 
 ## Example Configurations
 

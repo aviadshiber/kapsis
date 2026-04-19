@@ -1693,6 +1693,20 @@ main() {
         fi
     fi
 
+    # Start standalone mount check if liveness is disabled (Issue #248)
+    # When liveness IS enabled, mount check is integrated into its loop above
+    if [[ "${KAPSIS_MOUNT_CHECK_ENABLED:-false}" == "true" ]] \
+       && [[ "${KAPSIS_LIVENESS_ENABLED:-false}" != "true" ]]; then
+        local liveness_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/liveness-monitor.sh"
+        if [[ -f "$liveness_lib" ]]; then
+            # Source guard in liveness-monitor.sh prevents double-sourcing
+            source "$liveness_lib"
+            start_mount_check_monitor
+        else
+            log_warn "Mount check enabled but liveness-monitor library not found: $liveness_lib"
+        fi
+    fi
+
     # Execute command
     log_debug "About to execute command: $*"
     if [[ $# -eq 0 ]]; then

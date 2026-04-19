@@ -274,3 +274,13 @@ readonly KAPSIS_DEFAULT_CLEANUP_VM_JOURNAL_VACUUM_SIZE="100M"
 
 # Timeout (seconds) for podman machine ssh commands
 readonly KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT=15
+
+#===============================================================================
+# EXIT CODES (Issue #248)
+#
+# Standard exit codes returned by Kapsis agent containers.
+# Used by launch-agent.sh, entrypoint.sh, and kapsis-status.sh.
+#===============================================================================
+
+# Workspace mount lost during execution (macOS virtio-fs drop)
+readonly KAPSIS_EXIT_MOUNT_FAILURE=4
