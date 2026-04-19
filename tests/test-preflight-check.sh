@@ -14,6 +14,9 @@
 # - Worktree conflict detection
 #===============================================================================
 # shellcheck disable=SC1090  # Dynamic source paths are intentional in tests
+# shellcheck disable=SC2030,SC2031  # Subshell variable modifications are intentional in mock tests
+# shellcheck disable=SC2034  # Variables used by sourced functions inside subshells
+# shellcheck disable=SC2329  # Functions defined in subshells are invoked by sourced scripts
 
 set -euo pipefail
 
@@ -426,6 +429,208 @@ test_preflight_error_messages_actionable() {
 }
 
 #===============================================================================
+# TEST CASES: SSH Tunnel Connectivity (Issue #255)
+#===============================================================================
+
+test_check_podman_verifies_ssh_connectivity() {
+    log_test "Testing check_podman verifies SSH connectivity on macOS"
+
+    local content
+    content=$(cat "$PREFLIGHT_SCRIPT")
+
+    assert_contains "$content" "_podman_ssh_probe" \
+        "check_podman should call _podman_ssh_probe"
+    assert_contains "$content" "SSH tunnel is broken" \
+        "check_podman should report SSH tunnel broken on probe failure"
+    assert_contains "$content" "is_macos" \
+        "SSH probe should be gated on macOS platform check"
+}
+
+test_ssh_probe_defined_in_compat() {
+    log_test "Testing _podman_ssh_probe is defined in compat.sh"
+
+    local compat_file="$KAPSIS_ROOT/scripts/lib/compat.sh"
+    local content
+    content=$(cat "$compat_file")
+
+    assert_contains "$content" "_podman_ssh_probe()" \
+        "_podman_ssh_probe function should be defined in compat.sh"
+    assert_contains "$content" "podman info" \
+        "_podman_ssh_probe should use 'podman info' as connectivity check"
+    assert_contains "$content" "is_linux" \
+        "_podman_ssh_probe should skip on Linux (native Podman)"
+}
+
+test_ssh_probe_constants_exist() {
+    log_test "Testing SSH probe constants exist in constants.sh"
+
+    local constants_file="$KAPSIS_ROOT/scripts/lib/constants.sh"
+    local content
+    content=$(cat "$constants_file")
+
+    assert_contains "$content" "KAPSIS_DEFAULT_PREFLIGHT_SSH_PROBE_TIMEOUT" \
+        "SSH probe timeout constant should exist"
+    assert_contains "$content" "KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_RETRIES" \
+        "SSH recovery retries constant should exist"
+    assert_contains "$content" "KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_DELAY" \
+        "SSH recovery delay constant should exist"
+}
+
+test_backend_validate_has_ssh_recovery() {
+    log_test "Testing backend_validate includes SSH recovery logic"
+
+    local backend_file="$KAPSIS_ROOT/scripts/backends/podman.sh"
+    local content
+    content=$(cat "$backend_file")
+
+    assert_contains "$content" "_podman_ssh_probe" \
+        "backend_validate should call _podman_ssh_probe"
+    assert_contains "$content" "SSH tunnel is stale" \
+        "backend_validate should detect stale SSH tunnel"
+    assert_contains "$content" "podman machine stop" \
+        "backend_validate should attempt stop as part of recovery"
+    assert_contains "$content" "SSH tunnel recovered" \
+        "backend_validate should report successful recovery"
+    assert_contains "$content" "SSH tunnel is broken" \
+        "backend_validate should report if recovery fails"
+}
+
+test_check_podman_fails_on_stale_ssh() {
+    log_test "Testing check_podman fails when SSH tunnel is stale"
+
+    local mock_dir
+    mock_dir=$(mktemp -d)
+
+    # Mock podman: machine inspect returns "running" but podman info fails
+    cat > "$mock_dir/podman" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "machine" ]]; then
+    if [[ "${2:-}" == "inspect" ]]; then
+        for arg in "$@"; do
+            if [[ "$arg" == *"{{.State}}"* ]]; then
+                echo "running"
+                exit 0
+            fi
+        done
+        echo "{}"
+        exit 0
+    fi
+    # machine stop / machine start — succeed silently
+    exit 0
+fi
+if [[ "${1:-}" == "info" ]]; then
+    # Simulate stale SSH: podman info fails
+    exit 125
+fi
+exit 0
+MOCK
+    chmod +x "$mock_dir/podman"
+
+    # Mock timeout to just pass through
+    cat > "$mock_dir/timeout" <<'MOCK'
+#!/usr/bin/env bash
+shift  # skip timeout value
+exec "$@"
+MOCK
+    chmod +x "$mock_dir/timeout"
+
+    # Run in a fresh bash process to avoid readonly variable inheritance
+    local test_script="$mock_dir/run-test.sh"
+    cat > "$test_script" <<TESTEOF
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="$mock_dir:\$PATH"
+source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+log_init "test"
+source "$KAPSIS_ROOT/scripts/lib/compat.sh"
+source "$KAPSIS_ROOT/scripts/lib/constants.sh"
+# Force macOS detection for CI environments
+_KAPSIS_OS="Darwin"
+source "$PREFLIGHT_SCRIPT"
+_PREFLIGHT_ERRORS=0
+_PREFLIGHT_WARNINGS=0
+KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT=2
+KAPSIS_PREFLIGHT_SSH_RECOVERY_RETRIES=1
+KAPSIS_PREFLIGHT_SSH_RECOVERY_DELAY=0
+check_podman
+TESTEOF
+    chmod +x "$test_script"
+
+    local output
+    local result=0
+    output=$(bash "$test_script" 2>&1) || result=$?
+
+    rm -rf "$mock_dir"
+
+    assert_not_equals 0 "$result" "check_podman should fail when SSH tunnel is stale"
+    assert_contains "$output" "SSH tunnel is broken" "Should report broken SSH tunnel"
+}
+
+test_check_podman_passes_on_healthy_ssh() {
+    log_test "Testing check_podman passes when SSH tunnel is healthy"
+
+    local mock_dir
+    mock_dir=$(mktemp -d)
+
+    # Mock podman: both inspect and info succeed
+    cat > "$mock_dir/podman" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "machine" ]] && [[ "${2:-}" == "inspect" ]]; then
+    for arg in "$@"; do
+        if [[ "$arg" == *"{{.State}}"* ]]; then
+            echo "running"
+            exit 0
+        fi
+    done
+    echo "{}"
+    exit 0
+fi
+if [[ "${1:-}" == "info" ]]; then
+    echo "host:"
+    exit 0
+fi
+exit 0
+MOCK
+    chmod +x "$mock_dir/podman"
+
+    cat > "$mock_dir/timeout" <<'MOCK'
+#!/usr/bin/env bash
+shift
+exec "$@"
+MOCK
+    chmod +x "$mock_dir/timeout"
+
+    # Run in a fresh bash process to avoid readonly variable inheritance
+    local test_script="$mock_dir/run-test.sh"
+    cat > "$test_script" <<TESTEOF
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="$mock_dir:\$PATH"
+source "$KAPSIS_ROOT/scripts/lib/logging.sh"
+log_init "test"
+source "$KAPSIS_ROOT/scripts/lib/compat.sh"
+source "$KAPSIS_ROOT/scripts/lib/constants.sh"
+# Force macOS detection for CI environments
+_KAPSIS_OS="Darwin"
+source "$PREFLIGHT_SCRIPT"
+_PREFLIGHT_ERRORS=0
+_PREFLIGHT_WARNINGS=0
+KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT=2
+check_podman
+TESTEOF
+    chmod +x "$test_script"
+
+    local output
+    local result=0
+    output=$(bash "$test_script" 2>&1) || result=$?
+
+    rm -rf "$mock_dir"
+
+    assert_equals 0 "$result" "check_podman should pass when SSH tunnel is healthy"
+    assert_contains "$output" "SSH tunnel is functional" "Should report functional SSH tunnel"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -461,6 +666,14 @@ main() {
     run_test test_preflight_full_pass
     run_test test_preflight_branch_conflict_fails
     run_test test_preflight_error_messages_actionable
+
+    # SSH connectivity tests (Issue #255)
+    run_test test_check_podman_verifies_ssh_connectivity
+    run_test test_ssh_probe_defined_in_compat
+    run_test test_ssh_probe_constants_exist
+    run_test test_backend_validate_has_ssh_recovery
+    run_test test_check_podman_fails_on_stale_ssh
+    run_test test_check_podman_passes_on_healthy_ssh
 
     # Summary
     print_summary

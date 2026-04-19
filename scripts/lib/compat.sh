@@ -261,3 +261,36 @@ sha256_hash() {
         shasum -a 256 | cut -d' ' -f1
     fi
 }
+
+#-------------------------------------------------------------------------------
+# _podman_ssh_probe [timeout_seconds]
+#
+# Verifies that the Podman SSH tunnel is functional (macOS only).
+# Runs `podman info` which exercises the full stack: CLI → SSH → VM → daemon.
+# On Linux (native Podman, no SSH tunnel), always returns 0.
+#
+# Returns: 0 if healthy, 1 if SSH tunnel is broken.
+#-------------------------------------------------------------------------------
+_podman_ssh_probe() {
+    local timeout_secs="${1:-10}"
+
+    # Linux uses native Podman — no SSH tunnel to probe
+    if is_linux; then
+        return 0
+    fi
+
+    # Find a timeout command (macOS may have gtimeout from coreutils)
+    local timeout_cmd=""
+    if command -v timeout &>/dev/null; then
+        timeout_cmd="timeout"
+    elif command -v gtimeout &>/dev/null; then
+        timeout_cmd="gtimeout"
+    fi
+
+    # Probe: `podman info` validates CLI → SSH → VM → daemon
+    if [[ -n "$timeout_cmd" ]]; then
+        "$timeout_cmd" "$timeout_secs" podman info &>/dev/null
+    else
+        podman info &>/dev/null
+    fi
+}
