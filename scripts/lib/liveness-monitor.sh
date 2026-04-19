@@ -63,7 +63,11 @@ _LIVENESS_COMPLETION_TIMEOUT="${KAPSIS_LIVENESS_COMPLETION_TIMEOUT:-120}"
 
 # API staleness override (Issue #257): kill even when API connection exists
 # if updated_at has been stale for this many seconds (stuck mid-tool-call scenario)
+# Minimum 300s to prevent accidental disabling of API connection protection
 _LIVENESS_API_STALENESS_OVERRIDE="${KAPSIS_LIVENESS_API_STALENESS_OVERRIDE:-1800}"
+if [[ "$_LIVENESS_API_STALENESS_OVERRIDE" -lt 300 ]]; then
+    _LIVENESS_API_STALENESS_OVERRIDE=300
+fi
 
 # Mount check configuration (Issue #248) — independent of liveness timeout kill
 _MOUNT_CHECK_ENABLED="${KAPSIS_MOUNT_CHECK_ENABLED:-false}"
@@ -120,9 +124,9 @@ _liveness_log() {
 # Summing all descendants detects I/O from child processes (MCP servers, tool calls)
 # that PID 1's /proc/1/io alone would miss.
 # Returns 0 if /proc/io is unavailable (e.g., restricted permissions)
+# Note: no PID parameter — scans all processes in the container PID namespace.
 _liveness_get_io_total() {
-    local pid="$1"
-    # shellcheck disable=SC2086,SC2035
+    # Safe: /proc/ paths never contain spaces; glob only matches container processes
     awk '/^(read|write)_bytes:/ {s+=$2} END {print s+0}' /proc/[0-9]*/io 2>/dev/null || echo "0"
 }
 
@@ -164,7 +168,7 @@ _liveness_get_phase() {
 
     if [[ -n "${status_file:-}" && -f "$status_file" ]]; then
         local content
-        content=$(cat "$status_file" 2>/dev/null) || return
+        content=$(<"$status_file") 2>/dev/null || return
         if [[ "$content" =~ \"phase\":\ *\"([^\"]*)\" ]]; then
             echo "${BASH_REMATCH[1]}"
         fi
@@ -620,17 +624,24 @@ _liveness_capture_diagnostics() {
 
     {
         echo "=== Kapsis Liveness Kill Diagnostics ==="
+        echo "WARNING: This file may contain sensitive data (command-line args, FD paths, status content)."
+        echo "         Treat as confidential. Delete after investigation."
         echo "Timestamp: $ts"
         echo "Reason: $reason"
         echo "Staleness: ${stale_seconds}s"
         echo "Agent PID: $pid"
         echo ""
 
-        echo "=== Process Tree ==="
-        ps aux 2>/dev/null || echo "(ps unavailable)"
+        echo "=== Process Tree (sanitized) ==="
+        # Redact tokens/keys/passwords from command arguments to prevent leaking
+        # secrets via the diagnostics file (which persists on the host volume)
+        ps aux 2>/dev/null \
+            | sed -E 's/(token|key|password|secret|auth|bearer)[= ][^ ]*/\1=REDACTED/gi' \
+            || echo "(ps unavailable)"
         echo ""
 
         echo "=== Open File Descriptors (PID $pid) ==="
+        # Show FD targets but not content — safe for diagnostics
         ls -la "/proc/${pid}/fd/" 2>/dev/null || echo "(fd listing unavailable)"
         echo ""
 
@@ -670,18 +681,20 @@ _liveness_capture_diagnostics() {
         echo ""
 
         echo "=== Process States ==="
-        local name state
         for proc_status in /proc/[0-9]*/status; do
             proc_pid="${proc_status#/proc/}"
             proc_pid="${proc_pid%/status}"
-            name=$(awk '/^Name:/ {print $2}' "$proc_status" 2>/dev/null) || name="?"
-            state=$(awk '/^State:/ {print $2}' "$proc_status" 2>/dev/null) || state="?"
-            echo "PID $proc_pid: $name ($state)"
+            # Single awk pass for both Name and State (avoids 2N subprocess forks)
+            echo -n "PID $proc_pid: "
+            awk '/^Name:/{n=$2} /^State:/{s=$2} END{print n, "(" s ")"}' "$proc_status" 2>/dev/null || echo "? (?)"
         done
 
         echo ""
         echo "=== End Diagnostics ==="
     } > "$diag_file" 2>/dev/null || true
+
+    # Restrict permissions — diagnostics may contain sanitized but still sensitive data
+    chmod 600 "$diag_file" 2>/dev/null || true
 
     _liveness_log "INFO" "Diagnostics captured to $diag_file"
 }
@@ -692,10 +705,12 @@ _liveness_capture_diagnostics() {
 
 # Kill decision function: returns 0 if the agent should be killed, 1 otherwise.
 # Side effects: mutates io_stale_cycles (via nameref) and _LIVENESS_API_SKIP_COUNT.
+# $4 (optional): cached API connection state ("true"/"false") to avoid duplicate ss call
 _liveness_should_kill() {
     local stale_seconds="$1"
     local timeout="$2"
     local -n _io_stale_ref="$3"
+    local cached_api="${4:-}"
 
     # Signal 1: updated_at must be stale for at least $timeout seconds
     [[ "$stale_seconds" -ge "$timeout" ]] || return 1
@@ -706,8 +721,14 @@ _liveness_should_kill() {
         return 1
     fi
 
-    # Signal 3: check for active API connections
-    if _liveness_has_active_api_connections; then
+    # Signal 3: check for active API connections (use cached result if available)
+    local api_active=false
+    if [[ -n "$cached_api" ]]; then
+        api_active="$cached_api"
+    elif _liveness_has_active_api_connections; then
+        api_active=true
+    fi
+    if [[ "$api_active" == "true" ]]; then
         # Agent is waiting on an AI API call — skip kill.
         # Reset io_stale_cycles so the agent gets a fresh 2-cycle window once
         # the API call finishes and the TCP connection closes.
@@ -774,7 +795,7 @@ _liveness_monitor_loop() {
     local io_stale_cycles=0     # Consecutive cycles with no I/O change
 
     # Initialize with current values
-    prev_io_total=$(_liveness_get_io_total "$pid")
+    prev_io_total=$(_liveness_get_io_total)
     prev_updated_at=$(_liveness_get_updated_at)
 
     _liveness_log "INFO" "Monitoring active (initial io=$prev_io_total)"
@@ -804,7 +825,7 @@ _liveness_monitor_loop() {
 
         # Read current values
         local current_io_total
-        current_io_total=$(_liveness_get_io_total "$pid")
+        current_io_total=$(_liveness_get_io_total)
         local current_updated_at
         current_updated_at=$(_liveness_get_updated_at)
 
@@ -829,13 +850,19 @@ _liveness_monitor_loop() {
             prev_updated_at="$current_updated_at"
         fi
 
+        # Cache API connection check (avoid double ss subprocess per cycle)
+        local has_api_connection=false
+        if _liveness_has_active_api_connections; then
+            has_api_connection=true
+        fi
+
         # Issue #257: Phase-aware timeout — if agent reported completion but
         # process hasn't exited, use shorter timeout (stuck child process scenario)
         local effective_timeout="$timeout"
         local current_phase
         current_phase=$(_liveness_get_phase)
         if [[ "$current_phase" == "complete" || "$current_phase" == "committing" || "$current_phase" == "pushing" ]]; then
-            if ! _liveness_has_active_api_connections; then
+            if [[ "$has_api_connection" == "false" ]]; then
                 effective_timeout="$_LIVENESS_COMPLETION_TIMEOUT"
                 _liveness_log "DEBUG" "Phase=$current_phase, no API connections — using completion timeout (${effective_timeout}s)"
             else
@@ -844,7 +871,7 @@ _liveness_monitor_loop() {
         fi
 
         # Decision logic: kill only when all three signals are stale
-        if _liveness_should_kill "$stale_seconds" "$effective_timeout" io_stale_cycles; then
+        if _liveness_should_kill "$stale_seconds" "$effective_timeout" io_stale_cycles "$has_api_connection"; then
             # All three signals stale (or cap exceeded): agent is hung
             local kill_type="standard hung"
             if [[ "$current_phase" == "complete" || "$current_phase" == "committing" || "$current_phase" == "pushing" ]]; then

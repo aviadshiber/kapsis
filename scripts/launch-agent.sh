@@ -2507,13 +2507,21 @@ main() {
     fi
 
     # Check for hung-after-completion in status.json (Issue #257)
-    # When liveness monitor kills AND agent had completed work, exit_code 5 is in status.json
+    # When liveness monitor kills AND agent had completed work, exit_code 5 is in status.json.
+    # Defense-in-depth: verify both exit_code=5 AND phase is a completion phase to prevent
+    # a compromised agent from faking exit code 5 via status.json writes.
     if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
         local status_exit
         status_exit=$(status_get_exit_code 2>/dev/null || echo "")
-        if [[ "$status_exit" == "5" ]]; then
-            log_warn "Agent completed but process hung (exit code 5 from liveness monitor)"
-            EXIT_CODE=5
+        if [[ -n "$status_exit" && "$status_exit" == "5" ]]; then
+            local status_phase
+            status_phase=$(status_get_phase 2>/dev/null || echo "")
+            if [[ "$status_phase" == "complete" || "$status_phase" == "committing" || "$status_phase" == "pushing" ]]; then
+                log_warn "Agent completed but process hung (exit code 5, phase=$status_phase)"
+                EXIT_CODE=5
+            else
+                log_warn "Exit code 5 in status.json but phase='$status_phase' — ignoring (unexpected state)"
+            fi
         fi
     fi
 

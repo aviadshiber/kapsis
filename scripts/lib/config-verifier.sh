@@ -581,6 +581,21 @@ validate_liveness_config() {
         fi
     fi
 
+    # completion_timeout: positive integer >= 30 (Issue #257)
+    local completion_timeout
+    completion_timeout=$(yq -r '.liveness.completion_timeout // "null"' "$config_file" 2>/dev/null)
+    if [[ "$completion_timeout" != "null" ]]; then
+        if [[ "$completion_timeout" =~ ^[0-9]+$ ]]; then
+            if [[ "$completion_timeout" -ge 30 ]]; then
+                log_pass "Valid liveness.completion_timeout: ${completion_timeout}s"
+            else
+                log_error "Invalid liveness.completion_timeout: $completion_timeout (must be >= 30)"
+            fi
+        else
+            log_error "Invalid liveness.completion_timeout: $completion_timeout (must be a positive integer)"
+        fi
+    fi
+
     # Cross-field warnings
     if [[ "$timeout" != "null" && "$grace" != "null" ]] && \
        [[ "$timeout" =~ ^[0-9]+$ && "$grace" =~ ^[0-9]+$ ]]; then
