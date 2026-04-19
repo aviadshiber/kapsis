@@ -1685,7 +1685,7 @@ main() {
 
     # Start liveness monitor if enabled (background process, survives exec)
     # Must happen after status_init (writes to status.json) and before exec
-    if [[ "${KAPSIS_LIVENESS_ENABLED:-false}" == "true" ]]; then
+    if [[ "${KAPSIS_LIVENESS_ENABLED:-true}" == "true" ]]; then
         local liveness_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/liveness-monitor.sh"
         if [[ -f "$liveness_lib" ]]; then
             source "$liveness_lib"
@@ -1698,7 +1698,7 @@ main() {
     # Start standalone mount check if liveness is disabled (Issue #248)
     # When liveness IS enabled, mount check is integrated into its loop above
     if [[ "${KAPSIS_MOUNT_CHECK_ENABLED:-false}" == "true" ]] \
-       && [[ "${KAPSIS_LIVENESS_ENABLED:-false}" != "true" ]]; then
+       && [[ "${KAPSIS_LIVENESS_ENABLED:-true}" != "true" ]]; then
         local liveness_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/liveness-monitor.sh"
         if [[ -f "$liveness_lib" ]]; then
             # Source guard in liveness-monitor.sh prevents double-sourcing

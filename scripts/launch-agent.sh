@@ -827,10 +827,11 @@ parse_config() {
         LSP_SERVERS_JSON=$(yq -r '.lsp_servers // {} | tojson' "$CONFIG_FILE" 2>/dev/null || echo "{}")
 
         # Parse liveness monitoring configuration
-        LIVENESS_ENABLED=$(yq -r '.liveness.enabled // "false"' "$CONFIG_FILE" 2>/dev/null || echo "false")
-        LIVENESS_TIMEOUT=$(yq -r '.liveness.timeout // "1800"' "$CONFIG_FILE" 2>/dev/null || echo "1800")
+        LIVENESS_ENABLED=$(yq -r '.liveness.enabled // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        LIVENESS_TIMEOUT=$(yq -r '.liveness.timeout // "900"' "$CONFIG_FILE" 2>/dev/null || echo "900")
         LIVENESS_GRACE_PERIOD=$(yq -r '.liveness.grace_period // "300"' "$CONFIG_FILE" 2>/dev/null || echo "300")
         LIVENESS_CHECK_INTERVAL=$(yq -r '.liveness.check_interval // "30"' "$CONFIG_FILE" 2>/dev/null || echo "30")
+        LIVENESS_COMPLETION_TIMEOUT=$(yq -r '.liveness.completion_timeout // "120"' "$CONFIG_FILE" 2>/dev/null || echo "120")
 
         # Parse mount check configuration (Issue #248)
         # Defaults to true when liveness section exists, since mount checking is lightweight
@@ -1842,12 +1843,13 @@ generate_env_vars() {
         ENV_VARS+=("-e" "KAPSIS_LSP_SERVERS_JSON=${LSP_SERVERS_JSON}")
     fi
 
-    # Liveness monitoring env vars
-    if [[ "${LIVENESS_ENABLED:-false}" == "true" ]]; then
+    # Liveness monitoring env vars (Issue #257: enabled by default)
+    if [[ "${LIVENESS_ENABLED:-true}" == "true" ]]; then
         ENV_VARS+=("-e" "KAPSIS_LIVENESS_ENABLED=true")
-        ENV_VARS+=("-e" "KAPSIS_LIVENESS_TIMEOUT=${LIVENESS_TIMEOUT:-1800}")
+        ENV_VARS+=("-e" "KAPSIS_LIVENESS_TIMEOUT=${LIVENESS_TIMEOUT:-900}")
         ENV_VARS+=("-e" "KAPSIS_LIVENESS_GRACE_PERIOD=${LIVENESS_GRACE_PERIOD:-300}")
         ENV_VARS+=("-e" "KAPSIS_LIVENESS_CHECK_INTERVAL=${LIVENESS_CHECK_INTERVAL:-30}")
+        ENV_VARS+=("-e" "KAPSIS_LIVENESS_COMPLETION_TIMEOUT=${LIVENESS_COMPLETION_TIMEOUT:-120}")
     fi
 
     # Mount check env vars (Issue #248) — independent of liveness enabled
@@ -2504,6 +2506,17 @@ main() {
         fi
     fi
 
+    # Check for hung-after-completion in status.json (Issue #257)
+    # When liveness monitor kills AND agent had completed work, exit_code 5 is in status.json
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+        local status_exit
+        status_exit=$(status_get_exit_code 2>/dev/null || echo "")
+        if [[ "$status_exit" == "5" ]]; then
+            log_warn "Agent completed but process hung (exit code 5 from liveness monitor)"
+            EXIT_CODE=5
+        fi
+    fi
+
     rm -f "$container_output"
     # Update status to post_processing (Fix #3: don't report "completed" until commit verified)
     status_phase "post_processing" 85 "Processing agent output (exit code: $EXIT_CODE)"
@@ -2541,11 +2554,13 @@ main() {
     log_timer_end "total"
 
     # Combine exit codes - fail if either container or post-container operations failed
-    # Exit codes (Fix #3):
+    # Exit codes (Fix #3, Issue #257):
     #   0 = Success (changes committed or no changes)
     #   1 = Agent failure (container exit code non-zero)
     #   2 = Push failed
     #   3 = Uncommitted changes remain
+    #   4 = Mount failure (virtio-fs drop)
+    #   5 = Agent completed but process hung (stuck child process)
     if [[ "$EXIT_CODE" -eq 4 ]]; then
         # Mount failure detected via sentinel (Issue #248)
         FINAL_EXIT_CODE=4
@@ -2554,6 +2569,15 @@ main() {
         status_complete 4 "$mount_error"
         _STATUS_COMPLETE_SHOWN=true
         display_complete 4 "" "$mount_error"
+        _DISPLAY_COMPLETE_SHOWN=true
+    elif [[ "$EXIT_CODE" -eq 5 ]]; then
+        # Agent completed but process hung (Issue #257)
+        FINAL_EXIT_CODE=5
+        log_finalize 5
+        local hung_error="Agent completed work but process hung (killed by liveness monitor). Likely cause: stuck child process (e.g., tool call subprocess)."
+        status_complete 5 "$hung_error"
+        _STATUS_COMPLETE_SHOWN=true
+        display_complete 5 "" "$hung_error"
         _DISPLAY_COMPLETE_SHOWN=true
     elif [[ "$EXIT_CODE" -ne 0 ]]; then
         FINAL_EXIT_CODE=$EXIT_CODE

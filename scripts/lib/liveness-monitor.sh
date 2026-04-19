@@ -47,7 +47,7 @@ _KAPSIS_LIVENESS_MONITOR_LOADED=1
 # Configuration
 #===============================================================================
 
-_LIVENESS_TIMEOUT="${KAPSIS_LIVENESS_TIMEOUT:-1800}"
+_LIVENESS_TIMEOUT="${KAPSIS_LIVENESS_TIMEOUT:-900}"
 _LIVENESS_GRACE="${KAPSIS_LIVENESS_GRACE_PERIOD:-300}"
 _LIVENESS_INTERVAL="${KAPSIS_LIVENESS_CHECK_INTERVAL:-30}"
 
@@ -55,7 +55,15 @@ _LIVENESS_INTERVAL="${KAPSIS_LIVENESS_CHECK_INTERVAL:-30}"
 _LIVENESS_IPS_TTL="${KAPSIS_LIVENESS_IPS_TTL:-300}"
 _LIVENESS_DNS_TIMEOUT="${KAPSIS_LIVENESS_DNS_TIMEOUT:-2}"
 _LIVENESS_MAX_IPS_PER_DOMAIN="${KAPSIS_LIVENESS_MAX_IPS_PER_DOMAIN:-8}"
-_LIVENESS_API_MAX_SKIP="${KAPSIS_LIVENESS_API_MAX_SKIP:-240}"
+_LIVENESS_API_MAX_SKIP="${KAPSIS_LIVENESS_API_MAX_SKIP:-60}"
+
+# Post-completion short timeout (Issue #257): when agent reports completion
+# but process hasn't exited, use this shorter timeout instead of the full timeout
+_LIVENESS_COMPLETION_TIMEOUT="${KAPSIS_LIVENESS_COMPLETION_TIMEOUT:-120}"
+
+# API staleness override (Issue #257): kill even when API connection exists
+# if updated_at has been stale for this many seconds (stuck mid-tool-call scenario)
+_LIVENESS_API_STALENESS_OVERRIDE="${KAPSIS_LIVENESS_API_STALENESS_OVERRIDE:-1800}"
 
 # Mount check configuration (Issue #248) — independent of liveness timeout kill
 _MOUNT_CHECK_ENABLED="${KAPSIS_MOUNT_CHECK_ENABLED:-false}"
@@ -107,15 +115,15 @@ _liveness_log() {
 # I/O Monitoring
 #===============================================================================
 
-# Read total I/O bytes (read + write) from /proc/<pid>/io
+# Read total I/O bytes (read + write) across all container processes (Issue #257)
+# In container PID namespace, /proc/[0-9]*/io covers only container processes.
+# Summing all descendants detects I/O from child processes (MCP servers, tool calls)
+# that PID 1's /proc/1/io alone would miss.
 # Returns 0 if /proc/io is unavailable (e.g., restricted permissions)
 _liveness_get_io_total() {
     local pid="$1"
-    if [[ -r "/proc/${pid}/io" ]]; then
-        awk '/^(read|write)_bytes:/ {s+=$2} END {print s+0}' "/proc/${pid}/io" 2>/dev/null || echo "0"
-    else
-        echo "0"
-    fi
+    # shellcheck disable=SC2086,SC2035
+    awk '/^(read|write)_bytes:/ {s+=$2} END {print s+0}' /proc/[0-9]*/io 2>/dev/null || echo "0"
 }
 
 #===============================================================================
@@ -138,6 +146,26 @@ _liveness_get_updated_at() {
         local content
         content=$(cat "$status_file" 2>/dev/null) || return
         if [[ "$content" =~ \"updated_at\":\ *\"([^\"]*)\" ]]; then
+            echo "${BASH_REMATCH[1]}"
+        fi
+    fi
+}
+
+# Get phase from status.json (Issue #257)
+# Uses native bash regex to avoid subprocess overhead (same pattern as _liveness_get_updated_at)
+_liveness_get_phase() {
+    local status_dir="/kapsis-status"
+    [[ -d "$status_dir" ]] || status_dir="${HOME}/.kapsis/status"
+
+    local status_file
+    for f in "$status_dir"/kapsis-*.json; do
+        [[ -f "$f" ]] && status_file="$f" && break
+    done
+
+    if [[ -n "${status_file:-}" && -f "$status_file" ]]; then
+        local content
+        content=$(cat "$status_file" 2>/dev/null) || return
+        if [[ "$content" =~ \"phase\":\ *\"([^\"]*)\" ]]; then
             echo "${BASH_REMATCH[1]}"
         fi
     fi
@@ -170,12 +198,19 @@ _liveness_write_heartbeat() {
     fi
 }
 
-# Write killed status to status.json
+# Write killed status to status.json (Issue #257: exit code 5 when post-completion)
 _liveness_write_killed_status() {
     local reason="$1"
     if type status_phase &>/dev/null && type status_complete &>/dev/null; then
         if type status_is_active &>/dev/null && status_is_active; then
-            status_complete 137 "Agent killed by liveness monitor: $reason"
+            local phase
+            phase=$(_liveness_get_phase)
+            local exit_code=137
+            if [[ "$phase" == "complete" || "$phase" == "committing" || "$phase" == "pushing" ]]; then
+                exit_code=5
+                _liveness_log "INFO" "Phase is '$phase' — using exit code 5 (hung after completion)"
+            fi
+            status_complete "$exit_code" "Agent killed by liveness monitor: $reason"
         fi
     fi
 }
@@ -565,6 +600,93 @@ _mount_check_kill_agent() {
 }
 
 #===============================================================================
+# Pre-Kill Diagnostics (Issue #257)
+#===============================================================================
+
+# Capture diagnostic information before killing the agent.
+# Writes to a diagnostics file alongside status.json for post-mortem analysis.
+# Must be fast — budget 5s max before SIGTERM.
+_liveness_capture_diagnostics() {
+    local pid="$1"
+    local reason="$2"
+    local stale_seconds="$3"
+
+    local diag_dir="/kapsis-status"
+    [[ -d "$diag_dir" ]] || diag_dir="${HOME}/.kapsis/status"
+
+    local diag_file="${diag_dir}/kapsis-liveness-diagnostics.txt"
+    local ts
+    ts=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+
+    {
+        echo "=== Kapsis Liveness Kill Diagnostics ==="
+        echo "Timestamp: $ts"
+        echo "Reason: $reason"
+        echo "Staleness: ${stale_seconds}s"
+        echo "Agent PID: $pid"
+        echo ""
+
+        echo "=== Process Tree ==="
+        ps aux 2>/dev/null || echo "(ps unavailable)"
+        echo ""
+
+        echo "=== Open File Descriptors (PID $pid) ==="
+        ls -la "/proc/${pid}/fd/" 2>/dev/null || echo "(fd listing unavailable)"
+        echo ""
+
+        echo "=== TCP Connections ==="
+        if [[ -n "${_LIVENESS_SS_BIN:-}" ]]; then
+            "$_LIVENESS_SS_BIN" -tpn 2>/dev/null || echo "(ss unavailable)"
+        elif [[ -r /proc/net/tcp ]]; then
+            echo "--- /proc/net/tcp ---"
+            cat /proc/net/tcp 2>/dev/null || true
+            echo "--- /proc/net/tcp6 ---"
+            cat /proc/net/tcp6 2>/dev/null || true
+        else
+            echo "(no tcp info available)"
+        fi
+        echo ""
+
+        echo "=== Status JSON ==="
+        local status_file
+        for f in "$diag_dir"/kapsis-*.json; do
+            [[ -f "$f" ]] && status_file="$f" && break
+        done
+        if [[ -n "${status_file:-}" ]]; then
+            cat "$status_file" 2>/dev/null || echo "(status file unreadable)"
+        else
+            echo "(no status file found)"
+        fi
+        echo ""
+
+        echo "=== Descendant Process I/O ==="
+        local proc_pid
+        for proc_io in /proc/[0-9]*/io; do
+            proc_pid="${proc_io#/proc/}"
+            proc_pid="${proc_pid%/io}"
+            echo "--- PID $proc_pid ---"
+            cat "$proc_io" 2>/dev/null || echo "(unreadable)"
+        done
+        echo ""
+
+        echo "=== Process States ==="
+        local name state
+        for proc_status in /proc/[0-9]*/status; do
+            proc_pid="${proc_status#/proc/}"
+            proc_pid="${proc_pid%/status}"
+            name=$(awk '/^Name:/ {print $2}' "$proc_status" 2>/dev/null) || name="?"
+            state=$(awk '/^State:/ {print $2}' "$proc_status" 2>/dev/null) || state="?"
+            echo "PID $proc_pid: $name ($state)"
+        done
+
+        echo ""
+        echo "=== End Diagnostics ==="
+    } > "$diag_file" 2>/dev/null || true
+
+    _liveness_log "INFO" "Diagnostics captured to $diag_file"
+}
+
+#===============================================================================
 # Kill Decision
 #===============================================================================
 
@@ -592,7 +714,17 @@ _liveness_should_kill() {
         local prev_io_cycles="$_io_stale_ref"
         _io_stale_ref=0
         (( _LIVENESS_API_SKIP_COUNT++ )) || true
-        if [[ "$_LIVENESS_API_SKIP_COUNT" -ge "$_LIVENESS_API_MAX_SKIP" ]]; then
+
+        # Issue #257: Time-based override — if updated_at stale for >N seconds
+        # AND API connection exists, the agent is likely stuck mid-tool-call.
+        # This catches the case where a hung child process (e.g., jira CLI) blocks
+        # the tool call, keeping the API connection alive indefinitely.
+        if [[ "$stale_seconds" -ge "$_LIVENESS_API_STALENESS_OVERRIDE" ]]; then
+            _liveness_log "WARN" "API connection active but updated_at stale for ${stale_seconds}s (>= ${_LIVENESS_API_STALENESS_OVERRIDE}s) — overriding API protection"
+            _LIVENESS_API_SKIP_COUNT=0
+            _io_stale_ref="$prev_io_cycles"
+            # fall through — return 0 (kill)
+        elif [[ "$_LIVENESS_API_SKIP_COUNT" -ge "$_LIVENESS_API_MAX_SKIP" ]]; then
             # Layer 3: cap exceeded — kill anyway to prevent indefinite bypass
             _liveness_log "WARN" "API skip cap exceeded (${_LIVENESS_API_SKIP_COUNT}/${_LIVENESS_API_MAX_SKIP}), proceeding with kill"
             _LIVENESS_API_SKIP_COUNT=0
@@ -697,14 +829,35 @@ _liveness_monitor_loop() {
             prev_updated_at="$current_updated_at"
         fi
 
+        # Issue #257: Phase-aware timeout — if agent reported completion but
+        # process hasn't exited, use shorter timeout (stuck child process scenario)
+        local effective_timeout="$timeout"
+        local current_phase
+        current_phase=$(_liveness_get_phase)
+        if [[ "$current_phase" == "complete" || "$current_phase" == "committing" || "$current_phase" == "pushing" ]]; then
+            if ! _liveness_has_active_api_connections; then
+                effective_timeout="$_LIVENESS_COMPLETION_TIMEOUT"
+                _liveness_log "DEBUG" "Phase=$current_phase, no API connections — using completion timeout (${effective_timeout}s)"
+            else
+                _liveness_log "DEBUG" "Phase=$current_phase but API connection active — using normal timeout"
+            fi
+        fi
+
         # Decision logic: kill only when all three signals are stale
-        if _liveness_should_kill "$stale_seconds" "$timeout" io_stale_cycles; then
+        if _liveness_should_kill "$stale_seconds" "$effective_timeout" io_stale_cycles; then
             # All three signals stale (or cap exceeded): agent is hung
-            _liveness_log "WARN" "Agent hung detected! updated_at stale for ${stale_seconds}s, I/O unchanged for ${io_stale_cycles} cycles"
+            local kill_type="standard hung"
+            if [[ "$current_phase" == "complete" || "$current_phase" == "committing" || "$current_phase" == "pushing" ]]; then
+                kill_type="hung after completion (phase=$current_phase)"
+            fi
+            _liveness_log "WARN" "Agent $kill_type detected! updated_at stale for ${stale_seconds}s, I/O unchanged for ${io_stale_cycles} cycles"
             _liveness_log "WARN" "Sending SIGTERM to PID $pid"
 
+            # Issue #257: Capture diagnostics before kill
+            _liveness_capture_diagnostics "$pid" "No activity for ${stale_seconds}s ($kill_type)" "$stale_seconds"
+
             # Write killed status before sending signal
-            _liveness_write_killed_status "No activity for ${stale_seconds}s (updated_at stale, I/O idle)"
+            _liveness_write_killed_status "No activity for ${stale_seconds}s ($kill_type)"
 
             # SIGTERM first, then SIGKILL after 10s
             kill -SIGTERM "$pid" 2>/dev/null || true
@@ -765,7 +918,7 @@ _mount_check_loop() {
 # Start the liveness monitor as a background process
 # Must be called before exec (after which PID 1 becomes the agent)
 start_liveness_monitor() {
-    if [[ "${KAPSIS_LIVENESS_ENABLED:-false}" != "true" ]]; then
+    if [[ "${KAPSIS_LIVENESS_ENABLED:-true}" != "true" ]]; then
         return 0
     fi
 

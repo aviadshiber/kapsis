@@ -176,6 +176,7 @@ Configuration is stored in `configs/tool-phase-mapping.yaml`.
 | 2 | Push failed | Run push fallback command |
 | 3 | Uncommitted changes | Manually commit from worktree |
 | 4 | Mount failure (virtio-fs drop) | `podman machine stop && start`, re-run |
+| 5 | Agent completed but process hung (Issue #257) | Work is saved; check diagnostics file |
 | 137 | Killed by liveness monitor (SIGKILL) | Check agent for hangs |
 | 143 | Killed by liveness monitor (SIGTERM) | Check agent for hangs |
 

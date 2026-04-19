@@ -660,6 +660,17 @@ status_get_phase() {
     fi
 }
 
+# Get exit code from status file (for host-side scripts reading container status)
+status_get_exit_code() {
+    if [[ -f "$_KAPSIS_STATUS_FILE" ]]; then
+        local content
+        content=$(<"$_KAPSIS_STATUS_FILE") 2>/dev/null || return
+        if [[ "$content" =~ \"exit_code\":\ *([0-9]+) ]]; then
+            echo "${BASH_REMATCH[1]}"
+        fi
+    fi
+}
+
 # Check if status tracking is active
 status_is_active() {
     [[ "$KAPSIS_STATUS_ENABLED" == "true" && "$_KAPSIS_STATUS_INITIALIZED" == "true" ]]

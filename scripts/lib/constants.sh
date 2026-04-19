@@ -301,3 +301,7 @@ readonly KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_DELAY=3
 
 # Workspace mount lost during execution (macOS virtio-fs drop)
 readonly KAPSIS_EXIT_MOUNT_FAILURE=4
+
+# Agent completed work but process hung (Issue #257)
+# e.g., child process (MCP server, stuck tool call) keeps container alive
+readonly KAPSIS_EXIT_HUNG_AFTER_COMPLETION=5
