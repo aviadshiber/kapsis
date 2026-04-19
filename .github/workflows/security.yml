@@ -19,21 +19,21 @@ jobs:
   shellcheck-sarif:
     name: ShellCheck SARIF
     runs-on: ubuntu-latest
+    # Skip on schedule — differential shellcheck needs BASE/HEAD refs from a
+    # push or PR event. Shell scripts don't gain new findings without code changes.
+    if: github.event_name != 'schedule'
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
         with:
           fetch-depth: 0
 
-
       - name: Run ShellCheck with SARIF output
         uses: redhat-plumbers-in-action/differential-shellcheck@d965e66ec0b3b2f821f75c8eff9b12442d9a7d1e  # v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           severity: warning
-          # Map schedule/workflow_dispatch events to 'manual' since the action
-          # only supports: merge_group, pull_request, push, manual
-          triggering-event: ${{ github.event_name == 'schedule' && 'manual' || github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}
+          triggering-event: ${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}
 
   container-scan:
     name: Container Vulnerability Scan
