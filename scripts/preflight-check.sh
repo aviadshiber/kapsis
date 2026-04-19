@@ -31,6 +31,11 @@ if [[ -z "${_KAPSIS_COMPAT_LOADED:-}" ]] && [[ -f "$PREFLIGHT_SCRIPT_DIR/lib/com
     source "$PREFLIGHT_SCRIPT_DIR/lib/compat.sh"
 fi
 
+# Source constants (only if not already loaded — provides SSH probe defaults)
+if [[ -z "${_KAPSIS_CONSTANTS_LOADED:-}" ]] && [[ -f "$PREFLIGHT_SCRIPT_DIR/lib/constants.sh" ]]; then
+    source "$PREFLIGHT_SCRIPT_DIR/lib/constants.sh"
+fi
+
 #===============================================================================
 # PREFLIGHT CHECK RESULTS
 #===============================================================================
@@ -80,6 +85,27 @@ check_podman() {
     fi
 
     preflight_ok "Podman machine is running"
+
+    # Verify SSH tunnel is functional (macOS only — Issue #255)
+    # After reboot/sleep, machine reports "running" but SSH tunnel may be dead.
+    if ! is_linux && declare -f _recover_podman_ssh_tunnel &>/dev/null; then
+        local probe_timeout="${KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_PROBE_TIMEOUT:-10}}"
+        local max_retries="${KAPSIS_PREFLIGHT_SSH_RECOVERY_RETRIES:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_RETRIES:-2}}"
+        local retry_delay="${KAPSIS_PREFLIGHT_SSH_RECOVERY_DELAY:-${KAPSIS_DEFAULT_PREFLIGHT_SSH_RECOVERY_DELAY:-3}}"
+
+        log_info "Verifying Podman SSH tunnel..."
+
+        if _recover_podman_ssh_tunnel "$probe_timeout" "$max_retries" "$retry_delay"; then
+            if [[ "${KAPSIS_SSH_PROBE_PASSED:-}" == "1" ]]; then
+                preflight_ok "Podman SSH tunnel is functional"
+            fi
+        else
+            # preflight_error does not return non-zero; explicit return required
+            preflight_error "Podman SSH tunnel is broken — run: podman machine stop && podman machine start"
+            return 1
+        fi
+    fi
+
     return 0
 }
 
