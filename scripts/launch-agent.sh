@@ -466,8 +466,12 @@ parse_args() {
                 shift 2
                 ;;
             --co-author)
-                # Validate format: must contain "<email>" with an @ inside angle brackets
-                if [[ ! "$2" =~ \<[^\>]+@[^\>]+\> ]]; then
+                if [[ $# -lt 2 ]]; then
+                    log_error "--co-author requires an argument"
+                    exit 1
+                fi
+                # Validate format: "Name <email>" — reject shell metacharacters in name
+                if [[ ! "$2" =~ ^[[:alnum:][:space:].\'\",_-]+\ \<[^\>]+@[^\>]+\>$ ]]; then
                     log_error "Invalid --co-author format (expected 'Name <email>'): $2"
                     exit 1
                 fi
@@ -767,8 +771,9 @@ parse_config() {
         # Parse attribution templates (commit trailer + PR description).
         # A null/missing value yields the string "null" from yq -r; treat that as unset
         # so defaults kick in. An explicit empty string in config disables attribution.
-        GIT_ATTRIBUTION_COMMIT_RAW=$(yq -r '.git.attribution.commit' "$CONFIG_FILE" 2>/dev/null || echo "null")
-        GIT_ATTRIBUTION_PR_RAW=$(yq -r '.git.attribution.pr' "$CONFIG_FILE" 2>/dev/null || echo "null")
+        # Strip trailing whitespace — yq -r on YAML '|' block scalars appends a newline
+        GIT_ATTRIBUTION_COMMIT_RAW=$(yq -r '.git.attribution.commit' "$CONFIG_FILE" 2>/dev/null | sed 's/[[:space:]]*$//' || echo "null")
+        GIT_ATTRIBUTION_PR_RAW=$(yq -r '.git.attribution.pr' "$CONFIG_FILE" 2>/dev/null | sed 's/[[:space:]]*$//' || echo "null")
 
         # Parse fork workflow settings
         GIT_FORK_ENABLED=$(yq -r '.git.fork_workflow.enabled // "false"' "$CONFIG_FILE")
@@ -969,8 +974,8 @@ parse_config() {
         GIT_ATTRIBUTION_PR="$GIT_ATTRIBUTION_PR_RAW"
     fi
 
-    # Substitute placeholders: {version}, {agent_id}, {branch}, {worktree}
-    # {worktree} is resolved later once WORKTREE_PATH is known.
+    # Substitute placeholders: {version}, {agent_id}, {branch}
+    # {worktree} is resolved later in generate_env_vars() once WORKTREE_PATH is known.
     # Version resolution matches get_kapsis_version() in post-container-git.sh:
     # prefer package.json, fall back to git describe, else "dev".
     local kapsis_version_str="${KAPSIS_VERSION:-}"
@@ -993,7 +998,7 @@ parse_config() {
     log_debug "  RESOURCE_MEMORY=$RESOURCE_MEMORY"
     log_debug "  RESOURCE_CPUS=$RESOURCE_CPUS"
     log_debug "  IMAGE_NAME=$IMAGE_NAME"
-    log_debug "  GIT_ATTRIBUTION_COMMIT=$(echo "$GIT_ATTRIBUTION_COMMIT" | head -1)..."
+    log_debug "  GIT_ATTRIBUTION_COMMIT=${GIT_ATTRIBUTION_COMMIT%%$'\n'*}..."
 }
 
 #===============================================================================
@@ -1775,6 +1780,13 @@ generate_env_vars() {
     # - Other agents: entrypoint.sh and host-side post-container-git.sh read
     #   KAPSIS_ATTRIBUTION_COMMIT and append it to commit messages directly.
     # Empty string disables attribution (Claude Code honors this explicitly).
+    #
+    # Resolve {worktree} placeholder now that WORKTREE_PATH is available.
+    local worktree_basename
+    worktree_basename="$(basename "${WORKTREE_PATH:-workspace}")"
+    GIT_ATTRIBUTION_COMMIT="${GIT_ATTRIBUTION_COMMIT//\{worktree\}/$worktree_basename}"
+    GIT_ATTRIBUTION_PR="${GIT_ATTRIBUTION_PR//\{worktree\}/$worktree_basename}"
+
     ENV_VARS+=("-e" "KAPSIS_ATTRIBUTION_COMMIT=${GIT_ATTRIBUTION_COMMIT:-}")
     ENV_VARS+=("-e" "KAPSIS_ATTRIBUTION_PR=${GIT_ATTRIBUTION_PR:-}")
     # Export for host-side post-container-git.sh (sourced later in same process).
