@@ -32,18 +32,21 @@ test_post_container_exit_code_captured() {
     # This test verifies that POST_EXIT_CODE is set when post_container_worktree
     # returns non-zero. We test this by examining the code structure rather than
     # executing it (since full execution requires complex setup).
+    #
+    # Issue #256: Both calls use || POST_EXIT_CODE=$? to prevent set -e from
+    # killing the script before the structured exit code logic runs.
 
-    # Check that POST_EXIT_CODE=$? appears after post_container_worktree call
-    if grep -A 1 'post_container_worktree$' "$LAUNCH_AGENT_SCRIPT" | grep -q 'POST_EXIT_CODE=\$?'; then
-        log_info "  ✓ POST_EXIT_CODE captured for post_container_worktree"
+    # Check that POST_EXIT_CODE is captured via || for post_container_worktree
+    if grep -q 'post_container_worktree || POST_EXIT_CODE=\$?' "$LAUNCH_AGENT_SCRIPT"; then
+        log_info "  ✓ POST_EXIT_CODE captured for post_container_worktree (|| pattern)"
     else
         log_fail "POST_EXIT_CODE not captured after post_container_worktree"
         return 1
     fi
 
-    # Check that POST_EXIT_CODE=$? appears after post_container_overlay call
-    if grep -A 1 'post_container_overlay$' "$LAUNCH_AGENT_SCRIPT" | grep -q 'POST_EXIT_CODE=\$?'; then
-        log_info "  ✓ POST_EXIT_CODE captured for post_container_overlay"
+    # Check that POST_EXIT_CODE is captured via || for post_container_overlay
+    if grep -q 'post_container_overlay || POST_EXIT_CODE=\$?' "$LAUNCH_AGENT_SCRIPT"; then
+        log_info "  ✓ POST_EXIT_CODE captured for post_container_overlay (|| pattern)"
     else
         log_fail "POST_EXIT_CODE not captured after post_container_overlay"
         return 1
@@ -69,9 +72,12 @@ test_final_exit_code_combines_both() {
     fi
 
     # Check for the logic that sets FINAL_EXIT_CODE when POST_EXIT_CODE is non-zero
+    # Issue #256: The block now distinguishes commit failure (FINAL_EXIT_CODE=6) from
+    # push failure (FINAL_EXIT_CODE=$POST_EXIT_CODE), so we check for the elif and
+    # that FINAL_EXIT_CODE is set in the broader block
     if grep -q 'elif \[\[ "\$POST_EXIT_CODE" -ne 0 \]\]; then' "$LAUNCH_AGENT_SCRIPT" && \
-       grep -A 1 'elif \[\[ "\$POST_EXIT_CODE" -ne 0 \]\]; then' "$LAUNCH_AGENT_SCRIPT" | grep -q 'FINAL_EXIT_CODE=\$POST_EXIT_CODE'; then
-        log_info "  ✓ FINAL_EXIT_CODE set to POST_EXIT_CODE when post-container fails"
+       grep -A 15 'elif \[\[ "\$POST_EXIT_CODE" -ne 0 \]\]; then' "$LAUNCH_AGENT_SCRIPT" | grep -q 'FINAL_EXIT_CODE=\$POST_EXIT_CODE'; then
+        log_info "  ✓ FINAL_EXIT_CODE set to POST_EXIT_CODE when post-container fails (push path)"
     else
         log_fail "FINAL_EXIT_CODE not properly set for post-container failure"
         return 1
@@ -83,8 +89,8 @@ test_final_exit_code_combines_both() {
     #     ... commit status check ...
     #       FINAL_EXIT_CODE=0
     # We check for FINAL_EXIT_CODE=0 somewhere in the success branch
-    # Note: Need -A 25 because the commit status check adds extra lines before FINAL_EXIT_CODE=0
-    if grep -A 25 'elif \[\[ "\$POST_EXIT_CODE" -ne 0 \]\]' "$LAUNCH_AGENT_SCRIPT" | \
+    # Note: Need -A 40 because Issue #256 adds commit/push distinction + commit status check
+    if grep -A 40 'elif \[\[ "\$POST_EXIT_CODE" -ne 0 \]\]' "$LAUNCH_AGENT_SCRIPT" | \
        grep -q 'FINAL_EXIT_CODE=0'; then
         log_info "  ✓ FINAL_EXIT_CODE set to 0 when both succeed"
     else
@@ -120,13 +126,14 @@ test_status_complete_called_with_post_exit_code() {
 
     # When POST_EXIT_CODE is non-zero, status_complete should be called with
     # POST_EXIT_CODE and a message indicating post-container failure
+    # Issue #256: Block now has two sub-branches (commit failure → code 6, push failure → POST_EXIT_CODE)
 
-    # Look for the pattern where status_complete is called with POST_EXIT_CODE
-    if grep -A 3 'elif \[\[ "\$POST_EXIT_CODE" -ne 0 \]\]; then' "$LAUNCH_AGENT_SCRIPT" | \
+    # Look for status_complete with POST_EXIT_CODE in the push failure sub-branch
+    if grep -A 20 'elif \[\[ "\$POST_EXIT_CODE" -ne 0 \]\]; then' "$LAUNCH_AGENT_SCRIPT" | \
        grep -q 'status_complete.*POST_EXIT_CODE.*Post-container operations failed'; then
-        log_info "  ✓ status_complete called with POST_EXIT_CODE and failure message"
+        log_info "  ✓ status_complete called with POST_EXIT_CODE for push failure"
     else
-        log_fail "status_complete not properly called for post-container failure"
+        log_fail "status_complete not properly called for post-container push failure"
         return 1
     fi
 }

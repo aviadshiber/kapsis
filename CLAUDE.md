@@ -374,6 +374,7 @@ KAPSIS_PUSH_FALLBACK: cd /path/to/worktree && git push -u origin branch-name
 | 3 | Uncommitted changes remain | Commit status check |
 | 4 | Mount failure (virtio-fs drop, Issue #248) | `KAPSIS_MOUNT_FAILURE:` sentinel in stderr |
 | 5 | Agent completed but process hung (Issue #257) | Liveness monitor kills + status.json phase is "complete" |
+| 6 | Commit failure (Issue #256) | Post-container `git commit` error, `commit_status: "failed"` |
 
 ## Mount Failure Detection (Issue #248)
 
@@ -398,6 +399,24 @@ liveness:
   completion_timeout: 120  # default: 120s (post-completion)
   grace_period: 300      # default: 300s
   check_interval: 30     # default: 30s
+```
+
+## Commit Failure Detection (Issue #256)
+
+Exit code 6 indicates the post-container `git commit` command failed. The agent DID produce file changes, but they could not be committed (e.g., pre-commit hook failure, git permission issue, empty diff after filtering). The worktree is preserved with staged changes for manual recovery.
+
+Key features:
+- **Full error capture**: `git commit` stderr/stdout is logged on failure (no longer swallowed)
+- **Worktree preservation**: Worktree is kept intact with recovery instructions
+- **Opt-in hook bypass**: Set `KAPSIS_COMMIT_NO_VERIFY=true` to skip pre-commit hooks in post-container context
+- **Structured error type**: `status.json` field `error_type` is `"commit_failure"` and `commit_status` is `"failed"`
+
+Recovery:
+```bash
+cd <worktree-path>
+git status           # See what was staged
+git diff --cached    # Review staged changes
+git commit -m "fix: manual recovery commit"
 ```
 
 ## Cross-Platform Notes
