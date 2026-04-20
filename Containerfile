@@ -256,7 +256,7 @@ RUN if [ "$ENABLE_NODEJS" = "true" ]; then \
             nvm install '"$NODE_VERSION"' && \
             nvm alias default '"$NODE_VERSION"' && \
             nvm use default && \
-            npm install -g pnpm@9.15.3'; \
+            npm install -g pnpm@10.33.0'; \
     else \
         mkdir -p /opt/nvm; \
     fi
