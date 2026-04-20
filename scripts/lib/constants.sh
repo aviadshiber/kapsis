@@ -305,3 +305,7 @@ readonly KAPSIS_EXIT_MOUNT_FAILURE=4
 # Agent completed work but process hung (Issue #257)
 # e.g., child process (MCP server, stuck tool call) keeps container alive
 readonly KAPSIS_EXIT_HUNG_AFTER_COMPLETION=5
+
+# Post-container commit failed — agent produced work but git commit returned error (Issue #256)
+# Recovery: worktree preserved with staged changes for manual commit
+readonly KAPSIS_EXIT_COMMIT_FAILURE=6

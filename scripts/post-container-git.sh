@@ -453,8 +453,21 @@ commit_changes() {
         full_message+=$'\n\n'"${KAPSIS_SANITIZE_SUMMARY}"
     fi
 
-    # Commit
-    if git commit -m "$full_message"; then
+    # Opt-in: bypass pre-commit hooks in post-container context (Issue #256)
+    # Use when repo hooks are known to fail on the host after container exit
+    local _no_verify_flag=""
+    if [[ "${KAPSIS_COMMIT_NO_VERIFY:-false}" == "true" ]]; then
+        _no_verify_flag="--no-verify"
+        log_info "Pre-commit hooks bypassed (KAPSIS_COMMIT_NO_VERIFY=true)"
+    fi
+
+    # Commit with full error capture (Issue #256)
+    local _commit_output
+    local _commit_exit=0
+    # shellcheck disable=SC2086  # _no_verify_flag intentionally unquoted (empty or --no-verify)
+    _commit_output=$(git commit $_no_verify_flag -m "$full_message" 2>&1) || _commit_exit=$?
+
+    if [[ $_commit_exit -eq 0 ]]; then
         log_success "Changes committed"
         echo ""
         log_info "Commit details:"
@@ -462,7 +475,22 @@ commit_changes() {
         echo ""
         return 0
     else
-        log_warn "Commit failed or nothing to commit"
+        log_error "git commit failed (exit code $_commit_exit):"
+        # Truncate to first 50 lines to limit potential secret exposure from verbose hooks
+        local _line_count=0
+        while IFS= read -r line; do
+            log_error "  $line"
+            ((_line_count++)) || true
+            if [[ $_line_count -ge 50 ]]; then
+                log_error "  ... (output truncated at 50 lines)"
+                break
+            fi
+        done <<< "$_commit_output"
+        # Hint: if failure looks hook-related, suggest the config option
+        # Pure bash pattern match — no subprocess forks
+        if [[ "${_commit_output,,}" == *hook* ]]; then
+            log_error "Hint: If this is a pre-commit hook issue, set KAPSIS_COMMIT_NO_VERIFY=true"
+        fi
         return 1
     fi
 }

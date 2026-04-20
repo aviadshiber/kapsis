@@ -2529,20 +2529,22 @@ main() {
 
     # Handle post-container operations based on sandbox mode
     # Only local backends (podman) need host-side git operations
+    # Capture post-container return code with || to prevent set -e from killing
+    # the script before the structured exit code logic runs (Issue #256)
+    # CRITICAL: This || capture is inseparable from the inner || capture at the
+    # post_container_git call site — both must be present or neither works.
+    POST_EXIT_CODE=0
     if [[ "$BACKEND" == "podman" ]]; then
         log_debug "Running post-container operations (mode: $SANDBOX_MODE)"
         log_timer_start "post_container"
         if [[ "$SANDBOX_MODE" == "worktree" ]]; then
-            post_container_worktree
-            POST_EXIT_CODE=$?
+            post_container_worktree || POST_EXIT_CODE=$?
         else
-            post_container_overlay
-            POST_EXIT_CODE=$?
+            post_container_overlay || POST_EXIT_CODE=$?
         fi
         log_timer_end "post_container"
     else
         log_info "Backend '$BACKEND' handles git operations in-pod"
-        POST_EXIT_CODE=0
     fi
 
     # Auto-cleanup agent volumes after session end (Fix #191)
@@ -2554,17 +2556,19 @@ main() {
     log_timer_end "total"
 
     # Combine exit codes - fail if either container or post-container operations failed
-    # Exit codes (Fix #3, Issue #257):
+    # Exit codes (Fix #3, Issue #256, Issue #257):
     #   0 = Success (changes committed or no changes)
     #   1 = Agent failure (container exit code non-zero)
     #   2 = Push failed
     #   3 = Uncommitted changes remain
     #   4 = Mount failure (virtio-fs drop)
     #   5 = Agent completed but process hung (stuck child process)
+    #   6 = Commit failure (agent produced work but git commit failed)
     if [[ "$EXIT_CODE" -eq 4 ]]; then
         # Mount failure detected via sentinel (Issue #248)
         FINAL_EXIT_CODE=4
         log_finalize 4
+        status_set_error_type "mount_failure"
         local mount_error="Workspace mount lost (virtio-fs drop). Recovery: podman machine stop && podman machine start, then re-run."
         status_complete 4 "$mount_error"
         _STATUS_COMPLETE_SHOWN=true
@@ -2574,6 +2578,7 @@ main() {
         # Agent completed but process hung (Issue #257)
         FINAL_EXIT_CODE=5
         log_finalize 5
+        status_set_error_type "hung_after_completion"
         local hung_error="Agent completed work but process hung (killed by liveness monitor). Likely cause: stuck child process (e.g., tool call subprocess)."
         status_complete 5 "$hung_error"
         _STATUS_COMPLETE_SHOWN=true
@@ -2582,6 +2587,7 @@ main() {
     elif [[ "$EXIT_CODE" -ne 0 ]]; then
         FINAL_EXIT_CODE=$EXIT_CODE
         log_finalize "$EXIT_CODE"
+        status_set_error_type "agent_failure"
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
         _STATUS_COMPLETE_SHOWN=true
         # Include captured container error in the failure message
@@ -2596,12 +2602,27 @@ main() {
         display_complete "$EXIT_CODE" "" "$error_msg"
         _DISPLAY_COMPLETE_SHOWN=true
     elif [[ "$POST_EXIT_CODE" -ne 0 ]]; then
-        FINAL_EXIT_CODE=$POST_EXIT_CODE
-        log_finalize $POST_EXIT_CODE
-        status_complete "$POST_EXIT_CODE" "Post-container operations failed (push)"
-        _STATUS_COMPLETE_SHOWN=true
-        display_complete "$POST_EXIT_CODE" "" "Post-container operations failed"
-        _DISPLAY_COMPLETE_SHOWN=true
+        # Distinguish commit failure from push failure (Issue #256)
+        local commit_status
+        commit_status=$(status_get_commit_status 2>/dev/null || echo "unknown")
+        if [[ "$commit_status" == "failed" ]]; then
+            # Exit code 6: agent produced work but git commit failed
+            FINAL_EXIT_CODE=6
+            log_finalize 6
+            status_set_error_type "commit_failure"
+            status_complete 6 "Commit failed — agent produced work but git commit returned error. Worktree preserved."
+            _STATUS_COMPLETE_SHOWN=true
+            display_complete 6 "" "Commit failed — worktree preserved for manual recovery"
+            _DISPLAY_COMPLETE_SHOWN=true
+        else
+            FINAL_EXIT_CODE=$POST_EXIT_CODE
+            log_finalize $POST_EXIT_CODE
+            status_set_error_type "push_failure"
+            status_complete "$POST_EXIT_CODE" "Post-container operations failed (push)"
+            _STATUS_COMPLETE_SHOWN=true
+            display_complete "$POST_EXIT_CODE" "" "Post-container operations failed (push)"
+            _DISPLAY_COMPLETE_SHOWN=true
+        fi
     else
         # Check commit status before reporting success (Fix #3)
         local commit_status
@@ -2612,6 +2633,7 @@ main() {
             # Exit code 3: changes exist but weren't fully committed
             FINAL_EXIT_CODE=3
             log_finalize 3
+            status_set_error_type "uncommitted_work"
             log_warn "Uncommitted changes remain in worktree!"
             status_complete 3 "Uncommitted changes remain"
             _STATUS_COMPLETE_SHOWN=true
@@ -2669,6 +2691,9 @@ post_container_worktree() {
     log_debug "Processing worktree post-container operations..."
     log_debug "  WORKTREE_PATH=$WORKTREE_PATH"
 
+    # Declare unconditionally so cleanup guard and return always have a defined value (Issue #256)
+    local _pcg_rc=0
+
     # Re-point sanitized git objects symlink BEFORE any git operations (#219)
     # Must happen first so git status and sync_index_from_container work correctly
     repoint_sanitized_git_objects "$SANITIZED_GIT_PATH" "$OBJECTS_PATH"
@@ -2709,8 +2734,16 @@ post_container_worktree() {
             done < <(find "$SCRIPT_DIR" -maxdepth 1 -type f -name "*.sh" -print0 2>/dev/null)
             return 1
         fi
+        # MUST be sourced (not exec'd or run in subshell) so that status_set_commit_info
+        # writes to the same shell's _KAPSIS_COMMIT_STATUS variable, which is read later
+        # by status_get_commit_status in the FINAL_EXIT_CODE logic (Issue #256)
         source "$post_container_script"
         # post_container_git sets PR_URL global variable
+        # Capture return code to prevent set -e from killing the function (Issue #256)
+        # CRITICAL: This || capture is inseparable from the outer || capture at the
+        # post_container_worktree call site — both must be present or neither works.
+        # The outer || also keeps this function alive long enough for the _pcg_rc-based
+        # worktree preservation logic below to execute.
         post_container_git \
             "$WORKTREE_PATH" \
             "$BRANCH" \
@@ -2722,7 +2755,11 @@ post_container_worktree() {
             "$GIT_CO_AUTHORS" \
             "$GIT_FORK_ENABLED" \
             "$GIT_FORK_FALLBACK" \
-            "$REMOTE_BRANCH"
+            "$REMOTE_BRANCH" || _pcg_rc=$?
+
+        if [[ $_pcg_rc -ne 0 ]]; then
+            log_warn "post_container_git failed (exit code $_pcg_rc)"
+        fi
     else
         log_info "No file changes detected"
     fi
@@ -2736,12 +2773,17 @@ post_container_worktree() {
         fi
     fi
 
-    # Auto-cleanup worktree after completion (Fix #169)
-    # Only cleanup when: KEEP_WORKTREE is false AND agent didn't fail with uncommitted work
-    if [[ "$KEEP_WORKTREE" == "true" ]] || [[ "$EXIT_CODE" -ne 0 ]]; then
-        # Preserve worktree: user requested --keep-worktree, or agent failed (may have partial work)
+    # Auto-cleanup worktree after completion (Fix #169, Fix #256)
+    # Only cleanup when: KEEP_WORKTREE is false AND no failures (agent or post-container)
+    if [[ "$KEEP_WORKTREE" == "true" ]] || [[ "$EXIT_CODE" -ne 0 ]] || [[ "${_pcg_rc:-0}" -ne 0 ]]; then
+        # Preserve worktree: user requested --keep-worktree, or agent/post-container failed
         if [[ "$EXIT_CODE" -ne 0 ]]; then
             log_warn "Preserving worktree (agent exited with code $EXIT_CODE, partial work may exist)"
+        elif [[ "${_pcg_rc:-0}" -ne 0 ]]; then
+            log_warn "Preserving worktree (post-container git failed with code ${_pcg_rc}, staged changes may exist)"
+            echo ""
+            echo "To manually commit from the worktree:"
+            echo "  cd \"$WORKTREE_PATH\" && git status && git commit -m 'fix: manual recovery'"
         fi
         echo ""
         echo "Worktree location: $WORKTREE_PATH"
@@ -2757,6 +2799,11 @@ post_container_worktree() {
         cleanup_worktree "$PROJECT_PATH" "$AGENT_ID" "$delete_branch"
         prune_worktrees "$PROJECT_PATH"
     fi
+
+    # Propagate post-container failure to caller so POST_EXIT_CODE is set (Issue #256)
+    # Without this, the function returns 0 implicitly and the commit-failure detection
+    # chain (exit code 6, error_type, worktree preservation in main) is never triggered.
+    return "$_pcg_rc"
 }
 
 #===============================================================================

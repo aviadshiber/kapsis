@@ -74,6 +74,10 @@ _KAPSIS_GIST_UPDATED_AT=""       # When gist was last updated
 # Liveness heartbeat state (written by liveness-monitor.sh, independent of hooks)
 _KAPSIS_HEARTBEAT_AT=""             # Last heartbeat timestamp from liveness monitor
 
+# Error type for structured error reporting (Issue #256)
+# Populated for ALL non-zero exits so callers have one field to branch on
+_KAPSIS_ERROR_TYPE=""
+
 # Gist rate limiting state (reduce I/O on frequent PostToolUse calls)
 _KAPSIS_GIST_LAST_READ=""        # Epoch timestamp of last gist read
 _KAPSIS_GIST_LAST_MTIME=""       # Last known file mtime
@@ -419,6 +423,15 @@ status_get_commit_sha() {
     echo "${_KAPSIS_COMMIT_SHA:-}"
 }
 
+# Set error type for structured error reporting (Issue #256)
+# Enables callers to programmatically distinguish failure modes
+# Arguments:
+#   $1 - Error type: "agent_failure", "commit_failure", "push_failure",
+#        "uncommitted_work", "mount_failure", "hung_after_completion"
+status_set_error_type() {
+    _KAPSIS_ERROR_TYPE="${1:-}"
+}
+
 # =============================================================================
 # Agent Gist (Activity Summary)
 # =============================================================================
@@ -593,6 +606,11 @@ _status_write() {
     local heartbeat_json="null"
     [[ -n "$_KAPSIS_HEARTBEAT_AT" ]] && heartbeat_json="\"$_KAPSIS_HEARTBEAT_AT\""
 
+    # Error type field (Issue #256)
+    # shellcheck disable=SC2034  # used in heredoc below
+    local error_type_json="null"
+    [[ -n "$_KAPSIS_ERROR_TYPE" ]] && error_type_json="\"$_KAPSIS_ERROR_TYPE\""
+
     # Build JSON (using heredoc for readability)
     local json
     json=$(cat << EOF
@@ -620,7 +638,8 @@ _status_write() {
   "commit_status": ${commit_status_json},
   "commit_sha": ${commit_sha_json},
   "uncommitted_files": ${uncommitted_files_json},
-  "heartbeat_at": ${heartbeat_json}
+  "heartbeat_at": ${heartbeat_json},
+  "error_type": ${error_type_json}
 }
 EOF
 )
