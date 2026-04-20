@@ -476,11 +476,19 @@ commit_changes() {
         return 0
     else
         log_error "git commit failed (exit code $_commit_exit):"
+        # Truncate to first 50 lines to limit potential secret exposure from verbose hooks
+        local _line_count=0
         while IFS= read -r line; do
             log_error "  $line"
+            ((_line_count++)) || true
+            if [[ $_line_count -ge 50 ]]; then
+                log_error "  ... (output truncated at 50 lines)"
+                break
+            fi
         done <<< "$_commit_output"
         # Hint: if failure looks hook-related, suggest the config option
-        if echo "$_commit_output" | grep -qi "hook"; then
+        # Pure bash pattern match — no subprocess forks
+        if [[ "${_commit_output,,}" == *hook* ]]; then
             log_error "Hint: If this is a pre-commit hook issue, set KAPSIS_COMMIT_NO_VERIFY=true"
         fi
         return 1

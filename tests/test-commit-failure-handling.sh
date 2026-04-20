@@ -26,6 +26,31 @@ POST_CONTAINER_GIT="$KAPSIS_ROOT/scripts/post-container-git.sh"
 STATUS_SH="$KAPSIS_ROOT/scripts/lib/status.sh"
 CONSTANTS_SH="$KAPSIS_ROOT/scripts/lib/constants.sh"
 
+# Source post-container-git.sh for behavioral tests
+source "$KAPSIS_ROOT/scripts/lib/constants.sh"
+source "$KAPSIS_ROOT/scripts/post-container-git.sh"
+
+# Global variables for behavioral tests
+TEST_REPO=""
+
+setup_test_repo() {
+    local test_name="$1"
+    TEST_REPO=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-test-commit-${test_name}-XXXXXX")
+    cd "$TEST_REPO"
+    git init --quiet
+    git config user.email "test@kapsis.local"
+    git config user.name "Kapsis Test"
+    git config commit.gpgsign false
+    echo "# Test Project" > README.md
+    git add README.md
+    git commit --quiet -m "Initial commit"
+}
+
+cleanup_test_repo() {
+    [[ -n "$TEST_REPO" && -d "$TEST_REPO" ]] && rm -rf "$TEST_REPO"
+    TEST_REPO=""
+}
+
 #===============================================================================
 # TEST CASES
 #===============================================================================
@@ -33,16 +58,25 @@ CONSTANTS_SH="$KAPSIS_ROOT/scripts/lib/constants.sh"
 test_commit_output_captured() {
     log_test "git commit stderr/stdout is captured on failure"
 
-    # Verify that commit_changes() captures git commit output via 2>&1
-    # instead of letting it go to /dev/null
-    if grep -q 'git commit.*2>&1.*|| _commit_exit' "$POST_CONTAINER_GIT"; then
+    # Split into two separate checks to be robust against line reformatting
+
+    # Check 1: git commit output is captured via 2>&1
+    if grep -q 'git commit.*2>&1' "$POST_CONTAINER_GIT"; then
         log_info "  ✓ git commit output captured via 2>&1"
     else
-        log_fail "git commit output not captured in commit_changes()"
+        log_fail "git commit output not captured with 2>&1 in commit_changes()"
         return 1
     fi
 
-    # Verify the error output is logged, not silently discarded
+    # Check 2: exit code is captured via || pattern
+    if grep -q '|| _commit_exit=\$?' "$POST_CONTAINER_GIT"; then
+        log_info "  ✓ git commit exit code captured via || _commit_exit"
+    else
+        log_fail "git commit exit code not captured with || _commit_exit"
+        return 1
+    fi
+
+    # Check 3: the error output is logged, not silently discarded
     if grep -q 'log_error.*git commit failed' "$POST_CONTAINER_GIT"; then
         log_info "  ✓ Commit failure logged with log_error"
     else
@@ -207,6 +241,72 @@ test_error_type_populated_for_all_exits() {
     fi
 }
 
+test_pcg_rc_propagated_to_caller() {
+    log_test "post_container_worktree propagates _pcg_rc via return"
+
+    # Verify that post_container_worktree() ends with 'return "$_pcg_rc"'
+    # This is CRITICAL — without it, the function returns 0 implicitly
+    # and the entire commit-failure detection chain is dead code.
+    if grep -A 3 'Propagate post-container failure' "$LAUNCH_AGENT_SCRIPT" | \
+       grep -q 'return "\$_pcg_rc"'; then
+        log_info "  ✓ post_container_worktree returns _pcg_rc"
+    else
+        log_fail "post_container_worktree does not return _pcg_rc — commit failure detection is dead code"
+        return 1
+    fi
+}
+
+test_commit_changes_returns_1_on_failure() {
+    log_test "commit_changes() returns 1 when git commit fails (pre-commit hook rejection)"
+
+    # Behavioral test: set up a real git repo with a pre-commit hook that
+    # always rejects, add real file changes, and verify commit_changes returns 1.
+    # This is the exact scenario from Issue #256.
+
+    setup_test_repo "commit-fail"
+    cd "$TEST_REPO"
+
+    # Install a pre-commit hook that always fails
+    mkdir -p .git/hooks
+    cat > .git/hooks/pre-commit << 'HOOKEOF'
+#!/usr/bin/env bash
+echo "pre-commit hook: REJECTED (test)" >&2
+exit 1
+HOOKEOF
+    chmod +x .git/hooks/pre-commit
+
+    # Create real file changes (commit_changes will stage these via git add -A)
+    echo "agent output" > agent-result.txt
+
+    # Call commit_changes — git commit should fail due to hook rejection
+    local exit_code=0
+    commit_changes "$TEST_REPO" "feat: test commit failure" "agent-test" "" || exit_code=$?
+
+    if [[ $exit_code -eq 1 ]]; then
+        log_info "  ✓ commit_changes returned 1 on hook rejection"
+    else
+        log_fail "commit_changes returned $exit_code, expected 1"
+        cleanup_test_repo
+        return 1
+    fi
+
+    log_info "  ✓ Behavioral test: commit_changes correctly returns 1 on git commit failure"
+    cleanup_test_repo
+}
+
+test_push_failure_branch_still_works() {
+    log_test "Push failure path still sets FINAL_EXIT_CODE=\$POST_EXIT_CODE"
+
+    # Verify the else branch (push failure) is present and sets the right code
+    if grep -A 20 'elif \[\[ "\$POST_EXIT_CODE" -ne 0 \]\]' "$LAUNCH_AGENT_SCRIPT" | \
+       grep -q 'FINAL_EXIT_CODE=\$POST_EXIT_CODE'; then
+        log_info "  ✓ Push failure path sets FINAL_EXIT_CODE=\$POST_EXIT_CODE"
+    else
+        log_fail "Push failure path missing or broken"
+        return 1
+    fi
+}
+
 #===============================================================================
 # RUN TESTS
 #===============================================================================
@@ -219,7 +319,7 @@ main() {
     log_info "silently discarding it."
     log_info ""
 
-    # Run all tests
+    # Structure inspection tests
     run_test test_commit_output_captured
     run_test test_exit_code_6_constant_defined
     run_test test_commit_failure_sets_exit_code_6
@@ -229,6 +329,11 @@ main() {
     run_test test_both_error_captures_present
     run_test test_no_verify_config_supported
     run_test test_error_type_populated_for_all_exits
+    run_test test_pcg_rc_propagated_to_caller
+    run_test test_push_failure_branch_still_works
+
+    # Behavioral tests (use real git repo)
+    run_test test_commit_changes_returns_1_on_failure
 
     # Print summary
     print_summary

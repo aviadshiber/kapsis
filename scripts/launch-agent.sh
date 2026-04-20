@@ -2691,6 +2691,9 @@ post_container_worktree() {
     log_debug "Processing worktree post-container operations..."
     log_debug "  WORKTREE_PATH=$WORKTREE_PATH"
 
+    # Declare unconditionally so cleanup guard and return always have a defined value (Issue #256)
+    local _pcg_rc=0
+
     # Re-point sanitized git objects symlink BEFORE any git operations (#219)
     # Must happen first so git status and sync_index_from_container work correctly
     repoint_sanitized_git_objects "$SANITIZED_GIT_PATH" "$OBJECTS_PATH"
@@ -2731,12 +2734,16 @@ post_container_worktree() {
             done < <(find "$SCRIPT_DIR" -maxdepth 1 -type f -name "*.sh" -print0 2>/dev/null)
             return 1
         fi
+        # MUST be sourced (not exec'd or run in subshell) so that status_set_commit_info
+        # writes to the same shell's _KAPSIS_COMMIT_STATUS variable, which is read later
+        # by status_get_commit_status in the FINAL_EXIT_CODE logic (Issue #256)
         source "$post_container_script"
         # post_container_git sets PR_URL global variable
         # Capture return code to prevent set -e from killing the function (Issue #256)
         # CRITICAL: This || capture is inseparable from the outer || capture at the
         # post_container_worktree call site — both must be present or neither works.
-        local _pcg_rc=0
+        # The outer || also keeps this function alive long enough for the _pcg_rc-based
+        # worktree preservation logic below to execute.
         post_container_git \
             "$WORKTREE_PATH" \
             "$BRANCH" \
@@ -2776,7 +2783,7 @@ post_container_worktree() {
             log_warn "Preserving worktree (post-container git failed with code ${_pcg_rc}, staged changes may exist)"
             echo ""
             echo "To manually commit from the worktree:"
-            echo "  cd $WORKTREE_PATH && git status && git commit -m 'fix: manual recovery'"
+            echo "  cd \"$WORKTREE_PATH\" && git status && git commit -m 'fix: manual recovery'"
         fi
         echo ""
         echo "Worktree location: $WORKTREE_PATH"
@@ -2792,6 +2799,11 @@ post_container_worktree() {
         cleanup_worktree "$PROJECT_PATH" "$AGENT_ID" "$delete_branch"
         prune_worktrees "$PROJECT_PATH"
     fi
+
+    # Propagate post-container failure to caller so POST_EXIT_CODE is set (Issue #256)
+    # Without this, the function returns 0 implicitly and the commit-failure detection
+    # chain (exit code 6, error_type, worktree preservation in main) is never triggered.
+    return "$_pcg_rc"
 }
 
 #===============================================================================
