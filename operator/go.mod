@@ -1,6 +1,6 @@
 module github.com/aviadshiber/kapsis/operator
 
-go 1.25.3
+go 1.26.2
 
 require (
 	github.com/onsi/ginkgo/v2 v2.28.1
