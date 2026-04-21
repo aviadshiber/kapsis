@@ -426,8 +426,8 @@ status_get_commit_sha() {
 # Set error type for structured error reporting (Issue #256)
 # Enables callers to programmatically distinguish failure modes
 # Arguments:
-#   $1 - Error type: "agent_failure", "commit_failure", "push_failure",
-#        "uncommitted_work", "mount_failure", "hung_after_completion"
+#   $1 - Error type: "agent_failure", "agent_partial", "commit_failure",
+#        "push_failure", "uncommitted_work", "mount_failure", "hung_after_completion"
 status_set_error_type() {
     _KAPSIS_ERROR_TYPE="${1:-}"
 }

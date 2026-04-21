@@ -229,6 +229,7 @@ test_error_type_populated_for_all_exits() {
     grep -q 'status_set_error_type "mount_failure"' "$LAUNCH_AGENT_SCRIPT" || missing+=("mount_failure")
     grep -q 'status_set_error_type "hung_after_completion"' "$LAUNCH_AGENT_SCRIPT" || missing+=("hung_after_completion")
     grep -q 'status_set_error_type "agent_failure"' "$LAUNCH_AGENT_SCRIPT" || missing+=("agent_failure")
+    grep -q 'status_set_error_type "agent_partial"' "$LAUNCH_AGENT_SCRIPT" || missing+=("agent_partial")
     grep -q 'status_set_error_type "commit_failure"' "$LAUNCH_AGENT_SCRIPT" || missing+=("commit_failure")
     grep -q 'status_set_error_type "push_failure"' "$LAUNCH_AGENT_SCRIPT" || missing+=("push_failure")
     grep -q 'status_set_error_type "uncommitted_work"' "$LAUNCH_AGENT_SCRIPT" || missing+=("uncommitted_work")
