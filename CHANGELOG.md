@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.20.7] - 2026-04-20
+## [2.20.8] - 2026-04-20
 
-### Changed
-- Bump the github-actions group with 2 updates (#264)
+### Fixed
+- Detect and preserve work on post-container commit failure (#256) (#263)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Changed
+- Bump the github-actions group with 2 updates (#264)
+
 
 ### Fixed
 - Detect and recover from hung agent after completion (#257) (#259)
@@ -808,7 +812,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.20.7...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.20.8...HEAD
+[2.20.8]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.8
 [2.20.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.7
 [2.20.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.6
 [2.20.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.4
