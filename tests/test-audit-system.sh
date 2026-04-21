@@ -1085,7 +1085,29 @@ test_pattern_verbose_curl_long_flag() {
     teardown
 }
 
-# 29. Combined short flags (curl -sv, curl -kv) also detected
+# 29. curl -v at end of command (no trailing space) also detected
+test_pattern_verbose_curl_at_end() {
+    log_test "curl URL -v (flag at end of command) also flagged"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    local now
+    now=$(date +%s)
+
+    local alert_rc=0
+    if audit_check_patterns "network_activity" "Bash" "curl https://api.github.com -v" "" "$now"; then
+        alert_rc=0
+    else
+        alert_rc=1
+    fi
+    assert_equals 0 "$alert_rc" "curl with -v at end should trigger unusual_commands alert"
+
+    teardown
+}
+
+# 30. Combined short flags (curl -sv, curl -kv) also detected
 test_pattern_verbose_curl_combined_flags() {
     log_test "curl -sv (combined flags with -v) also flagged"
 
@@ -1180,9 +1202,10 @@ main() {
     run_test test_pattern_no_false_positive_pip
     run_test test_pattern_no_false_positive_maven
 
-    # Verbose curl detection tests (27-30, Issue #246)
+    # Verbose curl detection tests (27-31, Issue #246)
     run_test test_pattern_verbose_curl_detected
     run_test test_pattern_verbose_curl_long_flag
+    run_test test_pattern_verbose_curl_at_end
     run_test test_pattern_verbose_curl_combined_flags
     run_test test_pattern_normal_curl_not_flagged
 
