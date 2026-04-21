@@ -249,9 +249,9 @@ EOF
     local entries
     entries=$(generate_pinned_dnsmasq_entries "$temp_file")
 
-    # Check output uses host-record= (exact match) not address=/ (catches subdomains)
-    assert_contains "$entries" "host-record=github.com,1.2.3.4" "Should have github host-record entry"
-    assert_contains "$entries" "host-record=github.com,5.6.7.8" "Should have second github IP"
+    # Check output uses host-record= with comma-separated IPs (exact match, Issue #245)
+    # Multiple IPs on one line — separate host-record= lines don't accumulate in dnsmasq
+    assert_contains "$entries" "host-record=github.com,1.2.3.4,5.6.7.8" "Should have github host-record with both IPs"
     assert_contains "$entries" "host-record=gitlab.com,10.20.30.40" "Should have gitlab host-record entry"
 
     rm -f "$temp_file"

@@ -207,7 +207,7 @@ generate_add_host_args() {
 
 # generate_pinned_dnsmasq_entries <pinned-file>
 #
-# Generates dnsmasq address=/ directives from pinned DNS file.
+# Generates dnsmasq host-record= directives from pinned DNS file (Issue #245).
 # Used by dns-filter.sh to create static IP bindings.
 #
 # Arguments:
@@ -236,13 +236,11 @@ generate_pinned_dnsmasq_entries() {
         [[ -z "$domain" || -z "$ips" ]] && continue
 
         # Use host-record (exact match) instead of address= (which catches subdomains)
-        # address=/domain/IP makes ALL subdomains resolve to the apex IP (Issue #245)
-        # host-record=domain,IP only pins the exact domain; subdomains fall through
-        # to server=/ forwarders for live resolution
-        # shellcheck disable=SC2086  # Intentional word-split: $ips contains space-separated IPv4 addresses
-        for ip in $ips; do
-            echo "host-record=${domain},${ip}"
-        done
+        # host-record=domain,IP1,IP2 pins only the exact domain; subdomains fall through
+        # to server=/ forwarders for live resolution (Issue #245)
+        # Multiple IPs must be on one line — separate host-record= lines don't accumulate
+        local ip_csv="${ips// /,}"
+        echo "host-record=${domain},${ip_csv}"
     done < "$pinned_file"
 }
 

@@ -162,7 +162,7 @@ EOF
     # PINNED DNS ENTRIES (host-resolved IPs)
     #
     # If pinned DNS file exists (from host-side resolution), use static
-    # address=/ directives instead of dynamic server=/ forwarding.
+    # host-record= directives instead of dynamic server=/ forwarding.
     # This prevents DNS manipulation attacks inside the container.
     #===========================================================================
     local pinned_count=0
@@ -189,13 +189,11 @@ EOF
             _KAPSIS_PINNED_DOMAINS["$pin_domain"]=1
 
             # Use host-record (exact match) instead of address= (which catches subdomains)
-            # address=/domain/IP makes ALL subdomains resolve to the apex IP (Issue #245)
-            # host-record=domain,IP only pins the exact domain; subdomains fall through
-            # to server=/ forwarders for live resolution
-            # shellcheck disable=SC2086  # Intentional word-split: $pin_ips contains space-separated IPs
-            for ip in $pin_ips; do
-                echo "host-record=${pin_domain},${ip}" >> "$config_file"
-            done
+            # host-record=domain,IP1,IP2 pins only the exact domain; subdomains fall through
+            # to server=/ forwarders for live resolution (Issue #245)
+            # Multiple IPs must be on one line — separate host-record= lines don't accumulate
+            local pin_ip_csv="${pin_ips// /,}"
+            echo "host-record=${pin_domain},${pin_ip_csv}" >> "$config_file"
 
             log_debug "Pinned: $pin_domain -> $pin_ips"
             pinned_count=$((pinned_count + 1))
