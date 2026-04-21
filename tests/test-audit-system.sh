@@ -1029,6 +1029,132 @@ test_pattern_no_false_positive_maven() {
     teardown
 }
 
+# 27. Verbose curl flagged as unusual command (Issue #246)
+test_pattern_verbose_curl_detected() {
+    log_test "curl -v / --verbose flagged as unusual command (auth header leak risk)"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    local now
+    now=$(date +%s)
+
+    # Test curl -v
+    local alert_rc=0
+    if audit_check_patterns "network_activity" "Bash" "curl -v https://api.github.com/user" "" "$now"; then
+        alert_rc=0
+    else
+        alert_rc=1
+    fi
+    assert_equals 0 "$alert_rc" "curl -v should trigger unusual_commands alert"
+
+    # Verify alert content
+    local alert_found=false
+    for f in "$TEST_AUDIT_DIR"/*-alerts.jsonl; do
+        if [[ -f "$f" ]]; then
+            if grep -q "verbose curl" "$f" 2>/dev/null; then
+                alert_found=true
+            fi
+        fi
+    done
+    assert_true "[[ '$alert_found' == 'true' ]]" "Alert should mention 'verbose curl'"
+
+    teardown
+}
+
+# 28. curl --verbose also detected (long flag form)
+test_pattern_verbose_curl_long_flag() {
+    log_test "curl --verbose also flagged"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    local now
+    now=$(date +%s)
+
+    local alert_rc=0
+    if audit_check_patterns "network_activity" "Bash" "curl --verbose -H 'Authorization: Bearer token' https://api.github.com" "" "$now"; then
+        alert_rc=0
+    else
+        alert_rc=1
+    fi
+    assert_equals 0 "$alert_rc" "curl --verbose should trigger unusual_commands alert"
+
+    teardown
+}
+
+# 29. curl -v at end of command (no trailing space) also detected
+test_pattern_verbose_curl_at_end() {
+    log_test "curl URL -v (flag at end of command) also flagged"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    local now
+    now=$(date +%s)
+
+    local alert_rc=0
+    if audit_check_patterns "network_activity" "Bash" "curl https://api.github.com -v" "" "$now"; then
+        alert_rc=0
+    else
+        alert_rc=1
+    fi
+    assert_equals 0 "$alert_rc" "curl with -v at end should trigger unusual_commands alert"
+
+    teardown
+}
+
+# 30. Combined short flags (curl -sv, curl -kv) also detected
+test_pattern_verbose_curl_combined_flags() {
+    log_test "curl -sv (combined flags with -v) also flagged"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    local now
+    now=$(date +%s)
+
+    local alert_rc=0
+    if audit_check_patterns "network_activity" "Bash" "curl -sv https://api.github.com/user" "" "$now"; then
+        alert_rc=0
+    else
+        alert_rc=1
+    fi
+    assert_equals 0 "$alert_rc" "curl -sv should trigger unusual_commands alert"
+
+    teardown
+}
+
+# 30. Normal curl (no -v) should NOT be flagged
+test_pattern_normal_curl_not_flagged() {
+    log_test "Normal curl (no -v) not flagged as unusual"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    local now
+    now=$(date +%s)
+
+    audit_check_patterns "network_activity" "Bash" "curl -s https://api.github.com/repos" "" "$now" || true
+
+    local unusual_found=false
+    for f in "$TEST_AUDIT_DIR"/*-alerts.jsonl; do
+        if [[ -f "$f" ]]; then
+            if grep -q "verbose curl" "$f" 2>/dev/null; then
+                unusual_found=true
+            fi
+        fi
+    done
+    assert_true "[[ '$unusual_found' == 'false' ]]" "Normal curl should not trigger verbose curl alert"
+
+    teardown
+}
+
 #===============================================================================
 # TEST RUNNER
 #===============================================================================
@@ -1075,6 +1201,13 @@ main() {
     # Additional false positive tests (25-26)
     run_test test_pattern_no_false_positive_pip
     run_test test_pattern_no_false_positive_maven
+
+    # Verbose curl detection tests (27-31, Issue #246)
+    run_test test_pattern_verbose_curl_detected
+    run_test test_pattern_verbose_curl_long_flag
+    run_test test_pattern_verbose_curl_at_end
+    run_test test_pattern_verbose_curl_combined_flags
+    run_test test_pattern_normal_curl_not_flagged
 
     print_summary
     return "$TESTS_FAILED"
