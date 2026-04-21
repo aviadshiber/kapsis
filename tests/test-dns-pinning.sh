@@ -234,7 +234,7 @@ EOF
 }
 
 test_generate_pinned_dnsmasq_entries() {
-    log_test "Testing dnsmasq address=/ entries generation"
+    log_test "Testing dnsmasq host-record entries generation (Issue #245: exact-match, no subdomain capture)"
 
     source "$DNS_PIN_LIB"
 
@@ -249,10 +249,10 @@ EOF
     local entries
     entries=$(generate_pinned_dnsmasq_entries "$temp_file")
 
-    # Check output contains address=/ format
-    assert_contains "$entries" "address=/github.com/1.2.3.4" "Should have github address entry"
-    assert_contains "$entries" "address=/github.com/5.6.7.8" "Should have second github IP"
-    assert_contains "$entries" "address=/gitlab.com/10.20.30.40" "Should have gitlab address entry"
+    # Check output uses host-record= (exact match) not address=/ (catches subdomains)
+    assert_contains "$entries" "host-record=github.com,1.2.3.4" "Should have github host-record entry"
+    assert_contains "$entries" "host-record=github.com,5.6.7.8" "Should have second github IP"
+    assert_contains "$entries" "host-record=gitlab.com,10.20.30.40" "Should have gitlab host-record entry"
 
     rm -f "$temp_file"
 }
@@ -306,9 +306,9 @@ EOF
     # Generate config
     generate_dnsmasq_config
 
-    # Verify pinned domains use address=/ (static IP)
-    assert_file_contains "$temp_config" "address=/github.com/1.2.3.4" "Pinned github should use address=/"
-    assert_file_contains "$temp_config" "address=/gitlab.com/5.6.7.8" "Pinned gitlab should use address=/"
+    # Verify pinned domains use host-record= (exact match, Issue #245)
+    assert_file_contains "$temp_config" "host-record=github.com,1.2.3.4" "Pinned github should use host-record="
+    assert_file_contains "$temp_config" "host-record=gitlab.com,5.6.7.8" "Pinned gitlab should use host-record="
 
     # Verify wildcards still use server=/ (dynamic forwarding)
     assert_file_contains "$temp_config" "server=/.npmjs.org/8.8.8.8" "Wildcard should use server=/"
@@ -792,9 +792,9 @@ EOF
             echo "==="
         ' 2>&1) || true
 
-    # Check for address=/ entry for pinned domain
-    if echo "$output" | grep -q "address=/pinned-test.example/192.0.2.50"; then
-        log_pass "Pinned domain uses address=/ directive"
+    # Check for host-record= entry for pinned domain (Issue #245: exact match only)
+    if echo "$output" | grep -q "host-record=pinned-test.example,192.0.2.50"; then
+        log_pass "Pinned domain uses host-record= directive (exact match)"
     else
         log_warn "Could not verify dnsmasq config (DNS filter may have different behavior in CI)"
     fi

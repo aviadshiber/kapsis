@@ -188,10 +188,13 @@ EOF
             # Track this domain as pinned (skip in dynamic rules later)
             _KAPSIS_PINNED_DOMAINS["$pin_domain"]=1
 
-            # Generate address= directive for each IP
+            # Use host-record (exact match) instead of address= (which catches subdomains)
+            # address=/domain/IP makes ALL subdomains resolve to the apex IP (Issue #245)
+            # host-record=domain,IP only pins the exact domain; subdomains fall through
+            # to server=/ forwarders for live resolution
             # shellcheck disable=SC2086  # Intentional word-split: $pin_ips contains space-separated IPs
             for ip in $pin_ips; do
-                echo "address=/${pin_domain}/${ip}" >> "$config_file"
+                echo "host-record=${pin_domain},${ip}" >> "$config_file"
             done
 
             log_debug "Pinned: $pin_domain -> $pin_ips"

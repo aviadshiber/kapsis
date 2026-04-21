@@ -235,10 +235,13 @@ generate_pinned_dnsmasq_entries() {
 
         [[ -z "$domain" || -z "$ips" ]] && continue
 
-        # Generate address= directive for each IP
+        # Use host-record (exact match) instead of address= (which catches subdomains)
+        # address=/domain/IP makes ALL subdomains resolve to the apex IP (Issue #245)
+        # host-record=domain,IP only pins the exact domain; subdomains fall through
+        # to server=/ forwarders for live resolution
         # shellcheck disable=SC2086  # Intentional word-split: $ips contains space-separated IPv4 addresses
         for ip in $ips; do
-            echo "address=/${domain}/${ip}"
+            echo "host-record=${domain},${ip}"
         done
     done < "$pinned_file"
 }
