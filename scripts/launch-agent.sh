@@ -2588,9 +2588,12 @@ main() {
         FINAL_EXIT_CODE=$EXIT_CODE
         log_finalize "$EXIT_CODE"
         # Distinguish agent_partial (crashed but committed work) from agent_failure (Issue #260)
-        local _agent_commit_status
-        _agent_commit_status=$(status_get_commit_status 2>/dev/null || echo "unknown")
-        if [[ "$_agent_commit_status" == "success" ]]; then
+        # Note: In overlay mode, commit_status is "overlay_pending" (not "success"),
+        # so overlay-mode crashes are always "agent_failure". This is intentional —
+        # overlay mode has no git commit, only an upper-dir with changes.
+        local agent_commit_status
+        agent_commit_status=$(status_get_commit_status 2>/dev/null || echo "unknown")
+        if [[ "$agent_commit_status" == "success" ]]; then
             status_set_error_type "agent_partial"
         else
             status_set_error_type "agent_failure"
