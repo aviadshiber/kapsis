@@ -401,6 +401,15 @@ liveness:
   check_interval: 30     # default: 30s
 ```
 
+## Agent Partial Completion (Issue #260)
+
+When a container exits non-zero but the agent's work was successfully committed, `error_type` is set to `"agent_partial"` instead of `"agent_failure"`. This tells callers (slack-bot) NOT to retry — the work exists on the branch. Exit code remains 1.
+
+| Scenario | exit_code | error_type |
+|----------|-----------|-----------|
+| Container crashed, no work | 1 | `agent_failure` |
+| Container crashed, work committed | 1 | `agent_partial` |
+
 ## Commit Failure Detection (Issue #256)
 
 Exit code 6 indicates the post-container `git commit` command failed. The agent DID produce file changes, but they could not be committed (e.g., pre-commit hook failure, git permission issue, empty diff after filtering). The worktree is preserved with staged changes for manual recovery.
