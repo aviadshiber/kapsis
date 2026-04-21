@@ -2558,7 +2558,7 @@ main() {
     # Combine exit codes - fail if either container or post-container operations failed
     # Exit codes (Fix #3, Issue #256, Issue #257):
     #   0 = Success (changes committed or no changes)
-    #   1 = Agent failure (container exit code non-zero)
+    #   1 = Agent failure (container exit code non-zero; error_type=agent_partial if work committed)
     #   2 = Push failed
     #   3 = Uncommitted changes remain
     #   4 = Mount failure (virtio-fs drop)
@@ -2587,7 +2587,14 @@ main() {
     elif [[ "$EXIT_CODE" -ne 0 ]]; then
         FINAL_EXIT_CODE=$EXIT_CODE
         log_finalize "$EXIT_CODE"
-        status_set_error_type "agent_failure"
+        # Distinguish agent_partial (crashed but committed work) from agent_failure (Issue #260)
+        local _agent_commit_status
+        _agent_commit_status=$(status_get_commit_status 2>/dev/null || echo "unknown")
+        if [[ "$_agent_commit_status" == "success" ]]; then
+            status_set_error_type "agent_partial"
+        else
+            status_set_error_type "agent_failure"
+        fi
         status_complete "$EXIT_CODE" "Agent exited with error code $EXIT_CODE"
         _STATUS_COMPLETE_SHOWN=true
         # Include captured container error in the failure message
