@@ -317,6 +317,7 @@ _pattern_sensitive_path_access() {
 # Suspicious patterns:
 #   - base64 -d (decoding obfuscated payloads)
 #   - curl ... | sh/bash (remote code execution)
+#   - curl -v / --verbose (auth header exposure in output)
 #   - nc -l / ncat (network listeners)
 #   - python/python3 -c ...socket (reverse shells)
 #   - eval ...base64 (obfuscated eval)
@@ -337,6 +338,8 @@ _pattern_unusual_commands() {
     elif [[ "$command" =~ curl.*\|.*sh ]] || \
          [[ "$command" =~ curl.*\|.*bash ]]; then
         pattern_desc="curl piped to shell"
+    elif [[ "$command" =~ curl[[:space:]].*(-v[[:space:]]|--verbose) ]]; then
+        pattern_desc="verbose curl (may expose Authorization headers in output)"
     elif [[ "$command" =~ nc[[:space:]]+-l ]] || \
          [[ "$command" =~ ncat[[:space:]] ]]; then
         pattern_desc="network listener (nc/ncat)"
