@@ -851,7 +851,7 @@ image:
 
 ## Liveness Monitoring
 
-Built-in agent liveness monitoring detects and kills hung agent processes. **Enabled by default** (Issue #257). The monitor checks three signals: hook-driven `updated_at` timestamps, process tree I/O activity across all container descendants, and active TCP connections to AI API endpoints. All three must be stale before the agent is killed (defense against false positives during long thinking phases or API calls).
+Built-in agent liveness monitoring detects and kills hung agent processes. **Enabled by default** (Issue #257). The monitor checks three signals: hook-driven `updated_at` timestamps, process tree I/O activity across all container descendants, and TCP connection quality to AI API endpoints. All three must indicate inactivity before the agent is killed, with a two-tier grace period based on how active the API connection appears (data in flight vs. idle keepalive).
 
 ### Configuration
 
@@ -862,6 +862,8 @@ liveness:
   grace_period: 300          # Skip checks for N seconds after start (default: 300)
   check_interval: 30         # Check every N seconds (default: 30, min: 10)
   completion_timeout: 120    # Shorter timeout when agent reports done (default: 120)
+  api_soft_skip: 20          # Grace cycles when API connection has data in flight (default: 20 = 10 min)
+  api_hard_skip: 6           # Grace cycles when API connection is idle/keepalive (default: 6 = 3 min)
 ```
 
 ### K8s Backend (AgentRequest CR)
@@ -881,13 +883,12 @@ spec:
 2. **Activity check**: Every `check_interval` seconds, monitor reads:
    - `updated_at` from status.json (set by PostToolUse hooks)
    - `read_bytes + write_bytes` from `/proc/[0-9]*/io` (all container process I/O)
-   - Active TCP connections to AI API endpoints (port 443)
-3. **Kill decision**: If `updated_at` is stale for >= `timeout` seconds AND I/O counters unchanged for 2+ consecutive cycles AND no active API connections → SIGTERM, wait 10s, SIGKILL
-4. **Post-completion timeout** (Issue #257): When status.json phase is "complete" but process hasn't exited and no API connections exist, the shorter `completion_timeout` (120s) applies instead of the full timeout
-5. **API staleness override** (Issue #257): If `updated_at` is stale for >= 1800s but an API connection exists, the agent is killed anyway — this catches stuck tool calls where the API connection stays alive indefinitely
-6. **Exit code 5**: When liveness kills an agent that had completed its work (phase="complete"/"committing"/"pushing"), exit code 5 is used instead of 137
-7. **Auto-diagnostics**: Before killing, captures process tree, open FDs, TCP connections, and status.json to `kapsis-liveness-diagnostics.txt`
-8. **Heartbeat**: Monitor writes `heartbeat_at` to status.json on every check cycle (independent of agent activity)
+   - TCP connection quality to AI API endpoints (port 443) via `/proc/net/tcp` queue depths
+3. **Kill decision**: If `updated_at` is stale for >= `timeout` seconds AND I/O counters unchanged for 2+ consecutive cycles, Signal 3 provides a two-tier grace: active connections (data in flight or TCP retransmitting) get up to `api_soft_skip` cycles of grace; idle connections (open but queues empty) get up to `api_hard_skip` cycles. When all grace is exhausted → SIGTERM, wait 10s, SIGKILL
+4. **Post-completion timeout** (Issue #257): When status.json phase is "complete", "committing", or "pushing", the shorter `completion_timeout` (120s) applies unconditionally — API connections do not extend the timeout in the completion phase
+5. **Exit code 5**: When liveness kills an agent that had completed its work (phase="complete"/"committing"/"pushing"), exit code 5 is used instead of 137
+6. **Auto-diagnostics**: Before killing, captures process tree, open FDs, TCP connections, and status.json to `kapsis-liveness-diagnostics.txt`
+7. **Heartbeat**: Monitor writes `heartbeat_at` to status.json on every check cycle (independent of agent activity)
 
 ### Claude Hang Fix
 

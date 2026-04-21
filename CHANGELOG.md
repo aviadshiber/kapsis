@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.20.8] - 2026-04-20
+## [2.21.1] - 2026-04-21
 
 ### Fixed
-- Detect and preserve work on post-container commit failure (#256) (#263)
+- DNS pinning no longer captures subdomains — use host-record instead of address= (#245) (#271)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Detect and preserve work on post-container commit failure (#256) (#263)
+
 
 ### Changed
 - Bump the github-actions group with 2 updates (#264)
@@ -812,7 +816,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.20.8...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.21.1...HEAD
+[2.21.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.21.1
 [2.20.8]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.8
 [2.20.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.7
 [2.20.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.20.6

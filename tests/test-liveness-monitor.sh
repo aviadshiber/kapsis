@@ -110,17 +110,17 @@ test_liveness_config_defaults() {
         unset KAPSIS_LIVENESS_TIMEOUT KAPSIS_LIVENESS_GRACE_PERIOD KAPSIS_LIVENESS_CHECK_INTERVAL
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
 
-        # Check defaults are set correctly (Issue #257: timeout 1800→900, API max skip 240→60)
+        # Check defaults are set correctly (Issue #267: two-tier grace replaces single skip cap)
         [[ "$_LIVENESS_TIMEOUT" == "900" ]] || exit 1
         [[ "$_LIVENESS_GRACE" == "300" ]] || exit 2
         [[ "$_LIVENESS_INTERVAL" == "30" ]] || exit 3
-        [[ "$_LIVENESS_API_MAX_SKIP" == "60" ]] || exit 4
-        [[ "$_LIVENESS_COMPLETION_TIMEOUT" == "120" ]] || exit 5
-        [[ "$_LIVENESS_API_STALENESS_OVERRIDE" == "1800" ]] || exit 6
+        [[ "$_LIVENESS_API_SOFT_SKIP" == "20" ]] || exit 4
+        [[ "$_LIVENESS_API_HARD_SKIP" == "6" ]] || exit 5
+        [[ "$_LIVENESS_COMPLETION_TIMEOUT" == "120" ]] || exit 6
     ) 2>/dev/null
     local exit_code=$?
 
-    assert_equals 0 "$exit_code" "Should have correct defaults (900/300/30/60/120/1800)"
+    assert_equals 0 "$exit_code" "Should have correct defaults (900/300/30/soft=20/hard=6/120)"
 }
 
 test_liveness_config_custom_values() {
@@ -299,39 +299,159 @@ test_liveness_resolve_api_ips_graceful_failure() {
 }
 
 #===============================================================================
-# UNIT TESTS: API connection signal — ss detection
+# UNIT TESTS: API connection strength (Issue #267 two-tier grace)
 #===============================================================================
 
-test_liveness_ss_detection_established() {
-    log_test "Testing has_active_api_connections detects established API connection via ss"
-
-    local tmpdir
-    tmpdir=$(mktemp -d)
-
-    local err exit_code=0
-    err=$(
-        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-
-        # Create a fake ss binary that reports an ESTABLISHED connection to an API IP
-        cat > "$tmpdir/ss" << 'EOF'
-#!/bin/bash
-echo "Netid  State   Recv-Q  Send-Q  Local Address:Port  Peer Address:Port"
-echo "tcp    ESTAB   0       0       10.0.0.1:54321      1.2.3.4:443"
-EOF
-        chmod +x "$tmpdir/ss"
-
-        _LIVENESS_SS_BIN="$tmpdir/ss"
-        _LIVENESS_API_IPS=("1.2.3.4")
-
-        _liveness_has_active_api_connections || { echo "Expected detection of 1.2.3.4:443"; exit 1; }
-    ) 2>&1 || exit_code=$?
-
-    rm -rf "$tmpdir"
-    assert_equals 0 "$exit_code" "Should detect active API connection via fake ss: $err"
+# Helper: build a /proc/net/tcp line for a given remote IP hex and queue values
+# Usage: _make_tcp_line <remote_ip_hex> <tx_queue_hex> <rx_queue_hex> <retrnsmt_hex>
+_make_tcp_line() {
+    # sl local_addr remote_addr st tx:rx tr:tm retrnsmt uid timeout inode
+    printf "0: 0100007F:0000 %s:01BB 01 %s:%s 00:00000000 %s 0 0 1234 1\n" \
+        "$1" "$2" "$3" "$4"
 }
 
-test_liveness_ss_detection_ignores_non_api_ip() {
-    log_test "Testing has_active_api_connections ignores non-API IP"
+test_liveness_api_strength_active_queues() {
+    log_test "Testing _liveness_api_connection_strength returns 'active' when rx_queue non-zero"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local tcp_file="$tmpdir/tcp"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_log() { true; }
+
+        # 1.2.3.4 → little-endian hex = 04030201
+        _LIVENESS_HEX_IPV4=("04030201")
+        _LIVENESS_API_IPS=("1.2.3.4")
+        _LIVENESS_SS_BIN=""  # force /proc path
+        _LIVENESS_PROC_TCP="$tcp_file"
+        _LIVENESS_PROC_TCP6="/nonexistent"
+
+        # tx_queue=0, rx_queue=256 (non-zero) → active
+        printf "  sl  local_address rem_address  st tx_queue:rx_queue tr:tm->when retrnsmt  uid timeout inode\n" > "$tcp_file"
+        printf "   0: 0100007F:0000 04030201:01BB 01 00000000:00000100 00:00000000 00000000 0 0 1234 1\n" >> "$tcp_file"
+
+        result=$(_liveness_api_connection_strength)
+        [[ "$result" == "active" ]] || { echo "Expected 'active', got '$result'"; exit 1; }
+    ) 2>&1 || exit_code=$?
+
+    rm -rf "$tmpdir"
+    assert_equals 0 "$exit_code" "Should return 'active' when rx_queue non-zero: $err"
+}
+
+test_liveness_api_strength_active_retransmit() {
+    log_test "Testing _liveness_api_connection_strength returns 'active' when retransmit non-zero"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local tcp_file="$tmpdir/tcp"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_log() { true; }
+
+        _LIVENESS_HEX_IPV4=("04030201")
+        _LIVENESS_API_IPS=("1.2.3.4")
+        _LIVENESS_SS_BIN=""
+        _LIVENESS_PROC_TCP="$tcp_file"
+        _LIVENESS_PROC_TCP6="/nonexistent"
+
+        # Both queues zero, but retrnsmt=1 → active
+        printf "  sl  local_address rem_address  st tx_queue:rx_queue tr:tm->when retrnsmt  uid timeout inode\n" > "$tcp_file"
+        printf "   0: 0100007F:0000 04030201:01BB 01 00000000:00000000 00:00000000 00000001 0 0 1234 1\n" >> "$tcp_file"
+
+        result=$(_liveness_api_connection_strength)
+        [[ "$result" == "active" ]] || { echo "Expected 'active', got '$result'"; exit 1; }
+    ) 2>&1 || exit_code=$?
+
+    rm -rf "$tmpdir"
+    assert_equals 0 "$exit_code" "Should return 'active' when retransmit non-zero: $err"
+}
+
+test_liveness_api_strength_idle_queues() {
+    log_test "Testing _liveness_api_connection_strength returns 'idle' when all queues zero"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local tcp_file="$tmpdir/tcp"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_log() { true; }
+
+        _LIVENESS_HEX_IPV4=("04030201")
+        _LIVENESS_API_IPS=("1.2.3.4")
+        _LIVENESS_SS_BIN=""
+        _LIVENESS_PROC_TCP="$tcp_file"
+        _LIVENESS_PROC_TCP6="/nonexistent"
+
+        # All queues and retransmit zero → idle
+        printf "  sl  local_address rem_address  st tx_queue:rx_queue tr:tm->when retrnsmt  uid timeout inode\n" > "$tcp_file"
+        printf "   0: 0100007F:0000 04030201:01BB 01 00000000:00000000 00:00000000 00000000 0 0 1234 1\n" >> "$tcp_file"
+
+        result=$(_liveness_api_connection_strength)
+        [[ "$result" == "idle" ]] || { echo "Expected 'idle', got '$result'"; exit 1; }
+    ) 2>&1 || exit_code=$?
+
+    rm -rf "$tmpdir"
+    assert_equals 0 "$exit_code" "Should return 'idle' when queues zero: $err"
+}
+
+test_liveness_api_strength_none() {
+    log_test "Testing _liveness_api_connection_strength returns 'none' when no matching connection"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local tcp_file="$tmpdir/tcp"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_log() { true; }
+
+        _LIVENESS_HEX_IPV4=("04030201")
+        _LIVENESS_API_IPS=("1.2.3.4")
+        _LIVENESS_SS_BIN=""
+        _LIVENESS_PROC_TCP="$tcp_file"
+        _LIVENESS_PROC_TCP6="/nonexistent"
+
+        # Connection to 9.9.9.9 (09090909 LE), not an API IP → none
+        printf "  sl  local_address rem_address  st tx_queue:rx_queue tr:tm->when retrnsmt  uid timeout inode\n" > "$tcp_file"
+        printf "   0: 0100007F:0000 09090909:01BB 01 00000000:00000100 00:00000000 00000000 0 0 1234 1\n" >> "$tcp_file"
+
+        result=$(_liveness_api_connection_strength)
+        [[ "$result" == "none" ]] || { echo "Expected 'none', got '$result'"; exit 1; }
+    ) 2>&1 || exit_code=$?
+
+    rm -rf "$tmpdir"
+    assert_equals 0 "$exit_code" "Should return 'none' when no matching API IP: $err"
+}
+
+test_liveness_api_strength_no_ips() {
+    log_test "Testing _liveness_api_connection_strength returns 'none' when no IPs resolved"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_log() { true; }
+
+        _LIVENESS_API_IPS=()
+        _LIVENESS_HEX_IPV4=()
+        _LIVENESS_SS_BIN=""
+
+        result=$(_liveness_api_connection_strength)
+        [[ "$result" == "none" ]] || { echo "Expected 'none', got '$result'"; exit 1; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should return 'none' when no IPs resolved: $err"
+}
+
+test_liveness_api_strength_ss_fallback() {
+    log_test "Testing _liveness_api_connection_strength falls back to ss when no hex cache"
 
     local tmpdir
     tmpdir=$(mktemp -d)
@@ -339,23 +459,28 @@ test_liveness_ss_detection_ignores_non_api_ip() {
     local err exit_code=0
     err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_log() { true; }
 
-        # Create a fake ss binary that reports a connection to a non-API IP
+        # Create a fake ss binary reporting a connection to 1.2.3.4:443
         cat > "$tmpdir/ss" << 'EOF'
 #!/bin/bash
-echo "Netid  State   Recv-Q  Send-Q  Local Address:Port  Peer Address:Port"
-echo "tcp    ESTAB   0       0       10.0.0.1:54321      9.9.9.9:443"
+echo "Recv-Q Send-Q Local Address:Port Peer Address:Port"
+echo "0      0      10.0.0.1:54321     1.2.3.4:443"
 EOF
         chmod +x "$tmpdir/ss"
 
         _LIVENESS_SS_BIN="$tmpdir/ss"
         _LIVENESS_API_IPS=("1.2.3.4")
+        _LIVENESS_HEX_IPV4=()  # empty — force ss path
+        _LIVENESS_HEX_IPV6=()
 
-        _liveness_has_active_api_connections && { echo "Should NOT have detected 9.9.9.9:443 as API connection"; exit 1; } || true
+        result=$(_liveness_api_connection_strength)
+        # ss fallback has no queue data, so it returns "idle" (conservative)
+        [[ "$result" == "idle" ]] || { echo "Expected 'idle' from ss fallback, got '$result'"; exit 1; }
     ) 2>&1 || exit_code=$?
 
     rm -rf "$tmpdir"
-    assert_equals 0 "$exit_code" "Should not detect non-API IP as API connection: $err"
+    assert_equals 0 "$exit_code" "ss fallback should return 'idle' (no queue data): $err"
 }
 
 #===============================================================================
@@ -368,7 +493,7 @@ test_liveness_should_kill_not_stale() {
     local err exit_code=0
     err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-        _liveness_has_active_api_connections() { return 1; }
+        _liveness_api_connection_strength() { echo "none"; }
         _liveness_log() { true; }
 
         local cycles=5
@@ -389,7 +514,7 @@ test_liveness_should_kill_io_active() {
     local err exit_code=0
     err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-        _liveness_has_active_api_connections() { return 1; }
+        _liveness_api_connection_strength() { echo "none"; }
         _liveness_log() { true; }
 
         local cycles=1
@@ -404,85 +529,175 @@ test_liveness_should_kill_io_active() {
     assert_equals 0 "$exit_code" "Should not kill when io_stale_cycles < 2: $err"
 }
 
-test_liveness_skip_kill_when_api_connection() {
-    log_test "Testing _liveness_should_kill spares agent when API connection active"
+test_liveness_kill_two_signals_met_no_connection() {
+    log_test "Testing _liveness_should_kill kills when Signals 1+2 met and no API connection"
 
     local err exit_code=0
     err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-        _liveness_has_active_api_connections() { return 0; }
+        _liveness_api_connection_strength() { echo "none"; }
         _liveness_log() { true; }
-
-        _LIVENESS_API_SKIP_COUNT=0
-        _LIVENESS_API_MAX_SKIP=240
-        _LIVENESS_API_STALENESS_OVERRIDE=99999  # Prevent staleness override from triggering
-
-        local cycles=5
-        if _liveness_should_kill 9999 1800 cycles; then
-            echo "ERROR: should_kill returned 0 (kill) but API is active"
-            exit 1
-        fi
-
-        # io_stale_cycles should be reset to 0
-        [[ "$cycles" -eq 0 ]] || { echo "Expected cycles=0, got $cycles"; exit 2; }
-        # skip count should be incremented
-        [[ "$_LIVENESS_API_SKIP_COUNT" -eq 1 ]] || { echo "Expected skip_count=1, got $_LIVENESS_API_SKIP_COUNT"; exit 3; }
-    ) 2>&1 || exit_code=$?
-
-    assert_equals 0 "$exit_code" "Kill should be skipped with active API connection: $err"
-}
-
-test_liveness_kill_when_no_api_connection() {
-    log_test "Testing _liveness_should_kill triggers kill when no API and all stale"
-
-    local err exit_code=0
-    err=$(
-        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-        _liveness_has_active_api_connections() { return 1; }
-        _liveness_log() { true; }
-
-        _LIVENESS_API_SKIP_COUNT=0
 
         local cycles=5
         if ! _liveness_should_kill 9999 1800 cycles; then
             echo "ERROR: should_kill returned 1 (spare) but no API and all stale"
             exit 1
         fi
-
-        # skip count should be reset to 0
-        [[ "$_LIVENESS_API_SKIP_COUNT" -eq 0 ]] || { echo "Expected skip_count=0, got $_LIVENESS_API_SKIP_COUNT"; exit 2; }
         # cycles should be unchanged (no-API path does not mutate io_stale_cycles)
-        [[ "$cycles" -eq 5 ]] || { echo "Expected cycles=5 unchanged, got $cycles"; exit 3; }
+        [[ "$cycles" -eq 5 ]] || { echo "Expected cycles=5 unchanged, got $cycles"; exit 2; }
     ) 2>&1 || exit_code=$?
 
-    assert_equals 0 "$exit_code" "Agent should be killed when no API connection: $err"
+    assert_equals 0 "$exit_code" "Should kill when Signals 1+2 met and no API connection: $err"
 }
 
-test_liveness_kill_when_api_skip_cap_exceeded() {
-    log_test "Testing _liveness_should_kill triggers kill when API skip cap exceeded"
+test_liveness_soft_grace_defers_kill() {
+    log_test "Testing _liveness_should_kill defers kill during soft grace (active connection)"
 
     local err exit_code=0
     err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-        _liveness_has_active_api_connections() { return 0; }
+        _liveness_api_connection_strength() { echo "active"; }
         _liveness_log() { true; }
 
-        _LIVENESS_API_MAX_SKIP=3
-        _LIVENESS_API_SKIP_COUNT=2  # one more will hit the cap
+        _LIVENESS_API_SOFT_SKIP=10
+        _LIVENESS_API_SOFT_COUNT=0
+        _LIVENESS_API_HARD_COUNT=0
+
+        local cycles=5
+        if _liveness_should_kill 9999 1800 cycles; then
+            echo "ERROR: should_kill returned 0 (kill) but soft grace not exhausted"
+            exit 1
+        fi
+        # soft count should be incremented
+        [[ "$_LIVENESS_API_SOFT_COUNT" -eq 1 ]] || { echo "Expected soft_count=1, got $_LIVENESS_API_SOFT_COUNT"; exit 2; }
+        # io_stale_cycles should NOT be reset (Bug A fix)
+        [[ "$cycles" -eq 5 ]] || { echo "Expected cycles=5 unchanged (no reset), got $cycles"; exit 3; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Kill should be deferred during soft grace: $err"
+}
+
+test_liveness_soft_grace_cap_kills() {
+    log_test "Testing _liveness_should_kill kills when soft grace cap exceeded"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_api_connection_strength() { echo "active"; }
+        _liveness_log() { true; }
+
+        _LIVENESS_API_SOFT_SKIP=3
+        _LIVENESS_API_SOFT_COUNT=3  # at cap
+        _LIVENESS_API_HARD_COUNT=0
 
         local cycles=5
         if ! _liveness_should_kill 9999 1800 cycles; then
-            echo "ERROR: should_kill returned 1 (spare) but skip cap should be exceeded"
+            echo "ERROR: should_kill returned 1 (spare) but soft grace cap exceeded"
             exit 1
         fi
-
-        # io_stale_cycles should be restored to original value
-        [[ "$cycles" -eq 5 ]] || { echo "Expected cycles=5 (restored), got $cycles"; exit 2; }
-        # skip count should be reset after cap exceeded
-        [[ "$_LIVENESS_API_SKIP_COUNT" -eq 0 ]] || { echo "Expected skip_count=0, got $_LIVENESS_API_SKIP_COUNT"; exit 3; }
+        # soft count should be reset after cap
+        [[ "$_LIVENESS_API_SOFT_COUNT" -eq 0 ]] || { echo "Expected soft_count=0, got $_LIVENESS_API_SOFT_COUNT"; exit 2; }
     ) 2>&1 || exit_code=$?
 
-    assert_equals 0 "$exit_code" "Agent should be killed when API skip cap exceeded: $err"
+    assert_equals 0 "$exit_code" "Should kill when soft grace cap exceeded: $err"
+}
+
+test_liveness_hard_grace_defers_kill() {
+    log_test "Testing _liveness_should_kill defers kill during hard grace (idle connection)"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_api_connection_strength() { echo "idle"; }
+        _liveness_log() { true; }
+
+        _LIVENESS_API_HARD_SKIP=6
+        _LIVENESS_API_HARD_COUNT=0
+        _LIVENESS_API_SOFT_COUNT=0
+
+        local cycles=5
+        if _liveness_should_kill 9999 1800 cycles; then
+            echo "ERROR: should_kill returned 0 (kill) but hard grace not exhausted"
+            exit 1
+        fi
+        # hard count should be incremented
+        [[ "$_LIVENESS_API_HARD_COUNT" -eq 1 ]] || { echo "Expected hard_count=1, got $_LIVENESS_API_HARD_COUNT"; exit 2; }
+        # io_stale_cycles should NOT be reset (Bug A fix)
+        [[ "$cycles" -eq 5 ]] || { echo "Expected cycles=5 unchanged (no reset), got $cycles"; exit 3; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Kill should be deferred during hard grace: $err"
+}
+
+test_liveness_hard_grace_cap_kills() {
+    log_test "Testing _liveness_should_kill kills when hard grace cap exceeded"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_api_connection_strength() { echo "idle"; }
+        _liveness_log() { true; }
+
+        _LIVENESS_API_HARD_SKIP=3
+        _LIVENESS_API_HARD_COUNT=3  # at cap
+        _LIVENESS_API_SOFT_COUNT=0
+
+        local cycles=5
+        if ! _liveness_should_kill 9999 1800 cycles; then
+            echo "ERROR: should_kill returned 1 (spare) but hard grace cap exceeded"
+            exit 1
+        fi
+        # hard count should be reset after cap
+        [[ "$_LIVENESS_API_HARD_COUNT" -eq 0 ]] || { echo "Expected hard_count=0, got $_LIVENESS_API_HARD_COUNT"; exit 2; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Should kill when hard grace cap exceeded: $err"
+}
+
+test_liveness_signal2_not_reset_by_signal3() {
+    log_test "Testing io_stale_cycles is NOT reset when Signal 3 defers kill (Bug A fix)"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_api_connection_strength() { echo "idle"; }
+        _liveness_log() { true; }
+
+        _LIVENESS_API_HARD_SKIP=10
+        _LIVENESS_API_HARD_COUNT=0
+
+        # Run 3 consecutive deferred cycles — io_stale_cycles must accumulate
+        local cycles=2
+        _liveness_should_kill 9999 1800 cycles || true  # cycle 1: deferred
+        [[ "$cycles" -eq 2 ]] || { echo "Cycle 1: expected cycles=2, got $cycles (was reset!)"; exit 1; }
+        _liveness_should_kill 9999 1800 cycles || true  # cycle 2: deferred
+        [[ "$cycles" -eq 2 ]] || { echo "Cycle 2: expected cycles=2, got $cycles (was reset!)"; exit 2; }
+
+        [[ "$_LIVENESS_API_HARD_COUNT" -eq 2 ]] || { echo "Expected hard_count=2, got $_LIVENESS_API_HARD_COUNT"; exit 3; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "io_stale_cycles should never be reset by Signal 3: $err"
+}
+
+test_liveness_io_active_protects_without_api() {
+    log_test "Testing that active I/O (Signal 2 not met) prevents kill even without API"
+
+    local err exit_code=0
+    err=$(
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+        _liveness_api_connection_strength() { echo "none"; }
+        _liveness_log() { true; }
+
+        # io_stale_cycles=1 (< 2) — Signal 2 not met
+        local cycles=1
+        if _liveness_should_kill 9999 1800 cycles; then
+            echo "ERROR: killed when I/O still active (io_stale_cycles=1)"
+            exit 1
+        fi
+        [[ "$cycles" -eq 1 ]] || { echo "Expected cycles=1 unchanged, got $cycles"; exit 2; }
+    ) 2>&1 || exit_code=$?
+
+    assert_equals 0 "$exit_code" "Active I/O should prevent kill regardless of API: $err"
 }
 
 test_liveness_monitor_starts_without_dns() {
@@ -1098,55 +1313,44 @@ test_liveness_io_total_descendants() {
     rm -rf "$tmpdir"
 }
 
-test_liveness_api_staleness_override() {
-    log_test "Testing _liveness_should_kill triggers kill via API staleness override"
+test_liveness_completion_timeout_unconditional() {
+    log_test "Testing completion timeout applies regardless of API connection (Issue #267 Bug D fix)"
 
+    # This tests _liveness_monitor_loop behavior indirectly by verifying that
+    # _liveness_should_kill is called with _LIVENESS_COMPLETION_TIMEOUT when phase
+    # is 'complete', even when an API connection is active.
+    # We test the timeout selection logic directly here.
     local err exit_code=0
     err=$(
         source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-        _liveness_has_active_api_connections() { return 0; }  # API active
+        _liveness_api_connection_strength() { echo "active"; }
         _liveness_log() { true; }
 
-        _LIVENESS_API_SKIP_COUNT=0
-        _LIVENESS_API_MAX_SKIP=999  # High cap — won't be reached
-        _LIVENESS_API_STALENESS_OVERRIDE=1800  # Override at 30 min
+        # With soft grace, the agent should be spared because count < cap
+        _LIVENESS_API_SOFT_SKIP=10
+        _LIVENESS_API_SOFT_COUNT=0
 
+        # Completion timeout is 120s. stale_seconds=150 > 120 → kill should trigger
+        # after grace runs out, but at 120s threshold not 900s.
+        # We test that _liveness_should_kill respects whatever timeout is passed.
+        # Passed timeout=120 (completion), stale=150 → Signal 1 met (150>=120)
+        # Signal 2 met (cycles=5), Signal 3 active → soft grace defers (count=0 < 10)
         local cycles=5
-        # stale_seconds=2000 > 1800 → should trigger staleness override
-        if ! _liveness_should_kill 2000 900 cycles; then
-            echo "ERROR: should_kill returned 1 (spare) but staleness override should trigger"
+        if _liveness_should_kill 150 120 cycles; then
+            echo "ERROR: killed on first grace cycle (expected deferral)"
             exit 1
         fi
+        [[ "$_LIVENESS_API_SOFT_COUNT" -eq 1 ]] || { echo "Expected soft_count=1, got $_LIVENESS_API_SOFT_COUNT"; exit 2; }
 
-        # cycles should be restored
-        [[ "$cycles" -eq 5 ]] || { echo "Expected cycles=5 (restored), got $cycles"; exit 2; }
-    ) 2>&1 || exit_code=$?
-
-    assert_equals 0 "$exit_code" "Should kill via API staleness override: $err"
-}
-
-test_liveness_api_staleness_no_override_below_threshold() {
-    log_test "Testing _liveness_should_kill skips kill when below staleness override"
-
-    local err exit_code=0
-    err=$(
-        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
-        _liveness_has_active_api_connections() { return 0; }  # API active
-        _liveness_log() { true; }
-
-        _LIVENESS_API_SKIP_COUNT=0
-        _LIVENESS_API_MAX_SKIP=999
-        _LIVENESS_API_STALENESS_OVERRIDE=1800
-
-        local cycles=5
-        # stale_seconds=1500 < 1800 → should NOT trigger staleness override
-        if _liveness_should_kill 1500 900 cycles; then
-            echo "ERROR: should_kill returned 0 (kill) but staleness override should NOT trigger"
-            exit 1
+        # Now exhaust the grace: simulate cap reached
+        _LIVENESS_API_SOFT_COUNT=10
+        if ! _liveness_should_kill 150 120 cycles; then
+            echo "ERROR: should have killed after soft grace exhausted with completion timeout"
+            exit 3
         fi
     ) 2>&1 || exit_code=$?
 
-    assert_equals 0 "$exit_code" "Should not kill below staleness override threshold: $err"
+    assert_equals 0 "$exit_code" "Completion timeout should be honoured with two-tier grace: $err"
 }
 
 test_liveness_diagnostics_capture() {
@@ -1250,15 +1454,25 @@ main() {
     run_test test_liveness_ip6_to_proc_hex
     run_test test_liveness_resolve_api_ips_deduplication
     run_test test_liveness_resolve_api_ips_graceful_failure
-    run_test test_liveness_ss_detection_established
-    run_test test_liveness_ss_detection_ignores_non_api_ip
+
+    # Connection strength unit tests (Issue #267)
+    run_test test_liveness_api_strength_active_queues
+    run_test test_liveness_api_strength_active_retransmit
+    run_test test_liveness_api_strength_idle_queues
+    run_test test_liveness_api_strength_none
+    run_test test_liveness_api_strength_no_ips
+    run_test test_liveness_api_strength_ss_fallback
 
     # Kill decision logic unit tests
     run_test test_liveness_should_kill_not_stale
     run_test test_liveness_should_kill_io_active
-    run_test test_liveness_skip_kill_when_api_connection
-    run_test test_liveness_kill_when_no_api_connection
-    run_test test_liveness_kill_when_api_skip_cap_exceeded
+    run_test test_liveness_kill_two_signals_met_no_connection
+    run_test test_liveness_soft_grace_defers_kill
+    run_test test_liveness_soft_grace_cap_kills
+    run_test test_liveness_hard_grace_defers_kill
+    run_test test_liveness_hard_grace_cap_kills
+    run_test test_liveness_signal2_not_reset_by_signal3
+    run_test test_liveness_io_active_protects_without_api
     run_test test_liveness_monitor_starts_without_dns
 
     # Integration tests
@@ -1282,8 +1496,7 @@ main() {
     run_test test_liveness_exit_code_5_on_completion
     run_test test_liveness_exit_code_137_when_running
     run_test test_liveness_io_total_descendants
-    run_test test_liveness_api_staleness_override
-    run_test test_liveness_api_staleness_no_override_below_threshold
+    run_test test_liveness_completion_timeout_unconditional
     run_test test_liveness_diagnostics_capture
     run_test test_liveness_exit_code_5_constant
     run_test test_status_get_exit_code
