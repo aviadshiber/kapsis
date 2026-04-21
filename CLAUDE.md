@@ -382,23 +382,25 @@ Exit code 4 indicates a virtio-fs mount drop detected mid-run. The agent writes 
 
 ## Hung Agent Detection (Issue #257)
 
-Liveness monitoring is **enabled by default** (timeout: 900s). It detects hung agents via three signals: `updated_at` staleness, process tree I/O activity, and active API TCP connections. When all signals are stale, the agent is killed.
+Liveness monitoring is **enabled by default** (timeout: 900s). It detects hung agents via three signals: `updated_at` staleness, process tree I/O activity, and TCP connection quality (active data-in-flight vs. idle keepalive) providing two-tier grace periods. When all signals are exhausted and time caps are exceeded, the agent is killed.
 
 Key features:
 - **Descendant I/O monitoring**: Sums I/O across all container processes, not just PID 1
-- **Post-completion short timeout**: 120s when agent reports done but process hasn't exited
-- **API staleness override**: Kills after 1800s even with active API connection (stuck tool call scenario)
+- **Post-completion short timeout**: 120s unconditionally when agent reports done but process hasn't exited
+- **Two-tier API grace**: Active connections (data in flight) get up to 10 min soft grace; idle connections get up to 3 min hard grace — both capped, eliminating the old 30-minute deaf period
 - **Auto-diagnostics**: Captures process tree, FDs, TCP connections before kill
 - **Exit code 5**: Written when agent completed work but process hung (e.g., stuck MCP server or tool call)
 
 Configuration in `agent-sandbox.yaml`:
 ```yaml
 liveness:
-  enabled: true          # default: true
-  timeout: 900           # default: 900s
+  enabled: true            # default: true
+  timeout: 900             # default: 900s
   completion_timeout: 120  # default: 120s (post-completion)
-  grace_period: 300      # default: 300s
-  check_interval: 30     # default: 30s
+  grace_period: 300        # default: 300s
+  check_interval: 30       # default: 30s
+  api_soft_skip: 20        # default: 20 cycles = 10 min (active connection grace)
+  api_hard_skip: 6         # default: 6 cycles = 3 min (idle connection grace)
 ```
 
 ## Commit Failure Detection (Issue #256)

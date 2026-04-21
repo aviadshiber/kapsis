@@ -6,35 +6,37 @@
 # auto-kills hung agent processes. Runs as a background subshell before
 # the entrypoint exec's into the agent (same pattern as DNS watchdog).
 #
-# Detection strategy (three signals; updated_at + I/O must both be stale
-# AND no active AI API connection to trigger kill):
+# Detection strategy (three signals; all must indicate inactivity to trigger kill):
 #   1. status.json updated_at - hook fires on every PostToolUse
 #   2. /proc/1/io read_bytes+write_bytes - catches activity during thinking
-#   3. Active TCP connections to AI API endpoints (port 443) - prevents
-#      false-positive kills when agents wait on subagent Task calls
+#   3. TCP connection quality to AI API endpoints (port 443) — two-tier grace:
+#        "active"  (rx/tx queues or retransmit non-zero) → soft grace (Issue #267)
+#        "idle"    (connection open but all queues zero)  → hard grace (Issue #267)
 #
 # Kill decision: updated_at stale for timeout AND I/O unchanged for 2+
-# consecutive check cycles AND no active AI API TCP connections ->
+# consecutive check cycles THEN Signal 3 provides bounded grace:
+#   active connection → up to api_soft_skip cycles before kill
+#   idle connection   → up to api_hard_skip cycles before kill
+#   no connection     → kill immediately
 # SIGTERM, wait 10s, SIGKILL.
 #
-# DNS Security Model (three layers):
+# DNS Security Model (two layers):
 #   1. Host-pinned baseline from /etc/kapsis/pinned-dns.conf (read-only
 #      mount — cannot be tampered with inside the container). IPs are
 #      NEVER discarded at runtime.
 #   2. Union-only TTL-aware re-resolution: periodic refresh adds new IPs
 #      but never removes pinned ones. DNS poisoning can only expand the
 #      allowlist (less dangerous than false kills).
-#   3. Maximum skip cap (KAPSIS_LIVENESS_API_MAX_SKIP cycles) prevents
-#      an attacker holding an idle keep-alive connection indefinitely.
 #
 # Environment Variables:
-#   KAPSIS_LIVENESS_TIMEOUT          - Kill after N seconds of no activity (default: 1800)
-#   KAPSIS_LIVENESS_GRACE_PERIOD     - Skip checks for N seconds after start (default: 300)
-#   KAPSIS_LIVENESS_CHECK_INTERVAL   - Check every N seconds (default: 30)
-#   KAPSIS_LIVENESS_IPS_TTL          - Re-resolve API IPs after N seconds (default: 300)
-#   KAPSIS_LIVENESS_DNS_TIMEOUT      - DNS resolution timeout in seconds (default: 2)
+#   KAPSIS_LIVENESS_TIMEOUT            - Kill after N seconds of no activity (default: 900)
+#   KAPSIS_LIVENESS_GRACE_PERIOD       - Skip checks for N seconds after start (default: 300)
+#   KAPSIS_LIVENESS_CHECK_INTERVAL     - Check every N seconds (default: 30)
+#   KAPSIS_LIVENESS_IPS_TTL            - Re-resolve API IPs after N seconds (default: 300)
+#   KAPSIS_LIVENESS_DNS_TIMEOUT        - DNS resolution timeout in seconds (default: 2)
 #   KAPSIS_LIVENESS_MAX_IPS_PER_DOMAIN - Max IPs to track per domain (default: 8)
-#   KAPSIS_LIVENESS_API_MAX_SKIP     - Max cycles to skip kill for API connections (default: 240)
+#   KAPSIS_LIVENESS_API_SOFT_SKIP      - Grace cycles for active connections (default: 20 = 10 min)
+#   KAPSIS_LIVENESS_API_HARD_SKIP      - Grace cycles for idle connections (default: 6 = 3 min)
 #
 # Usage: Called by entrypoint.sh before exec, not directly.
 #===============================================================================
@@ -55,15 +57,21 @@ _LIVENESS_INTERVAL="${KAPSIS_LIVENESS_CHECK_INTERVAL:-30}"
 _LIVENESS_IPS_TTL="${KAPSIS_LIVENESS_IPS_TTL:-300}"
 _LIVENESS_DNS_TIMEOUT="${KAPSIS_LIVENESS_DNS_TIMEOUT:-2}"
 _LIVENESS_MAX_IPS_PER_DOMAIN="${KAPSIS_LIVENESS_MAX_IPS_PER_DOMAIN:-8}"
-_LIVENESS_API_MAX_SKIP="${KAPSIS_LIVENESS_API_MAX_SKIP:-60}"
+
+# Two-tier API grace (Issue #267): bounded deferral based on connection quality.
+# Soft grace: connection has data in flight (rx/tx queue non-zero or retransmitting).
+# Hard grace: connection open but all queues zero (keepalive, thinking phase, or zombie).
+# With a 30s check interval: 20 cycles = 10 min soft, 6 cycles = 3 min hard.
+_LIVENESS_API_SOFT_SKIP="${KAPSIS_LIVENESS_API_SOFT_SKIP:-20}"
+_LIVENESS_API_HARD_SKIP="${KAPSIS_LIVENESS_API_HARD_SKIP:-6}"
+
+# Overrideable proc paths — set to temp files in tests
+_LIVENESS_PROC_TCP="${_LIVENESS_PROC_TCP:-/proc/net/tcp}"
+_LIVENESS_PROC_TCP6="${_LIVENESS_PROC_TCP6:-/proc/net/tcp6}"
 
 # Post-completion short timeout (Issue #257): when agent reports completion
 # but process hasn't exited, use this shorter timeout instead of the full timeout
 _LIVENESS_COMPLETION_TIMEOUT="${KAPSIS_LIVENESS_COMPLETION_TIMEOUT:-120}"
-
-# API staleness override (Issue #257): kill even when API connection exists
-# if updated_at has been stale for this many seconds (stuck mid-tool-call scenario)
-_LIVENESS_API_STALENESS_OVERRIDE="${KAPSIS_LIVENESS_API_STALENESS_OVERRIDE:-1800}"
 
 # Mount check configuration (Issue #248) — independent of liveness timeout kill
 _MOUNT_CHECK_ENABLED="${KAPSIS_MOUNT_CHECK_ENABLED:-false}"
@@ -89,8 +97,9 @@ _LIVENESS_API_IPS_PINNED=()
 _LIVENESS_API_IPS=()
 # Epoch seconds of last successful IP resolution (0 = never resolved)
 _LIVENESS_IPS_LAST_RESOLVED=0
-# Layer 3: consecutive cycles the kill was skipped due to active API connection
-_LIVENESS_API_SKIP_COUNT=0
+# Two-tier grace counters (Issue #267): separate counts for active vs idle connections
+_LIVENESS_API_SOFT_COUNT=0
+_LIVENESS_API_HARD_COUNT=0
 # Cached path to ss binary (set once at init, avoids per-cycle command -v)
 _LIVENESS_SS_BIN=""
 # Cached little-endian hex representations of _LIVENESS_API_IPS for /proc/net/tcp
@@ -403,57 +412,92 @@ _liveness_check_proc_tcp_ips() {
     ' "$file" 2>/dev/null
 }
 
-# Check whether the agent currently has active TCP connections to AI API endpoints.
-# Used to prevent false-positive kills when agents wait on long-running API calls
-# (e.g., subagent Task tool calls that may take minutes with no local I/O activity).
+# Return connection quality to AI API endpoints (Issue #267 two-tier grace).
 #
-# Method 1: ss (preferred) — uses cached _LIVENESS_SS_BIN, strips header with tail -n +2,
-#   uses leading-space anchor to prevent substring IP match (1.2.3.4 ≠ substring of 21.2.3.4)
-# Method 2: /proc/net/tcp fallback — uses pre-computed hex arrays, no subprocess per IP
+# Checks /proc/net/tcp[6] for ESTABLISHED connections to known API IPs on port 443.
+# Quality is determined by tx_queue, rx_queue, and retransmit fields:
+#   "active" — connection found with non-zero tx/rx queue or retransmit counter
+#              (data physically in flight — credible live signal)
+#   "idle"   — connection found but all queues zero (keepalive, thinking phase, or zombie)
+#   "none"   — no ESTABLISHED connection to any API IP found
 #
-# Returns 0 if an active API connection is found, 1 otherwise.
-_liveness_has_active_api_connections() {
-    # No IPs resolved yet — cannot detect API connections
-    [[ "${#_LIVENESS_API_IPS[@]}" -eq 0 ]] && return 1
+# Falls back to ss for existence detection when /proc/net/tcp has no hex cache.
+# Queue-depth quality check uses /proc/net/tcp exclusively (has the data; ss does not).
+_liveness_api_connection_strength() {
+    [[ "${#_LIVENESS_API_IPS[@]}" -eq 0 ]] && { echo "none"; return 0; }
 
-    # Method 1: ss (fast path — cached binary, bash pattern matching, no subprocesses per IP)
+    # Primary path: /proc/net/tcp — always available in containers, has queue data.
+    # /proc/net/tcp format: sl local_addr rem_addr st tx_queue:rx_queue tr:tm retrnsmt ...
+    # state 01=ESTABLISHED, port 01BB=443 (hex).
+    # Queue fields: $5 = "TTTTTTTT:RRRRRRRR" (hex); $7 = retransmit count (hex).
+    local _liveness_awk_prog='
+        BEGIN { split(ips, arr, "|"); for (i in arr) ipset[arr[i]] = 1; found=0; active=0 }
+        $4 == "01" && $3 ~ /:01BB$/ {
+            split($3, a, ":")
+            if (a[1] in ipset) {
+                found = 1
+                split($5, q, ":")
+                if (q[1] != "00000000" || q[2] != "00000000" || $7 != "00000000") active = 1
+            }
+        }
+        END { print found ":" active }
+    '
+
+    if [[ "${#_LIVENESS_HEX_IPV4[@]}" -gt 0 && -r "$_LIVENESS_PROC_TCP" ]]; then
+        local hex_pattern result
+        hex_pattern=$(IFS='|'; echo "${_LIVENESS_HEX_IPV4[*]}")
+        result=$(awk -v ips="$hex_pattern" "$_liveness_awk_prog" "$_LIVENESS_PROC_TCP" 2>/dev/null) || true
+        case "$result" in
+            "1:1") echo "active"; return 0 ;;
+            "1:0") echo "idle";   return 0 ;;
+        esac
+    fi
+
+    if [[ "${#_LIVENESS_HEX_IPV6[@]}" -gt 0 && -r "$_LIVENESS_PROC_TCP6" ]]; then
+        local hex_pattern result
+        hex_pattern=$(IFS='|'; echo "${_LIVENESS_HEX_IPV6[*]}")
+        result=$(awk -v ips="$hex_pattern" "$_liveness_awk_prog" "$_LIVENESS_PROC_TCP6" 2>/dev/null) || true
+        case "$result" in
+            "1:1") echo "active"; return 0 ;;
+            "1:0") echo "idle";   return 0 ;;
+        esac
+    fi
+
+    # Fallback: ss for existence when /proc hex cache is empty.
+    # Queue data is unavailable via ss in this path — treat as idle (conservative).
     if [[ -n "$_LIVENESS_SS_BIN" ]]; then
         local ss_output
-        # ss always prints a header line; tail -n +2 strips it so [[ -n ]] is meaningful
         ss_output=$("$_LIVENESS_SS_BIN" -tn state established 2>/dev/null | tail -n +2)
         local ip
         for ip in "${_LIVENESS_API_IPS[@]}"; do
             if [[ "$ip" =~ : ]]; then
-                # IPv6: ss formats as [addr]:port
-                [[ "$ss_output" == *" [${ip}]:443"* ]] && return 0
+                [[ "$ss_output" == *" [${ip}]:443"* ]] && { echo "idle"; return 0; }
             else
-                # IPv4: leading-space anchor prevents 1.2.3.4 matching 21.2.3.4
-                [[ "$ss_output" == *" ${ip}:443"* ]] && return 0
+                [[ "$ss_output" == *" ${ip}:443"* ]] && { echo "idle"; return 0; }
             fi
         done
-        return 1
     fi
 
-    # Method 2: /proc/net/tcp fallback (pre-computed hex arrays, no per-IP subprocesses)
-    if [[ "${#_LIVENESS_HEX_IPV4[@]}" -gt 0 ]]; then
-        local hex_pattern
-        hex_pattern=$(IFS='|'; echo "${_LIVENESS_HEX_IPV4[*]}")
-        _liveness_check_proc_tcp_ips /proc/net/tcp "$hex_pattern" && return 0
-    fi
+    echo "none"
+}
 
-    if [[ "${#_LIVENESS_HEX_IPV6[@]}" -gt 0 ]]; then
-        local hex_pattern
-        hex_pattern=$(IFS='|'; echo "${_LIVENESS_HEX_IPV6[*]}")
-        _liveness_check_proc_tcp_ips /proc/net/tcp6 "$hex_pattern" && return 0
-    fi
-
-    return 1
+# Backward-compatible wrapper: returns 0 if any API connection found, 1 otherwise.
+# New code should call _liveness_api_connection_strength() directly for quality info.
+_liveness_has_active_api_connections() {
+    [[ "$(_liveness_api_connection_strength)" != "none" ]]
 }
 
 # Initialize the API connection signal state.
 # Must be called before the subshell launch so that the subshell inherits
 # the cached ss path, pinned IPs, and initial resolved IP set.
 _liveness_init_api_signal() {
+    # Deprecation warnings for removed single-tier config vars (Issue #267)
+    if [[ -n "${KAPSIS_LIVENESS_API_MAX_SKIP:-}" ]]; then
+        _liveness_log "WARN" "KAPSIS_LIVENESS_API_MAX_SKIP is ignored — replaced by KAPSIS_LIVENESS_API_SOFT_SKIP / KAPSIS_LIVENESS_API_HARD_SKIP (issue #267)"
+    fi
+    if [[ -n "${KAPSIS_LIVENESS_API_STALENESS_OVERRIDE:-}" ]]; then
+        _liveness_log "WARN" "KAPSIS_LIVENESS_API_STALENESS_OVERRIDE is ignored — replaced by two-tier grace caps (issue #267)"
+    fi
     # Cache ss binary path once (avoids command -v per check cycle)
     _LIVENESS_SS_BIN=$(command -v ss 2>/dev/null) || true
     # Layer 1: load host-pinned IP baseline
@@ -461,7 +505,7 @@ _liveness_init_api_signal() {
     # Force initial resolution immediately (TTL guard will be bypassed)
     _LIVENESS_IPS_LAST_RESOLVED=0
     _liveness_resolve_api_ips
-    _liveness_log "INFO" "API signal initialized: ${#_LIVENESS_API_IPS[@]} IPs tracked, ss=${_LIVENESS_SS_BIN:-none}"
+    _liveness_log "INFO" "API signal initialized: ${#_LIVENESS_API_IPS[@]} IPs tracked, ss=${_LIVENESS_SS_BIN:-none}, soft_skip=${_LIVENESS_API_SOFT_SKIP}, hard_skip=${_LIVENESS_API_HARD_SKIP}"
 }
 
 #===============================================================================
@@ -691,7 +735,8 @@ _liveness_capture_diagnostics() {
 #===============================================================================
 
 # Kill decision function: returns 0 if the agent should be killed, 1 otherwise.
-# Side effects: mutates io_stale_cycles (via nameref) and _LIVENESS_API_SKIP_COUNT.
+# Side effects: mutates _LIVENESS_API_SOFT_COUNT and _LIVENESS_API_HARD_COUNT.
+# io_stale_cycles (nameref $3) is read but NOT reset — Signal 2 is independent.
 _liveness_should_kill() {
     local stale_seconds="$1"
     local timeout="$2"
@@ -706,38 +751,45 @@ _liveness_should_kill() {
         return 1
     fi
 
-    # Signal 3: check for active API connections
-    if _liveness_has_active_api_connections; then
-        # Agent is waiting on an AI API call — skip kill.
-        # Reset io_stale_cycles so the agent gets a fresh 2-cycle window once
-        # the API call finishes and the TCP connection closes.
-        local prev_io_cycles="$_io_stale_ref"
-        _io_stale_ref=0
-        (( _LIVENESS_API_SKIP_COUNT++ )) || true
+    # Signals 1+2 both met. Signal 3: API connection quality (Issue #267 two-tier grace).
+    # io_stale_cycles is NOT reset here — Signal 2 accumulates independently of Signal 3.
+    local strength
+    strength=$(_liveness_api_connection_strength)
 
-        # Issue #257: Time-based override — if updated_at stale for >N seconds
-        # AND API connection exists, the agent is likely stuck mid-tool-call.
-        # This catches the case where a hung child process (e.g., jira CLI) blocks
-        # the tool call, keeping the API connection alive indefinitely.
-        if [[ "$stale_seconds" -ge "$_LIVENESS_API_STALENESS_OVERRIDE" ]]; then
-            _liveness_log "WARN" "API connection active but updated_at stale for ${stale_seconds}s (>= ${_LIVENESS_API_STALENESS_OVERRIDE}s) — overriding API protection"
-            _LIVENESS_API_SKIP_COUNT=0
-            _io_stale_ref="$prev_io_cycles"
-            # fall through — return 0 (kill)
-        elif [[ "$_LIVENESS_API_SKIP_COUNT" -ge "$_LIVENESS_API_MAX_SKIP" ]]; then
-            # Layer 3: cap exceeded — kill anyway to prevent indefinite bypass
-            _liveness_log "WARN" "API skip cap exceeded (${_LIVENESS_API_SKIP_COUNT}/${_LIVENESS_API_MAX_SKIP}), proceeding with kill"
-            _LIVENESS_API_SKIP_COUNT=0
-            _io_stale_ref="$prev_io_cycles"
-            # fall through — return 0 (kill)
-        else
-            _liveness_log "INFO" "Active API connection — skipping kill (${_LIVENESS_API_SKIP_COUNT}/${_LIVENESS_API_MAX_SKIP})"
-            return 1
-        fi
-    else
-        _LIVENESS_API_SKIP_COUNT=0
-    fi
+    case "$strength" in
+        none)
+            # No API connection — no remaining life signal. Kill.
+            _LIVENESS_API_SOFT_COUNT=0
+            _LIVENESS_API_HARD_COUNT=0
+            return 0
+            ;;
+        active)
+            # Data in flight or TCP retransmitting — credible live signal (soft grace).
+            (( _LIVENESS_API_SOFT_COUNT++ )) || true
+            _LIVENESS_API_HARD_COUNT=0
+            if [[ "$_LIVENESS_API_SOFT_COUNT" -lt "$_LIVENESS_API_SOFT_SKIP" ]]; then
+                _liveness_log "INFO" "Active API connection (data in flight) — soft grace (${_LIVENESS_API_SOFT_COUNT}/${_LIVENESS_API_SOFT_SKIP})"
+                return 1
+            fi
+            _liveness_log "WARN" "Soft grace cap exceeded (${_LIVENESS_API_SOFT_COUNT}/${_LIVENESS_API_SOFT_SKIP}) — killing"
+            _LIVENESS_API_SOFT_COUNT=0
+            return 0
+            ;;
+        idle)
+            # Connection open but queues empty — zombie, keepalive, or pre-stream thinking phase.
+            (( _LIVENESS_API_HARD_COUNT++ )) || true
+            _LIVENESS_API_SOFT_COUNT=0
+            if [[ "$_LIVENESS_API_HARD_COUNT" -lt "$_LIVENESS_API_HARD_SKIP" ]]; then
+                _liveness_log "INFO" "Idle API connection (queues empty) — hard grace (${_LIVENESS_API_HARD_COUNT}/${_LIVENESS_API_HARD_SKIP})"
+                return 1
+            fi
+            _liveness_log "WARN" "Hard grace cap exceeded (${_LIVENESS_API_HARD_COUNT}/${_LIVENESS_API_HARD_SKIP}) — killing"
+            _LIVENESS_API_HARD_COUNT=0
+            return 0
+            ;;
+    esac
 
+    # Unreachable — _liveness_api_connection_strength always prints one of the three values.
     return 0
 }
 
@@ -830,22 +882,19 @@ _liveness_monitor_loop() {
         fi
 
         # Issue #257: Phase-aware timeout — if agent reported completion but
-        # process hasn't exited, use shorter timeout (stuck child process scenario)
+        # process hasn't exited, use shorter timeout (stuck child process scenario).
+        # Issue #267: Completion timeout is unconditional — API connections in the
+        # completion phase get zero extra tolerance (agent has already reported done).
         local effective_timeout="$timeout"
         local current_phase
         current_phase=$(_liveness_get_phase)
         if [[ "$current_phase" == "complete" || "$current_phase" == "committing" || "$current_phase" == "pushing" ]]; then
-            if ! _liveness_has_active_api_connections; then
-                effective_timeout="$_LIVENESS_COMPLETION_TIMEOUT"
-                _liveness_log "DEBUG" "Phase=$current_phase, no API connections — using completion timeout (${effective_timeout}s)"
-            else
-                _liveness_log "DEBUG" "Phase=$current_phase but API connection active — using normal timeout"
-            fi
+            effective_timeout="$_LIVENESS_COMPLETION_TIMEOUT"
+            _liveness_log "DEBUG" "Phase=$current_phase — using completion timeout (${effective_timeout}s)"
         fi
 
-        # Decision logic: kill only when all three signals are stale
+        # Decision logic: kill when Signals 1+2 are stale and Signal 3 grace is exhausted
         if _liveness_should_kill "$stale_seconds" "$effective_timeout" io_stale_cycles; then
-            # All three signals stale (or cap exceeded): agent is hung
             local kill_type="standard hung"
             if [[ "$current_phase" == "complete" || "$current_phase" == "committing" || "$current_phase" == "pushing" ]]; then
                 kill_type="hung after completion (phase=$current_phase)"
