@@ -338,7 +338,11 @@ _pattern_unusual_commands() {
     elif [[ "$command" =~ curl.*\|.*sh ]] || \
          [[ "$command" =~ curl.*\|.*bash ]]; then
         pattern_desc="curl piped to shell"
-    elif [[ "$command" =~ curl[[:space:]].*(-v[[:space:]]|--verbose) ]]; then
+    # Note: this must come AFTER the curl|sh/bash check above so pipe-to-shell
+    # (higher severity) takes priority when both patterns match (e.g., curl -v ... | bash)
+    # Matches: curl -v, curl --verbose, curl -sv, curl -kv, curl -vsSL, etc.
+    elif [[ "$command" =~ curl[[:space:]].*(-v[[:space:]]|--verbose) ]] || \
+         [[ "$command" =~ curl[[:space:]]+-[a-zA-Z]*v([[:space:]]|$) ]]; then
         pattern_desc="verbose curl (may expose Authorization headers in output)"
     elif [[ "$command" =~ nc[[:space:]]+-l ]] || \
          [[ "$command" =~ ncat[[:space:]] ]]; then

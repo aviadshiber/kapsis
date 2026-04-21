@@ -1085,7 +1085,29 @@ test_pattern_verbose_curl_long_flag() {
     teardown
 }
 
-# 29. Normal curl (no -v) should NOT be flagged
+# 29. Combined short flags (curl -sv, curl -kv) also detected
+test_pattern_verbose_curl_combined_flags() {
+    log_test "curl -sv (combined flags with -v) also flagged"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    local now
+    now=$(date +%s)
+
+    local alert_rc=0
+    if audit_check_patterns "network_activity" "Bash" "curl -sv https://api.github.com/user" "" "$now"; then
+        alert_rc=0
+    else
+        alert_rc=1
+    fi
+    assert_equals 0 "$alert_rc" "curl -sv should trigger unusual_commands alert"
+
+    teardown
+}
+
+# 30. Normal curl (no -v) should NOT be flagged
 test_pattern_normal_curl_not_flagged() {
     log_test "Normal curl (no -v) not flagged as unusual"
 
@@ -1158,9 +1180,10 @@ main() {
     run_test test_pattern_no_false_positive_pip
     run_test test_pattern_no_false_positive_maven
 
-    # Verbose curl detection tests (27-29, Issue #246)
+    # Verbose curl detection tests (27-30, Issue #246)
     run_test test_pattern_verbose_curl_detected
     run_test test_pattern_verbose_curl_long_flag
+    run_test test_pattern_verbose_curl_combined_flags
     run_test test_pattern_normal_curl_not_flagged
 
     print_summary
