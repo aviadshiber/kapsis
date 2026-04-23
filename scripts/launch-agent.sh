@@ -1003,6 +1003,40 @@ parse_config() {
 }
 
 #===============================================================================
+# AGENT COMMAND VALIDATION
+#===============================================================================
+validate_agent_command() {
+    local cmd="$1"
+    [[ -z "$cmd" || "$cmd" == "bash" ]] && return 0
+
+    # Validate that the command starts with a known agent binary.
+    # Container isolation bounds the blast radius of the command itself;
+    # this check ensures the invocation at least *begins* with a sanctioned
+    # binary, catching config tampering that swaps in arbitrary programs.
+    local first_word
+    first_word=$(echo "$cmd" | awk '{print $1}')
+
+    local -a known_prefixes=(
+        "claude" "codex" "aider" "gemini" "bash" "sh" "python3" "python" "node" "echo"
+    )
+    for prefix in "${known_prefixes[@]}"; do
+        if [[ "$first_word" == "$prefix" ]]; then
+            return 0
+        fi
+    done
+
+    # Strict mode: block unrecognized commands when KAPSIS_STRICT_AGENT_COMMANDS=1
+    if [[ "${KAPSIS_STRICT_AGENT_COMMANDS:-}" == "1" ]]; then
+        log_error "Strict mode: agent command '$first_word' is not in the allowlist"
+        log_error "Allowed: ${known_prefixes[*]}"
+        return 1
+    fi
+
+    log_debug "Agent command '$first_word' is not in the known-safe list (non-strict mode)"
+    return 0
+}
+
+#===============================================================================
 # SANDBOX MODE DETECTION
 #===============================================================================
 detect_sandbox_mode() {
@@ -1916,7 +1950,11 @@ write_secrets_env_file() {
 
     # Try to create temp file (may fail in restricted environments)
     # Note: BSD mktemp (macOS) requires X's at the end of the template - no suffix allowed
+    local old_umask
+    old_umask=$(umask)
+    umask 0077
     if ! SECRETS_ENV_FILE=$(mktemp "${TMPDIR:-/tmp}/kapsis-secrets-XXXXXX" 2>/dev/null); then
+        umask "$old_umask"
         log_warn "Cannot create secrets env-file in /tmp - falling back to inline env vars"
         log_warn "Secrets may be visible in debug traces (bash -x) or process listings"
         # Fallback: add secrets as inline -e flags (current behavior)
@@ -1926,9 +1964,7 @@ write_secrets_env_file() {
         SECRET_ENV_VARS=()  # Clear to prevent double-adding
         return 0
     fi
-
-    # Set restrictive permissions (owner read/write only)
-    chmod 600 "$SECRETS_ENV_FILE"
+    umask "$old_umask"
 
     # Write secrets to file (one VAR=value per line)
     printf '%s\n' "${SECRET_ENV_VARS[@]}" > "$SECRETS_ENV_FILE"
@@ -2327,6 +2363,7 @@ main() {
     resolve_config
     validate_config_security "$CONFIG_FILE"
     parse_config
+    validate_agent_command "$AGENT_COMMAND"
     log_timer_end "config"
     status_phase "initializing" 10 "Configuration loaded"
 

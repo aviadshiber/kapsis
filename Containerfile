@@ -60,7 +60,12 @@ ARG CUSTOM_PACKAGES=""
 
 # yq configuration (required for Kapsis)
 ARG YQ_VERSION=4.52.5
-ARG YQ_SHA256=75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9
+ARG YQ_SHA256_AMD64=75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9
+ARG YQ_SHA256_ARM64=""
+
+# Supply chain integrity: SHA256 hashes for install scripts
+ARG SDKMAN_SHA256=""
+ARG NVM_SHA256=""
 
 # User configuration
 ARG USER_ID=1000
@@ -170,8 +175,11 @@ RUN if [ "$ENABLE_PYTHON" = "true" ]; then \
         rm -rf /var/lib/apt/lists/*; \
     fi
 
-# Custom packages
+# Custom packages (validated to prevent shell metacharacter injection)
 RUN if [ -n "$CUSTOM_PACKAGES" ]; then \
+        if echo "$CUSTOM_PACKAGES" | grep -qE '[;|&$`(){}\\<>!]'; then \
+            echo "FATAL: CUSTOM_PACKAGES contains disallowed shell metacharacters"; exit 1; \
+        fi && \
         apt-get update && apt-get install -y --no-install-recommends $CUSTOM_PACKAGES && \
         rm -rf /var/lib/apt/lists/*; \
     fi
@@ -182,14 +190,18 @@ RUN if [ -n "$CUSTOM_PACKAGES" ]; then \
 FROM base AS yq-installer
 
 ARG YQ_VERSION
-ARG YQ_SHA256
+ARG YQ_SHA256_AMD64
+ARG YQ_SHA256_ARM64
 ARG TARGETARCH
 
 RUN ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "amd64") && \
     wget -qO /tmp/yq "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${ARCH}" && \
-    if [ -n "$YQ_SHA256" ] && [ "$ARCH" = "amd64" ]; then \
-        echo "${YQ_SHA256}  /tmp/yq" | sha256sum -c - || \
-        { echo "WARNING: yq checksum mismatch - script may have been updated."; }; \
+    if [ "$ARCH" = "amd64" ] && [ -n "$YQ_SHA256_AMD64" ]; then \
+        echo "${YQ_SHA256_AMD64}  /tmp/yq" | sha256sum -c - || \
+        { echo "FATAL: yq amd64 checksum mismatch"; exit 1; }; \
+    elif [ "$ARCH" = "arm64" ] && [ -n "$YQ_SHA256_ARM64" ]; then \
+        echo "${YQ_SHA256_ARM64}  /tmp/yq" | sha256sum -c - || \
+        { echo "FATAL: yq arm64 checksum mismatch"; exit 1; }; \
     fi && \
     mv /tmp/yq /usr/local/bin/yq && \
     chmod +x /usr/local/bin/yq
@@ -204,12 +216,17 @@ ARG JAVA_VERSIONS
 ARG JAVA_DEFAULT
 ARG ENABLE_MAVEN
 ARG MAVEN_VERSION
+ARG SDKMAN_SHA256
 
 ENV SDKMAN_DIR=/opt/sdkman
 
 # Install SDKMAN and Java versions
 RUN if [ "$ENABLE_JAVA" = "true" ]; then \
         curl -sL "https://get.sdkman.io?rcupdate=false" -o /tmp/sdkman-install.sh && \
+        if [ -n "$SDKMAN_SHA256" ]; then \
+            echo "${SDKMAN_SHA256}  /tmp/sdkman-install.sh" | sha256sum -c - || \
+            { echo "FATAL: SDKMAN install script checksum mismatch"; exit 1; }; \
+        fi && \
         bash /tmp/sdkman-install.sh && \
         rm -f /tmp/sdkman-install.sh && \
         # Parse JSON array and install each version
@@ -244,12 +261,17 @@ FROM base AS nodejs-installer
 
 ARG ENABLE_NODEJS
 ARG NODE_VERSION
+ARG NVM_SHA256
 
 ENV NVM_DIR=/opt/nvm
 
 RUN if [ "$ENABLE_NODEJS" = "true" ]; then \
         mkdir -p $NVM_DIR && \
         curl -sL "https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.7/install.sh" -o /tmp/nvm-install.sh && \
+        if [ -n "$NVM_SHA256" ]; then \
+            echo "${NVM_SHA256}  /tmp/nvm-install.sh" | sha256sum -c - || \
+            { echo "FATAL: NVM install script checksum mismatch"; exit 1; }; \
+        fi && \
         bash /tmp/nvm-install.sh && \
         rm -f /tmp/nvm-install.sh && \
         bash -c 'source $NVM_DIR/nvm.sh && \
@@ -273,8 +295,9 @@ ENV RUSTUP_HOME=/opt/rustup
 ENV CARGO_HOME=/opt/cargo
 
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
-        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
-            sh -s -- -y --default-toolchain "$RUST_CHANNEL" --profile minimal && \
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o /tmp/rustup-init.sh && \
+        sh /tmp/rustup-init.sh -y --default-toolchain "$RUST_CHANNEL" --profile minimal && \
+        rm -f /tmp/rustup-init.sh && \
         . /opt/cargo/env && \
         rustup component add rustfmt clippy; \
     else \
@@ -292,7 +315,12 @@ ARG TARGETARCH
 
 RUN if [ "$ENABLE_GO" = "true" ]; then \
         ARCH=$([ "$TARGETARCH" = "arm64" ] && echo "arm64" || echo "amd64") && \
-        curl -sL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" | tar -C /opt -xz; \
+        curl -sL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" -o /tmp/go.tar.gz && \
+        EXPECTED_HASH=$(curl -sL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz.sha256") && \
+        echo "${EXPECTED_HASH}  /tmp/go.tar.gz" | sha256sum -c - || \
+        { echo "FATAL: Go tarball checksum mismatch"; exit 1; } && \
+        tar -C /opt -xzf /tmp/go.tar.gz && \
+        rm -f /tmp/go.tar.gz; \
     else \
         mkdir -p /opt/go; \
     fi
