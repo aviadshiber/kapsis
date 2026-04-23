@@ -1009,6 +1009,7 @@ validate_agent_command() {
     local cmd="$1"
     [[ -z "$cmd" || "$cmd" == "bash" ]] && return 0
 
+    # Hard block: dangerous shell injection patterns
     if [[ "$cmd" =~ \$\( || "$cmd" =~ \` || "$cmd" =~ \;\; || "$cmd" =~ \|\ *\| ]]; then
         log_error "Agent command contains disallowed shell patterns: $cmd"
         log_error "Command substitution (\$(), \`\`), double-semicolons, and double-pipes are not allowed"
@@ -1018,25 +1019,24 @@ validate_agent_command() {
     local first_word
     first_word=$(echo "$cmd" | awk '{print $1}')
 
-    local -a allowed_prefixes=(
-        "claude" "codex" "aider" "gemini" "bash" "python3" "python" "node"
+    local -a known_prefixes=(
+        "claude" "codex" "aider" "gemini" "bash" "sh" "python3" "python" "node" "echo"
     )
-    for prefix in "${allowed_prefixes[@]}"; do
+    for prefix in "${known_prefixes[@]}"; do
         if [[ "$first_word" == "$prefix" ]]; then
             return 0
         fi
     done
 
-    log_warn "Agent command '$first_word' is not in the default allowlist"
-    log_warn "Allowed commands: ${allowed_prefixes[*]}"
-    log_warn "Set KAPSIS_ALLOW_CUSTOM_COMMANDS=1 to override"
-
-    if [[ "${KAPSIS_ALLOW_CUSTOM_COMMANDS:-}" == "1" ]]; then
-        return 0
+    # Strict mode: block unrecognized commands when KAPSIS_STRICT_AGENT_COMMANDS=1
+    if [[ "${KAPSIS_STRICT_AGENT_COMMANDS:-}" == "1" ]]; then
+        log_error "Strict mode: agent command '$first_word' is not in the allowlist"
+        log_error "Allowed: ${known_prefixes[*]}"
+        return 1
     fi
 
-    log_error "Blocked unrecognized agent command. See warning above."
-    return 1
+    log_debug "Agent command '$first_word' is not in the known-safe list (non-strict mode)"
+    return 0
 }
 
 #===============================================================================
