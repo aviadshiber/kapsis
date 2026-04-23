@@ -88,6 +88,8 @@ declare -g CUSTOM_PACKAGES=""
 
 declare -g YQ_VERSION=""
 declare -g YQ_SHA256=""
+declare -g SDKMAN_SHA256=""
+declare -g NVM_SHA256=""
 
 declare -g -a BUILD_ARGS=()
 
@@ -196,6 +198,12 @@ parse_build_config() {
     # Parse custom packages as space-separated list
     CUSTOM_PACKAGES=$(yq -r '.system_packages.custom // [] | join(" ")' "$config_file")
 
+    if [[ -n "$CUSTOM_PACKAGES" ]] && [[ ! "$CUSTOM_PACKAGES" =~ ^[a-zA-Z0-9._+:\ -]+$ ]]; then
+        log_error "CUSTOM_PACKAGES contains disallowed characters: $CUSTOM_PACKAGES"
+        log_error "Only alphanumeric, dots, dashes, underscores, colons, and plus signs are allowed"
+        return 1
+    fi
+
     # Parse yq settings
     YQ_VERSION=$(yq -r '.dependency_managers.yq.version // "4.44.3"' "$config_file")
     YQ_SHA256=$(yq -r '.dependency_managers.yq.sha256 // ""' "$config_file")
@@ -298,7 +306,13 @@ _generate_build_args() {
 
     # Only add SHA256 if provided
     if [[ -n "$YQ_SHA256" ]]; then
-        BUILD_ARGS+=("--build-arg" "YQ_SHA256=$YQ_SHA256")
+        BUILD_ARGS+=("--build-arg" "YQ_SHA256_AMD64=$YQ_SHA256")
+    fi
+    if [[ -n "$SDKMAN_SHA256" ]]; then
+        BUILD_ARGS+=("--build-arg" "SDKMAN_SHA256=$SDKMAN_SHA256")
+    fi
+    if [[ -n "$NVM_SHA256" ]]; then
+        BUILD_ARGS+=("--build-arg" "NVM_SHA256=$NVM_SHA256")
     fi
 }
 
