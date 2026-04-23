@@ -1003,6 +1003,43 @@ parse_config() {
 }
 
 #===============================================================================
+# AGENT COMMAND VALIDATION
+#===============================================================================
+validate_agent_command() {
+    local cmd="$1"
+    [[ -z "$cmd" || "$cmd" == "bash" ]] && return 0
+
+    if [[ "$cmd" =~ \$\( || "$cmd" =~ \` || "$cmd" =~ \;\; || "$cmd" =~ \|\ *\| ]]; then
+        log_error "Agent command contains disallowed shell patterns: $cmd"
+        log_error "Command substitution (\$(), \`\`), double-semicolons, and double-pipes are not allowed"
+        return 1
+    fi
+
+    local first_word
+    first_word=$(echo "$cmd" | awk '{print $1}')
+
+    local -a allowed_prefixes=(
+        "claude" "codex" "aider" "gemini" "bash" "python3" "python" "node"
+    )
+    for prefix in "${allowed_prefixes[@]}"; do
+        if [[ "$first_word" == "$prefix" ]]; then
+            return 0
+        fi
+    done
+
+    log_warn "Agent command '$first_word' is not in the default allowlist"
+    log_warn "Allowed commands: ${allowed_prefixes[*]}"
+    log_warn "Set KAPSIS_ALLOW_CUSTOM_COMMANDS=1 to override"
+
+    if [[ "${KAPSIS_ALLOW_CUSTOM_COMMANDS:-}" == "1" ]]; then
+        return 0
+    fi
+
+    log_error "Blocked unrecognized agent command. See warning above."
+    return 1
+}
+
+#===============================================================================
 # SANDBOX MODE DETECTION
 #===============================================================================
 detect_sandbox_mode() {
@@ -1916,7 +1953,11 @@ write_secrets_env_file() {
 
     # Try to create temp file (may fail in restricted environments)
     # Note: BSD mktemp (macOS) requires X's at the end of the template - no suffix allowed
+    local old_umask
+    old_umask=$(umask)
+    umask 0077
     if ! SECRETS_ENV_FILE=$(mktemp "${TMPDIR:-/tmp}/kapsis-secrets-XXXXXX" 2>/dev/null); then
+        umask "$old_umask"
         log_warn "Cannot create secrets env-file in /tmp - falling back to inline env vars"
         log_warn "Secrets may be visible in debug traces (bash -x) or process listings"
         # Fallback: add secrets as inline -e flags (current behavior)
@@ -1926,9 +1967,7 @@ write_secrets_env_file() {
         SECRET_ENV_VARS=()  # Clear to prevent double-adding
         return 0
     fi
-
-    # Set restrictive permissions (owner read/write only)
-    chmod 600 "$SECRETS_ENV_FILE"
+    umask "$old_umask"
 
     # Write secrets to file (one VAR=value per line)
     printf '%s\n' "${SECRET_ENV_VARS[@]}" > "$SECRETS_ENV_FILE"
@@ -2327,6 +2366,7 @@ main() {
     resolve_config
     validate_config_security "$CONFIG_FILE"
     parse_config
+    validate_agent_command "$AGENT_COMMAND"
     log_timer_end "config"
     status_phase "initializing" 10 "Configuration loaded"
 
