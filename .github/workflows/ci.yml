@@ -248,8 +248,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y jq
           # Install yq for YAML parsing (pinned version with checksum)
-          YQ_VERSION="v4.50.1"
-          YQ_SHA256="c7a1278e6bbc4924f41b56db838086c39d13ee25dcb22089e7fbf16ac901f0d4"
+          YQ_VERSION="v4.52.5"
+          YQ_SHA256="75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9"
           sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
           echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
           sudo chmod +x /usr/local/bin/yq
@@ -298,8 +298,8 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y podman fuse-overlayfs slirp4netns jq
           # Install yq for YAML parsing (pinned version with checksum)
-          YQ_VERSION="v4.50.1"
-          YQ_SHA256="c7a1278e6bbc4924f41b56db838086c39d13ee25dcb22089e7fbf16ac901f0d4"
+          YQ_VERSION="v4.52.5"
+          YQ_SHA256="75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9"
           sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
           echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
           sudo chmod +x /usr/local/bin/yq
