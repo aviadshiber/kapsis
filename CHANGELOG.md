@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.21.3] - 2026-04-21
+## [2.21.4] - 2026-04-23
 
-### Fixed
-- Detect curl -v/--verbose as potential auth header leak in audit (#246) (#270)
+### Changed
+- Release v2.21.4
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Detect curl -v/--verbose as potential auth header leak in audit (#246) (#270)
+
 
 ### Changed
 - Release v2.21.2
@@ -824,7 +828,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.21.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.21.4...HEAD
+[2.21.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.21.4
 [2.21.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.21.3
 [2.21.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.21.2
 [2.21.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.21.1
