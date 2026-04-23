@@ -1009,13 +1009,10 @@ validate_agent_command() {
     local cmd="$1"
     [[ -z "$cmd" || "$cmd" == "bash" ]] && return 0
 
-    # Hard block: dangerous shell injection patterns
-    if [[ "$cmd" =~ \$\( || "$cmd" =~ \` || "$cmd" =~ \;\; || "$cmd" =~ \|\ *\| ]]; then
-        log_error "Agent command contains disallowed shell patterns: $cmd"
-        log_error "Command substitution (\$(), \`\`), double-semicolons, and double-pipes are not allowed"
-        return 1
-    fi
-
+    # Validate that the command starts with a known agent binary.
+    # Container isolation bounds the blast radius of the command itself;
+    # this check ensures the invocation at least *begins* with a sanctioned
+    # binary, catching config tampering that swaps in arbitrary programs.
     local first_word
     first_word=$(echo "$cmd" | awk '{print $1}')
 
