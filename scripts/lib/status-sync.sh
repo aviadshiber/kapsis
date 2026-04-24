@@ -192,6 +192,15 @@ start_status_sync() {
 # on the host. Safe to call multiple times; safe to call when no worker was
 # started (e.g. after an early probe failure).
 #
+# Staleness contract (PR #280 review follow-up):
+#   When SIGTERM arrives while the worker is mid-`tar`, the worker's trap
+#   runs a final `_status_sync_once` and the parent then runs another one
+#   here. Worst-case observable staleness on the host is therefore one sync
+#   interval (~2s by default) — anything the volume received in that window
+#   and that the parent's retry fails to capture (e.g. transient podman
+#   error) stays on the volume until the next `kapsis-status.sh` call
+#   imports it directly, so the volume remains the authoritative source.
+#
 # Returns 0 always.
 #-------------------------------------------------------------------------------
 stop_status_sync() {
@@ -222,10 +231,15 @@ stop_status_sync() {
     fi
 
     # Final sync — runs even if the worker never started, as long as we have a
-    # volume name. This is how slack-bot / --watch consumers see the definitive
-    # post-exit state.
+    # volume name. Retry once with a short backoff if the first attempt fails:
+    # this covers transient podman errors (e.g. the worker's trap was still
+    # mid-export when we SIGKILL'd it and left podman in a weird state) and
+    # tightens the staleness contract above.
     if [[ -n "$volume_name" ]]; then
-        _status_sync_once "$volume_name" "$host_status_dir" >/dev/null 2>&1 || true
+        if ! _status_sync_once "$volume_name" "$host_status_dir" >/dev/null 2>&1; then
+            sleep 0.2
+            _status_sync_once "$volume_name" "$host_status_dir" >/dev/null 2>&1 || true
+        fi
     fi
     return 0
 }

@@ -84,7 +84,10 @@ test_probe_passes_when_podman_succeeds() {
     log_test "probe_virtio_fs_health returns 0 when probe container exits 0"
     local tmpdir
     tmpdir=$(mktemp -d)
-    _make_fake_podman "$tmpdir/podman" 'exit 0'
+    # Updated fake (post-review): image check succeeds (cached), run succeeds.
+    _make_fake_podman "$tmpdir/podman" \
+        'if [[ "$1" == "image" && "$2" == "exists" ]]; then exit 0; fi' \
+        'exit 0'
 
     local out rc=0
     out=$(bash -c "
@@ -101,7 +104,10 @@ test_probe_fails_when_podman_fails() {
     log_test "probe_virtio_fs_health returns 1 when probe container exits non-zero"
     local tmpdir
     tmpdir=$(mktemp -d)
-    _make_fake_podman "$tmpdir/podman" 'exit 42'
+    # Updated fake: image check succeeds (so we reach the run), run fails.
+    _make_fake_podman "$tmpdir/podman" \
+        'if [[ "$1" == "image" && "$2" == "exists" ]]; then exit 0; fi' \
+        'exit 42'
 
     local rc=0
     bash -c "
@@ -117,9 +123,10 @@ test_probe_invokes_podman_run_with_bind_mount() {
     log_test "probe_virtio_fs_health invokes 'podman run' with a bind mount"
     local tmpdir
     tmpdir=$(mktemp -d)
-    # Fake podman logs its argv to a file and exits 0.
+    # Updated fake: image check succeeds; `run` invocations log argv.
     _make_fake_podman "$tmpdir/podman" \
-        'printf "%s\n" "$@" > '"$tmpdir"'/argv.log' \
+        'if [[ "$1" == "image" && "$2" == "exists" ]]; then exit 0; fi' \
+        'if [[ "$1" == "run" ]]; then printf "%s\n" "$@" > '"$tmpdir"'/argv.log; fi' \
         'exit 0'
 
     bash -c "
@@ -243,13 +250,17 @@ test_autoheal_refuses_when_other_containers_running() {
     local tmpdir
     tmpdir=$(mktemp -d)
     # Fake podman:
-    # - run <image> <cmd>   -> exit 42   (probe fails)
-    # - ps ...              -> print kapsis names (other containers running)
-    # - machine stop/start  -> recorded & exit 0
+    # - image exists         -> exit 0 (cached; probe proceeds to `run`)
+    # - run <image> <cmd>    -> exit 42   (probe fails)
+    # - ps ...               -> print kapsis IDs (other containers running)
+    # - machine stop/start   -> recorded & exit 0
     _make_fake_podman "$tmpdir/podman" \
         'case "$1" in
+            image)
+                if [[ "$2" == "exists" ]]; then exit 0; fi
+                exit 0 ;;
             run)     echo "$@" >> '"$tmpdir"'/calls.log; exit 42 ;;
-            ps)      printf "%s\n" "kapsis-other1" "kapsis-other2" ;;
+            ps)      printf "%s\n" "other1" "other2" ;;
             machine) echo "machine $*" >> '"$tmpdir"'/calls.log; exit 0 ;;
             *)       echo "unknown: $*" >&2; exit 1 ;;
         esac'
@@ -277,6 +288,9 @@ test_autoheal_restarts_when_safe_and_probe_recovers() {
 
     _make_fake_podman "$tmpdir/podman" \
         'case "$1" in
+            image)
+                [[ "$2" == "exists" ]] && exit 0
+                exit 0 ;;
             run)
                 # "run" is only used by the probe path.
                 n=$(cat '"$state_file"')
@@ -323,6 +337,7 @@ test_autoheal_disabled_refuses_restart() {
     tmpdir=$(mktemp -d)
     _make_fake_podman "$tmpdir/podman" \
         'case "$1" in
+            image)   [[ "$2" == "exists" ]] && exit 0; exit 0 ;;
             run)     echo "$@" >> '"$tmpdir"'/calls.log; exit 42 ;;
             ps)      exit 0 ;;
             machine) echo "machine $*" >> '"$tmpdir"'/calls.log; exit 0 ;;
@@ -342,6 +357,186 @@ test_autoheal_disabled_refuses_restart() {
     rm -rf "$tmpdir"
     assert_equals "1" "$rc" "Should return 1 when auto-heal disabled"
     assert_not_contains "$calls" "machine stop" "Must NOT restart VM when auto-heal disabled"
+}
+
+#===============================================================================
+# REVIEW-GAP TESTS (Issue #276 second-round review)
+#===============================================================================
+
+test_autoheal_retry_exhaustion_returns_1() {
+    log_test "maybe_autoheal_podman_vm returns 1 when every retry fails after restart"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    # Fake podman:
+    # - volume run (probe): always fail — both pre-restart and post-restart
+    # - ps:                  no other kapsis containers
+    # - machine stop/start:  succeed
+    cat > "$tmpdir/podman" <<EOF
+#!/usr/bin/env bash
+set -u
+case "\${1:-}" in
+    run)
+        echo "run" >> '$tmpdir/calls.log'
+        exit 42
+        ;;
+    ps)      exit 0 ;;
+    machine) echo "machine \$*" >> '$tmpdir/calls.log'; exit 0 ;;
+    image)   exit 0 ;;
+    *)       exit 1 ;;
+esac
+EOF
+    chmod +x "$tmpdir/podman"
+
+    local rc=0
+    bash -c "
+        $(_load_lib_with_macos)
+        KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' \
+        KAPSIS_VFS_RECOVERY_DELAY=1 \
+        KAPSIS_VFS_PROBE_SKIP_IF_MISSING=false \
+        maybe_autoheal_podman_vm 1 2 1
+    " &>/dev/null || rc=$?
+
+    local calls
+    calls=$(cat "$tmpdir/calls.log" 2>/dev/null || echo "")
+    local run_count
+    run_count=$(grep -c '^run$' <<<"$calls" || true)
+    rm -rf "$tmpdir"
+    assert_equals "1" "$rc" "Should return 1 when all retries after restart fail"
+    assert_contains "$calls" "machine stop" "Must still have attempted the restart"
+    # Expected run calls: 1 initial probe + 2 retries = 3.
+    assert_equals "3" "$run_count" \
+        "Should attempt the probe exactly (1 + max_retries) = 3 times"
+}
+
+test_probe_skipped_when_image_missing_and_skip_enabled() {
+    log_test "probe_virtio_fs_health skips cleanly when the probe image is not cached"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    # Fake podman:
+    # - image exists: always returns 1 (not cached)
+    # - run:          unreachable; if we hit it, the skip logic is broken
+    cat > "$tmpdir/podman" <<EOF
+#!/usr/bin/env bash
+case "\${1:-}" in
+    image)
+        if [[ "\${2:-}" == "exists" ]]; then
+            exit 1
+        fi
+        ;;
+    run)
+        echo "SHOULD_NOT_RUN" > '$tmpdir/marker'
+        exit 0
+        ;;
+esac
+exit 0
+EOF
+    chmod +x "$tmpdir/podman"
+
+    local rc=0
+    bash -c "
+        $(_load_lib_with_macos)
+        KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' \
+        KAPSIS_VFS_PROBE_IMAGE='kapsis-sandbox:latest' \
+        KAPSIS_VFS_PROBE_SKIP_IF_MISSING=true \
+        probe_virtio_fs_health 1
+    " &>/dev/null || rc=$?
+
+    local marker_present="no"
+    [[ -f "$tmpdir/marker" ]] && marker_present="yes"
+    rm -rf "$tmpdir"
+    assert_equals "0" "$rc" "Skip path must return 0 (not 'degraded')"
+    assert_equals "no" "$marker_present" \
+        "Must NOT invoke 'podman run' when the image isn't cached and skip is enabled"
+}
+
+test_probe_pulls_image_when_skip_disabled() {
+    log_test "probe_virtio_fs_health pulls the image when skip-if-missing is disabled"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local pulled="$tmpdir/pulled"
+    # Fake podman:
+    # - image exists <img>: fails first (not cached), succeeds after `pull`
+    # - pull <img>:         touches the marker and exits 0
+    # - run:                succeeds (probe passes after pull)
+    cat > "$tmpdir/podman" <<EOF
+#!/usr/bin/env bash
+case "\${1:-}" in
+    image)
+        if [[ "\${2:-}" == "exists" ]]; then
+            [[ -f '$pulled' ]] && exit 0 || exit 1
+        fi
+        ;;
+    pull)
+        touch '$pulled'
+        exit 0
+        ;;
+    run)
+        exit 0
+        ;;
+esac
+exit 0
+EOF
+    chmod +x "$tmpdir/podman"
+
+    local rc=0
+    bash -c "
+        $(_load_lib_with_macos)
+        KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' \
+        KAPSIS_VFS_PROBE_IMAGE='kapsis-sandbox:latest' \
+        KAPSIS_VFS_PROBE_SKIP_IF_MISSING=false \
+        probe_virtio_fs_health 1
+    " &>/dev/null || rc=$?
+
+    local marker_present="no"
+    [[ -f "$pulled" ]] && marker_present="yes"
+    rm -rf "$tmpdir"
+    assert_equals "0" "$rc" "Probe should succeed after successful pull + probe run"
+    assert_equals "yes" "$marker_present" \
+        "podman pull must have been invoked when skip-if-missing=false"
+}
+
+test_probe_without_timeout_binary_still_runs() {
+    log_test "probe_virtio_fs_health runs without the 'timeout' binary (coreutils-missing fallback)"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local shim_bin="$tmpdir/bin"
+    mkdir -p "$shim_bin"
+    # Fake podman (always succeeds) in a directory that will be PATH.
+    cat > "$shim_bin/podman" <<'EOF'
+#!/usr/bin/env bash
+exit 0
+EOF
+    chmod +x "$shim_bin/podman"
+
+    # Capture the probe's rc under a PATH that does NOT include `timeout`
+    # or `gtimeout`. We must also clear any cached value of
+    # _KAPSIS_TIMEOUT_CMD that compat.sh picked up at its own source time.
+    local rc=0
+    bash -c "
+        unset _KAPSIS_TIMEOUT_CMD
+        PATH='$shim_bin'
+        log_debug() { :; }; log_info() { :; }; log_warn() { :; }; log_error() { :; }
+        log_success() { :; }
+        source '$LIB_DIR/constants.sh'
+        # compat.sh caches the timeout lookup on first source — override after.
+        source '$LIB_DIR/compat.sh'
+        is_macos() { return 0; }; is_linux() { return 1; }
+        _KAPSIS_TIMEOUT_CMD=''
+        source '$LIB_DIR/podman-health.sh'
+        KAPSIS_VFS_PROBE_PODMAN='$shim_bin/podman' \
+        KAPSIS_VFS_PROBE_IMAGE='kapsis-sandbox:latest' \
+        KAPSIS_VFS_PROBE_SKIP_IF_MISSING=true \
+        probe_virtio_fs_health 1
+    " &>/dev/null || rc=$?
+    rm -rf "$tmpdir"
+    # Without timeout AND with probe image missing, the skip path returns 0.
+    # The important invariant is: no hard crash / no unbound-variable error.
+    assert_equals "0" "$rc" \
+        "Probe must not crash when 'timeout' is unavailable"
 }
 
 #===============================================================================
@@ -368,6 +563,12 @@ main() {
     run_test test_autoheal_refuses_when_other_containers_running
     run_test test_autoheal_restarts_when_safe_and_probe_recovers
     run_test test_autoheal_disabled_refuses_restart
+
+    log_info "=== Review-gap tests (Issue #276 second round) ==="
+    run_test test_autoheal_retry_exhaustion_returns_1
+    run_test test_probe_skipped_when_image_missing_and_skip_enabled
+    run_test test_probe_pulls_image_when_skip_disabled
+    run_test test_probe_without_timeout_binary_still_runs
 
     print_summary
 }

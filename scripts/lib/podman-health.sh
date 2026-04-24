@@ -57,14 +57,21 @@ _vfs_timeout_cmd() {
 #
 # Args (optional):
 #   $1 - probe_timeout in seconds (default: KAPSIS_VFS_PROBE_TIMEOUT or 10)
-#   $2 - probe_image (default: busybox:latest, overridable for tests)
+#   $2 - probe_image (override; default: KAPSIS_VFS_PROBE_IMAGE or the
+#        kapsis-sandbox image, or busybox:latest as a last resort)
 #
 # Env (for tests):
 #   KAPSIS_VFS_PROBE_PODMAN - override the podman binary path
 #   KAPSIS_VFS_PROBE_HOST_DIR - use this host dir as the probe mount source
 #                              (default: mktemp -d under $TMPDIR)
+#   KAPSIS_VFS_PROBE_IMAGE - override the probe image
+#   KAPSIS_VFS_PROBE_SKIP_IF_MISSING - set to "false" to force a pull when
+#                              the image isn't cached (default: "true", i.e.
+#                              skip the probe rather than race a network pull
+#                              against a potentially-degraded VM)
 #
-# Returns: 0 if virtio-fs is healthy, 1 if degraded. Always 0 on Linux.
+# Returns: 0 if virtio-fs is healthy OR the probe had to be skipped, 1 if
+# the probe ran and the mount is degraded. Always 0 on Linux.
 #-------------------------------------------------------------------------------
 probe_virtio_fs_health() {
     if is_linux; then
@@ -72,8 +79,22 @@ probe_virtio_fs_health() {
     fi
 
     local probe_timeout="${1:-${KAPSIS_VFS_PROBE_TIMEOUT:-${KAPSIS_DEFAULT_VFS_PROBE_TIMEOUT:-10}}}"
-    local probe_image="${2:-${KAPSIS_VFS_PROBE_IMAGE:-busybox:latest}}"
+    # Default image resolution order (PR #280 review follow-up):
+    #   1. explicit $2 argument
+    #   2. KAPSIS_VFS_PROBE_IMAGE env var
+    #   3. the kapsis-sandbox image, if already cached — always present on a
+    #      host that has launched at least one agent, so no extra pull cost
+    #   4. busybox:latest as a last resort (may need a pull on cold VMs)
+    local probe_image="${2:-${KAPSIS_VFS_PROBE_IMAGE:-}}"
     local podman_bin="${KAPSIS_VFS_PROBE_PODMAN:-podman}"
+
+    if [[ -z "$probe_image" ]]; then
+        if "$podman_bin" image exists kapsis-sandbox:latest 2>/dev/null; then
+            probe_image="kapsis-sandbox:latest"
+        else
+            probe_image="busybox:latest"
+        fi
+    fi
 
     if ! [[ "$probe_timeout" =~ ^[0-9]+$ ]] || (( probe_timeout < 1 || probe_timeout > 120 )); then
         probe_timeout=10
@@ -81,6 +102,30 @@ probe_virtio_fs_health() {
 
     local timeout_cmd
     timeout_cmd="$(_vfs_timeout_cmd)"
+
+    # Image-availability gate (PR #280 review follow-up): on a cold VM,
+    # `podman run <image>` will try to pull. If the VM is also degraded —
+    # the very condition we're probing for — the pull may succeed while the
+    # bind-mount write fails, or fail with a network error indistinguishable
+    # from an fs error. Decouple by pre-checking the image and, by default,
+    # skipping the probe rather than racing a pull.
+    if ! "$podman_bin" image exists "$probe_image" 2>/dev/null; then
+        if [[ "${KAPSIS_VFS_PROBE_SKIP_IF_MISSING:-true}" == "true" ]]; then
+            log_debug "Virtio-fs probe skipped: image $probe_image not cached locally"
+            return 0
+        fi
+        log_debug "Pulling probe image $probe_image (KAPSIS_VFS_PROBE_SKIP_IF_MISSING=false)"
+        local pull_rc=0
+        if [[ -n "$timeout_cmd" ]]; then
+            "$timeout_cmd" "$probe_timeout" "$podman_bin" pull "$probe_image" &>/dev/null || pull_rc=$?
+        else
+            "$podman_bin" pull "$probe_image" &>/dev/null || pull_rc=$?
+        fi
+        if [[ $pull_rc -ne 0 ]]; then
+            log_warn "Virtio-fs probe: failed to pull $probe_image (rc=$pull_rc) — skipping probe"
+            return 0
+        fi
+    fi
 
     # Use a caller-supplied host dir if given (tests); otherwise create a
     # throwaway directory so the probe does not pollute ~/.kapsis/status.
@@ -117,11 +162,11 @@ probe_virtio_fs_health() {
     [[ -n "$cleanup_host_dir" ]] && rm -rf "$cleanup_host_dir" 2>/dev/null || true
 
     if [[ $rc -eq 0 ]]; then
-        log_debug "Virtio-fs probe passed (${probe_timeout}s budget)"
+        log_debug "Virtio-fs probe passed (${probe_timeout}s budget, image=$probe_image)"
         return 0
     fi
 
-    log_warn "Virtio-fs probe failed (rc=$rc, timeout=${probe_timeout}s)"
+    log_warn "Virtio-fs probe failed (rc=$rc, timeout=${probe_timeout}s, image=$probe_image)"
     return 1
 }
 

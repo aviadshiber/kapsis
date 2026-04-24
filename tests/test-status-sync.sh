@@ -316,6 +316,142 @@ test_non_whitelisted_basenames_are_dropped() {
 }
 
 #===============================================================================
+# REVIEW-GAP TESTS (Issue #276 second-round review)
+#===============================================================================
+
+test_start_respawns_when_stale_pid_file_present() {
+    log_test "start_status_sync replaces the PID file when the recorded PID is dead"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local host_dir="$tmpdir/host"
+    local staging="$tmpdir/staging"
+    mkdir -p "$host_dir" "$staging"
+    _make_fake_podman_volume "$tmpdir/podman" "$staging"
+
+    # Simulate the orphaned-PID case: a prior worker wrote a pid file but
+    # then crashed without running stop_status_sync. Pick a PID that is
+    # almost certainly free (999999 is out-of-range on most systems).
+    printf '%s' "999999" > "$host_dir/.sync-agent1.pid"
+
+    local pid_after=""
+    (
+        # shellcheck disable=SC1091
+        source "$LIB_DIR/constants.sh"
+        # shellcheck disable=SC1091
+        source "$LIB_DIR/status-sync.sh"
+        export KAPSIS_STATUS_SYNC_PODMAN="$tmpdir/podman"
+        _STATUS_SYNC_PODMAN="$tmpdir/podman"
+        start_status_sync "agent1" "kapsis-agent1-status" "$host_dir" 5 || true
+        cp "$host_dir/.sync-agent1.pid" "$tmpdir/new-pid" 2>/dev/null || true
+        stop_status_sync "agent1" "kapsis-agent1-status" "$host_dir"
+    )
+    [[ -f "$tmpdir/new-pid" ]] && pid_after=$(cat "$tmpdir/new-pid")
+    rm -rf "$tmpdir"
+    assert_not_equals "999999" "$pid_after" \
+        "start_status_sync must replace a stale pid file with its own live worker PID"
+}
+
+test_stop_retries_final_sync_on_transient_failure() {
+    log_test "stop_status_sync retries the final sync once if the first attempt fails"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local host_dir="$tmpdir/host"
+    local staging="$tmpdir/staging"
+    mkdir -p "$host_dir" "$staging"
+    echo "final-state" > "$staging/kapsis-proj-agent1.json"
+
+    # Fake podman: first volume-export call exits non-zero (simulates a
+    # transient failure — e.g. worker was mid-tar and left podman in a
+    # weird state), second call succeeds. stop_status_sync's post-drain
+    # retry should catch this and the final state should land on the host.
+    local counter="$tmpdir/exports"
+    echo "0" > "$counter"
+    cat > "$tmpdir/podman" <<EOF
+#!/usr/bin/env bash
+set -u
+if [[ "\${1:-}" == "volume" && "\${2:-}" == "export" ]]; then
+    n=\$(cat '$counter')
+    n=\$((n+1))
+    echo "\$n" > '$counter'
+    if [[ \$n -eq 1 ]]; then
+        exit 7  # transient failure on first attempt
+    fi
+    cd '$staging' && tar -cf - . 2>/dev/null
+fi
+exit 0
+EOF
+    chmod +x "$tmpdir/podman"
+
+    (
+        # shellcheck disable=SC1091
+        source "$LIB_DIR/constants.sh"
+        # shellcheck disable=SC1091
+        source "$LIB_DIR/status-sync.sh"
+        export KAPSIS_STATUS_SYNC_PODMAN="$tmpdir/podman"
+        _STATUS_SYNC_PODMAN="$tmpdir/podman"
+        stop_status_sync "agent1" "kapsis-agent1-status" "$host_dir"
+    )
+
+    local mirrored=""
+    [[ -f "$host_dir/kapsis-proj-agent1.json" ]] && mirrored=$(cat "$host_dir/kapsis-proj-agent1.json")
+    local export_calls
+    export_calls=$(cat "$counter")
+    rm -rf "$tmpdir"
+    assert_contains "$mirrored" "final-state" \
+        "Retry should have landed the post-transient-error state on the host"
+    assert_equals "2" "$export_calls" \
+        "stop_status_sync should call volume export exactly twice (1 fail + 1 retry)"
+}
+
+test_volume_export_steady_state_failure_does_not_break_worker() {
+    log_test "steady-state volume-export failures do not kill the background worker"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local host_dir="$tmpdir/host"
+    mkdir -p "$host_dir"
+
+    # Fake podman: every volume-export call fails (simulates a broken
+    # volume or a VM restart mid-run). The worker should keep looping
+    # and stay alive — a single failed sync is not fatal.
+    cat > "$tmpdir/podman" <<'EOF'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "volume" && "${2:-}" == "export" ]]; then
+    exit 17
+fi
+exit 0
+EOF
+    chmod +x "$tmpdir/podman"
+
+    (
+        # shellcheck disable=SC1091
+        source "$LIB_DIR/constants.sh"
+        # shellcheck disable=SC1091
+        source "$LIB_DIR/status-sync.sh"
+        export KAPSIS_STATUS_SYNC_PODMAN="$tmpdir/podman"
+        _STATUS_SYNC_PODMAN="$tmpdir/podman"
+        start_status_sync "agent1" "kapsis-agent1-status" "$host_dir" 1
+        # Let the worker go through at least two loop iterations (each one
+        # tries volume export and gets exit 17), then assert it's still alive.
+        sleep 2.5
+        local worker_pid
+        worker_pid=$(cat "$host_dir/.sync-agent1.pid" 2>/dev/null || echo "")
+        if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
+            echo "ALIVE" > "$tmpdir/alive"
+        fi
+        stop_status_sync "agent1" "kapsis-agent1-status" "$host_dir"
+    )
+
+    local alive=""
+    [[ -f "$tmpdir/alive" ]] && alive=$(cat "$tmpdir/alive")
+    rm -rf "$tmpdir"
+    assert_equals "ALIVE" "$alive" \
+        "Worker must survive repeated steady-state export failures"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -330,6 +466,9 @@ main() {
     run_test test_double_start_does_not_spawn_twice
     run_test test_symlink_in_volume_is_not_materialized_on_host
     run_test test_non_whitelisted_basenames_are_dropped
+    run_test test_start_respawns_when_stale_pid_file_present
+    run_test test_stop_retries_final_sync_on_transient_failure
+    run_test test_volume_export_steady_state_failure_does_not_break_worker
 
     print_summary
 }

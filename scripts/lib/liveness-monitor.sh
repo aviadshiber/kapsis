@@ -615,9 +615,14 @@ _mount_check_write_failed_status() {
     # lines that happen to contain "KAPSIS_MOUNT_FAILURE:" verbatim.
     _liveness_log "ERROR" "KAPSIS_MOUNT_FAILURE[liveness_monitor]: /workspace inaccessible (virtio-fs drop)"
 
-    # Best-effort status write (may fail if status mount is also gone)
+    # Best-effort status write. Explicit error_type="mount_failure" makes the
+    # JSON status the source of truth; the stderr sentinel remains as
+    # defence-in-depth for cases where the status write itself fails (e.g.
+    # when /kapsis-status is also on virtio-fs, pre-#276 macOS install).
     if type status_phase &>/dev/null && type status_complete &>/dev/null; then
         if type status_is_active &>/dev/null && status_is_active; then
+            type status_set_error_type &>/dev/null \
+                && status_set_error_type "mount_failure" 2>/dev/null || true
             status_complete 4 "Workspace mount lost: /workspace became inaccessible (virtio-fs drop)" 2>/dev/null || true
         fi
     fi

@@ -1804,7 +1804,12 @@ main() {
     if ! probe_mount_readiness; then
         # Best-effort status update — /kapsis-status is a named volume on
         # macOS (Issue #276) and unaffected by virtio-fs, so this should
-        # typically succeed.
+        # typically succeed. Explicit error_type="mount_failure" makes the
+        # JSON status the source of truth; the stderr sentinel remains as
+        # defence-in-depth for cases where the status write also fails.
+        if type status_set_error_type &>/dev/null; then
+            status_set_error_type "mount_failure" 2>/dev/null || true
+        fi
         if type status_complete &>/dev/null; then
             status_complete "${KAPSIS_EXIT_MOUNT_FAILURE:-4}" \
                 "Workspace mount not ready at agent start (virtio-fs drop)" \

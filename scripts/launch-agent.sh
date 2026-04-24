@@ -2526,8 +2526,15 @@ main() {
        && [[ "${KAPSIS_VFS_PROBE_ENABLED:-true}" == "true" ]]; then
         log_timer_start "vfs_probe"
         if ! maybe_autoheal_podman_vm; then
-            log_error "KAPSIS_MOUNT_FAILURE: virtio-fs degraded at launch — aborting before container start"
-            status_complete "$KAPSIS_EXIT_MOUNT_FAILURE" "Virtio-fs degraded at launch (Issue #276)"
+            # Emit the tagged sentinel to stderr so any log-scraping caller
+            # sees the same signal as from in-container failures. (Host code
+            # sets EXIT_CODE=4 directly below — the sentinel is informational.)
+            log_error "KAPSIS_MOUNT_FAILURE[probe_virtio_fs_health]: virtio-fs degraded at launch — aborting before container start"
+            # status.json: explicit error_type so slack-bot / --watch consumers
+            # can treat this as retriable infra, not an agent bug.
+            status_set_error_type "mount_failure"
+            status_complete "$KAPSIS_EXIT_MOUNT_FAILURE" \
+                "Virtio-fs degraded at launch (Issue #276). Recovery: podman machine stop && podman machine start, then re-run."
             _STATUS_COMPLETE_SHOWN=true
             exit "$KAPSIS_EXIT_MOUNT_FAILURE"
         fi
@@ -2629,7 +2636,7 @@ main() {
     if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
         if [[ -f "$container_output" ]] \
            && tail -n 10 "$container_output" 2>/dev/null \
-              | grep -Eq '^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor)\]:' ; then
+              | grep -Eq '^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor|probe_virtio_fs_health)\]:' ; then
             log_warn "Mount failure detected via sentinel — overriding exit code to 4"
             EXIT_CODE=4
         fi
