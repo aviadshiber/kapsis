@@ -502,6 +502,12 @@ test_check_dependencies_missing_yq_exits_2() {
     # symlinking the host's uname into our isolated directory.
     local iso
     iso=$(mktemp -d -t kapsis-yq-missing-XXXXXX)
+    # SC2064: expand $iso at trap-definition time ON PURPOSE. `iso` is a local
+    # variable; by the time the RETURN trap fires (at function exit) the local
+    # scope is gone and late expansion would read "unbound variable" under set -u.
+    # Capturing the value eagerly is correct here because `iso` is set once and
+    # never reassigned.
+    # shellcheck disable=SC2064
     trap "rm -rf '$iso'" RETURN
 
     # Symlink the bare-minimum external commands the verifier uses during its
