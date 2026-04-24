@@ -609,8 +609,11 @@ _mount_check_with_retries() {
 # Status write may fail if /kapsis-status is also on virtio-fs — that's OK,
 # the stderr sentinel reaches the host via podman's pipe regardless.
 _mount_check_write_failed_status() {
-    # Write sentinel to stderr — captured by podman tee pipeline on host
-    _liveness_log "ERROR" "KAPSIS_MOUNT_FAILURE: /workspace inaccessible (virtio-fs drop)"
+    # Write sentinel to stderr — captured by podman tee pipeline on host.
+    # Sentinel format (Issue #276 review): tag with the emitting subsystem so
+    # the host-side grep is anchored and cannot match arbitrary agent log
+    # lines that happen to contain "KAPSIS_MOUNT_FAILURE:" verbatim.
+    _liveness_log "ERROR" "KAPSIS_MOUNT_FAILURE[liveness_monitor]: /workspace inaccessible (virtio-fs drop)"
 
     # Best-effort status write (may fail if status mount is also gone)
     if type status_phase &>/dev/null && type status_complete &>/dev/null; then

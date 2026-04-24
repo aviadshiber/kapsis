@@ -55,12 +55,55 @@ _status_sync_once() {
 
     mkdir -p "$host_status_dir" 2>/dev/null || return 1
 
-    # `podman volume export` streams a tar of the volume contents to stdout.
-    # Extract into the host dir; --overwrite makes updates atomic at the
-    # tar-member level (tar uses rename() to replace each file on most tars).
-    "$_STATUS_SYNC_PODMAN" volume export "$volume_name" 2>/dev/null \
-        | tar -C "$host_status_dir" --no-same-owner -xf - 2>/dev/null \
-        || return 1
+    # Symlink-hardened extraction (Issue #276 review, must-fix #2).
+    #
+    # A buggy or hostile agent inside the container can write a symlink like
+    #     ln -s /etc/passwd /kapsis-status/attacker
+    # into the volume. If we tar-extracted that symlink directly under the
+    # host status dir, a subsequent write through the symlink would escape
+    # the status dir and clobber an arbitrary host file.
+    #
+    # Mitigation: extract into a per-call staging directory inside the host
+    # status dir, then move only plain regular files with sanitized basenames
+    # into place. Anything non-regular (symlink, device, fifo, dir) stays in
+    # the staging dir and gets deleted with it.
+    local staging
+    staging=$(mktemp -d "$host_status_dir/.staging-XXXXXX" 2>/dev/null) || return 1
+
+    # --no-same-owner:       strip ownership (we run unprivileged)
+    # --no-same-permissions: ignore tar-member umasks
+    # --no-overwrite-dir:    tar will not re-chmod an existing dir
+    # -p is intentionally NOT passed; we want restrictive default perms.
+    if ! "$_STATUS_SYNC_PODMAN" volume export "$volume_name" 2>/dev/null \
+         | tar -C "$staging" \
+               --no-same-owner \
+               --no-same-permissions \
+               --no-overwrite-dir \
+               -xf - 2>/dev/null; then
+        rm -rf "$staging" 2>/dev/null || true
+        return 1
+    fi
+
+    # Move only regular top-level files with strictly-validated basenames.
+    # Legitimate status files look like `kapsis-<project>-<id>.json`,
+    # `debug-<id>.log`, `decisions-<id>.json`, `response-<id>.md`,
+    # `.progress-monitor-state`. Reject anything else.
+    local src
+    while IFS= read -r -d '' src; do
+        local name="${src##*/}"
+        # Reject symlinks, hardlinks, devices, fifos, directories — we only
+        # mirror plain files. `-type f` above excludes symlinks on GNU find,
+        # but belt-and-braces re-check here handles BSD find edge cases.
+        [[ -L "$src" ]] && continue
+        [[ ! -f "$src" ]] && continue
+        # Whitelist the basename: alphanumerics, dots, dashes, underscores.
+        # No path separators, no leading dash, no control chars.
+        if [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] && [[ "$name" != -* ]]; then
+            mv -f "$src" "$host_status_dir/$name" 2>/dev/null || true
+        fi
+    done < <(find "$staging" -mindepth 1 -maxdepth 1 -type f -print0 2>/dev/null)
+
+    rm -rf "$staging" 2>/dev/null || true
     return 0
 }
 
@@ -130,8 +173,13 @@ start_status_sync() {
         done
     ) &
     local worker_pid=$!
+    # Record the PID BEFORE `disown` so a concurrent stop_status_sync cannot
+    # see a missing pid file and leak the worker (Issue #276 review, #3).
+    # The mktemp + mv dance is atomic: the pid file either doesn't exist or
+    # contains a fully-written integer.
+    local pid_tmp="${pid_file}.tmp.$$"
+    printf '%s' "$worker_pid" > "$pid_tmp" && mv -f "$pid_tmp" "$pid_file"
     disown "$worker_pid" 2>/dev/null || true
-    printf '%s' "$worker_pid" > "$pid_file"
     log_debug "status-sync worker started (pid=$worker_pid, interval=${interval}s, volume=$volume_name)"
     return 0
 }

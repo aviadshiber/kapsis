@@ -143,7 +143,9 @@ test_count_zero_when_no_containers() {
     log_test "count_running_kapsis_containers returns 0 when no containers"
     local tmpdir
     tmpdir=$(mktemp -d)
-    _make_fake_podman "$tmpdir/podman" 'exit 0'
+    # Fake podman: regardless of args, produce empty output for `ps`.
+    _make_fake_podman "$tmpdir/podman" \
+        'if [[ "$1" == "ps" ]]; then exit 0; else exit 0; fi'
 
     local out
     out=$(bash -c "
@@ -154,28 +156,37 @@ test_count_zero_when_no_containers() {
     assert_equals "0" "$out" "Should return 0 when podman ps produces no output"
 }
 
-test_count_skips_non_kapsis_containers() {
-    log_test "count_running_kapsis_containers ignores non-kapsis container names"
+test_count_uses_label_filter() {
+    log_test "count_running_kapsis_containers invokes podman ps with label filter"
     local tmpdir
     tmpdir=$(mktemp -d)
+    # Fake podman records its argv for the ps call.
     _make_fake_podman "$tmpdir/podman" \
-        'printf "%s\n" "web-server" "my-redis" "postgres-db"'
+        'if [[ "$1" == "ps" ]]; then printf "%s\n" "$@" > '"$tmpdir"'/argv.log; fi' \
+        'exit 0'
 
-    local out
-    out=$(bash -c "
+    bash -c "
         $(_load_lib_with_macos)
         KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' count_running_kapsis_containers
-    " 2>&1)
+    " &>/dev/null || true
+
+    local argv
+    argv=$(cat "$tmpdir/argv.log" 2>/dev/null || echo "")
     rm -rf "$tmpdir"
-    assert_equals "0" "$out" "Should return 0 when no kapsis-* names present"
+    # The post-review implementation filters by the kapsis.managed label so
+    # user containers named "kapsis-*" don't stall auto-heal.
+    assert_contains "$argv" "--filter" "ps should use --filter"
+    assert_contains "$argv" "label=kapsis.managed=true" "Filter should target the managed label"
 }
 
-test_count_reports_kapsis_containers() {
-    log_test "count_running_kapsis_containers counts kapsis-* containers"
+test_count_reports_only_labeled_containers() {
+    log_test "count_running_kapsis_containers counts labeled containers"
     local tmpdir
     tmpdir=$(mktemp -d)
+    # Fake podman: when asked for ps, print three container IDs (simulating
+    # that the --filter already matched only managed containers).
     _make_fake_podman "$tmpdir/podman" \
-        'printf "%s\n" "kapsis-abc123" "kapsis-def456" "unrelated" "kapsis-xyz"'
+        'if [[ "$1" == "ps" ]]; then printf "%s\n" "abc123" "def456" "xyz789"; fi'
 
     local out
     out=$(bash -c "
@@ -183,7 +194,7 @@ test_count_reports_kapsis_containers() {
         KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' count_running_kapsis_containers
     " 2>&1)
     rm -rf "$tmpdir"
-    assert_equals "3" "$out" "Should count 3 kapsis-* names"
+    assert_equals "3" "$out" "Should count 3 containers when podman ps returns 3 IDs"
 }
 
 #===============================================================================
@@ -348,8 +359,8 @@ main() {
 
     log_info "=== count_running_kapsis_containers ==="
     run_test test_count_zero_when_no_containers
-    run_test test_count_skips_non_kapsis_containers
-    run_test test_count_reports_kapsis_containers
+    run_test test_count_uses_label_filter
+    run_test test_count_reports_only_labeled_containers
 
     log_info "=== maybe_autoheal_podman_vm ==="
     run_test test_autoheal_noop_on_linux

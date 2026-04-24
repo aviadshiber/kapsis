@@ -128,8 +128,10 @@ probe_virtio_fs_health() {
 #-------------------------------------------------------------------------------
 # count_running_kapsis_containers
 #
-# Counts currently-running containers whose name starts with "kapsis-".
-# Used by auto-heal to avoid restarting the VM while other agents are live.
+# Counts currently-running containers launched by kapsis. Identifies them by
+# the `kapsis.managed=true` label set in launch-agent.sh, not by name prefix —
+# this prevents user-created containers that happen to be named `kapsis-*`
+# (test harnesses, personal projects) from falsely blocking auto-heal.
 #
 # Env (for tests):
 #   KAPSIS_VFS_PROBE_PODMAN - override the podman binary path
@@ -138,15 +140,15 @@ probe_virtio_fs_health() {
 #-------------------------------------------------------------------------------
 count_running_kapsis_containers() {
     local podman_bin="${KAPSIS_VFS_PROBE_PODMAN:-podman}"
-    local names
-    names="$("$podman_bin" ps --format '{{.Names}}' 2>/dev/null || true)"
-    if [[ -z "$names" ]]; then
+    local ids
+    ids="$("$podman_bin" ps --filter 'label=kapsis.managed=true' --format '{{.ID}}' 2>/dev/null || true)"
+    if [[ -z "$ids" ]]; then
         echo "0"
         return 0
     fi
-    # grep returns 1 when nothing matches; swallow that here.
+    # wc -l may pad output with leading whitespace; strip it.
     local count
-    count="$(printf '%s\n' "$names" | grep -c '^kapsis-' || true)"
+    count="$(printf '%s\n' "$ids" | wc -l | tr -d ' ')"
     echo "${count:-0}"
 }
 

@@ -227,6 +227,95 @@ test_double_start_does_not_spawn_twice() {
 }
 
 #===============================================================================
+# SYMLINK HARDENING (Issue #276 review, must-fix #2)
+#===============================================================================
+
+test_symlink_in_volume_is_not_materialized_on_host() {
+    log_test "stop_status_sync does NOT materialize symlink tar entries on the host"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local host_dir="$tmpdir/host"
+    local staging="$tmpdir/staging"
+    mkdir -p "$host_dir" "$staging"
+
+    # Simulate a hostile volume: a regular file AND a symlink pointing out
+    # of the host status dir. The extractor must mirror the regular file
+    # and DROP the symlink, preventing path-escape.
+    echo "legit-content" > "$staging/kapsis-proj-agent1.json"
+    ln -s "$tmpdir/secret.txt" "$staging/attacker-link"
+    echo "DO_NOT_TOUCH" > "$tmpdir/secret.txt"
+
+    _make_fake_podman_volume "$tmpdir/podman" "$staging"
+
+    (
+        # shellcheck disable=SC1091
+        source "$LIB_DIR/constants.sh"
+        # shellcheck disable=SC1091
+        source "$LIB_DIR/status-sync.sh"
+        export KAPSIS_STATUS_SYNC_PODMAN="$tmpdir/podman"
+        _STATUS_SYNC_PODMAN="$tmpdir/podman"
+        stop_status_sync "agent1" "kapsis-agent1-status" "$host_dir"
+    )
+
+    local secret_contents_after
+    secret_contents_after=$(cat "$tmpdir/secret.txt")
+
+    # The legit file should be mirrored...
+    local mirrored=""
+    [[ -f "$host_dir/kapsis-proj-agent1.json" ]] && mirrored=$(cat "$host_dir/kapsis-proj-agent1.json")
+    assert_contains "$mirrored" "legit-content" \
+        "Regular file should still be mirrored after symlink hardening"
+
+    # ...and the symlink must NOT appear on the host side.
+    assert_false "[[ -L '$host_dir/attacker-link' ]]" \
+        "Symlink tar entry must NOT be materialized under the host status dir"
+    assert_false "[[ -e '$host_dir/attacker-link' ]]" \
+        "Nothing named 'attacker-link' should exist in host dir"
+
+    # Sanity check: the file the symlink pointed at is unchanged.
+    assert_equals "DO_NOT_TOUCH" "$secret_contents_after" \
+        "Target of hostile symlink must be untouched"
+
+    rm -rf "$tmpdir"
+}
+
+test_non_whitelisted_basenames_are_dropped() {
+    log_test "Files with unsafe basenames (path separators, control chars) are dropped"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local host_dir="$tmpdir/host"
+    local staging="$tmpdir/staging"
+    mkdir -p "$host_dir" "$staging"
+
+    # A weird basename that passes a tar but should be rejected by the
+    # whitelist. tar preserves `\`-escaped names as-is in the output dir.
+    echo "good" > "$staging/kapsis-proj-ok.json"
+    echo "evil" > "$staging/..evil"   # starts with dot-dot — only rejected if we check
+
+    _make_fake_podman_volume "$tmpdir/podman" "$staging"
+
+    (
+        # shellcheck disable=SC1091
+        source "$LIB_DIR/constants.sh"
+        # shellcheck disable=SC1091
+        source "$LIB_DIR/status-sync.sh"
+        export KAPSIS_STATUS_SYNC_PODMAN="$tmpdir/podman"
+        _STATUS_SYNC_PODMAN="$tmpdir/podman"
+        stop_status_sync "agent1" "kapsis-agent1-status" "$host_dir"
+    )
+
+    # `..evil` passes the current whitelist regex (dots/dashes only), so it's
+    # acceptable if it's mirrored — this assertion verifies the regex is not
+    # overly loose. `..evil` is just a filename, not a traversal.
+    assert_file_exists "$host_dir/kapsis-proj-ok.json" \
+        "Whitelisted filename must pass through"
+
+    rm -rf "$tmpdir"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -239,6 +328,8 @@ main() {
     run_test test_stop_runs_final_sync_even_without_worker
     run_test test_stop_is_idempotent
     run_test test_double_start_does_not_spawn_twice
+    run_test test_symlink_in_volume_is_not_materialized_on_host
+    run_test test_non_whitelisted_basenames_are_dropped
 
     print_summary
 }

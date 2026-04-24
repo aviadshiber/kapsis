@@ -2150,6 +2150,11 @@ build_container_command() {
         "--rm"
         "--name" "kapsis-${AGENT_ID}"
         "--hostname" "kapsis-${AGENT_ID}"
+        # Label (Issue #276 review, #5): count_running_kapsis_containers
+        # filters by this label instead of the name prefix, so unrelated
+        # user containers named "kapsis-*" cannot stall auto-heal.
+        "--label" "kapsis.managed=true"
+        "--label" "kapsis.agent-id=${AGENT_ID}"
     )
 
     # Add TTY flags only for interactive mode
@@ -2299,10 +2304,16 @@ cleanup_agent_volumes() {
     local agent_id="$1"
     local removed=0
 
-    # Note: "-status" suffix is cleaned up only on macOS where we use a named
-    # volume for /kapsis-status (Issue #276). On Linux it is a bind mount,
-    # and the corresponding volume never gets created.
-    for suffix in m2 gradle ge status; do
+    # Build the suffix list: "-status" is macOS-only because that's the only
+    # platform where we back /kapsis-status with a named volume (Issue #276).
+    # On Linux the bind mount is used and the -status volume never exists,
+    # so attempting to `podman volume rm` it is just noise.
+    local suffixes=(m2 gradle ge)
+    if is_macos; then
+        suffixes+=(status)
+    fi
+
+    for suffix in "${suffixes[@]}"; do
         local vol="kapsis-${agent_id}-${suffix}"
         if podman volume rm "$vol" &>/dev/null; then
             log_debug "Removed volume: $vol"
@@ -2600,13 +2611,25 @@ main() {
     fi
 
     # Check for mount failure sentinel in container output (Issues #248, #276)
-    # Honor when container was killed by signal (SIGTERM=143, SIGKILL=137) OR
-    # exited with code 1 — bash silently exits 1 when it cannot open the
-    # agent's redirect files because virtio-fs is degraded at startup.
-    # Exits 0 are never overridden, preserving the security property that a
+    #
+    # Pattern (post-review): tagged form `KAPSIS_MOUNT_FAILURE[<subsystem>]:`
+    # where <subsystem> is `probe_mount_readiness` or `liveness_monitor`. This
+    # anchored format and the restriction of the grep to the last 10 lines of
+    # container output together defend against agents that merely log the
+    # word "KAPSIS_MOUNT_FAILURE:" somewhere in their own diagnostics — the
+    # sentinel is only emitted immediately before exit, so it must be at the
+    # tail of the captured output.
+    #
+    # Accepted exit codes:
+    #  - 143 / 137: signal kills from the in-container liveness monitor
+    #  - 1:         bash's silent redirect-open failure when virtio-fs has
+    #               degraded before the agent command runs (Issue #276)
+    # Exit 0 is never overridden, preserving the security property that a
     # compromised agent cannot upgrade a clean success into a mount failure.
     if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
-        if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
+        if [[ -f "$container_output" ]] \
+           && tail -n 10 "$container_output" 2>/dev/null \
+              | grep -Eq '^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor)\]:' ; then
             log_warn "Mount failure detected via sentinel — overriding exit code to 4"
             EXIT_CODE=4
         fi

@@ -1586,13 +1586,29 @@ probe_mount_readiness() {
         probe_timeout=5
     fi
 
+    # Resolve timeout binary once. If the system timeout is missing (extremely
+    # rare — the container base image includes coreutils — but belt-and-braces),
+    # fall back to invoking stat/bash directly; we trade timeout enforcement for
+    # not hanging on a missing binary lookup.
+    local tmo_bin
+    tmo_bin="$(command -v timeout 2>/dev/null || true)"
+
     local rc=0
-    timeout "$probe_timeout" stat "$workspace" >/dev/null 2>&1
-    rc=$?
+    if [[ -n "$tmo_bin" ]]; then
+        "$tmo_bin" "$probe_timeout" stat "$workspace" >/dev/null 2>&1
+        rc=$?
+    else
+        stat "$workspace" >/dev/null 2>&1
+        rc=$?
+    fi
     if [[ $rc -ne 0 ]]; then
-        # stderr reaches the host via podman's pipe even when virtio-fs is
-        # degraded — do not try to log via /kapsis-status here.
-        echo "KAPSIS_MOUNT_FAILURE: $workspace inaccessible at startup (stat rc=$rc, virtio-fs drop)" >&2
+        # Sentinel format (Issue #276 review): tagged with the probe name so
+        # the host grep can be anchored to /^KAPSIS_MOUNT_FAILURE\[probe_mount_readiness\]:/
+        # and not collide with arbitrary agent log lines that mention
+        # "KAPSIS_MOUNT_FAILURE:" verbatim. stderr reaches the host via
+        # podman's pipe even when virtio-fs is degraded — do not try to log
+        # via /kapsis-status here.
+        echo "KAPSIS_MOUNT_FAILURE[probe_mount_readiness]: $workspace inaccessible at startup (stat rc=$rc, virtio-fs drop)" >&2
         return 1
     fi
 
@@ -1600,10 +1616,15 @@ probe_mount_readiness() {
     # output redirect. Verify that the agent will be able to create files
     # under the workspace before we exec into it.
     local probe_file="$workspace/.kapsis-probe-$$"
-    timeout "$probe_timeout" bash -c ": > \"$probe_file\" && rm -f \"$probe_file\"" 2>/dev/null
-    rc=$?
+    if [[ -n "$tmo_bin" ]]; then
+        "$tmo_bin" "$probe_timeout" bash -c ": > \"$probe_file\" && rm -f \"$probe_file\"" 2>/dev/null
+        rc=$?
+    else
+        bash -c ": > \"$probe_file\" && rm -f \"$probe_file\"" 2>/dev/null
+        rc=$?
+    fi
     if [[ $rc -ne 0 ]]; then
-        echo "KAPSIS_MOUNT_FAILURE: $workspace is read-only or write failed at startup (rc=$rc, virtio-fs drop)" >&2
+        echo "KAPSIS_MOUNT_FAILURE[probe_mount_readiness]: $workspace is read-only or write failed at startup (rc=$rc, virtio-fs drop)" >&2
         return 1
     fi
 
