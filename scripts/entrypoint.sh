@@ -1569,18 +1569,17 @@ probe_mount_readiness() {
     local workspace="${1:-/workspace}"
     local probe_timeout="${KAPSIS_MOUNT_PROBE_TIMEOUT:-5}"
 
-    # In fuse-overlayfs mode, /workspace is backed by /lower — reuse the same
-    # early-validation target so the probe is meaningful.
-    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-false}" == "true" ]]; then
-        workspace="/lower"
-    fi
-
     # Probe containers (no KAPSIS_AGENT_ID) do not run real agents and do not
     # need /workspace to be writable — skip the probe there.
     if [[ -z "${KAPSIS_AGENT_ID:-}" ]]; then
         log_debug "No KAPSIS_AGENT_ID — skipping pre-agent mount readiness probe"
         return 0
     fi
+
+    # Note: in fuse-overlayfs mode (macOS legacy), setup_fuse_overlay has
+    # already run by the time we get here, so /workspace is the merged
+    # (writable) overlay view — probing /workspace is correct. Probing
+    # /lower here would fail because /lower is mounted read-only.
 
     # Clamp timeout to sane bounds (1..60).
     if ! [[ "$probe_timeout" =~ ^[0-9]+$ ]] || (( probe_timeout < 1 || probe_timeout > 60 )); then
