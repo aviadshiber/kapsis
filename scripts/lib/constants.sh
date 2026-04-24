@@ -309,3 +309,39 @@ readonly KAPSIS_EXIT_HUNG_AFTER_COMPLETION=5
 # Post-container commit failed — agent produced work but git commit returned error (Issue #256)
 # Recovery: worktree preserved with staged changes for manual commit
 readonly KAPSIS_EXIT_COMMIT_FAILURE=6
+
+#===============================================================================
+# VIRTIO-FS HEALTH PROBE (Issue #276)
+#
+# Macos Podman's virtio-fs can degrade after host sleep/wake, leaving bind
+# mounts unwritable from inside the container. A short-lived probe container
+# verifies bind-mount writability before the real agent starts.
+#===============================================================================
+
+# Timeout (seconds) for the virtio-fs probe container
+readonly KAPSIS_DEFAULT_VFS_PROBE_TIMEOUT=10
+
+# Auto-restart the Podman VM when the probe fails and no other kapsis
+# containers are running. Set to "false" to require manual recovery.
+readonly KAPSIS_DEFAULT_VFS_AUTOHEAL_ENABLED=true
+
+# Max retries of the probe after an auto-heal restart
+readonly KAPSIS_DEFAULT_VFS_RECOVERY_RETRIES=2
+
+# Delay (seconds) between retries after auto-heal
+readonly KAPSIS_DEFAULT_VFS_RECOVERY_DELAY=3
+
+#===============================================================================
+# STATUS VOLUME (Issue #276)
+#
+# On macOS, /kapsis-status is backed by a per-agent named volume living inside
+# the Podman VM (not virtio-fs), so agent writes survive virtio-fs degradation.
+# A host-side sync mirrors volume contents into ~/.kapsis/status so existing
+# consumers (kapsis-status.sh --watch) keep working.
+#===============================================================================
+
+# Suffix appended to AGENT_ID to form the status volume name
+readonly KAPSIS_STATUS_VOLUME_SUFFIX="-status"
+
+# Interval (seconds) between host-side syncs of the status volume
+readonly KAPSIS_DEFAULT_STATUS_SYNC_INTERVAL=2

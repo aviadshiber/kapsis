@@ -372,13 +372,23 @@ KAPSIS_PUSH_FALLBACK: cd /path/to/worktree && git push -u origin branch-name
 | 1 | Agent failure | Container exit non-zero |
 | 2 | Push failed | Post-container push failure |
 | 3 | Uncommitted changes remain | Commit status check |
-| 4 | Mount failure (virtio-fs drop, Issue #248) | `KAPSIS_MOUNT_FAILURE:` sentinel in stderr |
+| 4 | Mount failure (virtio-fs drop, Issues #248, #276) | `KAPSIS_MOUNT_FAILURE:` sentinel in stderr, or host pre-launch probe refusal |
 | 5 | Agent completed but process hung (Issue #257) | Liveness monitor kills + status.json phase is "complete" |
 | 6 | Commit failure (Issue #256) | Post-container `git commit` error, `commit_status: "failed"` |
 
-## Mount Failure Detection (Issue #248)
+## Mount Failure Detection (Issues #248, #276)
 
-Exit code 4 indicates a virtio-fs mount drop detected mid-run. The agent writes a `KAPSIS_MOUNT_FAILURE:` sentinel to stderr (which flows through podman's pipe, not virtio-fs). Host-side `launch-agent.sh` detects the sentinel and overrides the exit code. Recovery: `podman machine stop && podman machine start`, then re-run.
+Exit code 4 surfaces virtio-fs mount drops across the full agent lifecycle:
+
+- **Pre-launch (host, Issue #276)** — `scripts/lib/podman-health.sh` spins up a short-lived probe container on macOS and verifies a bind mount is writable. On failure, auto-heals by restarting the Podman VM when no other kapsis containers are running; otherwise fails fast with exit 4 and a clear remediation message.
+- **Container startup (Issue #276)** — `probe_mount_readiness()` in `scripts/entrypoint.sh` writes and unlinks a sentinel file under `/workspace` immediately before `exec`ing the agent command. Catches virtio-fs degradation that happens during the seconds of container setup. Emits the `KAPSIS_MOUNT_FAILURE:` sentinel to stderr (bypasses `/kapsis-status/` in case that's also affected) and exits 4 directly.
+- **Mid-run (Issue #248)** — the liveness monitor in `scripts/lib/liveness-monitor.sh` periodically probes `/workspace`. On confirmed drop it emits the sentinel and SIGTERMs the agent.
+
+Host-side in `scripts/launch-agent.sh`, the `KAPSIS_MOUNT_FAILURE:` sentinel in container output overrides the exit code to 4 for signal exits (143/137) and for bash-redirect exits (1). Exit 0 is never overridden.
+
+**Storage isolation (Issue #276, macOS only)** — `/kapsis-status/` is backed by a per-agent Podman named volume (`kapsis-${AGENT_ID}-status`) instead of a host bind mount. Named volumes live inside the Podman VM and survive virtio-fs degradation, so agent status writes never fail mid-run. A host-side worker (`scripts/lib/status-sync.sh`) mirrors volume contents into `~/.kapsis/status/` every 2s so `kapsis-status.sh --watch` consumers continue to work unchanged. Linux keeps the direct bind mount.
+
+Recovery when auto-heal is refused or fails: `podman machine stop && podman machine start`, then re-run.
 
 ## Hung Agent Detection (Issue #257)
 

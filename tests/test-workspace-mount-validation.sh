@@ -31,6 +31,7 @@ fi
 # Extract production functions
 eval "$(sed -n '/^validate_workspace_mount()/,/^}/p' "$KAPSIS_ROOT/scripts/entrypoint.sh")"
 eval "$(sed -n '/^validate_worktree_path()/,/^}/p' "$KAPSIS_ROOT/scripts/launch-agent.sh")"
+eval "$(sed -n '/^probe_mount_readiness()/,/^}/p' "$KAPSIS_ROOT/scripts/entrypoint.sh")"
 
 # Simulate a real agent environment: validate_workspace_mount skips when
 # KAPSIS_AGENT_ID is unset (probe containers).  Unit tests must set it so the
@@ -358,8 +359,118 @@ EOF
     rm -f "$container_output"
 }
 
+#===============================================================================
+# PRE-AGENT MOUNT READINESS PROBE TESTS (Issue #276)
+#===============================================================================
+
+test_probe_mount_readiness_healthy() {
+    log_test "probe_mount_readiness returns 0 when workspace is writable"
+    local test_dir
+    test_dir=$(make_test_dir)
+    mkdir -p "$test_dir/workspace"
+
+    local exit_code=0
+    probe_mount_readiness "$test_dir/workspace" 2>/dev/null || exit_code=$?
+    assert_equals "0" "$exit_code" "Writable workspace should pass probe"
+}
+
+test_probe_mount_readiness_missing() {
+    log_test "probe_mount_readiness returns 1 + sentinel when workspace missing"
+    local stderr_output
+    local exit_code=0
+    stderr_output=$(probe_mount_readiness "/nonexistent/workspace-$$" 2>&1 >/dev/null) || exit_code=$?
+    assert_equals "1" "$exit_code" "Missing workspace should fail probe"
+    assert_contains "$stderr_output" "KAPSIS_MOUNT_FAILURE:" \
+        "Should emit KAPSIS_MOUNT_FAILURE sentinel to stderr"
+    assert_contains "$stderr_output" "virtio-fs drop" \
+        "Sentinel should mention virtio-fs"
+}
+
+test_probe_mount_readiness_readonly() {
+    log_test "probe_mount_readiness returns 1 + sentinel when workspace is read-only"
+    # Skip the write-probe case when running as root — root bypasses mode bits.
+    if [[ $(id -u) -eq 0 ]]; then
+        log_skip "Skipping read-only probe test — running as root, mode bits bypassed"
+        return 0
+    fi
+    local test_dir
+    test_dir=$(make_test_dir)
+    mkdir -p "$test_dir/workspace"
+    chmod 0555 "$test_dir/workspace"
+
+    local stderr_output
+    local exit_code=0
+    stderr_output=$(probe_mount_readiness "$test_dir/workspace" 2>&1 >/dev/null) || exit_code=$?
+    # Restore write so cleanup can rm -rf.
+    chmod 0755 "$test_dir/workspace"
+    assert_equals "1" "$exit_code" "Read-only workspace should fail probe"
+    assert_contains "$stderr_output" "KAPSIS_MOUNT_FAILURE:" \
+        "Should emit KAPSIS_MOUNT_FAILURE sentinel when write probe fails"
+}
+
+test_probe_mount_readiness_skips_probe_container() {
+    log_test "probe_mount_readiness skips when KAPSIS_AGENT_ID is unset (probe container)"
+    local saved="$KAPSIS_AGENT_ID"
+    unset KAPSIS_AGENT_ID
+
+    local exit_code=0
+    # Pass a deliberately-missing path — probe should still return 0 because
+    # it short-circuits before any stat.
+    probe_mount_readiness "/nonexistent/workspace-$$" 2>/dev/null || exit_code=$?
+    assert_equals "0" "$exit_code" "Should be a no-op in probe containers"
+
+    export KAPSIS_AGENT_ID="$saved"
+}
+
+test_probe_mount_readiness_sentinel_host_compatible() {
+    log_test "probe_mount_readiness sentinel format matches launch-agent.sh grep"
+
+    local stderr_output
+    stderr_output=$(probe_mount_readiness "/nonexistent/workspace-$$" 2>&1 >/dev/null || true)
+
+    # Use the EXACT grep that scripts/launch-agent.sh uses to override exit_code to 4.
+    local matched="no"
+    if echo "$stderr_output" | grep -q 'KAPSIS_MOUNT_FAILURE:'; then
+        matched="yes"
+    fi
+    assert_equals "yes" "$matched" \
+        "Host-side grep 'KAPSIS_MOUNT_FAILURE:' must match probe stderr"
+}
+
+test_sentinel_honored_on_exit_1() {
+    log_test "Testing sentinel is honored when exit code is 1 (startup bash failure)"
+
+    local container_output
+    container_output=$(mktemp)
+
+    cat > "$container_output" << 'EOF'
+KAPSIS_MOUNT_FAILURE: /workspace inaccessible at startup (stat rc=1, virtio-fs drop)
+EOF
+
+    # Replicate the UPDATED sentinel detection from launch-agent.sh (Issue #276)
+    local EXIT_CODE=1
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
+        if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
+            EXIT_CODE=4
+        fi
+    fi
+    assert_equals 4 "$EXIT_CODE" "Should override exit code 1 to 4 when sentinel found (startup failure)"
+
+    # Exit 0 must NOT be overridden — a compromised agent should not be able
+    # to upgrade a clean success to a mount failure.
+    EXIT_CODE=0
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
+        if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
+            EXIT_CODE=4
+        fi
+    fi
+    assert_equals 0 "$EXIT_CODE" "Must NOT override clean exit 0"
+
+    rm -f "$container_output"
+}
+
 test_sentinel_only_honored_on_signal_exit() {
-    log_test "Testing sentinel is ignored when exit code is not 143/137"
+    log_test "Testing sentinel is ignored on exit 0 (security gate)"
 
     local container_output
     container_output=$(mktemp)
@@ -369,23 +480,28 @@ test_sentinel_only_honored_on_signal_exit() {
 [2026-03-22 10:30:00] ERROR: KAPSIS_MOUNT_FAILURE: /workspace inaccessible (virtio-fs drop)
 EOF
 
-    # Test with exit code 1 — sentinel should be ignored
-    local EXIT_CODE=1
-    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+    # Issue #276: the accepted set now includes 1, 137, 143 (see
+    # test_sentinel_honored_on_exit_1 for that path). But exit 0 must still
+    # be treated as a clean success — a compromised agent should not be able
+    # to upgrade success to a mount failure by writing the sentinel string.
+    local EXIT_CODE=0
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
         if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
             EXIT_CODE=4
         fi
     fi
-    assert_equals 1 "$EXIT_CODE" "Should NOT override exit code when not a signal exit"
+    assert_equals 0 "$EXIT_CODE" "Must NOT override clean exit 0 even with sentinel present"
 
-    # Test with exit code 0 — sentinel should be ignored
-    EXIT_CODE=0
-    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+    # Exit 2 is also not in the accepted set (agent config error, etc.) —
+    # unknown failure modes should not be silently re-classified as mount
+    # failures; the sentinel should only override known-suspicious exits.
+    EXIT_CODE=2
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
         if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
             EXIT_CODE=4
         fi
     fi
-    assert_equals 0 "$EXIT_CODE" "Should NOT override exit code on success"
+    assert_equals 2 "$EXIT_CODE" "Must NOT override unknown non-signal exit codes"
 
     rm -f "$container_output"
 }
@@ -420,6 +536,14 @@ main() {
     run_test test_status_display_exit_code_4
     run_test test_launch_agent_sentinel_detection
     run_test test_sentinel_only_honored_on_signal_exit
+
+    log_info "=== Pre-Agent Mount Readiness Probe (Issue #276) ==="
+    run_test test_probe_mount_readiness_healthy
+    run_test test_probe_mount_readiness_missing
+    run_test test_probe_mount_readiness_readonly
+    run_test test_probe_mount_readiness_skips_probe_container
+    run_test test_probe_mount_readiness_sentinel_host_compatible
+    run_test test_sentinel_honored_on_exit_1
 
     cleanup_test_dirs
 
