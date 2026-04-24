@@ -2,7 +2,9 @@
 
 Analysis of the Kapsis test suite coverage, identifying gaps and recommending improvements.
 
-**Codebase snapshot (2026-04-24):** 20 main scripts, 29 library modules, 15 hook scripts, 2 backends, 85 Bash test files, 6 Go test files (operator).
+**Codebase snapshot (2026-04-24):** 20 main scripts, 29 library modules, 15 hook scripts, 2 backends, 90 Bash test files, 7 Go test files (operator).
+
+**This revision adds 6 dedicated test files (74 Bash tests + 21 Go tests).** See § 8 "Implemented in this revision" below; only the items still open remain in § 1–6.
 
 ---
 
@@ -235,17 +237,19 @@ Missing infrastructure:
 
 ### Tier 1 — High impact, addresses real risk
 
-| # | Action | Rationale |
-|---|--------|-----------|
-| 1 | Create `tests/test-config-verifier.sh` | Config validation is a CI gate; regressions silently ship broken configs |
-| 2 | Create `tests/test-secret-store.sh` | Credential handling is security-sensitive; inject-feature test is not a substitute |
-| 3 | Create `tests/test-audit-patterns.sh` | Direct pattern-matcher coverage would have caught Issue #246 pre-merge |
-| 4 | Create `tests/test-init-git-branch.sh` | Branch init runs on every agent launch; base-branch logic is complex |
-| 5 | Create `tests/test-post-exit-git.sh` | Covers exit codes 2 & 6, push-fallback sentinel, PR-URL logic |
-| 6 | Create `tests/test-build-agent-image.sh` | Image builds involve profile parsing, dep validation, platform detection |
-| 7 | Create `tests/test-exit-code-contract.sh` | Inject all documented sentinels; assert 4/5/6 mapping matches `CLAUDE.md` |
-| 8 | Create `operator/internal/controller/status_bridge_test.go` | Every `error_type` and phase transition for the K8s backend is untested |
-| 9 | Add concurrent-writer case to `test-status-reporting.sh` | Status files are written by multiple agents in production |
+Items 1–5 and 8 are implemented in this revision (see § 8). Items 6, 7, 9 remain open.
+
+| # | Action | Status |
+|---|--------|--------|
+| 1 | Create `tests/test-config-verifier.sh` | ✅ implemented (22 tests) |
+| 2 | Create `tests/test-secret-store.sh` | ✅ implemented (12 tests) |
+| 3 | Create `tests/test-audit-patterns.sh` | ✅ implemented (24 tests) |
+| 4 | Create `tests/test-init-git-branch.sh` | ✅ implemented (6 tests) |
+| 5 | Create `tests/test-post-exit-git.sh` | ✅ implemented (10 tests) |
+| 6 | Create `tests/test-build-agent-image.sh` | open — needs Podman + registry mocking |
+| 7 | Create `tests/test-exit-code-contract.sh` | open — inject KAPSIS_MOUNT_FAILURE / hang / commit-fail sentinels and assert 4/5/6 |
+| 8 | Create `operator/internal/controller/status_bridge_test.go` | ✅ implemented (21 Go tests) |
+| 9 | Add concurrent-writer case to `test-status-reporting.sh` | open |
 
 ### Tier 2 — Strengthens coverage, moderate effort
 
@@ -269,3 +273,20 @@ Missing infrastructure:
 | 20 | Create `tests/test-precommit-run-tests.sh` | Validate `GIT_*` env-var cleanup prevents index corruption |
 | 21 | Complete `scripts/lib/progress-monitor.sh` coverage | `parse_progress_file`, `update_status`, main loop |
 | 22 | Backend-abstraction E2E for `scripts/backends/k8s.sh` | Dry-run CR YAML fixture; status-polling contract |
+
+---
+
+## 8. Implemented in this revision
+
+Six dedicated test files were added, closing the highest-priority gaps from §§ 1–3:
+
+| File | Tests | Targets |
+|------|-------|---------|
+| `tests/test-secret-store.sh` | 12 | `detect_os`, `query_secret_store`, `query_secret_store_with_fallbacks`, fallback ordering, account masking, double-source guard. Uses a PATH-shim `secret-tool` binary. |
+| `tests/test-audit-patterns.sh` | 24 | `_pattern_sensitive_path_access`, `_pattern_unusual_commands` (incl. Issue #246 curl `-v` regressions), `_pattern_credential_exfiltration` (package-manager exemption + window), `_pattern_mass_deletion` (5-count threshold + `/tmp` exemption), ring-buffer eviction at 20. |
+| `tests/test-config-verifier.sh` | 22 | All 8 public functions via subprocess invocation: tool-phase-mapping validation (version, phase ranges, default category), launch-config validation (LSP servers, liveness, auto_push), network validation (mode, DNS pinning), agent-profile validation, `detect_config_type`, `check_dependencies` (exit 2 when yq missing), `test_pattern_matching` via `--test`. |
+| `tests/test-init-git-branch.sh` | 6 | New-branch-from-HEAD, new-branch-from-explicit-base (Fix #116), missing-base fallback, remote-branch checkout+track, distinct local vs remote branch names, missing-arg validation. Uses local bare `origin` sandbox. |
+| `tests/test-post-exit-git.sh` | 10 | Clean-tree no-op, tracked/untracked commits, mismatched-branch auto-switch, successful push against local bare upstream, `KAPSIS_PUSH_FALLBACK` sentinel emission + exit 1 on failure, `KAPSIS_REMOTE_BRANCH` / `KAPSIS_DO_PUSH` env overrides, arg validation. |
+| `operator/internal/controller/status_bridge_test.go` | 21 | `mapPodPhase` across all Pod phases + annotation override + unknown-annotation fallback, `toAgentPhase` round-trip + unknown fallback, `extractExitCode` (running/terminated/sidecar), `applyAnnotations` (all fields, malformed progress, nil map), `applyTimestamps`, and three end-to-end `BridgeStatus` scenarios (happy path, failed pod, running-with-annotation). |
+
+Total: **74 new Bash test cases + 21 new Go test cases = 95 new cases**. All new Bash tests registered in `tests/run-all-tests.sh` under appropriate categories (`validation`, `security`, `git`) and in the `QUICK_TESTS` list so they run in CI's quick-tests job.
