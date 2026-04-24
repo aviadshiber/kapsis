@@ -2,55 +2,52 @@
 
 Analysis of the Kapsis test suite coverage, identifying gaps and recommending improvements.
 
-**Codebase snapshot:** 24 main scripts, 21 library modules, 14 hook scripts, ~550+ tests across 61 test files.
+**Codebase snapshot (2026-04-24):** 20 main scripts, 29 library modules, 15 hook scripts, 2 backends, 85 Bash test files, 6 Go test files (operator).
 
 ---
 
 ## 1. Completely Untested Modules
 
-### 1.1 `scripts/lib/config-verifier.sh` — 0% coverage
+### 1.1 `scripts/lib/secret-store.sh` — 0% direct coverage
 
-This module validates YAML configuration files (tool-phase-mapping, agent profiles, launch configs, network configs). It exposes 8 public functions, none of which have tests:
+Cross-platform credential retrieval (macOS Keychain, Linux secret-tool). `tests/test-secret-store-injection.sh` covers the secret *injection* feature, but does not exercise the library's public API:
 
-- `validate_tool_phase_mapping(file)` — Validates tool-phase-mapping.yaml structure
-- `validate_agent_profile(file)` — Validates agent profile YAML schema
-- `validate_launch_config(file)` — Validates launch configuration YAML
-- `validate_network_config(file)` — Validates network allowlist configuration
-- `detect_config_type(file)` — Auto-detects config file type
-- `test_pattern_matching(file)` — Tests tool-to-phase mapping logic
-- `check_dependencies()` — Verifies yq/yamllint availability
-- `print_summary()` — Reports validation results with error/warning counts
+- `detect_os()` — returns `"macos"` | `"linux"` | `"unknown"`
+- `query_secret_store(service, account)` — retrieves a credential
+- `query_secret_store_with_fallbacks(service, accounts, var_name)` — tries multiple accounts in order
 
-**Risk:** Config validation is a CI/CD gate. Silent regressions here would allow broken configs to ship.
+**Risk:** Credential handling is security-sensitive. Fallback ordering, masking, and graceful-absent-binary behavior are all unverified.
 
 **Recommended tests:**
-- Valid config files pass each validator without errors
-- Malformed YAML produces clear error messages
-- Missing required fields are caught (e.g., agent profile without `command`)
-- `detect_config_type()` correctly classifies all config types
-- `test_pattern_matching()` maps tools to correct phases
-- Invalid patterns produce warnings, not crashes
-
-### 1.2 `scripts/lib/secret-store.sh` — 0% coverage
-
-Cross-platform credential retrieval (macOS Keychain, Linux secret-tool). 3 public functions:
-
-- `detect_os()` — Returns `"macos"` | `"linux"` | `"unknown"`
-- `query_secret_store(service, account)` — Retrieves a credential
-- `query_secret_store_with_fallbacks(service, accounts, var_name)` — Tries multiple accounts in order
-
-**Risk:** Credential handling is security-sensitive. Fallback logic and error handling must be verified.
-
-**Recommended tests:**
-- `detect_os()` returns correct value on current platform
-- `query_secret_store()` returns empty and non-zero exit when credential is missing
-- `query_secret_store_with_fallbacks()` tries accounts in declared order
+- `detect_os()` returns correct value on current platform (gate with `is_macos`/`is_linux` helpers from `compat.sh`)
+- `query_secret_store()` returns empty + non-zero exit when credential is missing
+- `query_secret_store_with_fallbacks()` tries accounts in declared order, stops on first hit
 - Account masking in logs hides all but first 3 characters
-- Graceful behavior when `secret-tool`/`security` binary is absent
+- Graceful behavior when `secret-tool` / `security` binary is absent (shim PATH)
+
+### 1.2 `scripts/lib/config-verifier.sh` — no dedicated function-level coverage
+
+842 LOC. Referenced by 4 tests as a side-source, but none exercise its 8 public functions directly:
+
+- `validate_tool_phase_mapping(file)` — tool-phase-mapping.yaml structure
+- `validate_agent_profile(file)` — agent profile YAML schema
+- `validate_launch_config(file)` — launch configuration YAML
+- `validate_network_config(file)` — network allowlist configuration
+- `detect_config_type(file)` — auto-detects config file type
+- `test_pattern_matching(file)` — tool-to-phase mapping logic
+- `check_dependencies()` — verifies yq/yamllint availability
+- `print_summary()` — reports validation results
+
+**Risk:** Config validation is a CI gate. Silent regressions here allow broken configs to ship.
+
+**Recommended tests:**
+- Valid/malformed fixtures for each validator (including each missing-required-field case)
+- `detect_config_type()` correctly classifies all config types
+- Invalid patterns produce warnings, not crashes
 
 ### 1.3 `scripts/lib/constants.sh` — 0% dedicated coverage
 
-Central constants used across the entire codebase. While other tests _consume_ these constants, nothing validates the constants themselves.
+311 LOC. Heavily consumed by tests (36 references across 15 files), but nothing validates the constants themselves against their real callers (`Containerfile`, `entrypoint.sh`).
 
 **Recommended tests:**
 - Container mount path constants match what `Containerfile` and `entrypoint.sh` expect
@@ -59,13 +56,19 @@ Central constants used across the entire codebase. While other tests _consume_ t
 - `KAPSIS_DEFAULT_COMMIT_EXCLUDE` covers known problematic files
 - Guard variable prevents double-sourcing
 
+### 1.4 `operator/internal/controller/status_bridge.go` — 0% coverage
+
+167 LOC. Bridges container `status.json` → `AgentRequest` CRD status. Sibling files (`agentrequest_controller.go`, `pod_builder.go`, `networkpolicy_builder.go`) all have test files; this one does not.
+
+**Risk:** Silent drift affects every K8s-backend agent. Every documented `error_type` (`agent_failure`, `agent_partial`, `commit_failure`, etc.) and phase transition should be asserted.
+
 ---
 
 ## 2. Partially Tested Modules
 
 ### 2.1 `scripts/lib/agent-types.sh` — ~33% coverage
 
-Only `normalize_agent_type()` and `agent_supports_hooks()` are tested (indirectly via `test-status-hooks.sh`). 7 functions are untested:
+`normalize_agent_type()` and `agent_supports_hooks()` are tested indirectly via `test-status-hooks.sh` and `test-agent-type-detection.sh`. Untested:
 
 | Function | Risk |
 |----------|------|
@@ -81,17 +84,25 @@ Only `normalize_agent_type()` and `agent_supports_hooks()` are tested (indirectl
 
 `calculate_kapsis_progress()` and `map_progress_to_phase()` are tested. Untested:
 
-- `parse_progress_file(file)` — Parses `progress.json` from agent output
-- `update_status()` — Updates Kapsis status JSON
+- `parse_progress_file(file)` — parses `progress.json` from agent output
+- `update_status()` — updates Kapsis status JSON
 - Main monitoring loop — polling behavior, error recovery
+
+### 2.3 `scripts/lib/audit-patterns.sh` — pattern-level only
+
+Exercised by `test-audit-system.sh` for the end-to-end audit report path, but the individual pattern detectors (curl `-v`, base64 data URIs, token-shaped strings, credential-file access) are not directly asserted. Issue #246 (curl `-v` detection) would have caught silently before merge with a pattern-level test matrix.
+
+### 2.4 `scripts/backends/k8s.sh` — config translation only
+
+192 LOC. Covered indirectly via `test-k8s-config-translation.sh` and `test-backend-abstraction.sh`, but the backend-abstraction contract (launch → status polling → teardown) is not asserted end-to-end. No dry-run CR YAML fixture.
 
 ---
 
 ## 3. Untested Main Scripts
 
-Seven main scripts (39% of non-lib scripts) lack dedicated tests:
+Eight main scripts (40% of top-level scripts) lack dedicated tests:
 
-### 3.1 `scripts/build-agent-image.sh` (488 lines) — HIGH priority
+### 3.1 `scripts/build-agent-image.sh` (487 lines) — HIGH priority
 
 Builds agent-specific container images. Key untested functionality:
 - Agent YAML profile parsing (name, NPM/PIP deps, custom scripts)
@@ -100,22 +111,23 @@ Builds agent-specific container images. Key untested functionality:
 - `--pull` flag for pre-built image registry pull
 - Dangling image cleanup after successful builds
 
-### 3.2 `scripts/init-git-branch.sh` (91 lines) — HIGH priority
+### 3.2 `scripts/init-git-branch.sh` (99 lines) — HIGH priority
 
 Initializes git branches for agent workflows. Key untested functionality:
 - Remote branch existence checking (fetch + check)
 - Branch creation from base-branch vs. current HEAD
 - Checkout and tracking of existing remote branches
 
-### 3.3 `scripts/post-exit-git.sh` (133 lines) — HIGH priority
+### 3.3 `scripts/post-exit-git.sh` (137 lines) — HIGH priority
 
 Post-exit commit and push logic. Key untested functionality:
 - Change detection (staged, unstaged, untracked)
 - Branch correctness verification and switching
 - Push fallback mechanism (`KAPSIS_PUSH_FALLBACK`)
+- Exit codes 2 (push failed) and 6 (commit failed)
 - PR URL generation
 
-### 3.4 `scripts/merge-changes.sh` (154 lines) — MEDIUM priority
+### 3.4 `scripts/merge-changes.sh` (153 lines) — MEDIUM priority
 
 Sandbox-to-project merge workflow. Key untested functionality:
 - Sandbox directory discovery by agent ID
@@ -123,73 +135,93 @@ Sandbox-to-project merge workflow. Key untested functionality:
 - `--dry-run`, `--force`, `--cleanup` modes
 - rsync-based file merging
 
-### 3.5 Setup scripts (3 scripts) — LOW priority
+### 3.5 Setup scripts (4 scripts) — LOW priority
 
-`setup-github-protection.sh`, `setup-homebrew-tap-sync.sh`, `setup-package-repos.sh` are interactive scripts that call GitHub APIs. Testing would require extensive mocking of the `gh` CLI.
+`setup-github-protection.sh` (273 L), `setup-homebrew-tap-sync.sh` (79 L), `setup-package-repos.sh` (236 L), `setup-release-app.sh` (185 L) are interactive scripts that call external APIs (GitHub, package registries). Testing would require extensive mocking of `gh` / `curl`.
 
 ---
 
 ## 4. Untested Hook Scripts
 
-### 4.1 `scripts/hooks/precommit/run-tests.sh` — MEDIUM priority
+### 4.1 `scripts/hooks/precommit/run-tests.sh` (48 L) — MEDIUM priority
 
-Pre-commit hook that runs quick test suite. Key untested behavior:
+Pre-commit hook that runs the quick test suite. Key untested behavior:
 - Unsets `GIT_DIR`, `GIT_INDEX_FILE`, `GIT_WORK_TREE`, `GIT_OBJECT_DIRECTORY` to prevent index corruption
 - Runs test runner with `--quick -q` flags
 - Blocks commit on test failure
 
+This was called out in v1 of this doc; still uncovered.
+
 ---
 
-## 5. Test Quality Gaps
+## 5. Coverage Fixed Since v1
 
-### 5.1 Missing error path coverage
+These modules were flagged as untested in the previous revision and now have dedicated tests:
 
-Tests generally cover happy paths well, but several failure scenarios are missing:
+| Module | Test file |
+|--------|-----------|
+| `scripts/lib/audit.sh` | `test-audit-system.sh` |
+| `scripts/lib/liveness-monitor.sh` | `test-liveness-monitor.sh` |
+| `scripts/lib/dns-filter.sh` | `test-dns-filtering.sh` |
+| `scripts/lib/dns-pin.sh` | `test-dns-pinning.sh` |
+| `scripts/lib/k8s-config.sh` | `test-k8s-config-translation.sh` |
+| `scripts/lib/atomic-copy.sh` | `test-atomic-copy.sh` |
+| `scripts/lib/build-config.sh` | `test-build-config.sh` |
+| `scripts/lib/validate-scope.sh` | `test-scope-validation.sh`, `test-lib-namespace-isolation.sh` |
+| `scripts/lib/progress-display.sh` | `test-progress-display.sh` |
+| `scripts/lib/sanitize-files.sh` | `test-sanitize-files.sh` |
+| `scripts/lib/git-remote-utils.sh` | `test-git-remote-utils.sh` |
+| `scripts/lib/ssh-keychain.sh` | `test-ssh-keychain.sh`, `test-keychain-platform.sh` |
+| `scripts/lib/inject-lsp-config.sh` | `test-lsp-config.sh` |
+| `scripts/lib/inject-status-hooks.sh` | `test-status-hooks.sh` |
+| `scripts/lib/rewrite-plugin-paths.sh` | `test-plugin-path-rewrite.sh` |
+| `scripts/lib/ssh-config-compat.sh` | `test-ssh-config-portability.sh` |
 
-- **Container timeout/kill** — No tests for what happens when a container exceeds its time limit
-- **Network failures during push** — No tests for broken connections mid-push
-- **Permission denied** — Few tests for `chmod 000` directories or read-only filesystems
-- **Disk space exhaustion** — No tests for out-of-space scenarios during commits or builds
-- **Empty git repos** (no commits yet) — Could crash branch conflict detection
+---
 
-### 5.2 Missing concurrency/race condition tests
+## 6. Test Quality Gaps
+
+### 6.1 Exit-code contract is not asserted
+
+`CLAUDE.md` documents exit codes 0–6 with specific sentinel triggers (`KAPSIS_MOUNT_FAILURE:` → 4, post-completion hang → 5, `git commit` failure → 6). No test injects the sentinels and asserts the mapping. A regression here silently degrades caller behavior (e.g. slack-bot retrying on `agent_partial` instead of treating the work as landed, per Issue #260).
+
+### 6.2 Missing error-path coverage
+
+Happy paths are well covered. Failure scenarios that are not:
+
+- **Container timeout / kill mid-run** — time-limit enforcement untested
+- **Network failure during push** — broken connection mid-push
+- **Permission denied** — `chmod 000` directories, read-only filesystems
+- **Disk space exhaustion** — out-of-space during commits or builds
+- **Empty git repos** (no commits yet) — could crash branch-conflict detection
+
+### 6.3 Missing concurrency / race-condition tests
 
 - Two agents writing to the same git worktree simultaneously
 - Two agents pushing to the same branch simultaneously
-- Status file reads during concurrent writes from multiple containers
+- Status-file reads during concurrent writes from multiple containers
 - Container removal while another agent reads its status file
 - Rapid sequential container starts (stress test)
 
-### 5.3 Integration test gaps
+### 6.4 Integration test gaps
 
-`test-full-workflow.sh` and `test-parallel-agents.sh` cover basic scenarios, but miss:
+`test-full-workflow.sh` and `test-parallel-agents.sh` cover basic scenarios but miss:
 
-- **Scalability** — No test with 10+ concurrent agents
-- **Agent crash recovery** — What happens when a container crashes mid-operation
-- **Interrupted push** — Push starts but connection drops before completion
-- **Stale status cleanup** — Orphaned status files from crashed agents
-- **Partial commit** — Agent stages files but crashes before `git commit`
-- **Real remote interaction** — All git push tests use local mocks
+- **Scalability** — `test-parallel-agents.sh` uses only 2 agents; no 5+/10+ case
+- **Agent crash recovery** — what happens when a container crashes mid-operation
+- **Interrupted push** — push starts but connection drops before completion
+- **Stale status cleanup** — orphaned status files from crashed agents
+- **Partial commit** — agent stages files but crashes before `git commit` (Issue #256 path)
+- **Real remote interaction** — all `git push` tests use local mocks; capabilities we generate are not verified against an actual Podman enforce-point
 
-### 5.4 Mocking concerns
+### 6.5 Test framework limitations
 
-**Over-mocking (may miss real bugs):**
-- `test-git-auto-commit-push.sh` simulates push detection but never actually pushes to a remote
-- `test-security.sh` validates generated capability arguments but doesn't verify Podman enforces them
-- `test-status-reporting.sh` tests status writes in a single process — doesn't test concurrent writes from multiple containers
-
-**Under-mocking (may be flaky):**
-- `test-build-config.sh` reads actual `configs/build-profiles/*.yaml` — changes to those files break tests
-- `test-filter-agent-config.sh` modifies files relative to the real home directory during tests
-
-### 5.5 Test framework limitations
-
-Missing assertion types:
-- `assert_json_valid` — Currently tests call Python manually for JSON validation
-- `assert_json_field_equals` — No jq-based field assertion
-- `assert_exit_code_range` — For signal-terminated processes (128-139)
-- `assert_file_contains_multiline` — Current grep-based assertion can't match across lines
-- Timing/performance assertions
+Missing assertions:
+- `assert_json_valid` — tests currently shell out to Python for JSON validation
+- `assert_json_field_equals` — no jq-based field assertion
+- `assert_exit_code_range` — for signal-terminated processes (128–139)
+- `assert_file_contains_multiline` — current grep-based assertion can't match across lines
+- Timing / performance assertions
 
 Missing infrastructure:
 - No test fixture system — repetitive setup code across files
@@ -199,36 +231,41 @@ Missing infrastructure:
 
 ---
 
-## 6. Prioritized Recommendations
+## 7. Prioritized Recommendations
 
 ### Tier 1 — High impact, addresses real risk
 
 | # | Action | Rationale |
 |---|--------|-----------|
-| 1 | **Create `test-config-verifier.sh`** | Config validation is a CI gate; regressions silently ship broken configs |
-| 2 | **Create `test-init-git-branch.sh`** | Branch initialization is used on every agent launch; base-branch logic is complex |
-| 3 | **Create `test-post-exit-git.sh`** | Post-exit commit/push is the final step of every agent run; push fallback logic is critical |
-| 4 | **Create `test-build-agent-image.sh`** | Agent image builds involve profile parsing, dependency validation, and platform detection |
-| 5 | **Add concurrent write tests to `test-status-reporting.sh`** | Status files are written by multiple agents in production |
-| 6 | **Add agent crash recovery integration test** | No coverage for container crash → stale status → cleanup path |
+| 1 | Create `tests/test-config-verifier.sh` | Config validation is a CI gate; regressions silently ship broken configs |
+| 2 | Create `tests/test-secret-store.sh` | Credential handling is security-sensitive; inject-feature test is not a substitute |
+| 3 | Create `tests/test-audit-patterns.sh` | Direct pattern-matcher coverage would have caught Issue #246 pre-merge |
+| 4 | Create `tests/test-init-git-branch.sh` | Branch init runs on every agent launch; base-branch logic is complex |
+| 5 | Create `tests/test-post-exit-git.sh` | Covers exit codes 2 & 6, push-fallback sentinel, PR-URL logic |
+| 6 | Create `tests/test-build-agent-image.sh` | Image builds involve profile parsing, dep validation, platform detection |
+| 7 | Create `tests/test-exit-code-contract.sh` | Inject all documented sentinels; assert 4/5/6 mapping matches `CLAUDE.md` |
+| 8 | Create `operator/internal/controller/status_bridge_test.go` | Every `error_type` and phase transition for the K8s backend is untested |
+| 9 | Add concurrent-writer case to `test-status-reporting.sh` | Status files are written by multiple agents in production |
 
 ### Tier 2 — Strengthens coverage, moderate effort
 
 | # | Action | Rationale |
 |---|--------|-----------|
-| 7 | **Create `test-secret-store.sh`** | Credential handling is security-sensitive |
-| 8 | **Extend `test-agent-types.sh`** with full function coverage | 7 untested functions including hook config path resolution |
-| 9 | **Create `test-merge-changes.sh`** | rsync-based merge has edge cases (conflicts, permissions) |
-| 10 | **Add timeout/kill scenario tests** | Container time limits are enforced but never tested |
-| 11 | **Add `assert_json_valid` and `assert_json_field_equals`** to framework | Reduces boilerplate; 5+ test files manually shell out to Python for JSON checks |
-| 12 | **Add container log capture on test failure** | Debugging container test failures currently requires manual reproduction |
+| 10 | Extend `test-agent-type-detection.sh` to full function coverage | 7 untested functions including hook-config-path resolution |
+| 11 | Create `tests/test-merge-changes.sh` | rsync-based merge has edge cases (conflicts, permissions) |
+| 12 | Add container-timeout/kill scenario tests | Time limits are enforced but never asserted |
+| 13 | Add `assert_json_valid` / `assert_json_field_equals` / `assert_exit_code_range` / `assert_file_contains_multiline` to framework | Reduces boilerplate; 5+ tests manually shell out to Python |
+| 14 | Add container-log capture on test failure (EXIT trap in framework) | Debugging container failures currently requires manual reproduction |
+| 15 | Extend `test-parallel-agents.sh` from 2 → 5 agents; add 10-agent case behind `KAPSIS_STRESS=1` | Current coverage asserts nothing about fan-out at realistic scale |
+| 16 | Add agent crash-recovery integration test | No coverage for container crash → stale status → cleanup path; verifies `error_type=agent_partial` |
 
 ### Tier 3 — Polish and hardening
 
 | # | Action | Rationale |
 |---|--------|-----------|
-| 13 | **Create `test-constants.sh`** | Verify mount paths match Containerfile expectations |
-| 14 | **Add network failure injection tests** | Push/pull over network is untested for partial failures |
-| 15 | **Extend `test-parallel-agents.sh`** to 5+ agents | Current test uses only 2 agents |
-| 16 | **Add test data fixtures to framework** | Reduce 20+ lines of boilerplate per test file |
-| 17 | **Create `test-precommit-run-tests.sh`** | Validate GIT env var cleanup prevents index corruption |
+| 17 | Create `tests/test-constants.sh` | Verify mount paths match `Containerfile` / `entrypoint.sh` expectations |
+| 18 | Add network-failure injection test (throwaway git remote) | Push/pull over network is untested for partial failures |
+| 19 | Add test-data fixture system to `tests/lib/test-framework.sh` | Reduce 20+ lines of boilerplate per test file |
+| 20 | Create `tests/test-precommit-run-tests.sh` | Validate `GIT_*` env-var cleanup prevents index corruption |
+| 21 | Complete `scripts/lib/progress-monitor.sh` coverage | `parse_progress_file`, `update_status`, main loop |
+| 22 | Backend-abstraction E2E for `scripts/backends/k8s.sh` | Dry-run CR YAML fixture; status-polling contract |
