@@ -116,6 +116,12 @@ source "$SCRIPT_DIR/lib/compat.sh"
 # Source DNS pinning library (provides resolve_allowlist_domains, generate_add_host_args, etc.)
 source "$SCRIPT_DIR/lib/dns-pin.sh"
 
+# Source virtio-fs health probe / auto-heal (Issue #276) — macOS only, no-op on Linux
+source "$SCRIPT_DIR/lib/podman-health.sh"
+
+# Source host-side status volume sync (Issue #276) — no-op when KAPSIS_STATUS_VOLUME unset
+source "$SCRIPT_DIR/lib/status-sync.sh"
+
 # Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
 NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
 CLI_NETWORK_MODE=""  # Track if CLI explicitly set network mode
@@ -833,6 +839,10 @@ parse_config() {
         LIVENESS_CHECK_INTERVAL=$(yq -r '.liveness.check_interval // "30"' "$CONFIG_FILE" 2>/dev/null || echo "30")
         LIVENESS_COMPLETION_TIMEOUT=$(yq -r '.liveness.completion_timeout // "120"' "$CONFIG_FILE" 2>/dev/null || echo "120")
 
+        # Parse sleep prevention configuration (Issue #276, macOS only)
+        KAPSIS_PREVENT_SLEEP=$(yq -r '.prevent_sleep // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        export KAPSIS_PREVENT_SLEEP
+
         # Parse mount check configuration (Issue #248)
         # Defaults to true when liveness section exists, since mount checking is lightweight
         MOUNT_CHECK_ENABLED=$(yq -r '.liveness.mount_check // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
@@ -1229,7 +1239,20 @@ add_common_volume_mounts() {
     # Status reporting directory (shared between host and container)
     local status_dir="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
     ensure_dir "$status_dir"
-    VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
+
+    # Issue #276: on macOS the host bind-mount traverses virtio-fs, which can
+    # degrade silently (sleep/wake) and make /kapsis-status unwritable at
+    # container start. Back /kapsis-status with a per-agent named volume
+    # instead — named volumes live inside the Podman VM and are not affected
+    # by virtio-fs drops. A host-side sync (see start_status_sync) mirrors
+    # the volume into $status_dir so live --watch consumers keep working.
+    if is_macos; then
+        KAPSIS_STATUS_VOLUME="kapsis-${AGENT_ID}${KAPSIS_STATUS_VOLUME_SUFFIX}"
+        VOLUME_MOUNTS+=("-v" "${KAPSIS_STATUS_VOLUME}:/kapsis-status")
+    else
+        KAPSIS_STATUS_VOLUME=""
+        VOLUME_MOUNTS+=("-v" "${status_dir}:/kapsis-status")
+    fi
 
     # Audit directory (shared between host and container)
     if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" ]]; then
@@ -2131,6 +2154,11 @@ build_container_command() {
         "--rm"
         "--name" "kapsis-${AGENT_ID}"
         "--hostname" "kapsis-${AGENT_ID}"
+        # Label (Issue #276 review, #5): count_running_kapsis_containers
+        # filters by this label instead of the name prefix, so unrelated
+        # user containers named "kapsis-*" cannot stall auto-heal.
+        "--label" "kapsis.managed=true"
+        "--label" "kapsis.agent-id=${AGENT_ID}"
     )
 
     # Add TTY flags only for interactive mode
@@ -2280,7 +2308,16 @@ cleanup_agent_volumes() {
     local agent_id="$1"
     local removed=0
 
-    for suffix in m2 gradle ge; do
+    # Build the suffix list: "-status" is macOS-only because that's the only
+    # platform where we back /kapsis-status with a named volume (Issue #276).
+    # On Linux the bind mount is used and the -status volume never exists,
+    # so attempting to `podman volume rm` it is just noise.
+    local suffixes=(m2 gradle ge)
+    if is_macos; then
+        suffixes+=(status)
+    fi
+
+    for suffix in "${suffixes[@]}"; do
         local vol="kapsis-${agent_id}-${suffix}"
         if podman volume rm "$vol" &>/dev/null; then
             log_debug "Removed volume: $vol"
@@ -2308,12 +2345,28 @@ main() {
     # Track temp file for cleanup on signal (set later when container runs)
     _CONTAINER_OUTPUT_TMP=""
 
+    # PID of caffeinate background process (macOS sleep prevention, Issue #276).
+    # Set after caffeinate is started; cleared after it is killed.
+    _CAFFEINATE_PID=""
+
     # Cleanup function that ensures completion message is shown
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
         local exit_code=$?
         # Clean up temp files if they exist
         [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
+        # Stop macOS sleep prevention if active (Issue #276).
+        if [[ -n "$_CAFFEINATE_PID" ]]; then
+            kill "$_CAFFEINATE_PID" 2>/dev/null || true
+            _CAFFEINATE_PID=""
+        fi
+        # Stop host-side status volume sync and flush one final snapshot to
+        # the host status dir so post-exit consumers see the definitive state
+        # (Issue #276). No-op when KAPSIS_STATUS_VOLUME is unset.
+        if [[ -n "${KAPSIS_STATUS_VOLUME:-}" ]]; then
+            stop_status_sync "${AGENT_ID:-}" "$KAPSIS_STATUS_VOLUME" \
+                "${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}" 2>/dev/null || true
+        fi
         # Delegate backend-specific cleanup (secrets env file, inline spec, dns pin, etc.)
         backend_cleanup 2>/dev/null || true
         # Ensure status transitions to 'complete' on abnormal exit (Fix #168)
@@ -2478,6 +2531,40 @@ main() {
     echo "└────────────────────────────────────────────────────────────────────┘"
     echo ""
 
+    # Pre-launch virtio-fs health probe (Issue #276, macOS only).
+    # Fails the launch fast with exit code 4 (KAPSIS_EXIT_MOUNT_FAILURE) when
+    # virtio-fs is degraded and cannot be auto-healed. Skipped for Linux, K8s,
+    # and probe/dry-run paths where no real container will be started.
+    if [[ "$BACKEND" == "podman" ]] && is_macos \
+       && [[ "${KAPSIS_VFS_PROBE_ENABLED:-true}" == "true" ]]; then
+        log_timer_start "vfs_probe"
+        if ! maybe_autoheal_podman_vm; then
+            # Emit the tagged sentinel to stderr so any log-scraping caller
+            # sees the same signal as from in-container failures. (Host code
+            # sets EXIT_CODE=4 directly below — the sentinel is informational.)
+            log_error "KAPSIS_MOUNT_FAILURE[probe_virtio_fs_health]: virtio-fs degraded at launch — aborting before container start"
+            # status.json: explicit error_type so slack-bot / --watch consumers
+            # can treat this as retriable infra, not an agent bug.
+            status_set_error_type "mount_failure"
+            status_complete "$KAPSIS_EXIT_MOUNT_FAILURE" \
+                "Virtio-fs degraded at launch (Issue #276). Recovery: podman machine stop && podman machine start, then re-run."
+            _STATUS_COMPLETE_SHOWN=true
+            exit "$KAPSIS_EXIT_MOUNT_FAILURE"
+        fi
+        log_timer_end "vfs_probe"
+    fi
+
+    # macOS sleep prevention (Issue #276): prevent idle/system sleep while the
+    # agent is running so virtio-fs is never disrupted by a host sleep event.
+    # caffeinate -i prevents idle sleep; -s prevents system sleep.
+    # Controlled by the 'prevent_sleep' config key or KAPSIS_PREVENT_SLEEP env var.
+    if [[ "$BACKEND" == "podman" ]] && is_macos \
+       && [[ "${KAPSIS_PREVENT_SLEEP:-${KAPSIS_DEFAULT_PREVENT_SLEEP:-true}}" == "true" ]]; then
+        caffeinate -i -s &
+        _CAFFEINATE_PID=$!
+        log_debug "Sleep prevention active (caffeinate PID: $_CAFFEINATE_PID)"
+    fi
+
     # Display progress header (shows sandbox ready status with timer)
     display_header "$AGENT_ID" "$BRANCH" "$NETWORK_MODE"
 
@@ -2486,6 +2573,15 @@ main() {
     log_debug "Container command: ${CONTAINER_CMD[*]}"
     log_timer_start "container"
     status_phase "starting" 22 "Launching container"
+
+    # Start host-side sync of the /kapsis-status named volume (macOS only).
+    # No-op on Linux where /kapsis-status is a direct bind mount and on K8s
+    # where KAPSIS_STATUS_VOLUME is never set. Registered BEFORE backend_run so
+    # the EXIT trap's stop_status_sync call always has a consistent pair.
+    if [[ -n "${KAPSIS_STATUS_VOLUME:-}" ]]; then
+        start_status_sync "$AGENT_ID" "$KAPSIS_STATUS_VOLUME" \
+            "${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
+    fi
 
     # Create temp file to capture output for error reporting and logging
     # Store in global for cleanup on signal (see _cleanup_with_completion)
@@ -2500,6 +2596,18 @@ main() {
 
     log_timer_end "container"
     log_info "Container exited with code: $EXIT_CODE"
+
+    # Drain the host-side status sync now so post-container logic (sentinel
+    # detection, status_get_exit_code) reads the container's final state from
+    # the host dir, not a stale cached snapshot (Issue #276).
+    if [[ -n "${KAPSIS_STATUS_VOLUME:-}" ]]; then
+        stop_status_sync "$AGENT_ID" "$KAPSIS_STATUS_VOLUME" \
+            "${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}" 2>/dev/null || true
+        # Prevent _cleanup_with_completion from re-running the stop (idempotent
+        # stop_status_sync would be a no-op anyway, but this avoids a duplicate
+        # `podman volume export` at exit-time).
+        KAPSIS_STATUS_VOLUME=""
+    fi
 
     # Log full container output to log file for debugging
     if [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
@@ -2533,11 +2641,27 @@ main() {
         log_debug "CONTAINER_ERROR_OUTPUT: $CONTAINER_ERROR_OUTPUT"
     fi
 
-    # Check for mount failure sentinel in container output (Issue #248)
-    # Only honor when container was killed by signal (SIGTERM=143, SIGKILL=137)
-    # to prevent a compromised agent from faking mount failures
+    # Check for mount failure sentinel in container output (Issues #248, #276)
+    #
+    # Pattern (post-review): tagged form `KAPSIS_MOUNT_FAILURE[<subsystem>]:`
+    # where <subsystem> is one of: probe_mount_readiness, liveness_monitor,
+    # probe_virtio_fs_health. This anchored format and the restriction of the
+    # grep to the last 10 lines of container output defend against agents that
+    # log "KAPSIS_MOUNT_FAILURE:" somewhere in their own diagnostics.
+    #
+    # Accepted exit codes:
+    #  - 143 / 137: signal kills (SIGTERM / SIGKILL) from the in-container
+    #               liveness monitor (scripts/lib/liveness-monitor.sh)
+    # Exit 0 is never overridden, preserving the security property that a
+    # compromised agent cannot upgrade a clean success into a mount failure.
+    # Exit 1 is intentionally excluded: probe_mount_readiness exits 4 directly
+    # on failure (not 1), so exit-1 + sentinel cannot occur in legitimate code;
+    # accepting it would widen the spoofing surface for compromised agents.
+    local _MOUNT_SENTINEL_PATTERN='^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor|probe_virtio_fs_health)\]:'
     if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
-        if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
+        if [[ -f "$container_output" ]] \
+           && tail -n 10 "$container_output" 2>/dev/null \
+              | grep -Eq "$_MOUNT_SENTINEL_PATTERN" ; then
             log_warn "Mount failure detected via sentinel — overriding exit code to 4"
             EXIT_CODE=4
         fi

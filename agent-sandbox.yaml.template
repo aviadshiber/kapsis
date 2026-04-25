@@ -224,6 +224,16 @@ sandbox:
   interactive_merge: true
 
 #===============================================================================
+# MACOS SLEEP PREVENTION (Issue #276)
+#===============================================================================
+# Prevents macOS idle/system sleep while the agent is running.
+# virtio-fs (Podman VM) degrades after a sleep/wake cycle, causing bind mounts
+# to become unwritable. Keeping the machine awake eliminates the root cause.
+# Uses `caffeinate -i -s` for the duration of the agent session.
+# Set to false if you want macOS to sleep normally during long agent runs.
+prevent_sleep: true
+
+#===============================================================================
 # LIVENESS MONITORING (Issue #257)
 #===============================================================================
 # Detects hung agents and auto-kills them after timeout.

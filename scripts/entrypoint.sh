@@ -1546,6 +1546,101 @@ validate_workspace_mount() {
 }
 
 #===============================================================================
+# PRE-AGENT MOUNT READINESS PROBE (Issue #276)
+#
+# validate_workspace_mount above runs early in the entrypoint; several seconds
+# of setup (DNS, credential injection, CoW overlays) follow before we exec into
+# the agent command. On macOS virtio-fs can degrade during that window too.
+#
+# This probe runs immediately before exec and uses `timeout` so a hung virtio-
+# fs transport cannot freeze the container. A write probe is required (not
+# just stat) because the failure mode in #276 is that bash's `>` redirect open
+# fails even when stat succeeds on the parent dir.
+#
+# On failure, emits the same KAPSIS_MOUNT_FAILURE: sentinel to stderr that the
+# liveness monitor uses (scripts/lib/liveness-monitor.sh:613), so the existing
+# host-side detection in scripts/launch-agent.sh recognises it.
+#
+# Only probes /workspace — /kapsis-status on macOS is backed by a Podman named
+# volume (not virtio-fs) so it cannot fail in the same way.
+#===============================================================================
+# shellcheck disable=SC2120  # Optional arg is only used by unit tests
+probe_mount_readiness() {
+    local workspace="${1:-/workspace}"
+    local probe_timeout="${KAPSIS_MOUNT_PROBE_TIMEOUT:-5}"
+
+    # Probe containers (no KAPSIS_AGENT_ID) do not run real agents and do not
+    # need /workspace to be writable — skip the probe there.
+    if [[ -z "${KAPSIS_AGENT_ID:-}" ]]; then
+        log_debug "No KAPSIS_AGENT_ID — skipping pre-agent mount readiness probe"
+        return 0
+    fi
+
+    # Note: in fuse-overlayfs mode (macOS legacy), setup_fuse_overlay has
+    # already run by the time we get here, so /workspace is the merged
+    # (writable) overlay view — probing /workspace is correct. Probing
+    # /lower here would fail because /lower is mounted read-only.
+
+    # Clamp timeout to sane bounds (1..60).
+    if ! [[ "$probe_timeout" =~ ^[0-9]+$ ]] || (( probe_timeout < 1 || probe_timeout > 60 )); then
+        probe_timeout=5
+    fi
+
+    # Resolve timeout binary once. If the system timeout is missing (extremely
+    # rare — the container base image includes coreutils — but belt-and-braces),
+    # fall back to invoking stat/bash directly; we trade timeout enforcement for
+    # not hanging on a missing binary lookup.
+    local tmo_bin
+    tmo_bin="$(command -v timeout 2>/dev/null || true)"
+
+    local rc=0
+    if [[ -n "$tmo_bin" ]]; then
+        "$tmo_bin" "$probe_timeout" stat "$workspace" >/dev/null 2>&1
+        rc=$?
+    else
+        stat "$workspace" >/dev/null 2>&1
+        rc=$?
+    fi
+    if [[ $rc -ne 0 ]]; then
+        # Sentinel format (Issue #276 review): tagged with the probe name so
+        # the host grep can be anchored to /^KAPSIS_MOUNT_FAILURE\[probe_mount_readiness\]:/
+        # and not collide with arbitrary agent log lines that mention
+        # "KAPSIS_MOUNT_FAILURE:" verbatim. stderr reaches the host via
+        # podman's pipe even when virtio-fs is degraded — do not try to log
+        # via /kapsis-status here.
+        echo "KAPSIS_MOUNT_FAILURE[probe_mount_readiness]: $workspace inaccessible at startup (stat rc=$rc, virtio-fs drop)" >&2
+        return 1
+    fi
+
+    # Write probe: the real failure mode is that bash cannot open files for
+    # output redirect. Verify that the agent will be able to create files
+    # under the workspace before we exec into it.
+    # Use mktemp for an unpredictable filename; fall back to PID-suffix on
+    # systems where mktemp is unavailable inside the container (extremely rare).
+    local probe_file
+    probe_file="$(mktemp "$workspace/.kapsis-probe-XXXXXX" 2>/dev/null)" \
+        || probe_file="$workspace/.kapsis-probe-$$"
+    if [[ -n "$tmo_bin" ]]; then
+        "$tmo_bin" "$probe_timeout" bash -c ": > \"$probe_file\" && rm -f \"$probe_file\"" 2>/dev/null
+        rc=$?
+    else
+        bash -c ": > \"$probe_file\" && rm -f \"$probe_file\"" 2>/dev/null
+        rc=$?
+    fi
+    # Unconditional cleanup: if the compound `bash -c` timed out before `rm`
+    # completed, the probe file is left in the overlay — remove it now so it
+    # is never committed to git by the agent.
+    rm -f "$probe_file" 2>/dev/null || true
+    if [[ $rc -ne 0 ]]; then
+        echo "KAPSIS_MOUNT_FAILURE[probe_mount_readiness]: $workspace is read-only or write failed at startup (rc=$rc, virtio-fs drop)" >&2
+        return 1
+    fi
+
+    log_debug "Pre-agent mount readiness probe passed: $workspace"
+    return 0
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 main() {
@@ -1707,6 +1802,28 @@ main() {
         else
             log_warn "Mount check enabled but liveness-monitor library not found: $liveness_lib"
         fi
+    fi
+
+    # Final mount readiness probe (Issue #276).
+    # Runs after all setup but before exec so it catches virtio-fs degradation
+    # that occurred during startup. On failure, exits 4 directly so the host-
+    # side launch-agent.sh reports the outcome as a mount failure instead of a
+    # silent "agent_failure".
+    if ! probe_mount_readiness; then
+        # Best-effort status update — /kapsis-status is a named volume on
+        # macOS (Issue #276) and unaffected by virtio-fs, so this should
+        # typically succeed. Explicit error_type="mount_failure" makes the
+        # JSON status the source of truth; the stderr sentinel remains as
+        # defence-in-depth for cases where the status write also fails.
+        if type status_set_error_type &>/dev/null; then
+            status_set_error_type "mount_failure" 2>/dev/null || true
+        fi
+        if type status_complete &>/dev/null; then
+            status_complete "${KAPSIS_EXIT_MOUNT_FAILURE:-4}" \
+                "Workspace mount not ready at agent start (virtio-fs drop)" \
+                2>/dev/null || true
+        fi
+        exit "${KAPSIS_EXIT_MOUNT_FAILURE:-4}"
     fi
 
     # Execute command
