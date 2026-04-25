@@ -498,23 +498,44 @@ EOF
         "podman pull must have been invoked when skip-if-missing=false"
 }
 
-test_probe_without_timeout_binary_still_runs() {
-    log_test "probe_virtio_fs_health runs without the 'timeout' binary (coreutils-missing fallback)"
+test_vfs_timeout_cmd_returns_empty_when_missing() {
+    log_test "_vfs_timeout_cmd returns empty string when no timeout binary is on PATH"
+
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    mkdir -p "$tmpdir/bin"
+    # PATH contains only a directory with no timeout/gtimeout binary.
+
+    local result
+    result=$(bash -c "
+        unset _KAPSIS_TIMEOUT_CMD
+        PATH='$tmpdir/bin'
+        source '$LIB_DIR/podman-health.sh'
+        _vfs_timeout_cmd
+    " 2>/dev/null)
+    rm -rf "$tmpdir"
+    assert_equals "" "$result" "_vfs_timeout_cmd must return empty string when no timeout binary found"
+}
+
+test_probe_runs_podman_without_timeout_when_tmo_missing() {
+    log_test "probe_virtio_fs_health calls podman directly (no timeout wrapper) when timeout binary absent"
 
     local tmpdir
     tmpdir=$(mktemp -d)
     local shim_bin="$tmpdir/bin"
     mkdir -p "$shim_bin"
-    # Fake podman (always succeeds) in a directory that will be PATH.
-    cat > "$shim_bin/podman" <<'EOF'
-#!/usr/bin/env bash
+    local argv_log="$tmpdir/argv"
+
+    # Fake podman: logs args, exits 0.
+    # Use #!/bin/bash (absolute) — the test restricts PATH to $shim_bin so
+    # #!/usr/bin/env bash would fail to locate bash in the child process.
+    cat > "$shim_bin/podman" <<EOF
+#!/bin/bash
+echo "\$@" >> '$argv_log'
 exit 0
 EOF
     chmod +x "$shim_bin/podman"
 
-    # Capture the probe's rc under a PATH that does NOT include `timeout`
-    # or `gtimeout`. We must also clear any cached value of
-    # _KAPSIS_TIMEOUT_CMD that compat.sh picked up at its own source time.
     local rc=0
     bash -c "
         unset _KAPSIS_TIMEOUT_CMD
@@ -522,21 +543,25 @@ EOF
         log_debug() { :; }; log_info() { :; }; log_warn() { :; }; log_error() { :; }
         log_success() { :; }
         source '$LIB_DIR/constants.sh'
-        # compat.sh caches the timeout lookup on first source — override after.
         source '$LIB_DIR/compat.sh'
         is_macos() { return 0; }; is_linux() { return 1; }
         _KAPSIS_TIMEOUT_CMD=''
         source '$LIB_DIR/podman-health.sh'
         KAPSIS_VFS_PROBE_PODMAN='$shim_bin/podman' \
         KAPSIS_VFS_PROBE_IMAGE='kapsis-sandbox:latest' \
-        KAPSIS_VFS_PROBE_SKIP_IF_MISSING=true \
+        KAPSIS_VFS_PROBE_SKIP_IF_MISSING=false \
         probe_virtio_fs_health 1
     " &>/dev/null || rc=$?
+
+    local argv_content=""
+    [[ -f "$argv_log" ]] && argv_content=$(cat "$argv_log")
     rm -rf "$tmpdir"
-    # Without timeout AND with probe image missing, the skip path returns 0.
-    # The important invariant is: no hard crash / no unbound-variable error.
-    assert_equals "0" "$rc" \
-        "Probe must not crash when 'timeout' is unavailable"
+    assert_equals "0" "$rc" "Probe must succeed (fake podman exits 0)"
+    # The first call to fake podman should be 'image exists ...' and then 'run ...'
+    # Without timeout wrapper, the run call begins with 'run' not 'N run'.
+    assert_contains "$argv_content" "run" "podman run must be called"
+    assert_not_contains "$argv_content" "timeout" \
+        "podman run must NOT be wrapped in timeout when no timeout binary found"
 }
 
 #===============================================================================
@@ -568,7 +593,8 @@ main() {
     run_test test_autoheal_retry_exhaustion_returns_1
     run_test test_probe_skipped_when_image_missing_and_skip_enabled
     run_test test_probe_pulls_image_when_skip_disabled
-    run_test test_probe_without_timeout_binary_still_runs
+    run_test test_vfs_timeout_cmd_returns_empty_when_missing
+    run_test test_probe_runs_podman_without_timeout_when_tmo_missing
 
     print_summary
 }

@@ -39,13 +39,16 @@ _vfs_timeout_cmd() {
         printf '%s' "$_KAPSIS_TIMEOUT_CMD"
         return 0
     fi
+    local result=""
     if command -v timeout &>/dev/null; then
-        printf '%s' "timeout"
+        result="timeout"
     elif command -v gtimeout &>/dev/null; then
-        printf '%s' "gtimeout"
-    else
-        printf ''
+        result="gtimeout"
     fi
+    # Cache result so subsequent calls skip the command -v fork.
+    _KAPSIS_TIMEOUT_CMD="$result"
+    export _KAPSIS_TIMEOUT_CMD
+    printf '%s' "$result"
 }
 
 #-------------------------------------------------------------------------------
@@ -133,6 +136,7 @@ probe_virtio_fs_health() {
     local cleanup_host_dir=""
     if [[ -z "$host_dir" ]]; then
         host_dir="$(mktemp -d 2>/dev/null || mktemp -d -t kapsis-vfs-probe)"
+        chmod 0700 "$host_dir" 2>/dev/null || true
         cleanup_host_dir="$host_dir"
     fi
 
@@ -146,6 +150,8 @@ probe_virtio_fs_health() {
 
     if [[ -n "$timeout_cmd" ]]; then
         "$timeout_cmd" "$probe_timeout" "$podman_bin" run --rm \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            --read-only --network=none \
             -v "${host_dir}:/probe" \
             "$probe_image" \
             sh -c "$probe_cmd" >/dev/null 2>&1 || rc=$?
@@ -154,12 +160,14 @@ probe_virtio_fs_health() {
         # Document the install hint for the user.
         log_debug "No 'timeout' binary found — probe cannot bound duration (install coreutils)"
         "$podman_bin" run --rm \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            --read-only --network=none \
             -v "${host_dir}:/probe" \
             "$probe_image" \
             sh -c "$probe_cmd" >/dev/null 2>&1 || rc=$?
     fi
 
-    [[ -n "$cleanup_host_dir" ]] && rm -rf "$cleanup_host_dir" 2>/dev/null || true
+    if [[ -n "$cleanup_host_dir" ]]; then rm -rf "$cleanup_host_dir" 2>/dev/null || true; fi
 
     if [[ $rc -eq 0 ]]; then
         log_debug "Virtio-fs probe passed (${probe_timeout}s budget, image=$probe_image)"
@@ -191,7 +199,9 @@ count_running_kapsis_containers() {
         echo "0"
         return 0
     fi
-    # wc -l may pad output with leading whitespace; strip it.
+    # printf '%s\n' adds exactly one trailing newline; wc -l therefore counts
+    # all lines correctly. (Command substitution already stripped the trailing
+    # newline from podman output, so '%s' would undercount the last line.)
     local count
     count="$(printf '%s\n' "$ids" | wc -l | tr -d ' ')"
     echo "${count:-0}"
@@ -206,6 +216,11 @@ count_running_kapsis_containers() {
 _podman_machine_restart() {
     local podman_bin="${KAPSIS_VFS_PROBE_PODMAN:-podman}"
     local machine="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
+    # Validate machine name to prevent command injection via crafted env var.
+    if ! [[ "$machine" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        log_error "_podman_machine_restart: invalid KAPSIS_PODMAN_MACHINE value '$machine' — refusing auto-heal"
+        return 1
+    fi
     local timeout_cmd
     timeout_cmd="$(_vfs_timeout_cmd)"
 
@@ -281,6 +296,10 @@ maybe_autoheal_podman_vm() {
         log_error "Failed to restart Podman VM — manual recovery required"
         return 1
     fi
+
+    # Give virtio-fs time to initialise after VM start before the first probe.
+    # `podman machine start` can return before the virtiofs transport is fully ready.
+    sleep 2
 
     local i
     for (( i=1; i<=max_retries; i++ )); do

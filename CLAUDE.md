@@ -386,7 +386,9 @@ Exit code 4 surfaces virtio-fs mount drops across the full agent lifecycle:
 
 Host-side in `scripts/launch-agent.sh`, the `KAPSIS_MOUNT_FAILURE:` sentinel in container output overrides the exit code to 4 for signal exits (143/137) and for bash-redirect exits (1). Exit 0 is never overridden.
 
-**Storage isolation (Issue #276, macOS only)** — `/kapsis-status/` is backed by a per-agent Podman named volume (`kapsis-${AGENT_ID}-status`) instead of a host bind mount. Named volumes live inside the Podman VM and survive virtio-fs degradation, so agent status writes never fail mid-run. A host-side worker (`scripts/lib/status-sync.sh`) mirrors volume contents into `~/.kapsis/status/` every 2s so `kapsis-status.sh --watch` consumers continue to work unchanged. Linux keeps the direct bind mount.
+**Storage isolation (Issue #276, macOS only)** — `/kapsis-status/` is backed by a per-agent Podman named volume (`kapsis-${AGENT_ID}-status`) instead of a host bind mount. Named volumes live inside the Podman VM and survive virtio-fs degradation, so agent status writes never fail mid-run. A host-side worker (`scripts/lib/status-sync.sh`) mirrors volume contents into `~/.kapsis/status/` every 5s so `kapsis-status.sh --watch` consumers continue to work unchanged. Linux keeps the direct bind mount.
+
+**Sleep prevention (Issue #276, macOS only)** — `caffeinate -i -s` runs as a background process for the duration of the agent session, preventing macOS idle and system sleep. Since virtio-fs degradation is triggered by sleep/wake cycles, preventing sleep eliminates the root cause. Controlled by `prevent_sleep: true` in `agent-sandbox.yaml` or `KAPSIS_PREVENT_SLEEP=false` env var. Enabled by default.
 
 Recovery when auto-heal is refused or fails: `podman machine stop && podman machine start`, then re-run.
 

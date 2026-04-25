@@ -281,7 +281,7 @@ test_symlink_in_volume_is_not_materialized_on_host() {
 }
 
 test_non_whitelisted_basenames_are_dropped() {
-    log_test "Files with unsafe basenames (path separators, control chars) are dropped"
+    log_test "Files with dot-dot-prefixed or dash-prefixed basenames are dropped by whitelist"
 
     local tmpdir
     tmpdir=$(mktemp -d)
@@ -289,10 +289,9 @@ test_non_whitelisted_basenames_are_dropped() {
     local staging="$tmpdir/staging"
     mkdir -p "$host_dir" "$staging"
 
-    # A weird basename that passes a tar but should be rejected by the
-    # whitelist. tar preserves `\`-escaped names as-is in the output dir.
-    echo "good" > "$staging/kapsis-proj-ok.json"
-    echo "evil" > "$staging/..evil"   # starts with dot-dot — only rejected if we check
+    echo "good"  > "$staging/kapsis-proj-ok.json"
+    echo "evil"  > "$staging/..evil"     # dot-dot prefix — must be rejected
+    echo "evil2" > "$staging/-danger"    # leading dash — must be rejected
 
     _make_fake_podman_volume "$tmpdir/podman" "$staging"
 
@@ -306,11 +305,12 @@ test_non_whitelisted_basenames_are_dropped() {
         stop_status_sync "agent1" "kapsis-agent1-status" "$host_dir"
     )
 
-    # `..evil` passes the current whitelist regex (dots/dashes only), so it's
-    # acceptable if it's mirrored — this assertion verifies the regex is not
-    # overly loose. `..evil` is just a filename, not a traversal.
     assert_file_exists "$host_dir/kapsis-proj-ok.json" \
         "Whitelisted filename must pass through"
+    assert_file_not_exists "$host_dir/..evil" \
+        "dot-dot prefixed filename must be rejected by whitelist (security fix)"
+    assert_file_not_exists "$host_dir/-danger" \
+        "Leading-dash filename must be rejected by whitelist"
 
     rm -rf "$tmpdir"
 }
@@ -416,9 +416,13 @@ test_volume_export_steady_state_failure_does_not_break_worker() {
     # Fake podman: every volume-export call fails (simulates a broken
     # volume or a VM restart mid-run). The worker should keep looping
     # and stay alive — a single failed sync is not fatal.
-    cat > "$tmpdir/podman" <<'EOF'
+    local call_count_file="$tmpdir/call_count"
+    echo "0" > "$call_count_file"
+    cat > "$tmpdir/podman" <<EOF
 #!/usr/bin/env bash
-if [[ "${1:-}" == "volume" && "${2:-}" == "export" ]]; then
+if [[ "\${1:-}" == "volume" && "\${2:-}" == "export" ]]; then
+    n=\$(cat '$call_count_file' 2>/dev/null || echo 0)
+    echo \$(( n + 1 )) > '$call_count_file'
     exit 17
 fi
 exit 0
@@ -433,9 +437,16 @@ EOF
         export KAPSIS_STATUS_SYNC_PODMAN="$tmpdir/podman"
         _STATUS_SYNC_PODMAN="$tmpdir/podman"
         start_status_sync "agent1" "kapsis-agent1-status" "$host_dir" 1
-        # Let the worker go through at least two loop iterations (each one
-        # tries volume export and gets exit 17), then assert it's still alive.
-        sleep 2.5
+        # Poll until the fake podman has been called at least twice (each call
+        # is a failed volume export that the worker survives). This avoids a
+        # fixed sleep that could be flaky on loaded CI.
+        local deadline=$(( $(date +%s) + 8 ))
+        while (( $(date +%s) < deadline )); do
+            local call_count
+            call_count="$(cat "$tmpdir/call_count" 2>/dev/null || echo 0)"
+            (( call_count >= 2 )) && break
+            sleep 0.3
+        done
         local worker_pid
         worker_pid=$(cat "$host_dir/.sync-agent1.pid" 2>/dev/null || echo "")
         if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then

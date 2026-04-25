@@ -68,17 +68,20 @@ _status_sync_once() {
     # into place. Anything non-regular (symlink, device, fifo, dir) stays in
     # the staging dir and gets deleted with it.
     local staging
-    staging=$(mktemp -d "$host_status_dir/.staging-XXXXXX" 2>/dev/null) || return 1
+    staging=$(mktemp -d "$host_status_dir/.staging-XXXXXX" 2>/dev/null) || {
+        log_debug "_status_sync_once: mktemp staging dir failed (transient, will retry on next tick)"
+        return 1
+    }
 
     # --no-same-owner:       strip ownership (we run unprivileged)
-    # --no-same-permissions: ignore tar-member umasks
-    # --no-overwrite-dir:    tar will not re-chmod an existing dir
-    # -p is intentionally NOT passed; we want restrictive default perms.
+    # --no-same-permissions: ignore tar-member umasks; use umask-derived perms
+    # Note: --no-overwrite-dir is intentionally NOT used — it is a GNU tar
+    # extension unsupported by BSD tar (macOS default). The staging dir is
+    # freshly created so there are no pre-existing directories to protect.
     if ! "$_STATUS_SYNC_PODMAN" volume export "$volume_name" 2>/dev/null \
          | tar -C "$staging" \
                --no-same-owner \
                --no-same-permissions \
-               --no-overwrite-dir \
                -xf - 2>/dev/null; then
         rm -rf "$staging" 2>/dev/null || true
         return 1
@@ -88,20 +91,23 @@ _status_sync_once() {
     # Legitimate status files look like `kapsis-<project>-<id>.json`,
     # `debug-<id>.log`, `decisions-<id>.json`, `response-<id>.md`,
     # `.progress-monitor-state`. Reject anything else.
+    # Iterate top-level entries with a bash glob — avoids spawning `find` for a
+    # typically 2-5 file directory called every sync interval.
     local src
-    while IFS= read -r -d '' src; do
+    shopt -s nullglob
+    for src in "$staging"/*; do
         local name="${src##*/}"
-        # Reject symlinks, hardlinks, devices, fifos, directories — we only
-        # mirror plain files. `-type f` above excludes symlinks on GNU find,
-        # but belt-and-braces re-check here handles BSD find edge cases.
+        # Reject symlinks, devices, fifos, directories — only mirror plain files.
         [[ -L "$src" ]] && continue
         [[ ! -f "$src" ]] && continue
-        # Whitelist the basename: alphanumerics, dots, dashes, underscores.
-        # No path separators, no leading dash, no control chars.
-        if [[ "$name" =~ ^[a-zA-Z0-9._-]+$ ]] && [[ "$name" != -* ]]; then
+        # Whitelist the basename: must start with alphanumeric (blocks `..evil`,
+        # `-danger`). Allows alphanumerics, dots, dashes, underscores thereafter.
+        # No path separators, no control chars.
+        if [[ "$name" =~ ^[a-zA-Z0-9][a-zA-Z0-9._-]*$ ]]; then
             mv -f "$src" "$host_status_dir/$name" 2>/dev/null || true
         fi
-    done < <(find "$staging" -mindepth 1 -maxdepth 1 -type f -print0 2>/dev/null)
+    done
+    shopt -u nullglob
 
     rm -rf "$staging" 2>/dev/null || true
     return 0
@@ -219,12 +225,8 @@ stop_status_sync() {
         worker_pid="$(cat "$pid_file" 2>/dev/null || echo "")"
         if [[ -n "$worker_pid" ]] && kill -0 "$worker_pid" 2>/dev/null; then
             kill -TERM "$worker_pid" 2>/dev/null || true
-            # Give the worker up to ~2s to drain.
-            local i
-            for (( i=0; i<20; i++ )); do
-                kill -0 "$worker_pid" 2>/dev/null || break
-                sleep 0.1
-            done
+            # Give the worker a brief window to finish its current sync and exit.
+            sleep 0.3
             kill -0 "$worker_pid" 2>/dev/null && kill -KILL "$worker_pid" 2>/dev/null || true
         fi
         rm -f "$pid_file" 2>/dev/null || true

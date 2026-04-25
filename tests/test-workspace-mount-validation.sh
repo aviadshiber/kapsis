@@ -335,26 +335,30 @@ EOF
 }
 
 test_launch_agent_sentinel_detection() {
-    log_test "Testing sentinel detection greps for KAPSIS_MOUNT_FAILURE"
+    log_test "Sentinel detection overrides exit code when tagged KAPSIS_MOUNT_FAILURE found in tail"
 
     local container_output
     container_output=$(mktemp)
 
+    # Use the tagged sentinel format introduced in Issue #276 review.
     cat > "$container_output" << 'EOF'
-[2026-03-22 10:00:00] Starting agent...
-[2026-03-22 10:30:00] ERROR: KAPSIS_MOUNT_FAILURE: /workspace inaccessible (virtio-fs drop)
+[INFO] Entrypoint starting
+KAPSIS_MOUNT_FAILURE[liveness_monitor]: /workspace inaccessible (virtio-fs drop)
 EOF
 
     local EXIT_CODE=143  # SIGTERM
 
-    # Replicate the sentinel detection from launch-agent.sh
+    # Replicate the CURRENT sentinel detection from launch-agent.sh (tagged + tail + 3-way).
+    local _MOUNT_SENTINEL_PATTERN='^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor|probe_virtio_fs_health)\]:'
     if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
-        if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
+        if [[ -f "$container_output" ]] \
+           && tail -n 10 "$container_output" 2>/dev/null \
+              | grep -Eq "$_MOUNT_SENTINEL_PATTERN" ; then
             EXIT_CODE=4
         fi
     fi
 
-    assert_equals 4 "$EXIT_CODE" "Should override exit code to 4 when sentinel found"
+    assert_equals 4 "$EXIT_CODE" "Should override exit code to 4 when tagged sentinel in tail"
 
     rm -f "$container_output"
 }
@@ -430,10 +434,9 @@ test_probe_mount_readiness_sentinel_host_compatible() {
     stderr_output=$(probe_mount_readiness "/nonexistent/workspace-$$" 2>&1 >/dev/null || true)
 
     # Use the EXACT grep pattern from scripts/launch-agent.sh (anchored,
-    # tolerates timestamp/log-level prefixes, restricted to the
-    # probe_mount_readiness|liveness_monitor subsystems).
+    # tolerates timestamp/log-level prefixes, all 3 sentinel-emitting subsystems).
     local matched="no"
-    if echo "$stderr_output" | grep -Eq '^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor)\]:' ; then
+    if echo "$stderr_output" | grep -Eq '^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor|probe_virtio_fs_health)\]:' ; then
         matched="yes"
     fi
     assert_equals "yes" "$matched" \
@@ -441,27 +444,29 @@ test_probe_mount_readiness_sentinel_host_compatible() {
 }
 
 test_sentinel_rejects_arbitrary_log_line() {
-    log_test "Host-side grep rejects non-tagged 'KAPSIS_MOUNT_FAILURE:' that could appear in agent logs"
+    log_test "Host-side grep rejects non-tagged 'KAPSIS_MOUNT_FAILURE:' in agent logs"
 
     local container_output
     container_output=$(mktemp)
     # Simulate an agent that legitimately logs the literal sentinel phrase
-    # somewhere in its own diagnostics (review finding #1).
+    # somewhere in its own diagnostics — the anchored tagged pattern must
+    # NOT match this untagged form.
     cat > "$container_output" <<'EOF'
 [INFO] Agent started
 [WARN] docs: we use KAPSIS_MOUNT_FAILURE: as an internal sentinel
 [INFO] Agent exited
 EOF
 
-    local EXIT_CODE=1
-    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
+    local EXIT_CODE=143  # Use a signal exit so the condition is entered
+    local _MOUNT_SENTINEL_PATTERN='^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor|probe_virtio_fs_health)\]:'
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
         if [[ -f "$container_output" ]] \
            && tail -n 10 "$container_output" 2>/dev/null \
-              | grep -Eq '^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor)\]:' ; then
+              | grep -Eq "$_MOUNT_SENTINEL_PATTERN" ; then
             EXIT_CODE=4
         fi
     fi
-    assert_equals 1 "$EXIT_CODE" \
+    assert_equals 143 "$EXIT_CODE" \
         "Agent logs that merely mention 'KAPSIS_MOUNT_FAILURE:' must NOT trigger the override"
 
     rm -f "$container_output"
@@ -480,50 +485,55 @@ test_sentinel_rejects_spoofed_early_line() {
         for i in $(seq 1 20); do echo "[INFO] normal work $i"; done
     } > "$container_output"
 
-    local EXIT_CODE=1
-    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
+    local EXIT_CODE=143  # Use a signal exit so the condition is entered
+    local _MOUNT_SENTINEL_PATTERN='^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor|probe_virtio_fs_health)\]:'
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
         if [[ -f "$container_output" ]] \
            && tail -n 10 "$container_output" 2>/dev/null \
-              | grep -Eq '^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor)\]:' ; then
+              | grep -Eq "$_MOUNT_SENTINEL_PATTERN" ; then
             EXIT_CODE=4
         fi
     fi
-    assert_equals 1 "$EXIT_CODE" \
+    assert_equals 143 "$EXIT_CODE" \
         "Tagged sentinel far from end of output must NOT trigger the override"
 
     rm -f "$container_output"
 }
 
-test_sentinel_honored_on_exit_1() {
-    log_test "Testing sentinel is honored when exit code is 1 (startup bash failure)"
+test_sentinel_not_honored_on_exit_1() {
+    log_test "Sentinel is NOT honored on exit code 1 (probe_mount_readiness already exits 4 directly)"
 
     local container_output
     container_output=$(mktemp)
 
-    # Tagged sentinel on the last line, as emitted by probe_mount_readiness.
+    # Tagged sentinel on the last line, as if emitted just before exit.
+    # probe_mount_readiness exits 4, not 1, so this scenario cannot arise
+    # in legitimate code. Exit-1 was intentionally removed from the accepted
+    # set to narrow the spoofing surface.
     cat > "$container_output" << 'EOF'
 [INFO] Entrypoint starting
 KAPSIS_MOUNT_FAILURE[probe_mount_readiness]: /workspace inaccessible at startup (stat rc=1, virtio-fs drop)
 EOF
 
-    # Replicate the UPDATED sentinel detection from launch-agent.sh (Issue #276 review).
+    # Replicate the CURRENT sentinel detection from launch-agent.sh (exit-1 excluded).
+    local _MOUNT_SENTINEL_PATTERN='^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor|probe_virtio_fs_health)\]:'
     local EXIT_CODE=1
-    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
         if [[ -f "$container_output" ]] \
            && tail -n 10 "$container_output" 2>/dev/null \
-              | grep -Eq '^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor)\]:' ; then
+              | grep -Eq "$_MOUNT_SENTINEL_PATTERN" ; then
             EXIT_CODE=4
         fi
     fi
-    assert_equals 4 "$EXIT_CODE" "Should override exit code 1 to 4 when tagged sentinel present at tail"
+    assert_equals 1 "$EXIT_CODE" \
+        "Exit code 1 must NOT be overridden — probe_mount_readiness exits 4 directly, not 1"
 
-    # Exit 0 must NOT be overridden — a compromised agent should not be able
-    # to upgrade a clean success to a mount failure.
+    # Exit 0 must NOT be overridden either.
     EXIT_CODE=0
-    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
         if [[ -f "$container_output" ]] \
            && tail -n 10 "$container_output" 2>/dev/null \
-              | grep -Eq '^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor)\]:' ; then
+              | grep -Eq "$_MOUNT_SENTINEL_PATTERN" ; then
             EXIT_CODE=4
         fi
     fi
@@ -533,38 +543,62 @@ EOF
 }
 
 test_sentinel_only_honored_on_signal_exit() {
-    log_test "Testing sentinel is ignored on exit 0 (security gate)"
+    log_test "Sentinel is only honored on signal exits (143/137); ignored on 0, 1, 2"
 
     local container_output
     container_output=$(mktemp)
 
+    # Tagged sentinel at tail — the form emitted by the liveness monitor.
     cat > "$container_output" << 'EOF'
-[2026-03-22 10:00:00] Starting agent...
-[2026-03-22 10:30:00] ERROR: KAPSIS_MOUNT_FAILURE: /workspace inaccessible (virtio-fs drop)
+[INFO] Agent running...
+KAPSIS_MOUNT_FAILURE[liveness_monitor]: /workspace inaccessible (virtio-fs drop)
 EOF
 
-    # Issue #276: the accepted set now includes 1, 137, 143 (see
-    # test_sentinel_honored_on_exit_1 for that path). But exit 0 must still
-    # be treated as a clean success — a compromised agent should not be able
-    # to upgrade success to a mount failure by writing the sentinel string.
+    local _MOUNT_SENTINEL_PATTERN='^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor|probe_virtio_fs_health)\]:'
+
+    # Exit 0: clean success — must NEVER be overridden even if sentinel present.
     local EXIT_CODE=0
-    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
-        if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+        if [[ -f "$container_output" ]] \
+           && tail -n 10 "$container_output" 2>/dev/null \
+              | grep -Eq "$_MOUNT_SENTINEL_PATTERN" ; then
             EXIT_CODE=4
         fi
     fi
     assert_equals 0 "$EXIT_CODE" "Must NOT override clean exit 0 even with sentinel present"
 
-    # Exit 2 is also not in the accepted set (agent config error, etc.) —
-    # unknown failure modes should not be silently re-classified as mount
-    # failures; the sentinel should only override known-suspicious exits.
+    # Exit 1: agent failure — NOT in the accepted set (probe exits 4 directly).
+    EXIT_CODE=1
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+        if [[ -f "$container_output" ]] \
+           && tail -n 10 "$container_output" 2>/dev/null \
+              | grep -Eq "$_MOUNT_SENTINEL_PATTERN" ; then
+            EXIT_CODE=4
+        fi
+    fi
+    assert_equals 1 "$EXIT_CODE" "Must NOT override exit 1 (probe exits 4 directly)"
+
+    # Exit 2: unknown non-signal exit — must NOT be re-classified as mount failure.
     EXIT_CODE=2
-    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
-        if [[ -f "$container_output" ]] && grep -q 'KAPSIS_MOUNT_FAILURE:' "$container_output" 2>/dev/null; then
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+        if [[ -f "$container_output" ]] \
+           && tail -n 10 "$container_output" 2>/dev/null \
+              | grep -Eq "$_MOUNT_SENTINEL_PATTERN" ; then
             EXIT_CODE=4
         fi
     fi
     assert_equals 2 "$EXIT_CODE" "Must NOT override unknown non-signal exit codes"
+
+    # Exit 143 (SIGTERM): accepted — liveness monitor SIGTERM'd the agent.
+    EXIT_CODE=143
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+        if [[ -f "$container_output" ]] \
+           && tail -n 10 "$container_output" 2>/dev/null \
+              | grep -Eq "$_MOUNT_SENTINEL_PATTERN" ; then
+            EXIT_CODE=4
+        fi
+    fi
+    assert_equals 4 "$EXIT_CODE" "Exit 143 with tagged sentinel must be overridden to 4"
 
     rm -f "$container_output"
 }
@@ -608,7 +642,7 @@ main() {
     run_test test_probe_mount_readiness_sentinel_host_compatible
     run_test test_sentinel_rejects_arbitrary_log_line
     run_test test_sentinel_rejects_spoofed_early_line
-    run_test test_sentinel_honored_on_exit_1
+    run_test test_sentinel_not_honored_on_exit_1
 
     cleanup_test_dirs
 

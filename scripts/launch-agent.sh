@@ -839,6 +839,10 @@ parse_config() {
         LIVENESS_CHECK_INTERVAL=$(yq -r '.liveness.check_interval // "30"' "$CONFIG_FILE" 2>/dev/null || echo "30")
         LIVENESS_COMPLETION_TIMEOUT=$(yq -r '.liveness.completion_timeout // "120"' "$CONFIG_FILE" 2>/dev/null || echo "120")
 
+        # Parse sleep prevention configuration (Issue #276, macOS only)
+        KAPSIS_PREVENT_SLEEP=$(yq -r '.prevent_sleep // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        export KAPSIS_PREVENT_SLEEP
+
         # Parse mount check configuration (Issue #248)
         # Defaults to true when liveness section exists, since mount checking is lightweight
         MOUNT_CHECK_ENABLED=$(yq -r '.liveness.mount_check // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
@@ -2341,12 +2345,21 @@ main() {
     # Track temp file for cleanup on signal (set later when container runs)
     _CONTAINER_OUTPUT_TMP=""
 
+    # PID of caffeinate background process (macOS sleep prevention, Issue #276).
+    # Set after caffeinate is started; cleared after it is killed.
+    _CAFFEINATE_PID=""
+
     # Cleanup function that ensures completion message is shown
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
         local exit_code=$?
         # Clean up temp files if they exist
         [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
+        # Stop macOS sleep prevention if active (Issue #276).
+        if [[ -n "$_CAFFEINATE_PID" ]]; then
+            kill "$_CAFFEINATE_PID" 2>/dev/null || true
+            _CAFFEINATE_PID=""
+        fi
         # Stop host-side status volume sync and flush one final snapshot to
         # the host status dir so post-exit consumers see the definitive state
         # (Issue #276). No-op when KAPSIS_STATUS_VOLUME is unset.
@@ -2541,6 +2554,17 @@ main() {
         log_timer_end "vfs_probe"
     fi
 
+    # macOS sleep prevention (Issue #276): prevent idle/system sleep while the
+    # agent is running so virtio-fs is never disrupted by a host sleep event.
+    # caffeinate -i prevents idle sleep; -s prevents system sleep.
+    # Controlled by the 'prevent_sleep' config key or KAPSIS_PREVENT_SLEEP env var.
+    if [[ "$BACKEND" == "podman" ]] && is_macos \
+       && [[ "${KAPSIS_PREVENT_SLEEP:-${KAPSIS_DEFAULT_PREVENT_SLEEP:-true}}" == "true" ]]; then
+        caffeinate -i -s &
+        _CAFFEINATE_PID=$!
+        log_debug "Sleep prevention active (caffeinate PID: $_CAFFEINATE_PID)"
+    fi
+
     # Display progress header (shows sandbox ready status with timer)
     display_header "$AGENT_ID" "$BRANCH" "$NETWORK_MODE"
 
@@ -2620,23 +2644,24 @@ main() {
     # Check for mount failure sentinel in container output (Issues #248, #276)
     #
     # Pattern (post-review): tagged form `KAPSIS_MOUNT_FAILURE[<subsystem>]:`
-    # where <subsystem> is `probe_mount_readiness` or `liveness_monitor`. This
-    # anchored format and the restriction of the grep to the last 10 lines of
-    # container output together defend against agents that merely log the
-    # word "KAPSIS_MOUNT_FAILURE:" somewhere in their own diagnostics — the
-    # sentinel is only emitted immediately before exit, so it must be at the
-    # tail of the captured output.
+    # where <subsystem> is one of: probe_mount_readiness, liveness_monitor,
+    # probe_virtio_fs_health. This anchored format and the restriction of the
+    # grep to the last 10 lines of container output defend against agents that
+    # log "KAPSIS_MOUNT_FAILURE:" somewhere in their own diagnostics.
     #
     # Accepted exit codes:
-    #  - 143 / 137: signal kills from the in-container liveness monitor
-    #  - 1:         bash's silent redirect-open failure when virtio-fs has
-    #               degraded before the agent command runs (Issue #276)
+    #  - 143 / 137: signal kills (SIGTERM / SIGKILL) from the in-container
+    #               liveness monitor (scripts/lib/liveness-monitor.sh)
     # Exit 0 is never overridden, preserving the security property that a
     # compromised agent cannot upgrade a clean success into a mount failure.
-    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 || "$EXIT_CODE" -eq 1 ]]; then
+    # Exit 1 is intentionally excluded: probe_mount_readiness exits 4 directly
+    # on failure (not 1), so exit-1 + sentinel cannot occur in legitimate code;
+    # accepting it would widen the spoofing surface for compromised agents.
+    local _MOUNT_SENTINEL_PATTERN='^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor|probe_virtio_fs_health)\]:'
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
         if [[ -f "$container_output" ]] \
            && tail -n 10 "$container_output" 2>/dev/null \
-              | grep -Eq '^(\[[^]]*\])?[[:space:]]*(\x1b\[[0-9;]*m)?(\[[A-Z]+\][[:space:]]+)?KAPSIS_MOUNT_FAILURE\[(probe_mount_readiness|liveness_monitor|probe_virtio_fs_health)\]:' ; then
+              | grep -Eq "$_MOUNT_SENTINEL_PATTERN" ; then
             log_warn "Mount failure detected via sentinel — overriding exit code to 4"
             EXIT_CODE=4
         fi

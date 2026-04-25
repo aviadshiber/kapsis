@@ -1615,7 +1615,11 @@ probe_mount_readiness() {
     # Write probe: the real failure mode is that bash cannot open files for
     # output redirect. Verify that the agent will be able to create files
     # under the workspace before we exec into it.
-    local probe_file="$workspace/.kapsis-probe-$$"
+    # Use mktemp for an unpredictable filename; fall back to PID-suffix on
+    # systems where mktemp is unavailable inside the container (extremely rare).
+    local probe_file
+    probe_file="$(mktemp "$workspace/.kapsis-probe-XXXXXX" 2>/dev/null)" \
+        || probe_file="$workspace/.kapsis-probe-$$"
     if [[ -n "$tmo_bin" ]]; then
         "$tmo_bin" "$probe_timeout" bash -c ": > \"$probe_file\" && rm -f \"$probe_file\"" 2>/dev/null
         rc=$?
@@ -1623,6 +1627,10 @@ probe_mount_readiness() {
         bash -c ": > \"$probe_file\" && rm -f \"$probe_file\"" 2>/dev/null
         rc=$?
     fi
+    # Unconditional cleanup: if the compound `bash -c` timed out before `rm`
+    # completed, the probe file is left in the overlay — remove it now so it
+    # is never committed to git by the agent.
+    rm -f "$probe_file" 2>/dev/null || true
     if [[ $rc -ne 0 ]]; then
         echo "KAPSIS_MOUNT_FAILURE[probe_mount_readiness]: $workspace is read-only or write failed at startup (rc=$rc, virtio-fs drop)" >&2
         return 1
