@@ -27,6 +27,7 @@ if [[ -f "${KAPSIS_LIB:-/opt/kapsis/lib}/logging.sh" ]]; then
 else
     log_info() { echo "[INFO] $*"; }
     log_warn() { echo "[WARN] $*" >&2; }
+    log_error() { echo "[ERROR] $*" >&2; }
     log_debug() { :; }
     log_success() { echo "[OK] $*"; }
 fi
@@ -72,7 +73,7 @@ inject_claude_hooks() {
     local GIST_HOOK="${KAPSIS_HOOK_DIR}/kapsis-gist-hook.sh"
     local inject_gist="${KAPSIS_INJECT_GIST:-false}"
     if [[ "$inject_gist" == "true" && ! -x "$GIST_HOOK" ]]; then
-        log_warn "Gist hook not found or not executable: $GIST_HOOK -- skipping gist hook injection"
+        log_error "Gist hook not found or not executable: $GIST_HOOK -- KAPSIS_INJECT_GIST=true but gist hook will NOT be injected"
         inject_gist="false"
     fi
 
@@ -100,22 +101,24 @@ inject_claude_hooks() {
         # Ensure PostToolUse array exists
         .hooks.PostToolUse //= [] |
 
-        # Add status hook to PostToolUse if not already present
+        # Add gist hook to PostToolUse FIRST if KAPSIS_INJECT_GIST=true and not already present.
+        # Gist must fire before the status hook so that status_read_gist_file() reads the
+        # current gist (not the previous one).
+        if $inject_gist == "true" then
+            if ([.hooks.PostToolUse[].hooks[]? | select(.command == $gist_hook)] | length) == 0 then
+                .hooks.PostToolUse += [{
+                    "matcher": "*",
+                    "hooks": [{"type": "command", "command": $gist_hook, "timeout": 10}]
+                }]
+            else . end
+        else . end |
+
+        # Add status hook to PostToolUse after gist hook if not already present
         if ([.hooks.PostToolUse[].hooks[]? | select(.command == $status_hook)] | length) == 0 then
             .hooks.PostToolUse += [{
                 "matcher": "*",
                 "hooks": [{"type": "command", "command": $status_hook, "timeout": 5}]
             }]
-        else . end |
-
-        # Add gist hook to PostToolUse if KAPSIS_INJECT_GIST=true and not already present
-        if $inject_gist == "true" then
-            if ([.hooks.PostToolUse[].hooks[]? | select(.command == $gist_hook)] | length) == 0 then
-                .hooks.PostToolUse += [{
-                    "matcher": "*",
-                    "hooks": [{"type": "command", "command": $gist_hook, "timeout": 5}]
-                }]
-            else . end
         else . end |
 
         # Ensure Stop array exists

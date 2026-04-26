@@ -16,6 +16,9 @@
 #   KAPSIS_INJECT_GIST       - Must be "true" to activate (opt-in flag)
 #   KAPSIS_GIST_FILE         - Override default gist file path (for testing)
 #   KAPSIS_HOME              - Kapsis installation directory (default: /opt/kapsis)
+#   KAPSIS_GIST_LLM          - Set "true" to enable LLM upgrade layer
+#   KAPSIS_GIST_LLM_INTERVAL - Throttle interval in seconds (default: 60)
+#   KAPSIS_GIST_LLM_SYNC     - Set "true" for synchronous LLM calls (testing only)
 #===============================================================================
 
 set -euo pipefail
@@ -46,13 +49,14 @@ GIST_DIR="$(dirname "$GIST_FILE")"
 
 # Extract a field from JSON using python3 (always available in container).
 # Supports nested keys like 'tool_input.command'.
+# Dict/list values are serialized as JSON (not Python repr).
 json_get() {
     local json="$1"
     local field="$2"
     local default="${3:-}"
 
     local value
-    value=$(echo "$json" | python3 -c "
+    value=$(printf '%s\n' "$json" | python3 -c "
 import json, sys
 try:
     data = json.load(sys.stdin)
@@ -64,7 +68,12 @@ try:
         else:
             result = ''
             break
-    print(result if result is not None else '')
+    if result is None or result == '':
+        print('')
+    elif isinstance(result, (dict, list)):
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        print(result)
 except Exception:
     print('')
 " 2>/dev/null) || value="$default"
@@ -113,20 +122,33 @@ try:
 except Exception:
     pass
 " 2>/dev/null || echo "")
-            gist="Committing: ${msg:-changes}"
+            # Append ellipsis when the message was truncated
+            if [[ "${#msg}" -ge 60 ]]; then
+                gist="Committing: ${msg}…"
+            else
+                gist="Committing: ${msg:-changes}"
+            fi
 
         elif [[ "$command" =~ git[[:space:]]+push ]]; then
             gist="Pushing changes to remote"
 
-        elif [[ "$command" =~ (mvn|gradle)[[:space:]].*test|pytest|go[[:space:]]+test|npm[[:space:]]+test|jest ]]; then
+        elif [[ "$command" =~ (mvn|gradlew?)[[:space:]].*test ]] \
+             || [[ "$command" =~ (^|[[:space:]])(pytest|go[[:space:]]+test|npm[[:space:]]+test|jest)([[:space:]]|$) ]]; then
             gist="Running tests"
 
-        elif [[ "$command" =~ (mvn|gradle)[[:space:]].*(compile|build|package|install)|go[[:space:]]+build|npm.*(build|run[[:space:]]+build) ]]; then
+        elif [[ "$command" =~ (mvn|gradlew?)[[:space:]].*(compile|build|package|install) ]] \
+             || [[ "$command" =~ (^|[[:space:]])go[[:space:]]+build([[:space:]]|$) ]] \
+             || [[ "$command" =~ (^|[[:space:]])npm[[:space:]]*(build|run[[:space:]]+build)([[:space:]]|$) ]]; then
             gist="Building project"
 
         else
-            # Fallback: only write on first ever call (don't overwrite a meaningful gist)
-            if [[ ! -f "$GIST_FILE" ]]; then
+            # Fallback: write if no gist exists yet, or existing is stale (>5 min)
+            _gist_age=0
+            if [[ -f "$GIST_FILE" ]]; then
+                _gist_mtime=$(stat -f %m "$GIST_FILE" 2>/dev/null || stat -c %Y "$GIST_FILE" 2>/dev/null || echo 0)
+                _gist_age=$(( $(date +%s) - _gist_mtime ))
+            fi
+            if [[ ! -f "$GIST_FILE" || "$_gist_age" -ge 300 ]]; then
                 first_word="${command%%[[:space:]]*}"
                 first_word="${first_word##*/}"   # strip path prefix (e.g. /usr/bin/curl → curl)
                 gist="Running: ${first_word:0:40}"
@@ -137,11 +159,19 @@ except Exception:
         ;;
 
     Edit)
-        [[ -n "$file_path" ]] && gist="Editing: $(basename "$file_path")"
+        if [[ -n "$file_path" ]]; then
+            gist="Editing: ${file_path##*/}"
+        else
+            skip=true
+        fi
         ;;
 
     Write)
-        [[ -n "$file_path" ]] && gist="Writing: $(basename "$file_path")"
+        if [[ -n "$file_path" ]]; then
+            gist="Writing: ${file_path##*/}"
+        else
+            skip=true
+        fi
         ;;
 
     *)
@@ -179,23 +209,37 @@ if [[ "${KAPSIS_GIST_LLM:-false}" == "true" ]] && command -v claude &>/dev/null;
     fi
 
     if $should_run_llm; then
-        tool_result=$(json_get "$input" "tool_result" "")
-        tool_input_str=$(json_get "$input" "tool_input" "")
-        prompt="In one sentence (max 80 chars), what is this AI coding agent doing? Start with a verb. Be specific.
-Tool: $tool_name  Input: ${tool_input_str:0:200}  Output: ${tool_result:0:400}"
+        _tool_result=$(json_get "$input" "tool_result" "")
+        _tool_input_str=$(json_get "$input" "tool_input" "")
+        _prompt="In one sentence (max 80 chars), what is this AI coding agent doing? Start with a verb. Be specific.
+Tool: $tool_name  Input: ${_tool_input_str:0:200}  Output: ${_tool_result:0:400}"
 
-        gist_llm=$(timeout 8 claude --print --model claude-haiku-4-5-20251001 <<< "$prompt" 2>/dev/null) || gist_llm=""
+        # Run LLM asynchronously — hook exits with deterministic gist while LLM runs in background.
+        # The 5-second hook timeout applies to this process; backgrounding avoids the conflict with
+        # the internal 8-second LLM timeout. Set KAPSIS_GIST_LLM_SYNC=true for synchronous mode
+        # (useful for testing).
+        _do_llm_write() {
+            local _gist_llm
+            _gist_llm=$(timeout 8 claude --print --model claude-haiku-4-5-20251001 <<< "$_prompt" 2>/dev/null) || _gist_llm=""
 
-        if [[ -n "$gist_llm" ]]; then
-            mkdir -p "$GIST_DIR" 2>/dev/null || true
-            tmp=$(mktemp "${GIST_DIR}/.gist.tmp.XXXXXX" 2>/dev/null) || tmp=""
-            if [[ -n "$tmp" ]]; then
-                printf '%s\n' "${gist_llm:0:200}" > "$tmp"
-                mv "$tmp" "$GIST_FILE"
-                touch "$GIST_LLM_STAMP"
+            if [[ -n "$_gist_llm" ]]; then
+                mkdir -p "$GIST_DIR" 2>/dev/null || true
+                local _tmp
+                _tmp=$(mktemp "${GIST_DIR}/.gist.tmp.XXXXXX" 2>/dev/null) || _tmp=""
+                if [[ -n "$_tmp" ]]; then
+                    printf '%s\n' "${_gist_llm:0:200}" > "$_tmp"
+                    mv "$_tmp" "$GIST_FILE"
+                    touch "$GIST_LLM_STAMP"
+                fi
             fi
+        }
+
+        if [[ "${KAPSIS_GIST_LLM_SYNC:-false}" == "true" ]]; then
+            _do_llm_write
+        else
+            ( _do_llm_write ) &
+            disown 2>/dev/null || true
         fi
-        # On failure: deterministic gist (written above) stays
     fi
 fi
 
