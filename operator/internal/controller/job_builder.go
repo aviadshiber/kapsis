@@ -57,9 +57,6 @@ const (
 
 	// maxTTLSecondsAfterFinished caps Job retention to 4 hours after completion.
 	maxTTLSecondsAfterFinished = int32(4 * 3600)
-
-	// Projected SA token expiration for the status sidecar.
-	sidecarTokenExpirationSeconds = int64(3600)
 )
 
 // JobName returns the deterministic Job name for an AgentRequest.
@@ -84,7 +81,13 @@ func BuildJob(cr *kapsisv1alpha1.AgentRequest, sidecarImage string) (*batchv1.Jo
 
 	sidecarContainer := buildStatusSidecarContainer(sidecarImage)
 
-	volumes, err := buildVolumes(cr)
+	ttl := effectiveTTL(cr)
+	// Guard against int32 overflow: CRD max is 86400 but webhook may be disabled.
+	if ttl > 86400 {
+		ttl = 86400
+	}
+
+	volumes, err := buildVolumes(cr, ttl)
 	if err != nil {
 		return nil, fmt.Errorf("building volumes: %w", err)
 	}
@@ -92,7 +95,6 @@ func BuildJob(cr *kapsisv1alpha1.AgentRequest, sidecarImage string) (*batchv1.Jo
 	agentContainer.VolumeMounts = buildAgentVolumeMounts(cr)
 	sidecarContainer.VolumeMounts = buildSidecarVolumeMounts()
 
-	ttl := effectiveTTL(cr)
 	backoffLimit := int32(0)
 	ttlAfterFinished := min(int32(ttl*2), maxTTLSecondsAfterFinished)
 
@@ -144,12 +146,22 @@ func BuildJob(cr *kapsisv1alpha1.AgentRequest, sidecarImage string) (*batchv1.Jo
 		job.Spec.Template.Spec.RuntimeClassName = &cr.Spec.Security.RuntimeClass
 	}
 
-	// AppArmor unconfined annotation required for nested containers (userns).
+	// AppArmor unconfined required for nested containers (userns).
 	if nestedContainersEnabled(cr) {
 		if job.Spec.Template.Annotations == nil {
 			job.Spec.Template.Annotations = make(map[string]string)
 		}
+		// Deprecated beta annotation (K8s < 1.30 compatibility).
 		job.Spec.Template.Annotations["container.apparmor.security.beta.kubernetes.io/"+AgentContainerName] = "unconfined"
+		// Native AppArmor field (K8s 1.30+). Find the agent container and set it.
+		for i := range job.Spec.Template.Spec.Containers {
+			if job.Spec.Template.Spec.Containers[i].Name == AgentContainerName {
+				job.Spec.Template.Spec.Containers[i].SecurityContext.AppArmorProfile = &corev1.AppArmorProfile{
+					Type: corev1.AppArmorProfileTypeUnconfined,
+				}
+				break
+			}
+		}
 	}
 
 	return job, nil
@@ -190,8 +202,6 @@ func buildAgentContainer(cr *kapsisv1alpha1.AgentRequest) (corev1.Container, err
 //     via the Kubernetes API (using the projected SA token).
 //   - Tails /kapsis-audit/*.jsonl to stdout so log aggregators capture audit events.
 func buildStatusSidecarContainer(image string) corev1.Container {
-	falseVal := false
-	trueVal := true
 	return corev1.Container{
 		Name:  StatusSidecarContainerName,
 		Image: image,
@@ -218,9 +228,9 @@ func buildStatusSidecarContainer(image string) corev1.Container {
 			},
 		},
 		SecurityContext: &corev1.SecurityContext{
-			RunAsNonRoot:             &trueVal,
-			AllowPrivilegeEscalation: &falseVal,
-			ReadOnlyRootFilesystem:   &trueVal,
+			RunAsNonRoot:             boolPtr(true),
+			AllowPrivilegeEscalation: boolPtr(false),
+			ReadOnlyRootFilesystem:   boolPtr(true),
 			Capabilities: &corev1.Capabilities{
 				Drop: []corev1.Capability{"ALL"},
 			},
@@ -228,8 +238,16 @@ func buildStatusSidecarContainer(image string) corev1.Container {
 				Type: corev1.SeccompProfileTypeRuntimeDefault,
 			},
 		},
-		// No resource limits set on the sidecar — it is intentionally lightweight.
-		// The operator's own resource limits prevent it from consuming significant resources.
+		Resources: corev1.ResourceRequirements{
+			Requests: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("50m"),
+				corev1.ResourceMemory: resource.MustParse("64Mi"),
+			},
+			Limits: corev1.ResourceList{
+				corev1.ResourceCPU:    resource.MustParse("100m"),
+				corev1.ResourceMemory: resource.MustParse("128Mi"),
+			},
+		},
 	}
 }
 
@@ -423,8 +441,16 @@ func buildAgentSecurityContext(cr *kapsisv1alpha1.AgentRequest) *corev1.Security
 		// Unconfined seccomp required for CLONE_NEWUSER (rootless userns).
 		sc.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}
 	} else if profile == "paranoid" {
-		// Localhost profile for paranoid — caller must supply the profile path separately.
-		sc.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeLocalhost}
+		if cr.Spec.Security != nil && cr.Spec.Security.SeccompProfilePath != "" {
+			sc.SeccompProfile = &corev1.SeccompProfile{
+				Type:             corev1.SeccompProfileTypeLocalhost,
+				LocalhostProfile: &cr.Spec.Security.SeccompProfilePath,
+			}
+		} else {
+			// No custom seccomp profile path provided; fall back to RuntimeDefault.
+			// To use a custom localhost profile, set spec.security.seccompProfilePath.
+			sc.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
+		}
 	} else {
 		sc.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault}
 	}
@@ -456,7 +482,8 @@ func buildCapabilities(profile string) *corev1.Capabilities {
 }
 
 // buildVolumes constructs all volumes required by the Job pod.
-func buildVolumes(cr *kapsisv1alpha1.AgentRequest) ([]corev1.Volume, error) {
+// ttl is the effective Job TTL in seconds, used to compute sidecar token expiry.
+func buildVolumes(cr *kapsisv1alpha1.AgentRequest, ttl int64) ([]corev1.Volume, error) {
 	var volumes []corev1.Volume
 
 	// Workspace emptyDir with a size cap to prevent noisy-neighbour disk exhaustion.
@@ -495,7 +522,12 @@ func buildVolumes(cr *kapsisv1alpha1.AgentRequest) ([]corev1.Volume, error) {
 
 	// Projected ServiceAccount token for the status sidecar only.
 	// The main agent container never receives the SA token.
-	expiry := sidecarTokenExpirationSeconds
+	// Token expiry: add 20% grace over the job TTL, capped at 86400s (24h max for projected tokens).
+	tokenExpiry := int64(float64(ttl) * 1.2)
+	if tokenExpiry > 86400 {
+		tokenExpiry = 86400
+	}
+	expiry := tokenExpiry
 	volumes = append(volumes, corev1.Volume{
 		Name: "sidecar-token",
 		VolumeSource: corev1.VolumeSource{
@@ -687,10 +719,14 @@ func buildSecretEnvFrom(cr *kapsisv1alpha1.AgentRequest) []corev1.EnvFromSource 
 // --- helpers ---
 
 func effectiveTTL(cr *kapsisv1alpha1.AgentRequest) int64 {
-	if cr.Spec.TTL <= 0 {
-		return 3600
+	ttl := cr.Spec.TTL
+	if ttl <= 0 {
+		ttl = 3600
 	}
-	return cr.Spec.TTL
+	if ttl > 86400 {
+		ttl = 86400
+	}
+	return ttl
 }
 
 func effectiveProfile(cr *kapsisv1alpha1.AgentRequest) string {

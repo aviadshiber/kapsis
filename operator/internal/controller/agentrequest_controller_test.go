@@ -192,6 +192,47 @@ var _ = Describe("AgentRequest Controller", func() {
 				},
 			}
 			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+
+			// Create a pod with status annotations simulating the sidecar's work.
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-job-pod",
+					Namespace: namespace,
+					Labels: map[string]string{
+						"batch.kubernetes.io/job-name": resourceName + "-job",
+						LabelManagedBy:                 ManagedByValue,
+					},
+					Annotations: map[string]string{
+						AnnotationCommitSha: "abc123",
+						AnnotationPush:      "success",
+					},
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "batch/v1",
+							Kind:       "Job",
+							Name:       resourceName + "-job",
+							Controller: boolPtr(true),
+						},
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers:    []corev1.Container{{Name: "agent", Image: "test"}},
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			}
+			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			// Set pod status with terminated container and exit code.
+			pod.Status.ContainerStatuses = []corev1.ContainerStatus{
+				{
+					Name: AgentContainerName,
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{
+							ExitCode: 0,
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
 		})
 
 		AfterEach(func() {
@@ -204,6 +245,11 @@ var _ = Describe("AgentRequest Controller", func() {
 			if err := k8sClient.Get(ctx, jobNN, job); err == nil {
 				Expect(k8sClient.Delete(ctx, job)).To(Succeed())
 			}
+			pod := &corev1.Pod{}
+			podNN := types.NamespacedName{Name: resourceName + "-job-pod", Namespace: namespace}
+			if err := k8sClient.Get(ctx, podNN, pod); err == nil {
+				Expect(k8sClient.Delete(ctx, pod)).To(Succeed())
+			}
 		})
 
 		It("should set CR status to Complete", func() {
@@ -215,6 +261,16 @@ var _ = Describe("AgentRequest Controller", func() {
 			updatedAR := &kapsisv1alpha1.AgentRequest{}
 			Expect(k8sClient.Get(ctx, nn, updatedAR)).To(Succeed())
 			Expect(updatedAR.Status.Phase).To(Equal(kapsisv1alpha1.PhaseComplete))
+
+			By("verifying CommitSha from pod annotation is bridged to CR status")
+			Expect(updatedAR.Status.CommitSha).To(Equal("abc123"))
+
+			By("verifying PushStatus from pod annotation is bridged to CR status")
+			Expect(updatedAR.Status.PushStatus).To(Equal("success"))
+
+			By("verifying ExitCode from pod container state is bridged")
+			Expect(updatedAR.Status.ExitCode).NotTo(BeNil())
+			Expect(*updatedAR.Status.ExitCode).To(BeEquivalentTo(0))
 		})
 	})
 
@@ -264,6 +320,42 @@ var _ = Describe("AgentRequest Controller", func() {
 				},
 			}
 			Expect(k8sClient.Status().Update(ctx, job)).To(Succeed())
+
+			// Create a pod with a non-zero exit code.
+			pod := &corev1.Pod{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-job-pod",
+					Namespace: namespace,
+					Labels: map[string]string{
+						"batch.kubernetes.io/job-name": resourceName + "-job",
+						LabelManagedBy:                 ManagedByValue,
+					},
+					OwnerReferences: []metav1.OwnerReference{
+						{
+							APIVersion: "batch/v1",
+							Kind:       "Job",
+							Name:       resourceName + "-job",
+							Controller: boolPtr(true),
+						},
+					},
+				},
+				Spec: corev1.PodSpec{
+					Containers:    []corev1.Container{{Name: "agent", Image: "test"}},
+					RestartPolicy: corev1.RestartPolicyNever,
+				},
+			}
+			Expect(k8sClient.Create(ctx, pod)).To(Succeed())
+			pod.Status.ContainerStatuses = []corev1.ContainerStatus{
+				{
+					Name: AgentContainerName,
+					State: corev1.ContainerState{
+						Terminated: &corev1.ContainerStateTerminated{
+							ExitCode: 1,
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Status().Update(ctx, pod)).To(Succeed())
 		})
 
 		AfterEach(func() {
@@ -276,6 +368,11 @@ var _ = Describe("AgentRequest Controller", func() {
 			if err := k8sClient.Get(ctx, jobNN, job); err == nil {
 				Expect(k8sClient.Delete(ctx, job)).To(Succeed())
 			}
+			pod := &corev1.Pod{}
+			podNN := types.NamespacedName{Name: resourceName + "-job-pod", Namespace: namespace}
+			if err := k8sClient.Get(ctx, podNN, pod); err == nil {
+				Expect(k8sClient.Delete(ctx, pod)).To(Succeed())
+			}
 		})
 
 		It("should set CR status to Failed with error", func() {
@@ -287,6 +384,10 @@ var _ = Describe("AgentRequest Controller", func() {
 			Expect(k8sClient.Get(ctx, nn, updatedAR)).To(Succeed())
 			Expect(updatedAR.Status.Phase).To(Equal(kapsisv1alpha1.PhaseFailed))
 			Expect(updatedAR.Status.Error).To(ContainSubstring("agent process exited with error"))
+
+			By("verifying ExitCode from pod container state is bridged for failed job")
+			Expect(updatedAR.Status.ExitCode).NotTo(BeNil())
+			Expect(*updatedAR.Status.ExitCode).To(BeEquivalentTo(1))
 		})
 	})
 
@@ -449,7 +550,83 @@ var _ = Describe("AgentRequest Controller", func() {
 			By("verifying no NetworkPolicy exists for open mode")
 			np := &networkingv1.NetworkPolicy{}
 			err = k8sClient.Get(ctx, types.NamespacedName{Name: networkPolicyNameFiltered, Namespace: namespace}, np)
-			Expect(errors.IsNotFound(err)).To(BeTrue(), "should not create NetworkPolicy for open mode")
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "should not create filtered NetworkPolicy for open mode")
+
+			By("verifying neither filtered nor none NetworkPolicy exists for open mode")
+			npNone := &networkingv1.NetworkPolicy{}
+			errNone := k8sClient.Get(ctx, types.NamespacedName{Name: networkPolicyNameNone, Namespace: namespace}, npNone)
+			Expect(errors.IsNotFound(errNone)).To(BeTrue(), "should not create none NetworkPolicy for open mode")
+		})
+	})
+
+	// ── NetworkPolicy idempotency ──────────────────────────────────────────────
+	Context("When reconciling the same AgentRequest twice (NetworkPolicy idempotency)", func() {
+		const resourceName = "test-netpol-idempotent"
+
+		ctx := context.Background()
+		nn := types.NamespacedName{Name: resourceName, Namespace: namespace}
+
+		BeforeEach(func() {
+			ar := newMinimalAR(resourceName)
+			ar.Spec.Network = &kapsisv1alpha1.NetworkSpec{Mode: "filtered"}
+			err := k8sClient.Get(ctx, nn, &kapsisv1alpha1.AgentRequest{})
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, ar)).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			ar := &kapsisv1alpha1.AgentRequest{}
+			if err := k8sClient.Get(ctx, nn, ar); err == nil {
+				Expect(k8sClient.Delete(ctx, ar)).To(Succeed())
+			}
+			job := &batchv1.Job{}
+			jobNN := types.NamespacedName{Name: resourceName + "-job", Namespace: namespace}
+			if err := k8sClient.Get(ctx, jobNN, job); err == nil {
+				Expect(k8sClient.Delete(ctx, job)).To(Succeed())
+			}
+			np := &networkingv1.NetworkPolicy{}
+			if err := k8sClient.Get(ctx, types.NamespacedName{Name: networkPolicyNameFiltered, Namespace: namespace}, np); err == nil {
+				Expect(k8sClient.Delete(ctx, np)).To(Succeed())
+			}
+		})
+
+		It("should not error on the second reconcile when the NetworkPolicy already exists", func() {
+			By("first reconcile: creates Job and NetworkPolicy")
+			_, err := newReconciler().Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+			Expect(err).NotTo(HaveOccurred())
+
+			np := &networkingv1.NetworkPolicy{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: networkPolicyNameFiltered, Namespace: namespace}, np)).
+				To(Succeed())
+			firstRV := np.ResourceVersion
+
+			By("creating a second AgentRequest in the same namespace")
+			ar2Name := resourceName + "-2"
+			ar2 := newMinimalAR(ar2Name)
+			ar2.Spec.Network = &kapsisv1alpha1.NetworkSpec{Mode: "filtered"}
+			Expect(k8sClient.Create(ctx, ar2)).To(Succeed())
+			defer func() {
+				if err := k8sClient.Delete(ctx, ar2); err != nil {
+					// cleanup best-effort
+				}
+				j2 := &batchv1.Job{}
+				if err := k8sClient.Get(ctx, types.NamespacedName{Name: ar2Name + "-job", Namespace: namespace}, j2); err == nil {
+					_ = k8sClient.Delete(ctx, j2)
+				}
+			}()
+
+			By("second reconcile: NetworkPolicy already exists, should succeed")
+			_, err = newReconciler().Reconcile(ctx, reconcile.Request{
+				NamespacedName: types.NamespacedName{Name: ar2Name, Namespace: namespace},
+			})
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying NetworkPolicy ResourceVersion is unchanged (not recreated)")
+			np2 := &networkingv1.NetworkPolicy{}
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: networkPolicyNameFiltered, Namespace: namespace}, np2)).
+				To(Succeed())
+			Expect(np2.ResourceVersion).To(Equal(firstRV))
 		})
 	})
 })

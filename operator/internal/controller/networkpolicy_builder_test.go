@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -51,6 +52,10 @@ func TestNetworkPolicyStableNames(t *testing.T) {
 			}
 			if np.Name != tt.want {
 				t.Errorf("Name = %q, want %q", np.Name, tt.want)
+			}
+			// The stable name must never contain the CR name (that would be a regression to per-agent names).
+			if strings.Contains(np.Name, cr.Name) {
+				t.Errorf("NetworkPolicy name %q contains CR name %q — should use stable namespace-level name", np.Name, cr.Name)
 			}
 		})
 	}

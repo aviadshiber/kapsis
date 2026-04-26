@@ -86,8 +86,9 @@ func BridgeStatusFromJob(job *batchv1.Job) kapsisv1alpha1.AgentRequestStatus {
 func BridgeStatusFromPod(pod *corev1.Pod, status *kapsisv1alpha1.AgentRequestStatus) {
 	status.PodName = pod.Name
 
-	// Allow the agent to signal PostProcessing via annotation while the pod is still running.
-	if status.Phase == kapsisv1alpha1.PhaseRunning {
+	// Allow the agent to signal PostProcessing via annotation while the pod is still running
+	// or initializing.
+	if status.Phase == kapsisv1alpha1.PhaseRunning || status.Phase == kapsisv1alpha1.PhaseInitializing {
 		if override, ok := pod.Annotations[AnnotationPhase]; ok {
 			if toAgentPhase(override) == kapsisv1alpha1.PhasePostProcessing {
 				status.Phase = kapsisv1alpha1.PhasePostProcessing

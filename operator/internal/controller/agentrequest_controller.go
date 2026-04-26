@@ -24,14 +24,15 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
 	kapsisv1alpha1 "github.com/aviadshiber/kapsis/operator/api/v1alpha1"
 )
@@ -147,8 +148,6 @@ func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, ar *kapsi
 		fresh.Status.Phase = kapsisv1alpha1.PhaseInitializing
 		fresh.Status.JobName = jobNameStr
 		fresh.Status.Message = "Job created, waiting for pod to start"
-		now := metav1.Now()
-		fresh.Status.StartedAt = &now
 	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating status to Initializing: %w", err)
 	}
@@ -192,7 +191,7 @@ func (r *AgentRequestReconciler) reconcileWithJob(ctx context.Context, ar *kapsi
 	bridged := BridgeStatusFromJob(job)
 
 	// Look up the Job's pod to overlay real-time annotation-based status.
-	pod, err := r.findJobPod(ctx, job)
+	pod, err := r.findJobPod(ctx, job, ar.Status.PodName)
 	if err != nil {
 		return ctrl.Result{}, fmt.Errorf("finding job pod: %w", err)
 	}
@@ -257,8 +256,20 @@ func (r *AgentRequestReconciler) reconcileWithJob(ctx context.Context, ar *kapsi
 	return ctrl.Result{RequeueAfter: watchdogRequeue}, nil
 }
 
-// findJobPod returns the first pod owned by the given Job, or nil if not yet scheduled.
-func (r *AgentRequestReconciler) findJobPod(ctx context.Context, job *batchv1.Job) (*corev1.Pod, error) {
+// findJobPod returns the pod for the given Job. If the pod name is already
+// cached in the CR status, it performs a direct Get instead of a List.
+func (r *AgentRequestReconciler) findJobPod(ctx context.Context, job *batchv1.Job, cachedPodName string) (*corev1.Pod, error) {
+	if cachedPodName != "" {
+		var pod corev1.Pod
+		if err := r.Get(ctx, types.NamespacedName{Name: cachedPodName, Namespace: job.Namespace}, &pod); err != nil {
+			if apierrors.IsNotFound(err) {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("getting cached pod %s: %w", cachedPodName, err)
+		}
+		return &pod, nil
+	}
+	// First-time discovery: List by job-name label.
 	var podList corev1.PodList
 	selector := labels.SelectorFromSet(map[string]string{
 		"batch.kubernetes.io/job-name": job.Name,
@@ -307,6 +318,39 @@ func jobFailureMessage(job *batchv1.Job) string {
 	return "Job failed without condition message"
 }
 
+// podToAgentRequest maps a Pod annotation-change event to the owning AgentRequest
+// by walking up the ownerReference chain: Pod -> Job -> AgentRequest.
+func (r *AgentRequestReconciler) podToAgentRequest(ctx context.Context, obj client.Object) []reconcile.Request {
+	pod, ok := obj.(*corev1.Pod)
+	if !ok {
+		return nil
+	}
+	// Find the Job that owns this pod.
+	jobName := ""
+	for _, ref := range pod.OwnerReferences {
+		if ref.Kind == "Job" && ref.Controller != nil && *ref.Controller {
+			jobName = ref.Name
+			break
+		}
+	}
+	if jobName == "" {
+		return nil
+	}
+	// Find the AgentRequest that owns the Job.
+	var job batchv1.Job
+	if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: pod.Namespace}, &job); err != nil {
+		return nil
+	}
+	for _, ref := range job.OwnerReferences {
+		if ref.Kind == "AgentRequest" && ref.Controller != nil && *ref.Controller {
+			return []reconcile.Request{
+				{NamespacedName: types.NamespacedName{Name: ref.Name, Namespace: pod.Namespace}},
+			}
+		}
+	}
+	return nil
+}
+
 // SetupWithManager registers the controller with the Manager.
 // It watches AgentRequest resources plus their owned Jobs and Pods so that
 // status changes trigger reconciliation without constant polling.
@@ -314,10 +358,12 @@ func (r *AgentRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kapsisv1alpha1.AgentRequest{}).
 		Owns(&batchv1.Job{}).
-		// Pod watch events drive real-time annotation bridging.
-		// NOTE: We use Owns here because the Job's pod is transitively owned
-		// by the AgentRequest via the Job owner reference chain.
-		Owns(&corev1.Pod{}).
+		// Pod watch: maps annotation changes by the status sidecar back to the owning
+		// AgentRequest via Pod->Job->AgentRequest owner reference chain.
+		Watches(
+			&corev1.Pod{},
+			handler.EnqueueRequestsFromMapFunc(r.podToAgentRequest),
+		).
 		Named("agentrequest").
 		Complete(r)
 }

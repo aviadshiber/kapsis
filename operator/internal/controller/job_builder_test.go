@@ -679,3 +679,214 @@ func TestJobName(t *testing.T) {
 		t.Errorf("JobName = %q, want test-agent-job", got)
 	}
 }
+
+func TestBuildJob_SidecarSecurityContext(t *testing.T) {
+	cr := minimalCR()
+	job, err := BuildJob(cr, "")
+	if err != nil {
+		t.Fatalf("BuildJob() error: %v", err)
+	}
+
+	sidecar := job.Spec.Template.Spec.Containers[1]
+	if sidecar.Name != StatusSidecarContainerName {
+		t.Fatalf("containers[1].Name = %q, want %q", sidecar.Name, StatusSidecarContainerName)
+	}
+	sc := sidecar.SecurityContext
+	if sc == nil {
+		t.Fatal("sidecar SecurityContext is nil")
+	}
+	if sc.RunAsNonRoot == nil || !*sc.RunAsNonRoot {
+		t.Error("sidecar RunAsNonRoot should be true")
+	}
+	if sc.AllowPrivilegeEscalation == nil || *sc.AllowPrivilegeEscalation {
+		t.Error("sidecar AllowPrivilegeEscalation should be false")
+	}
+	if sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+		t.Error("sidecar ReadOnlyRootFilesystem should be true")
+	}
+	if sc.Capabilities == nil {
+		t.Fatal("sidecar Capabilities is nil")
+	}
+	foundDropAll := false
+	for _, c := range sc.Capabilities.Drop {
+		if c == "ALL" {
+			foundDropAll = true
+			break
+		}
+	}
+	if !foundDropAll {
+		t.Error("sidecar should drop ALL capabilities")
+	}
+	// Should not add any dangerous capabilities.
+	if len(sc.Capabilities.Add) != 0 {
+		t.Errorf("sidecar should not add any capabilities, got: %v", sc.Capabilities.Add)
+	}
+}
+
+func TestBuildJob_SidecarEnvVars(t *testing.T) {
+	cr := minimalCR()
+	job, err := BuildJob(cr, "")
+	if err != nil {
+		t.Fatalf("BuildJob() error: %v", err)
+	}
+
+	sidecar := job.Spec.Template.Spec.Containers[1]
+	envs := sidecar.Env
+
+	podName := findEnvVar(envs, "POD_NAME")
+	if podName == nil {
+		t.Fatal("POD_NAME not found in sidecar env")
+	}
+	if podName.ValueFrom == nil || podName.ValueFrom.FieldRef == nil || podName.ValueFrom.FieldRef.FieldPath != "metadata.name" {
+		t.Error("POD_NAME should use FieldRef metadata.name")
+	}
+
+	podNs := findEnvVar(envs, "POD_NAMESPACE")
+	if podNs == nil {
+		t.Fatal("POD_NAMESPACE not found in sidecar env")
+	}
+	if podNs.ValueFrom == nil || podNs.ValueFrom.FieldRef == nil || podNs.ValueFrom.FieldRef.FieldPath != "metadata.namespace" {
+		t.Error("POD_NAMESPACE should use FieldRef metadata.namespace")
+	}
+
+	statusDir := findEnvVar(envs, "STATUS_DIR")
+	if statusDir == nil || statusDir.Value != "/kapsis-status" {
+		t.Errorf("STATUS_DIR = %v, want /kapsis-status", statusDir)
+	}
+
+	auditDir := findEnvVar(envs, "AUDIT_DIR")
+	if auditDir == nil || auditDir.Value != "/kapsis-audit" {
+		t.Errorf("AUDIT_DIR = %v, want /kapsis-audit", auditDir)
+	}
+}
+
+func TestBuildJob_SidecarResourceLimits(t *testing.T) {
+	cr := minimalCR()
+	job, err := BuildJob(cr, "")
+	if err != nil {
+		t.Fatalf("BuildJob() error: %v", err)
+	}
+
+	sidecar := job.Spec.Template.Spec.Containers[1]
+	if sidecar.Resources.Requests.Cpu() == nil || sidecar.Resources.Requests.Cpu().IsZero() {
+		t.Error("sidecar should have non-zero CPU request")
+	}
+	if sidecar.Resources.Requests.Memory() == nil || sidecar.Resources.Requests.Memory().IsZero() {
+		t.Error("sidecar should have non-zero memory request")
+	}
+	if sidecar.Resources.Limits.Cpu() == nil || sidecar.Resources.Limits.Cpu().IsZero() {
+		t.Error("sidecar should have non-zero CPU limit")
+	}
+	if sidecar.Resources.Limits.Memory() == nil || sidecar.Resources.Limits.Memory().IsZero() {
+		t.Error("sidecar should have non-zero memory limit")
+	}
+}
+
+func TestBuildJob_SidecarImageDefault(t *testing.T) {
+	cr := minimalCR()
+	job, err := BuildJob(cr, "")
+	if err != nil {
+		t.Fatalf("BuildJob() error: %v", err)
+	}
+
+	sidecar := job.Spec.Template.Spec.Containers[1]
+	if sidecar.Image != DefaultStatusSidecarImage {
+		t.Errorf("sidecar Image = %q, want %q", sidecar.Image, DefaultStatusSidecarImage)
+	}
+}
+
+func TestBuildJob_SidecarImageCustom(t *testing.T) {
+	cr := minimalCR()
+	customImage := "my-registry/sidecar:v1"
+	job, err := BuildJob(cr, customImage)
+	if err != nil {
+		t.Fatalf("BuildJob() error: %v", err)
+	}
+
+	sidecar := job.Spec.Template.Spec.Containers[1]
+	if sidecar.Image != customImage {
+		t.Errorf("sidecar Image = %q, want %q", sidecar.Image, customImage)
+	}
+}
+
+func TestBuildJob_StrictProfile_TmpVolumeExists(t *testing.T) {
+	cr := minimalCR()
+	cr.Spec.Security = &kapsisv1alpha1.SecuritySpec{Profile: "strict"}
+
+	job, err := BuildJob(cr, "")
+	if err != nil {
+		t.Fatalf("BuildJob() error: %v", err)
+	}
+
+	// ReadOnlyRootFilesystem must be true for strict.
+	sc := job.Spec.Template.Spec.Containers[0].SecurityContext
+	if sc == nil || sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+		t.Error("ReadOnlyRootFilesystem should be true for strict profile")
+	}
+
+	// tmp volume must exist.
+	if !hasVolume(job.Spec.Template.Spec.Volumes, "tmp") {
+		t.Error("tmp volume not found for strict profile")
+	}
+
+	// Agent container must mount tmp at /tmp.
+	agentMounts := job.Spec.Template.Spec.Containers[0].VolumeMounts
+	if !hasMount(agentMounts, "tmp") {
+		t.Error("agent container missing tmp mount for strict profile")
+	}
+	for _, m := range agentMounts {
+		if m.Name == "tmp" && m.MountPath != "/tmp" {
+			t.Errorf("tmp mount path = %q, want /tmp", m.MountPath)
+		}
+	}
+}
+
+func TestBuildJob_ParanoidProfile_TmpVolumeExists(t *testing.T) {
+	cr := minimalCR()
+	cr.Spec.Security = &kapsisv1alpha1.SecuritySpec{Profile: "paranoid"}
+
+	job, err := BuildJob(cr, "")
+	if err != nil {
+		t.Fatalf("BuildJob() error: %v", err)
+	}
+
+	sc := job.Spec.Template.Spec.Containers[0].SecurityContext
+	if sc == nil || sc.ReadOnlyRootFilesystem == nil || !*sc.ReadOnlyRootFilesystem {
+		t.Error("ReadOnlyRootFilesystem should be true for paranoid profile")
+	}
+
+	if !hasVolume(job.Spec.Template.Spec.Volumes, "tmp") {
+		t.Error("tmp volume not found for paranoid profile")
+	}
+
+	agentMounts := job.Spec.Template.Spec.Containers[0].VolumeMounts
+	if !hasMount(agentMounts, "tmp") {
+		t.Error("agent container missing tmp mount for paranoid profile")
+	}
+}
+
+func TestBuildJob_InvalidResource(t *testing.T) {
+	cr := minimalCR()
+	cr.Spec.Resources = &kapsisv1alpha1.ResourceSpec{Memory: "not-a-quantity"}
+
+	_, err := BuildJob(cr, "")
+	if err == nil {
+		t.Error("expected error for invalid resource quantity, got nil")
+	}
+}
+
+func TestBuildJob_ClaudeExitDelay_AbsentForNonClaude(t *testing.T) {
+	cr := minimalCR()
+	cr.Spec.Agent.Type = "codex-cli"
+
+	job, err := BuildJob(cr, "")
+	if err != nil {
+		t.Fatalf("BuildJob() error: %v", err)
+	}
+
+	envs := job.Spec.Template.Spec.Containers[0].Env
+	v := findEnvVar(envs, "CLAUDE_CODE_EXIT_AFTER_STOP_DELAY")
+	if v != nil {
+		t.Error("CLAUDE_CODE_EXIT_AFTER_STOP_DELAY should not be set for codex-cli agent")
+	}
+}

@@ -427,8 +427,8 @@ test_generate_cr_contains_status_env_vars() {
 
     assert_contains "$result" "KAPSIS_STATUS_PROJECT" "Should contain KAPSIS_STATUS_PROJECT"
     assert_contains "$result" "my-project" "Should contain project name value"
-    assert_contains "$result" "KAPSIS_STATUS_AGENT_ID" "Should contain KAPSIS_STATUS_AGENT_ID"
-    assert_contains "$result" "KAPSIS_STATUS_BRANCH" "Should contain KAPSIS_STATUS_BRANCH"
+    # KAPSIS_STATUS_AGENT_ID and KAPSIS_STATUS_BRANCH removed: they duplicated operator-injected
+    # KAPSIS_AGENT_ID and KAPSIS_BRANCH respectively. The operator already injects those last.
     assert_contains "$result" "KAPSIS_INJECT_GIST" "Should contain KAPSIS_INJECT_GIST"
 }
 

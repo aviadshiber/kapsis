@@ -9,7 +9,7 @@ webhooks:
   clientConfig:
     service:
       name: webhook-service
-      namespace: system
+      namespace: NAMESPACE
       path: /validate-kapsis-aviadshiber-github-io-v1alpha1-agentrequest
   failurePolicy: Fail
   name: vagentrequest.kb.io

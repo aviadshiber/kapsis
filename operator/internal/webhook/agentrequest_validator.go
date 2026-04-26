@@ -27,6 +27,7 @@ package webhook
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/validation/field"
@@ -63,6 +64,13 @@ var protectedMountPaths = []string{
 	"/sys/",
 	"/.git/hooks/",
 	"/var/run/secrets/",
+	// Operator-controlled paths that configMounts must not shadow.
+	"/workspace/",
+	"/kapsis-status/",
+	"/kapsis-audit/",
+	"/tmp/",
+	"/dev/",
+	"/var/lib/",
 }
 
 //+kubebuilder:webhook:path=/validate-kapsis-aviadshiber-github-io-v1alpha1-agentrequest,mutating=false,failurePolicy=fail,sideEffects=None,groups=kapsis.aviadshiber.github.io,resources=agentrequests,verbs=create;update,versions=v1alpha1,name=vagentrequest.kb.io,admissionReviewVersions=v1
@@ -109,7 +117,11 @@ func (v *AgentRequestValidator) validate(ar *kapsisv1alpha1.AgentRequest) field.
 // validateImage checks that the agent image matches one of the allowed prefixes.
 func (v *AgentRequestValidator) validateImage(ar *kapsisv1alpha1.AgentRequest, fld *field.Path) field.ErrorList {
 	if len(v.ImageAllowlistPatterns) == 0 {
-		return nil // no allowlist = dev/test mode, all images permitted
+		// No allowlist configured: fail-closed for safety.
+		// In development/test, configure ImageAllowlistPatterns to match your registry.
+		return field.ErrorList{
+			field.Forbidden(fld, "no image allowlist is configured; set ImageAllowlistPatterns on the operator to allow images"),
+		}
 	}
 	img := ar.Spec.Agent.Image
 	for _, prefix := range v.ImageAllowlistPatterns {
@@ -147,18 +159,38 @@ func (v *AgentRequestValidator) validateServiceAccount(ar *kapsisv1alpha1.AgentR
 	}
 }
 
-// validateEnvVarNames rejects environment.vars with names that start with "KAPSIS_".
-// These names are reserved for operator-injected variables (security: prevents override).
+// operatorReservedEnvVarNames are the specific env var names injected by the operator
+// that must not be overridden via spec.environment.vars. Non-reserved KAPSIS_ prefixed
+// names (e.g., KAPSIS_STATUS_PROJECT, KAPSIS_INJECT_GIST) are allowed.
+var operatorReservedEnvVarNames = map[string]bool{
+	"KAPSIS_BACKEND":               true,
+	"KAPSIS_AGENT_ID":              true,
+	"KAPSIS_AGENT_TYPE":            true,
+	"KAPSIS_AUDIT_ENABLED":         true,
+	"KAPSIS_AUDIT_DIR":             true,
+	"KAPSIS_STATUS_DIR":            true,
+	"KAPSIS_TASK":                  true,
+	"KAPSIS_BRANCH":                true,
+	"KAPSIS_BASE_BRANCH":           true,
+	"KAPSIS_DO_PUSH":               true,
+	"KAPSIS_LIVENESS_ENABLED":      true,
+	"KAPSIS_LIVENESS_TIMEOUT":      true,
+	"KAPSIS_COMPLETION_TIMEOUT":    true,
+	"KAPSIS_LIVENESS_GRACE_PERIOD": true,
+}
+
+// validateEnvVarNames rejects environment.vars with names that match operator-reserved
+// env var names. These are injected by the operator and must not be overridden.
 func (v *AgentRequestValidator) validateEnvVarNames(ar *kapsisv1alpha1.AgentRequest, fld *field.Path) field.ErrorList {
 	if ar.Spec.Environment == nil {
 		return nil
 	}
 	var errs field.ErrorList
 	for i, ev := range ar.Spec.Environment.Vars {
-		if strings.HasPrefix(ev.Name, "KAPSIS_") {
+		if operatorReservedEnvVarNames[ev.Name] {
 			errs = append(errs, field.Invalid(
 				fld.Index(i).Child("name"), ev.Name,
-				`env var name must not start with "KAPSIS_" (reserved for operator-injected variables)`,
+				fmt.Sprintf("env var name %q is reserved for operator injection and cannot be overridden via spec.environment.vars", ev.Name),
 			))
 		}
 	}
@@ -172,11 +204,13 @@ func (v *AgentRequestValidator) validateConfigMountPaths(ar *kapsisv1alpha1.Agen
 	}
 	var errs field.ErrorList
 	for i, cm := range ar.Spec.Environment.ConfigMounts {
+		// Canonicalize to prevent path traversal bypass (e.g., /workspace/../etc/shadow).
+		cleanPath := filepath.Clean(cm.MountPath)
 		for _, protected := range protectedMountPaths {
-			if strings.HasPrefix(cm.MountPath, protected) || cm.MountPath == strings.TrimSuffix(protected, "/") {
+			if strings.HasPrefix(cleanPath, protected) || cleanPath == strings.TrimSuffix(protected, "/") {
 				errs = append(errs, field.Invalid(
 					fld.Index(i).Child("mountPath"), cm.MountPath,
-					fmt.Sprintf("mountPath %q overlaps with protected path %q", cm.MountPath, protected),
+					fmt.Sprintf("mountPath %q (resolved: %q) overlaps with protected path %q", cm.MountPath, cleanPath, protected),
 				))
 				break
 			}

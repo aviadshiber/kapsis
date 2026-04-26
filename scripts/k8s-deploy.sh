@@ -101,8 +101,9 @@ EOF
 # ── Step 5: Create git credentials Secret (if token provided) ─────────────────
 if [[ -n "$GIT_TOKEN" ]]; then
     echo "==> Step 5: Creating kapsis-git-creds Secret..."
-    kubectl -n "$NAMESPACE" create secret generic kapsis-git-creds \
-        --from-literal=GIT_TOKEN="$GIT_TOKEN" \
+    # Pass the token via stdin to avoid exposing it in the process table (ps aux).
+    printf '%s' "$GIT_TOKEN" | kubectl -n "$NAMESPACE" create secret generic kapsis-git-creds \
+        --from-file=GIT_TOKEN=/dev/stdin \
         --dry-run=client -o yaml | apply
 fi
 

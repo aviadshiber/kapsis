@@ -140,34 +140,22 @@ YAML
 YAML
     fi
 
-    # Environment section — user vars first, then Kapsis-controlled vars.
-    # Kapsis vars are appended last at the operator level too (security invariant).
+    # Environment section — only vars the operator does not already inject.
+    # Removed: KAPSIS_BACKEND, KAPSIS_AGENT_ID, KAPSIS_AGENT_TYPE, KAPSIS_AUDIT_ENABLED
+    #   → operator injects these (appended last, always win).
+    # Removed: KAPSIS_STATUS_AGENT_ID (duplicate of operator-injected KAPSIS_AGENT_ID)
+    # Removed: KAPSIS_STATUS_BRANCH   (duplicate of operator-injected KAPSIS_BRANCH)
+    # Remaining vars are unique to shell-side context and not operator-injected.
+    # NOTE: The webhook blocks operator-reserved names; KAPSIS_STATUS_PROJECT and
+    # KAPSIS_INJECT_GIST are permitted because they are not in the operator reserved set.
     cat <<YAML
   environment:
     vars:
-      - name: "KAPSIS_BACKEND"
-        value: "k8s"
-      - name: "KAPSIS_AGENT_ID"
-        value: "$(_yaml_escape "$AGENT_ID")"
-      - name: "KAPSIS_AGENT_TYPE"
-        value: "$(_yaml_escape "$AGENT_NAME")"
       - name: "KAPSIS_STATUS_PROJECT"
         value: "$(_yaml_escape "${KAPSIS_STATUS_PROJECT:-}")"
-      - name: "KAPSIS_STATUS_AGENT_ID"
-        value: "$(_yaml_escape "$AGENT_ID")"
-      - name: "KAPSIS_STATUS_BRANCH"
-        value: "$(_yaml_escape "${BRANCH:-}")"
       - name: "KAPSIS_INJECT_GIST"
         value: "${INJECT_GIST:-false}"
 YAML
-
-    # Audit environment variables (if enabled)
-    if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" ]]; then
-        cat <<YAML
-      - name: "KAPSIS_AUDIT_ENABLED"
-        value: "true"
-YAML
-    fi
 
     # Optional: additional env vars from caller
     if [[ -n "$extra_env_var_name" ]]; then

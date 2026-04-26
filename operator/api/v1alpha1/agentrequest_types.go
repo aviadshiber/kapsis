@@ -159,6 +159,12 @@ type SecuritySpec struct {
 	// +optional
 	// +kubebuilder:default="kapsis-agent"
 	ServiceAccountName string `json:"serviceAccountName,omitempty"`
+
+	// SeccompProfilePath is the path to a localhost seccomp profile for the paranoid
+	// security profile. Only used when Profile == "paranoid". When empty, RuntimeDefault
+	// is used instead.
+	// +optional
+	SeccompProfilePath string `json:"seccompProfilePath,omitempty"`
 }
 
 // NetworkSpec defines network isolation for the agent.
