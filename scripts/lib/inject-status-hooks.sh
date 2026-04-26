@@ -27,6 +27,7 @@ if [[ -f "${KAPSIS_LIB:-/opt/kapsis/lib}/logging.sh" ]]; then
 else
     log_info() { echo "[INFO] $*"; }
     log_warn() { echo "[WARN] $*" >&2; }
+    log_error() { echo "[ERROR] $*" >&2; }
     log_debug() { :; }
     log_success() { echo "[OK] $*"; }
 fi
@@ -68,6 +69,14 @@ inject_claude_hooks() {
     local tmp_file
     tmp_file=$(mktemp)
 
+    # Determine whether to inject gist hook (opt-in, file must exist and be executable)
+    local GIST_HOOK="${KAPSIS_HOOK_DIR}/kapsis-gist-hook.sh"
+    local inject_gist="${KAPSIS_INJECT_GIST:-false}"
+    if [[ "$inject_gist" == "true" && ! -x "$GIST_HOOK" ]]; then
+        log_error "Gist hook not found or not executable: $GIST_HOOK -- KAPSIS_INJECT_GIST=true but gist hook will NOT be injected"
+        inject_gist="false"
+    fi
+
     # Attribution: only merge when the env vars are defined (set — including the
     # empty string, which is a valid "disable" per Claude Code's spec). When
     # unset, leave any existing user-configured attribution untouched.
@@ -79,6 +88,8 @@ inject_claude_hooks() {
     if jq \
         --arg status_hook "$STATUS_HOOK" \
         --arg stop_hook "$STOP_HOOK" \
+        --arg gist_hook "$GIST_HOOK" \
+        --arg inject_gist "$inject_gist" \
         --arg attr_commit "${KAPSIS_ATTRIBUTION_COMMIT:-}" \
         --arg attr_pr "${KAPSIS_ATTRIBUTION_PR:-}" \
         --arg attr_commit_set "$attr_commit_set" \
@@ -90,7 +101,19 @@ inject_claude_hooks() {
         # Ensure PostToolUse array exists
         .hooks.PostToolUse //= [] |
 
-        # Add status hook to PostToolUse if not already present
+        # Add gist hook to PostToolUse FIRST if KAPSIS_INJECT_GIST=true and not already present.
+        # Gist must fire before the status hook so that status_read_gist_file() reads the
+        # current gist (not the previous one).
+        if $inject_gist == "true" then
+            if ([.hooks.PostToolUse[].hooks[]? | select(.command == $gist_hook)] | length) == 0 then
+                .hooks.PostToolUse += [{
+                    "matcher": "*",
+                    "hooks": [{"type": "command", "command": $gist_hook, "timeout": 10}]
+                }]
+            else . end
+        else . end |
+
+        # Add status hook to PostToolUse after gist hook if not already present
         if ([.hooks.PostToolUse[].hooks[]? | select(.command == $status_hook)] | length) == 0 then
             .hooks.PostToolUse += [{
                 "matcher": "*",

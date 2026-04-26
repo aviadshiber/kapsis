@@ -892,6 +892,500 @@ test_progress_phase_mapping() {
 }
 
 #===============================================================================
+# Test: Gist Hook (kapsis-gist-hook.sh)
+#===============================================================================
+
+# Helper: run the gist hook with given JSON input, returns gist.txt content (or empty)
+_run_gist_hook() {
+    local json="$1"
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    mkdir -p "$tmp_dir/.kapsis"
+
+    printf '%s' "$json" | \
+        KAPSIS_STATUS_AGENT_ID="test-gist-agent" \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_dir/.kapsis/gist.txt" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || true
+
+    if [[ -f "$tmp_dir/.kapsis/gist.txt" ]]; then
+        cat "$tmp_dir/.kapsis/gist.txt"
+    fi
+    rm -rf "$tmp_dir"
+}
+
+test_gist_hook_git_commit() {
+    local tmp_dir tmp_gist
+    tmp_dir=$(mktemp -d)
+    tmp_gist="$tmp_dir/.kapsis/gist.txt"
+    mkdir -p "$tmp_dir/.kapsis"
+
+    printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"fix: null check in UserService\""}}' | \
+        KAPSIS_STATUS_AGENT_ID="test123" \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || true
+
+    assert_file_exists "$tmp_gist" "gist.txt should be written on git commit"
+    local content
+    content=$(cat "$tmp_gist")
+    assert_contains "$content" "Committing:" "gist should contain 'Committing:' prefix"
+    assert_contains "$content" "fix: null check" "gist should contain commit message"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_hook_git_push() {
+    local tmp_dir tmp_gist
+    tmp_dir=$(mktemp -d)
+    tmp_gist="$tmp_dir/.kapsis/gist.txt"
+    mkdir -p "$tmp_dir/.kapsis"
+
+    printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git push origin main"}}' | \
+        KAPSIS_STATUS_AGENT_ID="test123" \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || true
+
+    assert_file_exists "$tmp_gist" "gist.txt should be written on git push"
+    assert_contains "$(cat "$tmp_gist")" "Pushing changes to remote" "gist should describe push"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_hook_edit() {
+    local tmp_dir tmp_gist
+    tmp_dir=$(mktemp -d)
+    tmp_gist="$tmp_dir/.kapsis/gist.txt"
+    mkdir -p "$tmp_dir/.kapsis"
+
+    printf '%s' '{"tool_name":"Edit","tool_input":{"file_path":"/workspace/src/UserService.java"}}' | \
+        KAPSIS_STATUS_AGENT_ID="test123" \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || true
+
+    assert_file_exists "$tmp_gist" "gist.txt should be written on Edit"
+    local content
+    content=$(cat "$tmp_gist")
+    assert_contains "$content" "Editing:" "gist should contain 'Editing:' prefix"
+    assert_contains "$content" "UserService.java" "gist should contain file basename"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_hook_write() {
+    local tmp_dir tmp_gist
+    tmp_dir=$(mktemp -d)
+    tmp_gist="$tmp_dir/.kapsis/gist.txt"
+    mkdir -p "$tmp_dir/.kapsis"
+
+    printf '%s' '{"tool_name":"Write","tool_input":{"file_path":"/workspace/src/Config.java"}}' | \
+        KAPSIS_STATUS_AGENT_ID="test123" \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || true
+
+    assert_file_exists "$tmp_gist" "gist.txt should be written on Write"
+    local content
+    content=$(cat "$tmp_gist")
+    assert_contains "$content" "Writing:" "gist should contain 'Writing:' prefix"
+    assert_contains "$content" "Config.java" "gist should contain file basename"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_hook_running_tests_mvn() {
+    local content
+    content=$(_run_gist_hook '{"tool_name":"Bash","tool_input":{"command":"mvn test -pl auth-module"}}')
+    assert_contains "$content" "Running tests" "gist should say 'Running tests' for mvn test"
+}
+
+test_gist_hook_running_tests_pytest() {
+    local content
+    content=$(_run_gist_hook '{"tool_name":"Bash","tool_input":{"command":"pytest tests/ -v"}}')
+    assert_contains "$content" "Running tests" "gist should say 'Running tests' for pytest"
+}
+
+test_gist_hook_no_overwrite_on_read() {
+    local tmp_dir tmp_gist
+    tmp_dir=$(mktemp -d)
+    tmp_gist="$tmp_dir/.kapsis/gist.txt"
+    mkdir -p "$tmp_dir/.kapsis"
+
+    printf 'Building: authentication module\n' > "$tmp_gist"
+
+    printf '%s' '{"tool_name":"Read","tool_input":{"file_path":"/workspace/src/Auth.java"}}' | \
+        KAPSIS_STATUS_AGENT_ID="test123" \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || true
+
+    assert_equals "Building: authentication module" "$(cat "$tmp_gist")" "gist.txt should be unchanged after Read"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_hook_no_overwrite_on_grep() {
+    local tmp_dir tmp_gist
+    tmp_dir=$(mktemp -d)
+    tmp_gist="$tmp_dir/.kapsis/gist.txt"
+    mkdir -p "$tmp_dir/.kapsis"
+
+    printf 'Running tests\n' > "$tmp_gist"
+
+    printf '%s' '{"tool_name":"Grep","tool_input":{"pattern":"TODO"}}' | \
+        KAPSIS_STATUS_AGENT_ID="test123" \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || true
+
+    assert_equals "Running tests" "$(cat "$tmp_gist")" "gist.txt should be unchanged after Grep"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_hook_bash_fallback_first_run() {
+    local tmp_dir tmp_gist
+    tmp_dir=$(mktemp -d)
+    tmp_gist="$tmp_dir/.kapsis/gist.txt"
+    mkdir -p "$tmp_dir/.kapsis"
+
+    # No pre-existing gist.txt — first run should write fallback
+    printf '%s' '{"tool_name":"Bash","tool_input":{"command":"curl -s https://api.example.com"}}' | \
+        KAPSIS_STATUS_AGENT_ID="test123" \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || true
+
+    assert_file_exists "$tmp_gist" "gist.txt should be written on first Bash call"
+    local content
+    content=$(cat "$tmp_gist")
+    assert_contains "$content" "Running:" "fallback gist should have 'Running:' prefix"
+    assert_contains "$content" "curl" "fallback gist should contain extracted command name"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_hook_bash_fallback_no_overwrite() {
+    local tmp_dir tmp_gist
+    tmp_dir=$(mktemp -d)
+    tmp_gist="$tmp_dir/.kapsis/gist.txt"
+    mkdir -p "$tmp_dir/.kapsis"
+
+    printf 'Committing: fix: auth bug\n' > "$tmp_gist"
+
+    # Unrecognized Bash command when gist already exists — should NOT overwrite
+    printf '%s' '{"tool_name":"Bash","tool_input":{"command":"ls -la /workspace"}}' | \
+        KAPSIS_STATUS_AGENT_ID="test123" \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || true
+
+    assert_equals "Committing: fix: auth bug" "$(cat "$tmp_gist")" "gist.txt should not be overwritten by unrecognized Bash"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_hook_skips_when_agent_id_missing() {
+    local tmp_dir tmp_gist exit_code
+    tmp_dir=$(mktemp -d)
+    tmp_gist="$tmp_dir/.kapsis/gist.txt"
+    mkdir -p "$tmp_dir/.kapsis"
+    exit_code=0
+
+    printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}' | \
+        env -u KAPSIS_STATUS_AGENT_ID \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || exit_code=$?
+
+    assert_equals "0" "$exit_code" "gist hook should exit 0 without agent_id"
+    assert_false "[[ -f '$tmp_gist' ]]" "gist.txt should not be written without agent_id"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_hook_skips_when_inject_gist_false() {
+    local tmp_dir tmp_gist exit_code
+    tmp_dir=$(mktemp -d)
+    tmp_gist="$tmp_dir/.kapsis/gist.txt"
+    mkdir -p "$tmp_dir/.kapsis"
+    exit_code=0
+
+    printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}' | \
+        KAPSIS_STATUS_AGENT_ID="test123" \
+        KAPSIS_INJECT_GIST="false" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || exit_code=$?
+
+    assert_equals "0" "$exit_code" "gist hook should exit 0 when KAPSIS_INJECT_GIST=false"
+    assert_false "[[ -f '$tmp_gist' ]]" "gist.txt should not be written when gist disabled"
+
+    rm -rf "$tmp_dir"
+}
+
+#===============================================================================
+# Test: Gist Hook Injection into settings.local.json
+#===============================================================================
+
+test_inject_gist_hook_injected_when_enabled() {
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-gist-hook-1"
+    export KAPSIS_INJECT_GIST="true"
+
+    # Create mock gist hook
+    touch "$KAPSIS_ROOT/hooks/kapsis-gist-hook.sh"
+    chmod +x "$KAPSIS_ROOT/hooks/kapsis-gist-hook.sh"
+
+    source "$LIB_DIR/inject-status-hooks.sh"
+    inject_claude_hooks >/dev/null 2>&1
+
+    local hook_count
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    assert_equals "2" "$hook_count" "Should have 2 PostToolUse entries (status + gist) when KAPSIS_INJECT_GIST=true"
+
+    local content
+    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    assert_contains "$content" "kapsis-gist-hook.sh" "settings should contain gist hook path"
+
+    cleanup_inject_test_env
+}
+
+test_inject_gist_hook_not_injected_when_disabled() {
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-gist-hook-2"
+    unset KAPSIS_INJECT_GIST
+
+    source "$LIB_DIR/inject-status-hooks.sh"
+    inject_claude_hooks >/dev/null 2>&1
+
+    local hook_count
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    assert_equals "1" "$hook_count" "Should have 1 PostToolUse entry (status only) when KAPSIS_INJECT_GIST not set"
+
+    local content
+    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    assert_not_contains "$content" "kapsis-gist-hook.sh" "settings should not contain gist hook when disabled"
+
+    cleanup_inject_test_env
+}
+
+#===============================================================================
+# LLM Gist Throttle Tests
+#===============================================================================
+
+# Helper: create a mock claude binary that records invocations.
+# Uses a quoted heredoc + separate files for output/exit_code so that
+# special characters in $output or $exit_code cannot break the generated script.
+_make_mock_claude() {
+    local mock_dir="$1"
+    local exit_code="${2:-0}"
+    local output="${3:-LLM result text}"
+    mkdir -p "$mock_dir"
+    printf '%s\n' "$output" > "$mock_dir/claude_output"
+    printf '%d\n' "$exit_code" > "$mock_dir/claude_exitcode"
+    cat > "$mock_dir/claude" << 'EOF'
+#!/usr/bin/env bash
+touch "$(dirname "$0")/../llm_called_marker"
+cat "$(dirname "$0")/claude_output"
+exit "$(cat "$(dirname "$0")/claude_exitcode")"
+EOF
+    chmod +x "$mock_dir/claude"
+}
+
+test_gist_llm_time_gate_blocks() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local gist_file="${tmp_dir}/gist.txt"
+    local stamp_file="${tmp_dir}/gist.last_llm_run"
+    local mock_dir="${tmp_dir}/bin"
+
+    _make_mock_claude "$mock_dir"
+
+    # Create a fresh stamp file (set mtime to "now")
+    touch "$stamp_file"
+
+    # Use a Read tool event (non-high-signal) so deterministic gist is skipped
+    local input='{"tool_name":"Read","tool_input":{"file_path":"/workspace/foo.java"}}'
+
+    PATH="$mock_dir:$PATH" \
+    KAPSIS_STATUS_AGENT_ID="test-llm-gate" \
+    KAPSIS_INJECT_GIST=true \
+    KAPSIS_GIST_LLM=true \
+    KAPSIS_GIST_LLM_INTERVAL=3600 \
+    KAPSIS_GIST_FILE="$gist_file" \
+    bash "$HOOKS_DIR/kapsis-gist-hook.sh" <<< "$input" 2>/dev/null
+
+    # LLM must NOT have been called (stamp is fresh)
+    assert_false "[[ -f '${tmp_dir}/llm_called_marker' ]]" "LLM should be blocked by time gate"
+    # No gist written (Read tool + throttled)
+    assert_false "[[ -f '$gist_file' ]]" "No gist should be written when gate blocks"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_llm_high_signal_bypasses_gate() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local gist_file="${tmp_dir}/gist.txt"
+    local stamp_file="${tmp_dir}/gist.last_llm_run"
+    local mock_dir="${tmp_dir}/bin"
+
+    _make_mock_claude "$mock_dir" 0 "Committing the null-gist fix"
+
+    # Create a fresh stamp file — throttle would normally block
+    touch "$stamp_file"
+
+    local input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"fix: null gist\""}}'
+
+    # KAPSIS_GIST_LLM_SYNC=true: synchronous mode so the test can inspect results immediately.
+    # Stamp path is derived from dirname(KAPSIS_GIST_FILE) — no separate env var needed.
+    PATH="$mock_dir:$PATH" \
+    KAPSIS_STATUS_AGENT_ID="test-llm-high" \
+    KAPSIS_INJECT_GIST=true \
+    KAPSIS_GIST_LLM=true \
+    KAPSIS_GIST_LLM_SYNC=true \
+    KAPSIS_GIST_LLM_INTERVAL=3600 \
+    KAPSIS_GIST_FILE="$gist_file" \
+    bash "$HOOKS_DIR/kapsis-gist-hook.sh" <<< "$input" 2>/dev/null
+
+    # LLM must have been called despite fresh stamp (git commit = high-signal)
+    assert_true "[[ -f '${tmp_dir}/llm_called_marker' ]]" "LLM should be called for high-signal git commit"
+    # Gist file should contain LLM output (overwriting deterministic)
+    assert_file_exists "$gist_file" "Gist file should exist after LLM call"
+    local content
+    content=$(cat "$gist_file")
+    assert_contains "$content" "Committing the null-gist fix" "Gist should contain LLM output"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_llm_fallback_on_failure() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local gist_file="${tmp_dir}/gist.txt"
+    local mock_dir="${tmp_dir}/bin"
+
+    # Mock claude exits with failure
+    _make_mock_claude "$mock_dir" 1 ""
+
+    local input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"fix: null gist\""}}'
+
+    PATH="$mock_dir:$PATH" \
+    KAPSIS_STATUS_AGENT_ID="test-llm-fail" \
+    KAPSIS_INJECT_GIST=true \
+    KAPSIS_GIST_LLM=true \
+    KAPSIS_GIST_LLM_SYNC=true \
+    KAPSIS_GIST_FILE="$gist_file" \
+    bash "$HOOKS_DIR/kapsis-gist-hook.sh" <<< "$input" 2>/dev/null
+
+    # Deterministic gist must be preserved when LLM fails
+    assert_file_exists "$gist_file" "Gist file should exist (deterministic fallback)"
+    local content
+    content=$(cat "$gist_file")
+    assert_contains "$content" "Committing:" "Deterministic gist should be preserved on LLM failure"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_llm_stamp_created_on_success() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local gist_file="${tmp_dir}/gist.txt"
+    local stamp_file="${tmp_dir}/gist.last_llm_run"
+    local mock_dir="${tmp_dir}/bin"
+
+    _make_mock_claude "$mock_dir" 0 "Writing the gist hook implementation"
+
+    # No existing stamp — first run
+    local input='{"tool_name":"Write","tool_input":{"file_path":"/workspace/foo.sh"}}'
+
+    PATH="$mock_dir:$PATH" \
+    KAPSIS_STATUS_AGENT_ID="test-llm-stamp" \
+    KAPSIS_INJECT_GIST=true \
+    KAPSIS_GIST_LLM=true \
+    KAPSIS_GIST_LLM_SYNC=true \
+    KAPSIS_GIST_FILE="$gist_file" \
+    bash "$HOOKS_DIR/kapsis-gist-hook.sh" <<< "$input" 2>/dev/null
+
+    # Stamp file must be created after successful LLM call
+    assert_file_exists "$stamp_file" "Stamp file should be created after successful LLM call"
+
+    rm -rf "$tmp_dir"
+}
+
+#===============================================================================
+# Test: Stop Hook Bug 1 fix — reads gist before writing final status
+#===============================================================================
+
+test_stop_hook_reads_gist_before_completion() {
+    local tmp_dir kapsis_home marker
+    tmp_dir=$(mktemp -d)
+    kapsis_home="${tmp_dir}/kapsis"
+    marker="${tmp_dir}/gist_read_called"
+
+    # Provide a mock status.sh that records status_read_gist_file calls
+    mkdir -p "${kapsis_home}/lib"
+    cat > "${kapsis_home}/lib/status.sh" << EOF
+status_reinit_from_env() { :; }
+status_phase() { :; }
+status_read_gist_file() { touch '$marker'; }
+EOF
+
+    KAPSIS_HOME="$kapsis_home" \
+    KAPSIS_STATUS_AGENT_ID="test-stop-gist" \
+    KAPSIS_STATUS_PROJECT="test-project" \
+    bash "$HOOKS_DIR/kapsis-stop-hook.sh" <<< '{}' 2>/dev/null || true
+
+    assert_file_exists "$marker" \
+        "stop hook should call status_read_gist_file before writing final status (kapsis#285 Bug 1)"
+
+    rm -rf "$tmp_dir"
+}
+
+#===============================================================================
+# Test: Gist Hook edge cases
+#===============================================================================
+
+# Edit tool with tool_input.path key instead of tool_input.file_path
+test_gist_hook_edit_with_path_key() {
+    local content
+    content=$(_run_gist_hook '{"tool_name":"Edit","tool_input":{"path":"/workspace/src/Foo.java"}}')
+    assert_contains "$content" "Editing:" "gist should contain 'Editing:' when using .path key"
+    assert_contains "$content" "Foo.java" "gist should contain file basename from .path key"
+}
+
+# Agent ID regex guard rejects invalid formats in the gist hook
+test_gist_hook_skips_when_agent_id_invalid() {
+    local tmp_dir tmp_gist exit_code
+    tmp_dir=$(mktemp -d)
+    tmp_gist="$tmp_dir/.kapsis/gist.txt"
+    mkdir -p "$tmp_dir/.kapsis"
+    exit_code=0
+
+    printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}' | \
+        KAPSIS_STATUS_AGENT_ID="../evil" \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || exit_code=$?
+
+    assert_equals "0" "$exit_code" "gist hook should exit 0 with path-traversal agent_id"
+    assert_false "[[ -f '$tmp_gist' ]]" "gist.txt should not be written with path-traversal agent_id"
+
+    # Also test special chars
+    printf '%s' '{"tool_name":"Bash","tool_input":{"command":"git commit -m \"test\""}}' | \
+        KAPSIS_STATUS_AGENT_ID="agent;rm-rf" \
+        KAPSIS_INJECT_GIST="true" \
+        KAPSIS_GIST_FILE="$tmp_gist" \
+        bash "$HOOKS_DIR/kapsis-gist-hook.sh" 2>/dev/null || true
+
+    assert_false "[[ -f '$tmp_gist' ]]" "gist.txt should not be written with special-char agent_id"
+
+    rm -rf "$tmp_dir"
+}
+
+#===============================================================================
 # Run Tests
 #===============================================================================
 run_tests() {
@@ -928,6 +1422,7 @@ run_tests() {
     run_test test_agent_id_invalid_special_chars_skips
     run_test test_agent_id_valid_formats_accepted
     run_test test_stop_hook_agent_id_validation
+    run_test test_stop_hook_reads_gist_before_completion
 
     log_info "=== Hook Injection (inject-status-hooks.sh) ==="
     run_test test_inject_claude_creates_settings_if_missing
@@ -954,6 +1449,32 @@ run_tests() {
     log_info "=== Agent Type Inference ==="
     run_test test_agent_type_inference_from_image_name
     run_test test_agent_type_normalization_priority
+
+    log_info "=== Gist Hook (kapsis-gist-hook.sh) ==="
+    run_test test_gist_hook_git_commit
+    run_test test_gist_hook_git_push
+    run_test test_gist_hook_edit
+    run_test test_gist_hook_write
+    run_test test_gist_hook_running_tests_mvn
+    run_test test_gist_hook_running_tests_pytest
+    run_test test_gist_hook_no_overwrite_on_read
+    run_test test_gist_hook_no_overwrite_on_grep
+    run_test test_gist_hook_bash_fallback_first_run
+    run_test test_gist_hook_bash_fallback_no_overwrite
+    run_test test_gist_hook_skips_when_agent_id_missing
+    run_test test_gist_hook_skips_when_inject_gist_false
+    run_test test_gist_hook_edit_with_path_key
+    run_test test_gist_hook_skips_when_agent_id_invalid
+
+    log_info "=== Gist Hook Injection ==="
+    run_test test_inject_gist_hook_injected_when_enabled
+    run_test test_inject_gist_hook_not_injected_when_disabled
+
+    log_info "=== Gist Hook LLM Throttle ==="
+    run_test test_gist_llm_time_gate_blocks
+    run_test test_gist_llm_high_signal_bypasses_gate
+    run_test test_gist_llm_fallback_on_failure
+    run_test test_gist_llm_stamp_created_on_success
 
     print_summary
 }

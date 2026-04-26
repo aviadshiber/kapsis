@@ -132,6 +132,11 @@ main() {
         if type status_reinit_from_env &>/dev/null; then
             status_reinit_from_env
 
+            # Read agent gist before writing final status (kapsis#285 — Bug 1 fix)
+            if type status_read_gist_file &>/dev/null; then
+                status_read_gist_file
+            fi
+
             if [[ -n "$exit_code" && "$exit_code" != "0" ]]; then
                 status_phase "running" 85 "Agent completed with errors"
                 log_info "Agent completed with error: $error_message"
