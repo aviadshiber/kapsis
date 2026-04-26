@@ -65,7 +65,7 @@ generate_env_yaml() {
     for entry in "${_gen_arr[@]}"; do
         name="${entry%%=*}"
         value="${entry#*=}"
-        echo "      - name: \"$(_yaml_escape "$name")\""
+        echo "      - name: $name"
         echo "        value: \"$(_yaml_escape "$value")\""
     done
 }
@@ -107,7 +107,7 @@ metadata:
 spec:
   agent:
     type: "$(_yaml_escape "${AGENT_CONFIG_TYPE:-${AGENT_NAME}}")"
-    image: "$(_yaml_escape "$IMAGE_NAME")"
+    image: $(_yaml_escape "$IMAGE_NAME")
 ${cmd_yaml}
     workdir: /workspace
   resources:
