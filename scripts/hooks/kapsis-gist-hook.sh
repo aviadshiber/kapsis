@@ -156,4 +156,47 @@ if [[ "$skip" != "true" && -n "$gist" ]]; then
     printf '%s\n' "$gist" > "$GIST_FILE"
 fi
 
+# ─── LLM Gist upgrade (opt-in: KAPSIS_GIST_LLM=true) ────────────────────────
+if [[ "${KAPSIS_GIST_LLM:-false}" == "true" ]] && command -v claude &>/dev/null; then
+    GIST_LLM_STAMP="${GIST_DIR}/gist.last_llm_run"
+    GIST_LLM_INTERVAL="${KAPSIS_GIST_LLM_INTERVAL:-60}"
+
+    # High-signal tools always bypass the throttle
+    is_high_signal=false
+    [[ "$tool_name" == "Bash" && "$command" =~ git[[:space:]]+commit ]] && is_high_signal=true
+    [[ "$tool_name" == "Write" ]] && is_high_signal=true
+
+    # Time gate: check stamp mtime
+    should_run_llm=false
+    if $is_high_signal; then
+        should_run_llm=true
+    elif [[ ! -f "$GIST_LLM_STAMP" ]]; then
+        should_run_llm=true
+    else
+        last=$(stat -f %m "$GIST_LLM_STAMP" 2>/dev/null || stat -c %Y "$GIST_LLM_STAMP" 2>/dev/null || echo 0)
+        now=$(date +%s)
+        if (( now - last >= GIST_LLM_INTERVAL )); then should_run_llm=true; fi
+    fi
+
+    if $should_run_llm; then
+        tool_result=$(json_get "$input" "tool_result" "")
+        tool_input_str=$(json_get "$input" "tool_input" "")
+        prompt="In one sentence (max 80 chars), what is this AI coding agent doing? Start with a verb. Be specific.
+Tool: $tool_name  Input: ${tool_input_str:0:200}  Output: ${tool_result:0:400}"
+
+        gist_llm=$(timeout 8 claude --print --model claude-haiku-4-5-20251001 <<< "$prompt" 2>/dev/null) || gist_llm=""
+
+        if [[ -n "$gist_llm" ]]; then
+            mkdir -p "$GIST_DIR" 2>/dev/null || true
+            tmp=$(mktemp "${GIST_DIR}/.gist.tmp.XXXXXX" 2>/dev/null) || tmp=""
+            if [[ -n "$tmp" ]]; then
+                printf '%s\n' "${gist_llm:0:200}" > "$tmp"
+                mv "$tmp" "$GIST_FILE"
+                touch "$GIST_LLM_STAMP"
+            fi
+        fi
+        # On failure: deterministic gist (written above) stays
+    fi
+fi
+
 exit 0

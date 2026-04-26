@@ -1169,6 +1169,142 @@ test_inject_gist_hook_not_injected_when_disabled() {
 }
 
 #===============================================================================
+# LLM Gist Throttle Tests
+#===============================================================================
+
+# Helper: create a mock claude binary that records invocations
+_make_mock_claude() {
+    local mock_dir="$1"
+    local exit_code="${2:-0}"
+    local output="${3:-LLM result text}"
+    mkdir -p "$mock_dir"
+    cat > "$mock_dir/claude" << EOF
+#!/usr/bin/env bash
+touch "\$(dirname "\$0")/../llm_called_marker"
+echo "$output"
+exit $exit_code
+EOF
+    chmod +x "$mock_dir/claude"
+}
+
+test_gist_llm_time_gate_blocks() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local gist_file="${tmp_dir}/gist.txt"
+    local stamp_file="${tmp_dir}/gist.last_llm_run"
+    local mock_dir="${tmp_dir}/bin"
+
+    _make_mock_claude "$mock_dir"
+
+    # Create a fresh stamp file (set mtime to "now")
+    touch "$stamp_file"
+
+    # Use a Read tool event (non-high-signal) so deterministic gist is skipped
+    local input='{"tool_name":"Read","tool_input":{"file_path":"/workspace/foo.java"}}'
+
+    PATH="$mock_dir:$PATH" \
+    KAPSIS_STATUS_AGENT_ID="test-llm-gate" \
+    KAPSIS_INJECT_GIST=true \
+    KAPSIS_GIST_LLM=true \
+    KAPSIS_GIST_LLM_INTERVAL=3600 \
+    KAPSIS_GIST_FILE="$gist_file" \
+    bash "$HOOKS_DIR/kapsis-gist-hook.sh" <<< "$input" 2>/dev/null
+
+    # LLM must NOT have been called (stamp is fresh)
+    assert_false "[[ -f '${tmp_dir}/llm_called_marker' ]]" "LLM should be blocked by time gate"
+    # No gist written (Read tool + throttled)
+    assert_false "[[ -f '$gist_file' ]]" "No gist should be written when gate blocks"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_llm_high_signal_bypasses_gate() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local gist_file="${tmp_dir}/gist.txt"
+    local stamp_file="${tmp_dir}/gist.last_llm_run"
+    local mock_dir="${tmp_dir}/bin"
+
+    _make_mock_claude "$mock_dir" 0 "Committing the null-gist fix"
+
+    # Create a fresh stamp file — throttle would normally block
+    touch "$stamp_file"
+
+    local input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"fix: null gist\""}}'
+
+    PATH="$mock_dir:$PATH" \
+    KAPSIS_STATUS_AGENT_ID="test-llm-high" \
+    KAPSIS_INJECT_GIST=true \
+    KAPSIS_GIST_LLM=true \
+    KAPSIS_GIST_LLM_INTERVAL=3600 \
+    KAPSIS_GIST_FILE="$gist_file" \
+    KAPSIS_GIST_FILE_DIR="$tmp_dir" \
+    bash "$HOOKS_DIR/kapsis-gist-hook.sh" <<< "$input" 2>/dev/null
+
+    # LLM must have been called despite fresh stamp (git commit = high-signal)
+    assert_true "[[ -f '${tmp_dir}/llm_called_marker' ]]" "LLM should be called for high-signal git commit"
+    # Gist file should contain LLM output (overwriting deterministic)
+    assert_file_exists "$gist_file" "Gist file should exist after LLM call"
+    local content
+    content=$(cat "$gist_file")
+    assert_contains "$content" "Committing the null-gist fix" "Gist should contain LLM output"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_llm_fallback_on_failure() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local gist_file="${tmp_dir}/gist.txt"
+    local mock_dir="${tmp_dir}/bin"
+
+    # Mock claude exits with failure
+    _make_mock_claude "$mock_dir" 1 ""
+
+    local input='{"tool_name":"Bash","tool_input":{"command":"git commit -m \"fix: null gist\""}}'
+
+    PATH="$mock_dir:$PATH" \
+    KAPSIS_STATUS_AGENT_ID="test-llm-fail" \
+    KAPSIS_INJECT_GIST=true \
+    KAPSIS_GIST_LLM=true \
+    KAPSIS_GIST_FILE="$gist_file" \
+    bash "$HOOKS_DIR/kapsis-gist-hook.sh" <<< "$input" 2>/dev/null
+
+    # Deterministic gist must be preserved when LLM fails
+    assert_file_exists "$gist_file" "Gist file should exist (deterministic fallback)"
+    local content
+    content=$(cat "$gist_file")
+    assert_contains "$content" "Committing:" "Deterministic gist should be preserved on LLM failure"
+
+    rm -rf "$tmp_dir"
+}
+
+test_gist_llm_stamp_created_on_success() {
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    local gist_file="${tmp_dir}/gist.txt"
+    local stamp_file="${tmp_dir}/gist.last_llm_run"
+    local mock_dir="${tmp_dir}/bin"
+
+    _make_mock_claude "$mock_dir" 0 "Writing the gist hook implementation"
+
+    # No existing stamp — first run
+    local input='{"tool_name":"Write","tool_input":{"file_path":"/workspace/foo.sh"}}'
+
+    PATH="$mock_dir:$PATH" \
+    KAPSIS_STATUS_AGENT_ID="test-llm-stamp" \
+    KAPSIS_INJECT_GIST=true \
+    KAPSIS_GIST_LLM=true \
+    KAPSIS_GIST_FILE="$gist_file" \
+    bash "$HOOKS_DIR/kapsis-gist-hook.sh" <<< "$input" 2>/dev/null
+
+    # Stamp file must be created after successful LLM call
+    assert_file_exists "$stamp_file" "Stamp file should be created after successful LLM call"
+
+    rm -rf "$tmp_dir"
+}
+
+#===============================================================================
 # Run Tests
 #===============================================================================
 run_tests() {
@@ -1249,6 +1385,12 @@ run_tests() {
     log_info "=== Gist Hook Injection ==="
     run_test test_inject_gist_hook_injected_when_enabled
     run_test test_inject_gist_hook_not_injected_when_disabled
+
+    log_info "=== Gist Hook LLM Throttle ==="
+    run_test test_gist_llm_time_gate_blocks
+    run_test test_gist_llm_high_signal_bypasses_gate
+    run_test test_gist_llm_fallback_on_failure
+    run_test test_gist_llm_stamp_created_on_success
 
     print_summary
 }
