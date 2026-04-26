@@ -26,9 +26,6 @@ import (
 )
 
 const (
-	// NetworkPolicySuffix is appended to the CR name for the NetworkPolicy.
-	NetworkPolicySuffix = "-netpol"
-
 	// Network mode values matching the CRD enum.
 	NetworkModeNone     = "none"
 	NetworkModeFiltered = "filtered"
@@ -40,56 +37,72 @@ const (
 	PortHTTPS       = 443
 	PortGitProtocol = 9418
 	PortDNS         = 53
+
+	// networkPolicyNameFiltered / networkPolicyNameNone are the stable, namespace-level
+	// policy names. One policy per namespace per mode — not per AgentRequest.
+	// This avoids O(N) fan-out when many agents run concurrently.
+	networkPolicyNameFiltered = "kapsis-filtered-policy"
+	networkPolicyNameNone     = "kapsis-none-policy"
 )
 
-// NetworkPolicyName returns the deterministic NetworkPolicy name for an AgentRequest.
-func NetworkPolicyName(cr *kapsisv1alpha1.AgentRequest) string {
-	return cr.Name + NetworkPolicySuffix
-}
-
-// ShouldCreateNetworkPolicy returns true if a NetworkPolicy should be created
-// for the given CR. Mode "open" needs no NetworkPolicy.
+// ShouldCreateNetworkPolicy returns true if a namespace-level NetworkPolicy
+// should be created for the given CR. Mode "open" needs no policy.
 func ShouldCreateNetworkPolicy(cr *kapsisv1alpha1.AgentRequest) bool {
 	return networkMode(cr) != NetworkModeOpen
 }
 
-// BuildNetworkPolicy constructs a NetworkPolicy from an AgentRequest CR.
-//   - mode "none": deny-all egress (Egress PolicyType with no egress rules).
-//   - mode "filtered": allow egress on ports 22/80/443/9418 + DNS (port 53 UDP/TCP).
-//   - mode "open": returns nil (no NetworkPolicy needed).
+// BuildNetworkPolicy constructs a namespace-level NetworkPolicy for all kapsis-agent
+// pods in the namespace. The policy applies to ALL pods with the managed-by label,
+// so it is created once and reused across concurrent agent runs.
+//
+//   - mode "none":     deny-all egress + deny-all ingress.
+//   - mode "filtered": allow egress on ports 22/80/443/9418 + DNS (port 53 UDP/TCP);
+//     deny-all ingress so agents cannot receive inbound connections.
+//   - mode "open":     returns nil (no NetworkPolicy needed).
+//
+// The returned NetworkPolicy is NOT owned by the AgentRequest — it outlives
+// individual runs and must not be garbage-collected when a single CR is deleted.
 func BuildNetworkPolicy(cr *kapsisv1alpha1.AgentRequest) *networkingv1.NetworkPolicy {
 	mode := networkMode(cr)
 	if mode == NetworkModeOpen {
 		return nil
 	}
 
+	name := networkPolicyNameFiltered
+	if mode == NetworkModeNone {
+		name = networkPolicyNameNone
+	}
+
 	np := &networkingv1.NetworkPolicy{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      NetworkPolicyName(cr),
+			Name:      name,
 			Namespace: cr.Namespace,
 			Labels: map[string]string{
-				LabelAgentType: cr.Spec.Agent.Type,
-				LabelAgentID:   cr.Name,
 				LabelManagedBy: ManagedByValue,
 			},
 		},
 		Spec: networkingv1.NetworkPolicySpec{
+			// Applies to all pods managed by the kapsis operator in this namespace.
 			PodSelector: metav1.LabelSelector{
 				MatchLabels: map[string]string{
-					LabelAgentID:   cr.Name,
 					LabelManagedBy: ManagedByValue,
 				},
 			},
+			// Deny all ingress — agents must not receive inbound connections.
+			// Deny all egress by default; filtered mode adds explicit allow rules below.
 			PolicyTypes: []networkingv1.PolicyType{
+				networkingv1.PolicyTypeIngress,
 				networkingv1.PolicyTypeEgress,
 			},
+			// Ingress: empty slice = deny all (agents never receive connections).
+			Ingress: []networkingv1.NetworkPolicyIngressRule{},
 		},
 	}
 
 	if mode == NetworkModeFiltered {
 		np.Spec.Egress = buildFilteredEgressRules()
 	}
-	// mode "none": Egress is nil → deny-all egress.
+	// mode "none": Egress is nil → deny-all egress (combined with deny-all ingress above).
 
 	return np
 }
@@ -103,16 +116,15 @@ func networkMode(cr *kapsisv1alpha1.AgentRequest) string {
 }
 
 // buildFilteredEgressRules returns egress rules for filtered mode:
-//  1. DNS egress (port 53 UDP+TCP) — unrestricted destination so kube-dns works
+//  1. DNS egress (port 53 UDP+TCP) — unrestricted destination so kube-dns resolves
 //     regardless of cluster DNS implementation or placement.
 //  2. Service ports (22, 80, 443, 9418 TCP) to any destination.
-//     Fine-grained DNS-level filtering happens inside the container via dnsmasq.
+//     Fine-grained DNS-level filtering is handled inside the container via dnsmasq.
 func buildFilteredEgressRules() []networkingv1.NetworkPolicyEgressRule {
 	protocolTCP := corev1.ProtocolTCP
 	protocolUDP := corev1.ProtocolUDP
 	dnsPort := intstr.FromInt32(PortDNS)
 
-	// Rule 1: DNS egress (both UDP and TCP for large responses).
 	dnsRule := networkingv1.NetworkPolicyEgressRule{
 		Ports: []networkingv1.NetworkPolicyPort{
 			{Protocol: &protocolUDP, Port: &dnsPort},
@@ -120,7 +132,6 @@ func buildFilteredEgressRules() []networkingv1.NetworkPolicyEgressRule {
 		},
 	}
 
-	// Rule 2: Allowed service ports (TCP only).
 	sshPort := intstr.FromInt32(PortSSH)
 	httpPort := intstr.FromInt32(PortHTTP)
 	httpsPort := intstr.FromInt32(PortHTTPS)

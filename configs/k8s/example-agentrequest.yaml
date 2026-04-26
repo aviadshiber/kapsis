@@ -3,35 +3,51 @@ kind: AgentRequest
 metadata:
   name: example-claude-task
 spec:
-  image: kapsis-claude-cli:latest
   agent:
     type: claude-cli
+    image: ghcr.io/aviadshiber/kapsis/claude-cli:latest
     command: ["bash", "-c", "claude --task 'Implement the login feature'"]
     workdir: /workspace
+
+  task:
+    inline: "Implement the login feature with OAuth2 support"
+
+  workspace:
+    git:
+      url: https://github.com/org/repo.git
+      branch: feat/login-feature
+      baseBranch: main
+      push: true
+      # Name of the Secret containing the GIT_TOKEN key.
+      # Create with: kubectl create secret generic kapsis-git-creds --from-literal=GIT_TOKEN=<token>
+      credentialSecretRef: kapsis-git-creds
+
+  security:
+    profile: standard
+    serviceAccountName: kapsis-agent
+
+  network:
+    mode: filtered
+
   resources:
     memory: "8Gi"
     cpu: "4"
-  git:
-    repoUrl: https://github.com/org/repo.git
-    branch: feat/login-feature
-    baseBranch: main
-    push: true
-    credentialSecretRef:
-      name: git-credentials
-      key: token
-  task:
-    inline: "Implement the login feature with OAuth2 support"
+    workspaceSizeLimit: "20Gi"
+
   environment:
     vars:
       # KAPSIS_BACKEND, KAPSIS_AGENT_ID, and KAPSIS_AGENT_TYPE are
       # automatically injected by the operator — do not set them here.
       - name: MY_CUSTOM_VAR
         value: "example-value"
-  security:
-    profile: standard
-    serviceAccountName: kapsis-agent
+
+  liveness:
+    enabled: true
+    timeoutSeconds: 900
+
   ttl: 3600
+
   podAnnotations:
-    # Optional: pass annotations to the created Pod.
+    # Optional: pass annotations to the Job pod template.
     # Use for Vault/OpenBao secret injection, Istio sidecar, Prometheus scraping, etc.
     example.com/team: "platform"

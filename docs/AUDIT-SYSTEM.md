@@ -381,40 +381,27 @@ spec:
         value: "/kapsis-audit"
 ```
 
-### CRD Field
+### Operator-Provisioned Volumes
 
-The AgentRequest CRD includes a dedicated `spec.audit` section:
+The operator's job builder automatically creates an `emptyDir` volume named `kapsis-audit` and mounts it at `/kapsis-audit` in the agent container whenever a Job is created. No explicit CRD field is required.
 
-```yaml
-spec:
-  audit:
-    enabled: true
-```
+### Audit Log Retrieval
 
-When `spec.audit.enabled` is true, the operator automatically:
-
-1. Creates an `emptyDir` volume named `kapsis-audit`
-2. Mounts it at `/kapsis-audit` in the agent container
-3. Injects `KAPSIS_AUDIT_ENABLED=true` and `KAPSIS_AUDIT_DIR=/kapsis-audit` as environment variables
-
-### Audit File Retrieval
-
-After pod completion, the K8s backend (`scripts/backends/k8s.sh`) retrieves audit files from the pod before it is garbage-collected:
+Audit events written to `/kapsis-audit/` are streamed to stdout by the **status-sidecar** container. Log aggregators (ELK, Splunk, Loki) capture them automatically from the pod's stdout. No `kubectl cp` is needed.
 
 ```bash
-kubectl cp <namespace>/<pod-name>:/kapsis-audit/. ~/.kapsis/audit/
+# Retrieve audit logs from a running or completed pod
+kubectl logs -c status-sidecar <pod-name> -n <namespace>
 ```
-
-This copies all audit files (JSONL, alerts, reports) from the pod's emptyDir volume to the local audit directory for post-run analysis.
 
 ### Differences from Podman Backend
 
 | Aspect | Podman | K8s |
 |--------|--------|-----|
 | Volume type | Bind mount (host directory) | emptyDir (pod-local) |
-| Real-time access | Yes (host can read during session) | No (files retrieved after pod completion) |
-| Persistence | Files persist on host | Files exist only while pod is running |
-| Retrieval | Automatic (shared volume) | `kubectl cp` after pod completion |
+| Real-time access | Yes (host can read during session) | Via log aggregator or `kubectl logs` |
+| Persistence | Files persist on host | Retained in log aggregation system |
+| Retrieval | Automatic (shared volume) | `kubectl logs -c status-sidecar` |
 
 ---
 
@@ -529,7 +516,6 @@ spec:
 | `scripts/audit-report.sh` | Post-run report generator -- text and JSON formats, chain verification |
 | `scripts/lib/constants.sh` | Default configuration values for audit system |
 | `scripts/lib/compat.sh` | Cross-platform SHA-256 hash function (`sha256_hash`) |
-| `scripts/backends/k8s.sh` | K8s backend audit file retrieval via `kubectl cp` |
+| `scripts/backends/k8s.sh` | K8s backend: surfaces audit via `kubectl logs -c status-sidecar` |
 | `scripts/lib/k8s-config.sh` | K8s CR generation with audit env vars |
-| `operator/api/v1alpha1/agentrequest_types.go` | CRD `AuditSpec` type definition |
-| `operator/internal/controller/pod_builder.go` | Operator: emptyDir volume + env var injection |
+| `operator/internal/controller/job_builder.go` | Operator: emptyDir volume (`kapsis-audit`) + env var injection |

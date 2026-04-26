@@ -179,8 +179,9 @@ func main() {
 	}
 
 	if err := (&controller.AgentRequestReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:             mgr.GetClient(),
+		Scheme:             mgr.GetScheme(),
+		StatusSidecarImage: os.Getenv("KAPSIS_STATUS_SIDECAR_IMAGE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "AgentRequest")
 		os.Exit(1)

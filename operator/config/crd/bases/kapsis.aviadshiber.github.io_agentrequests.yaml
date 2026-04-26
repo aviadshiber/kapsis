@@ -27,6 +27,9 @@ spec:
     - jsonPath: .status.progress
       name: Progress
       type: integer
+    - jsonPath: .status.jobName
+      name: Job
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -56,41 +59,64 @@ spec:
             description: AgentRequestSpec defines the desired state of AgentRequest.
             properties:
               agent:
-                description: Agent defines the agent configuration.
+                description: Agent defines the agent type and container image.
                 properties:
                   command:
-                    description: Command is the command to execute in the container.
+                    description: Command overrides the container entrypoint.
                     items:
                       type: string
                     type: array
+                  image:
+                    description: Image is the container image to run.
+                    type: string
                   type:
-                    description: Type is the agent type (claude-cli, codex-cli, aider,
-                      gemini-cli).
+                    description: Type is the agent identifier (claude-cli, codex-cli,
+                      aider, gemini-cli).
+                    enum:
+                    - claude-cli
+                    - codex-cli
+                    - aider
+                    - gemini-cli
                     type: string
                   workdir:
                     default: /workspace
-                    description: Workdir is the working directory inside container.
+                    description: Workdir is the working directory inside the container.
                     type: string
                 required:
+                - image
                 - type
                 type: object
-              audit:
-                description: Audit configures audit logging.
+              buildCache:
+                description: BuildCache mounts a PVC-backed build tool cache (Maven,
+                  Gradle, npm).
                 properties:
-                  enabled:
-                    description: Enabled controls whether audit logging is active.
-                    type: boolean
+                  claimRef:
+                    description: ClaimRef is the name of an existing PersistentVolumeClaim
+                      to mount.
+                    type: string
+                  mountPath:
+                    default: /root/.m2
+                    description: MountPath is the path inside the agent container
+                      where the PVC is mounted.
+                    type: string
+                required:
+                - claimRef
                 type: object
               environment:
-                description: Environment defines environment configuration.
+                description: Environment defines user-supplied environment variables,
+                  secrets, and ConfigMap mounts.
                 properties:
                   configMounts:
-                    description: ConfigMounts are ConfigMaps to mount as volumes.
+                    description: ConfigMounts are ConfigMaps to mount as read-only
+                      volumes inside the agent container.
                     items:
-                      description: ConfigMount defines a ConfigMap to mount as a volume.
+                      description: ConfigMount defines a ConfigMap to mount as a read-only
+                        volume.
                       properties:
                         mountPath:
-                          description: MountPath inside the container.
+                          description: |-
+                            MountPath inside the agent container.
+                            Must not overlap with /etc/, /proc/, /sys/, or .git/hooks/.
                           type: string
                         name:
                           description: Name of the ConfigMap.
@@ -101,10 +127,10 @@ spec:
                       type: object
                     type: array
                   secretRefs:
-                    description: SecretRefs are references to Secrets to mount as
-                      env vars.
+                    description: SecretRefs are Secrets to expose as environment variables
+                      via envFrom.
                     items:
-                      description: SecretRef references a Secret by name.
+                      description: SecretRef references a Kubernetes Secret by name.
                       properties:
                         name:
                           description: Name of the Secret.
@@ -114,12 +140,15 @@ spec:
                       type: object
                     type: array
                   vars:
-                    description: Vars is a list of environment variables.
+                    description: |-
+                      Vars is a list of plain environment variables.
+                      Names must not start with "KAPSIS_" (reserved for operator-injected variables).
                     items:
                       description: EnvVar is a name-value environment variable pair.
                       properties:
                         name:
-                          description: Name of the environment variable.
+                          description: Name of the environment variable. Must not
+                            start with "KAPSIS_".
                           type: string
                         value:
                           description: Value of the environment variable.
@@ -130,53 +159,20 @@ spec:
                       type: object
                     type: array
                 type: object
-              git:
-                description: Git defines git repository configuration.
-                properties:
-                  baseBranch:
-                    default: main
-                    description: BaseBranch for new branches.
-                    type: string
-                  branch:
-                    description: Branch to work on.
-                    type: string
-                  credentialSecretRef:
-                    description: CredentialSecretRef is a reference to a Secret containing
-                      git credentials.
-                    properties:
-                      key:
-                        description: Key within the Secret.
-                        type: string
-                      name:
-                        description: Name of the Secret.
-                        type: string
-                    required:
-                    - key
-                    - name
-                    type: object
-                  push:
-                    default: false
-                    description: Push indicates whether to push changes after completion.
-                    type: boolean
-                  repoUrl:
-                    description: RepoUrl is the repository URL to clone.
-                    type: string
-                type: object
-              image:
-                description: Image is the container image to run.
-                type: string
               liveness:
-                description: Liveness configures agent liveness monitoring and auto-kill
-                  for hung processes.
+                description: Liveness configures agent activity monitoring and hung-process
+                  detection.
                 properties:
-                  checkIntervalSeconds:
-                    default: 30
-                    description: CheckIntervalSeconds is how often to check for agent
-                      activity.
+                  completionTimeoutSeconds:
+                    default: 120
+                    description: |-
+                      CompletionTimeoutSeconds is how long to wait after the agent reports completion
+                      before forcibly killing the process (handles stuck MCP servers, etc.).
                     format: int32
-                    minimum: 10
+                    minimum: 30
                     type: integer
                   enabled:
+                    default: true
                     description: Enabled controls whether liveness monitoring is active.
                     type: boolean
                   gracePeriodSeconds:
@@ -186,19 +182,21 @@ spec:
                     format: int32
                     type: integer
                   timeoutSeconds:
-                    default: 1800
-                    description: TimeoutSeconds is how long (in seconds) to wait with
-                      no activity before killing the agent.
+                    default: 900
+                    description: TimeoutSeconds is how long to wait without activity
+                      before killing the agent.
                     format: int32
                     minimum: 60
                     type: integer
                 type: object
               network:
-                description: Network defines network configuration.
+                description: Network defines network isolation mode.
                 properties:
                   mode:
                     default: filtered
-                    description: 'Mode is the network mode: none, filtered, open.'
+                    description: |-
+                      Mode is the network isolation mode.
+                      none: deny all egress. filtered: allow git/npm/Maven/PyPI ports + DNS. open: unrestricted.
                     enum:
                     - none
                     - filtered
@@ -209,12 +207,12 @@ spec:
                 additionalProperties:
                   type: string
                 description: |-
-                  PodAnnotations are arbitrary annotations to add to the created Pod.
-                  Use this to integrate with annotation-based tools such as Vault/OpenBao
-                  Agent Injector, Istio, Linkerd, or Prometheus scraping.
+                  PodAnnotations are passed through to the Job pod template.
+                  Use this for annotation-based sidecar injection (Vault, Istio, Prometheus, etc.).
                 type: object
               resources:
-                description: Resources defines resource limits for the pod.
+                description: Resources defines CPU/memory limits and workspace disk
+                  quota.
                 properties:
                   cpu:
                     default: "4"
@@ -224,38 +222,69 @@ spec:
                     default: 8Gi
                     description: Memory limit (e.g., "8Gi").
                     type: string
+                  workspaceSizeLimit:
+                    default: 20Gi
+                    description: |-
+                      WorkspaceSizeLimit caps the emptyDir workspace volume (e.g., "20Gi").
+                      Prevents noisy-neighbour disk exhaustion on the node.
+                    type: string
                 type: object
               security:
-                description: Security defines security configuration.
+                description: Security defines the security profile and container hardening
+                  settings.
                 properties:
+                  nestedContainers:
+                    default: false
+                    description: |-
+                      NestedContainers allows Podman-in-pod (rootless containers inside the agent).
+                      Requires the namespace to have PSA policy "privileged" and explicit admission approval.
+                    type: boolean
                   profile:
                     default: standard
-                    description: 'Profile is the security profile: minimal, standard,
-                      strict, paranoid.'
+                    description: Profile is the security hardening level.
                     enum:
                     - minimal
                     - standard
                     - strict
                     - paranoid
                     type: string
+                  runAsGroup:
+                    default: 1000
+                    description: RunAsGroup sets the GID for the agent container.
+                    format: int64
+                    type: integer
+                  runAsUser:
+                    default: 1000
+                    description: RunAsUser sets the UID for the agent container.
+                    format: int64
+                    type: integer
+                  runtimeClass:
+                    description: |-
+                      RuntimeClass selects an alternative container runtime (e.g. gvisor, kata-containers).
+                      Typically used with the paranoid profile.
+                    type: string
                   serviceAccountName:
                     default: kapsis-agent
-                    description: ServiceAccountName for the pod.
+                    description: ServiceAccountName is the Kubernetes ServiceAccount
+                      to bind to the Job pod.
                     type: string
                 type: object
               task:
-                description: Task defines the task specification.
+                description: Task defines what the agent should do.
                 properties:
                   inline:
-                    description: Inline task description.
+                    description: Inline is a free-form task description passed as
+                      the KAPSIS_TASK environment variable.
                     type: string
                   specConfigMapRef:
-                    description: SpecConfigMapRef references a ConfigMap containing
-                      the task spec.
+                    description: |-
+                      SpecConfigMapRef references a ConfigMap containing a task spec file (e.g., spec.md).
+                      The file is mounted read-only at /task-spec.md inside the agent container.
                     properties:
                       key:
                         default: spec.md
-                        description: Key within the ConfigMap.
+                        description: Key within the ConfigMap. Defaults to "spec.md"
+                          if omitted.
                         type: string
                       name:
                         description: Name of the ConfigMap.
@@ -266,13 +295,47 @@ spec:
                 type: object
               ttl:
                 default: 3600
-                description: TTL is the time-to-live in seconds (pod killed after
-                  this).
-                format: int32
+                description: |-
+                  TTL is the maximum lifetime of the agent Job in seconds.
+                  The Job is killed when this deadline is exceeded.
+                format: int64
+                maximum: 86400
+                minimum: 1
                 type: integer
+              workspace:
+                description: Workspace defines the git repository to clone.
+                properties:
+                  git:
+                    description: Git defines the git repository configuration.
+                    properties:
+                      baseBranch:
+                        default: main
+                        description: BaseBranch is the source branch for new branches
+                          and the merge base.
+                        type: string
+                      branch:
+                        description: Branch to work on. Created from BaseBranch if
+                          it does not exist.
+                        type: string
+                      credentialSecretRef:
+                        description: |-
+                          CredentialSecretRef is the name of a Secret that contains a GIT_TOKEN key
+                          used for authenticated git operations.
+                        type: string
+                      push:
+                        default: false
+                        description: Push indicates whether to commit and push changes
+                          after the agent completes.
+                        type: boolean
+                      url:
+                        description: URL is the repository URL to clone.
+                        type: string
+                    required:
+                    - url
+                    type: object
+                type: object
             required:
             - agent
-            - image
             type: object
           status:
             description: AgentRequestStatus defines the observed state of AgentRequest.
@@ -281,11 +344,13 @@ spec:
                 description: CommitSha is the SHA of the commit created by the agent.
                 type: string
               completedAt:
-                description: CompletedAt is when the agent completed.
+                description: CompletedAt is when the agent container finished.
                 format: date-time
                 type: string
               conditions:
-                description: Conditions represent the current state of the AgentRequest.
+                description: |-
+                  Conditions represent the latest available observations of the AgentRequest state.
+                  Defined for future use; not populated in v1alpha1.
                 items:
                   description: Condition contains details for one aspect of the current
                     state of this API Resource.
@@ -345,45 +410,56 @@ spec:
                 - type
                 x-kubernetes-list-type: map
               error:
-                description: Error message if failed.
+                description: Error is a human-readable failure description (populated
+                  when phase=Failed).
                 type: string
               exitCode:
-                description: ExitCode is the container exit code.
+                description: ExitCode is the container exit code (populated when the
+                  agent completes).
                 format: int32
                 type: integer
               gist:
-                description: Gist is a short summary of current work.
+                description: Gist is a short natural-language summary of the agent's
+                  current work.
+                maxLength: 1024
                 type: string
-              gistUpdatedAt:
-                description: GistUpdatedAt is the timestamp of last gist update.
-                format: date-time
+              jobName:
+                description: JobName is the name of the batch/v1 Job created for this
+                  request.
                 type: string
               message:
-                description: Message is a human-readable status message.
+                description: Message is a human-readable status message from the agent
+                  or operator.
+                maxLength: 1024
                 type: string
               phase:
-                description: Phase is the current phase.
+                description: Phase is the current lifecycle phase.
                 type: string
               podName:
-                description: PodName is the name of the created Pod.
+                description: PodName is the name of the Job's pod (populated once
+                  the pod is scheduled).
                 type: string
               prUrl:
-                description: PrUrl is the URL of the PR created by the agent.
+                description: PrUrl is the URL of the pull/merge request created by
+                  the agent.
                 type: string
               progress:
-                description: Progress percentage (0-100).
+                description: Progress percentage (0–100) reported by the agent.
                 format: int32
                 maximum: 100
                 minimum: 0
                 type: integer
-              pushStatus:
-                description: 'PushStatus indicates push result: success, failed, skipped.'
+              pushFallbackCommand:
+                description: |-
+                  PushFallbackCommand is a ready-to-run git push command for manual recovery
+                  when the in-container push failed (typically due to missing credentials).
                 type: string
-              response:
-                description: Response is the agent response summary.
+              pushStatus:
+                description: 'PushStatus indicates the result of the post-agent git
+                  push: success, failed, or skipped.'
                 type: string
               startedAt:
-                description: StartedAt is when the agent started.
+                description: StartedAt is when the agent container started.
                 format: date-time
                 type: string
             type: object

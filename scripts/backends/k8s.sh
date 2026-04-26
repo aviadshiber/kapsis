@@ -142,27 +142,39 @@ backend_run() {
         sleep "$poll_interval"
     done
 
-    # Single kubectl call for final status fields (consolidated)
+    # Single kubectl call for all final status fields (consolidated)
     local final_status
     final_status=$(kubectl get agentrequest "$_K8S_CR_NAME" -n "$_K8S_NAMESPACE" \
-        -o jsonpath='{.status.exitCode}{"\t"}{.status.podName}' 2>/dev/null) || final_status=""
+        -o jsonpath='{.status.exitCode}{"\t"}{.status.jobName}{"\t"}{.status.podName}{"\t"}{.status.commitSha}{"\t"}{.status.pushStatus}{"\t"}{.status.prUrl}{"\t"}{.status.pushFallbackCommand}' \
+        2>/dev/null) || final_status=""
 
-    local exit_code_str pod_name
-    IFS=$'\t' read -r exit_code_str pod_name <<< "$final_status"
+    local exit_code_str job_name pod_name commit_sha push_status pr_url push_fallback
+    IFS=$'\t' read -r exit_code_str job_name pod_name commit_sha push_status pr_url push_fallback <<< "$final_status"
     _BACKEND_EXIT_CODE="${exit_code_str:-1}"
 
-    # Capture pod logs for error reporting
+    # Log job/pod names for observability
+    [[ -n "$job_name" ]] && log_debug "K8s backend: Job=$job_name Pod=${pod_name:-unknown}"
+
+    # Capture agent container logs for error reporting.
+    # Use -c agent to target the agent container specifically (pod also has status-sidecar).
     if [[ -n "$pod_name" ]]; then
-        kubectl logs "$pod_name" -n "$_K8S_NAMESPACE" > "$container_output" 2>&1 || true
+        kubectl logs -c agent "$pod_name" -n "$_K8S_NAMESPACE" > "$container_output" 2>&1 || true
     fi
 
-    # Retrieve audit files from pod (if audit was enabled)
-    if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" && -n "$pod_name" ]]; then
-        local audit_dir="${KAPSIS_AUDIT_DIR:-$HOME/.kapsis/audit}"
-        mkdir -p "$audit_dir"
-        kubectl cp "$_K8S_NAMESPACE/$pod_name:${CONTAINER_AUDIT_PATH}/." "$audit_dir/" 2>/dev/null || \
-            log_warn "Could not retrieve audit files from pod $pod_name"
+    # Audit events are streamed to stdout by the status-sidecar — no kubectl cp needed.
+    # Use: kubectl logs -c status-sidecar <podName> -n <ns>  to retrieve them.
+    # Log aggregators (ELK/Splunk) capture them automatically via the sidecar container.
+
+    # Surface push failure: emit the KAPSIS_PUSH_FALLBACK sentinel so the orchestrator
+    # can execute the push from the host where git credentials are available.
+    if [[ "${push_status:-}" == "failed" && -n "${push_fallback:-}" ]]; then
+        log_warn "K8s backend: git push failed — fallback command available"
+        echo "KAPSIS_PUSH_FALLBACK: $push_fallback"
     fi
+
+    # Log git outcome for observability
+    [[ -n "$commit_sha" ]] && log_info "K8s backend: commit=$commit_sha push_status=${push_status:-unknown}"
+    [[ -n "$pr_url" ]]     && log_info "K8s backend: PR=$pr_url"
 }
 
 # Get the exit code from the last backend_run()
@@ -174,7 +186,7 @@ backend_get_exit_code() {
 backend_cleanup() {
     [[ -n "${_K8S_CR_FILE:-}" && -f "$_K8S_CR_FILE" ]] && rm -f "$_K8S_CR_FILE"
 
-    # Delete the CR (cascades to Pod via ownerReferences)
+    # Delete the CR (cascades to Job via ownerReferences)
     if [[ -n "${_K8S_CR_NAME:-}" ]]; then
         kubectl delete agentrequest "$_K8S_CR_NAME" -n "$_K8S_NAMESPACE" --ignore-not-found 2>/dev/null || true
     fi

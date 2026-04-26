@@ -21,9 +21,11 @@ import (
 	"fmt"
 	"time"
 
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/util/retry"
@@ -35,28 +37,39 @@ import (
 )
 
 const (
-	// requeueInterval is how often we re-check running pods for status updates.
-	requeueInterval = 10 * time.Second
+	// watchdogRequeue is the safety-net re-check interval for running Jobs.
+	// The primary driver is watch events from Owns(&batchv1.Job{}) and
+	// Owns(&corev1.Pod{}); this requeue is only a watchdog.
+	watchdogRequeue = 5 * time.Minute
 )
 
 // AgentRequestReconciler reconciles an AgentRequest object by creating and
-// monitoring a Pod that runs the requested agent, then bridging Pod status
-// back to the CR status.
+// monitoring a batch/v1 Job that runs the requested agent, then bridging Job
+// and Pod status back to the CR status subresource.
 type AgentRequestReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// StatusSidecarImage is the container image for the status/audit sidecar.
+	// Defaults to DefaultStatusSidecarImage if empty.
+	// Set via KAPSIS_STATUS_SIDECAR_IMAGE environment variable in the operator Deployment.
+	StatusSidecarImage string
 }
 
 // +kubebuilder:rbac:groups=kapsis.aviadshiber.github.io,resources=agentrequests,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=kapsis.aviadshiber.github.io,resources=agentrequests/status,verbs=get;update;patch
 // +kubebuilder:rbac:groups=kapsis.aviadshiber.github.io,resources=agentrequests/finalizers,verbs=update
-// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch;create;delete
-// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
+// +kubebuilder:rbac:groups="",resources=pods,verbs=get;list;watch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=networkpolicies,verbs=get;list;watch;create;update;patch
 
-// Reconcile implements the three-phase reconciliation loop for AgentRequest:
-//  1. Pending: CR just created, no pod yet. Create the pod and move to Initializing.
-//  2. Running: Pod exists and is active. Bridge pod status/annotations to CR status.
-//  3. Complete/Failed: Pod finished. Set final status and stop requeueing.
+// Reconcile implements the reconciliation loop for AgentRequest.
+//
+// Phase lifecycle:
+//  1. Pending  → create the namespace-level NetworkPolicy + batch/v1 Job
+//  2. Initializing → Job pod not yet running; driven by Job watch events
+//  3. Running  → pod running; sidecar patches annotations; 5-min watchdog safety net
+//  4. Complete/Failed → Job terminal; set final status; stop requeueing
 func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
@@ -64,143 +77,168 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	var ar kapsisv1alpha1.AgentRequest
 	if err := r.Get(ctx, req.NamespacedName, &ar); err != nil {
 		if apierrors.IsNotFound(err) {
-			// CR was deleted; nothing to do.
 			log.Info("AgentRequest not found, likely deleted")
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, fmt.Errorf("fetching AgentRequest: %w", err)
 	}
 
-	// Terminal phases: no further reconciliation needed.
+	// Terminal phases need no further reconciliation.
 	if ar.Status.Phase == kapsisv1alpha1.PhaseComplete || ar.Status.Phase == kapsisv1alpha1.PhaseFailed {
 		return ctrl.Result{}, nil
 	}
 
-	// Look up the owned pod.
-	podName := PodName(&ar)
-	var pod corev1.Pod
-	podExists := true
-	if err := r.Get(ctx, types.NamespacedName{Name: podName, Namespace: ar.Namespace}, &pod); err != nil {
+	// Look up the owned Job.
+	jobName := JobName(&ar)
+	var job batchv1.Job
+	jobExists := true
+	if err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: ar.Namespace}, &job); err != nil {
 		if apierrors.IsNotFound(err) {
-			podExists = false
+			jobExists = false
 		} else {
-			return ctrl.Result{}, fmt.Errorf("fetching pod %s: %w", podName, err)
+			return ctrl.Result{}, fmt.Errorf("fetching Job %s: %w", jobName, err)
 		}
 	}
 
-	// Phase 1: No pod yet, create one.
-	if !podExists {
+	if !jobExists {
 		return r.reconcilePending(ctx, &ar)
 	}
 
-	// Phase 2 & 3: Pod exists, bridge its status.
-	return r.reconcileWithPod(ctx, &ar, &pod)
+	return r.reconcileWithJob(ctx, &ar, &job)
 }
 
-// reconcilePending handles the initial state: sets the CR to Pending, builds
-// and creates the Pod, then transitions to Initializing.
+// reconcilePending handles the initial state: ensures the namespace NetworkPolicy
+// exists, creates the agent Job, and transitions to Initializing.
 func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, ar *kapsisv1alpha1.AgentRequest) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
 
-	// Build the pod spec from the CR.
-	pod, err := BuildPod(ar)
-	if err != nil {
-		return ctrl.Result{}, fmt.Errorf("building pod spec: %w", err)
+	// Ensure the namespace-level NetworkPolicy exists (idempotent: create or skip).
+	if ShouldCreateNetworkPolicy(ar) {
+		if err := r.ensureNetworkPolicy(ctx, ar); err != nil {
+			return ctrl.Result{}, fmt.Errorf("ensuring network policy: %w", err)
+		}
 	}
 
-	// Set the CR as the owner so the pod is garbage-collected with it.
-	if err := ctrl.SetControllerReference(ar, pod, r.Scheme); err != nil {
+	// Build the Job spec.
+	job, err := BuildJob(ar, r.StatusSidecarImage)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("building Job spec: %w", err)
+	}
+
+	// Set the CR as the owner so the Job is garbage-collected when the CR is deleted.
+	if err := ctrl.SetControllerReference(ar, job, r.Scheme); err != nil {
 		return ctrl.Result{}, fmt.Errorf("setting owner reference: %w", err)
 	}
 
-	// Create the pod in the cluster.
-	if err := r.Create(ctx, pod); err != nil {
+	if err := r.Create(ctx, job); err != nil {
 		if apierrors.IsAlreadyExists(err) {
-			// Race condition: pod was created between our Get and Create.
-			// Requeue to pick it up on the next reconcile.
+			// Race: Job created between our Get and Create; pick it up on next reconcile.
 			return ctrl.Result{Requeue: true}, nil
 		}
-		return ctrl.Result{}, fmt.Errorf("creating pod: %w", err)
+		return ctrl.Result{}, fmt.Errorf("creating Job: %w", err)
 	}
 
-	log.Info("Created agent pod", "pod", pod.Name)
+	log.Info("Created agent Job", "job", job.Name)
 
-	// Create NetworkPolicy for network isolation (skip for "open" mode).
-	if ShouldCreateNetworkPolicy(ar) {
-		np := BuildNetworkPolicy(ar)
-		if err := ctrl.SetControllerReference(ar, np, r.Scheme); err != nil {
-			return ctrl.Result{}, fmt.Errorf("setting network policy owner reference: %w", err)
-		}
-		if err := r.Create(ctx, np); err != nil {
-			if apierrors.IsAlreadyExists(err) {
-				log.V(1).Info("NetworkPolicy already exists", "name", np.Name)
-			} else {
-				return ctrl.Result{}, fmt.Errorf("creating network policy: %w", err)
-			}
-		} else {
-			log.Info("Created network policy", "name", np.Name, "mode", networkMode(ar))
-		}
-	}
-
-	// Update CR status to Initializing.
+	// Transition CR to Initializing.
 	nn := types.NamespacedName{Name: ar.Name, Namespace: ar.Namespace}
-	podNameStr := pod.Name
+	jobNameStr := job.Name
 	if err := r.updateStatusWithRetry(ctx, nn, func(fresh *kapsisv1alpha1.AgentRequest) {
 		fresh.Status.Phase = kapsisv1alpha1.PhaseInitializing
-		fresh.Status.PodName = podNameStr
-		fresh.Status.Message = "Pod created, waiting for container start"
+		fresh.Status.JobName = jobNameStr
+		fresh.Status.Message = "Job created, waiting for pod to start"
 		now := metav1.Now()
 		fresh.Status.StartedAt = &now
 	}); err != nil {
 		return ctrl.Result{}, fmt.Errorf("updating status to Initializing: %w", err)
 	}
 
-	return ctrl.Result{RequeueAfter: requeueInterval}, nil
+	// Watch events from Owns(&batchv1.Job{}) drive subsequent reconciles.
+	// Small requeue here in case the Job watch event is delayed.
+	return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 }
 
-// reconcileWithPod handles ongoing and terminal states by bridging pod status
-// to the CR. Running pods are requeued; completed/failed pods set final status.
-func (r *AgentRequestReconciler) reconcileWithPod(ctx context.Context, ar *kapsisv1alpha1.AgentRequest, pod *corev1.Pod) (ctrl.Result, error) {
+// ensureNetworkPolicy creates the namespace-level NetworkPolicy if it does not exist.
+// Unlike the old per-agent policy, this policy applies to ALL kapsis-agent pods in
+// the namespace via a label selector, so it is created once and reused.
+func (r *AgentRequestReconciler) ensureNetworkPolicy(ctx context.Context, ar *kapsisv1alpha1.AgentRequest) error {
 	log := logf.FromContext(ctx)
 
-	// Bridge status from the pod.
-	bridged := BridgeStatus(pod)
+	np := BuildNetworkPolicy(ar)
+	if np == nil {
+		return nil
+	}
 
-	// Update CR status with retry on conflict.
+	// Namespace-level policy is NOT owned by any single AgentRequest — it must
+	// outlive individual runs. Do not set a controller reference here.
+	if err := r.Create(ctx, np); err != nil {
+		if apierrors.IsAlreadyExists(err) {
+			log.V(1).Info("NetworkPolicy already exists, reusing", "name", np.Name)
+			return nil
+		}
+		return fmt.Errorf("creating NetworkPolicy %s: %w", np.Name, err)
+	}
+
+	log.Info("Created namespace NetworkPolicy", "name", np.Name, "mode", networkMode(ar))
+	return nil
+}
+
+// reconcileWithJob handles ongoing and terminal states by bridging Job and Pod
+// status back to the CR.
+func (r *AgentRequestReconciler) reconcileWithJob(ctx context.Context, ar *kapsisv1alpha1.AgentRequest, job *batchv1.Job) (ctrl.Result, error) {
+	log := logf.FromContext(ctx)
+
+	// Derive phase from the Job's conditions.
+	bridged := BridgeStatusFromJob(job)
+
+	// Look up the Job's pod to overlay real-time annotation-based status.
+	pod, err := r.findJobPod(ctx, job)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("finding job pod: %w", err)
+	}
+	if pod != nil {
+		BridgeStatusFromPod(pod, &bridged)
+	}
+
+	// Apply the bridged status to the CR with conflict retry.
 	nn := types.NamespacedName{Name: ar.Name, Namespace: ar.Namespace}
-	prevStartedAt := ar.Status.StartedAt
 	if err := r.updateStatusWithRetry(ctx, nn, func(fresh *kapsisv1alpha1.AgentRequest) {
+		// Phase: always accept the bridged phase (authoritative from Job conditions).
 		fresh.Status.Phase = bridged.Phase
-		fresh.Status.PodName = bridged.PodName
+		fresh.Status.JobName = bridged.JobName
+		if bridged.PodName != "" {
+			fresh.Status.PodName = bridged.PodName
+		}
+
+		// Real-time fields from pod annotations.
 		fresh.Status.Progress = bridged.Progress
 		fresh.Status.Message = bridged.Message
-		// Only update GistUpdatedAt when gist content actually changes.
-		if bridged.Gist != "" && bridged.Gist != fresh.Status.Gist {
-			now := metav1.Now()
-			fresh.Status.GistUpdatedAt = &now
-		}
 		fresh.Status.Gist = bridged.Gist
-		fresh.Status.ExitCode = bridged.ExitCode
 		fresh.Status.CommitSha = bridged.CommitSha
 		fresh.Status.PushStatus = bridged.PushStatus
 		fresh.Status.PrUrl = bridged.PrUrl
+		fresh.Status.PushFallbackCommand = bridged.PushFallbackCommand
+
+		if bridged.ExitCode != nil {
+			fresh.Status.ExitCode = bridged.ExitCode
+		}
 		if bridged.StartedAt != nil {
 			fresh.Status.StartedAt = bridged.StartedAt
-		} else if fresh.Status.StartedAt == nil {
-			fresh.Status.StartedAt = prevStartedAt
 		}
 		if bridged.CompletedAt != nil {
 			fresh.Status.CompletedAt = bridged.CompletedAt
 		}
 
-		// Set error message for failed pods.
-		if fresh.Status.Phase == kapsisv1alpha1.PhaseFailed {
-			fresh.Status.Error = terminationMessage(pod)
-			if fresh.Status.Message == "" {
-				fresh.Status.Message = "Agent failed"
+		// Set human-readable messages for terminal phases.
+		switch fresh.Status.Phase {
+		case kapsisv1alpha1.PhaseFailed:
+			if fresh.Status.Error == "" {
+				fresh.Status.Error = jobFailureMessage(job)
 			}
-		}
-		if fresh.Status.Phase == kapsisv1alpha1.PhaseComplete {
+			if fresh.Status.Message == "" {
+				fresh.Status.Message = "Agent Job failed"
+			}
+		case kapsisv1alpha1.PhaseComplete:
 			if fresh.Status.Message == "" {
 				fresh.Status.Message = "Agent completed successfully"
 			}
@@ -209,20 +247,39 @@ func (r *AgentRequestReconciler) reconcileWithPod(ctx context.Context, ar *kapsi
 		return ctrl.Result{}, fmt.Errorf("updating CR status: %w", err)
 	}
 
-	// Terminal: no requeue.
+	// Terminal: stop requeueing.
 	if bridged.Phase == kapsisv1alpha1.PhaseComplete || bridged.Phase == kapsisv1alpha1.PhaseFailed {
-		log.Info("Agent finished", "phase", bridged.Phase, "exitCode", bridged.ExitCode)
+		log.Info("Agent Job finished", "phase", bridged.Phase, "exitCode", bridged.ExitCode)
 		return ctrl.Result{}, nil
 	}
 
-	// Still running: requeue to poll for updates.
-	return ctrl.Result{RequeueAfter: requeueInterval}, nil
+	// Non-terminal: rely on watch events; requeue only as a safety watchdog.
+	return ctrl.Result{RequeueAfter: watchdogRequeue}, nil
 }
 
-// updateStatusWithRetry wraps a status update with conflict retry.
-// On conflict, it re-fetches the CR and reapplies the mutator function.
+// findJobPod returns the first pod owned by the given Job, or nil if not yet scheduled.
+func (r *AgentRequestReconciler) findJobPod(ctx context.Context, job *batchv1.Job) (*corev1.Pod, error) {
+	var podList corev1.PodList
+	selector := labels.SelectorFromSet(map[string]string{
+		"batch.kubernetes.io/job-name": job.Name,
+	})
+	if err := r.List(ctx, &podList,
+		client.InNamespace(job.Namespace),
+		client.MatchingLabelsSelector{Selector: selector},
+	); err != nil {
+		return nil, fmt.Errorf("listing pods for job %s: %w", job.Name, err)
+	}
+	if len(podList.Items) == 0 {
+		return nil, nil
+	}
+	return &podList.Items[0], nil
+}
+
+// updateStatusWithRetry wraps a status update with optimistic-concurrency retry.
+// On conflict it re-fetches the CR and re-applies the mutator.
 func (r *AgentRequestReconciler) updateStatusWithRetry(
-	ctx context.Context, nn types.NamespacedName,
+	ctx context.Context,
+	nn types.NamespacedName,
 	mutate func(*kapsisv1alpha1.AgentRequest),
 ) error {
 	return retry.RetryOnConflict(retry.DefaultRetry, func() error {
@@ -235,26 +292,31 @@ func (r *AgentRequestReconciler) updateStatusWithRetry(
 	})
 }
 
-// terminationMessage extracts the termination message from the agent container,
-// falling back to a generic message.
-func terminationMessage(pod *corev1.Pod) string {
-	for _, cs := range pod.Status.ContainerStatuses {
-		if cs.Name != AgentContainerName {
-			continue
-		}
-		if cs.State.Terminated != nil && cs.State.Terminated.Message != "" {
-			return cs.State.Terminated.Message
+// jobFailureMessage extracts a human-readable failure reason from the Job.
+func jobFailureMessage(job *batchv1.Job) string {
+	for _, cond := range job.Status.Conditions {
+		if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
+			if cond.Message != "" {
+				return cond.Message
+			}
+			if cond.Reason != "" {
+				return cond.Reason
+			}
 		}
 	}
-	return "Pod failed without termination message"
+	return "Job failed without condition message"
 }
 
-// SetupWithManager sets up the controller with the Manager.
-// It watches AgentRequest resources and their owned Pods so that pod status
-// changes automatically trigger reconciliation.
+// SetupWithManager registers the controller with the Manager.
+// It watches AgentRequest resources plus their owned Jobs and Pods so that
+// status changes trigger reconciliation without constant polling.
 func (r *AgentRequestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kapsisv1alpha1.AgentRequest{}).
+		Owns(&batchv1.Job{}).
+		// Pod watch events drive real-time annotation bridging.
+		// NOTE: We use Owns here because the Job's pod is transitively owned
+		// by the AgentRequest via the Job owner reference chain.
 		Owns(&corev1.Pod{}).
 		Named("agentrequest").
 		Complete(r)
