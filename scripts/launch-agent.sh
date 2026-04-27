@@ -761,6 +761,9 @@ parse_config() {
         AGENT_WORKDIR=$(yq -r '.agent.workdir // "/workspace"' "$CONFIG_FILE")
         # Gist instruction injection (default: false for safe rollout)
         INJECT_GIST=$(yq -r '.agent.inject_gist // "false"' "$CONFIG_FILE")
+        # LLM gist upgrade layer (default: false — adds per-tool Haiku API call)
+        GIST_LLM=$(yq -r '.agent.gist_llm // "false"' "$CONFIG_FILE")
+        GIST_LLM_INTERVAL=$(yq -r '.agent.gist_llm_interval // "60"' "$CONFIG_FILE")
         RESOURCE_MEMORY=$(yq -r '.resources.memory // "8g"' "$CONFIG_FILE")
         RESOURCE_CPUS=$(yq -r '.resources.cpus // "4"' "$CONFIG_FILE")
         SANDBOX_UPPER_BASE=$(yq -r '.sandbox.upper_dir_base // "~/.ai-sandboxes"' "$CONFIG_FILE")
@@ -1776,6 +1779,8 @@ generate_env_vars() {
     ENV_VARS+=("-e" "KAPSIS_STATUS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_STATUS_BRANCH=${BRANCH:-}")
     ENV_VARS+=("-e" "KAPSIS_INJECT_GIST=${INJECT_GIST:-false}")
+    ENV_VARS+=("-e" "KAPSIS_GIST_LLM=${GIST_LLM:-false}")
+    ENV_VARS+=("-e" "KAPSIS_GIST_LLM_INTERVAL=${GIST_LLM_INTERVAL:-60}")
 
     # Audit environment variables
     if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" ]]; then
