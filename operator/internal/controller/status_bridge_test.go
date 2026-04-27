@@ -18,6 +18,7 @@ package controller
 
 import (
 	"testing"
+	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -25,6 +26,33 @@ import (
 
 	kapsisv1alpha1 "github.com/aviadshiber/kapsis/operator/api/v1alpha1"
 )
+
+// podWithPhase returns a minimal Pod with the given Kubernetes phase and an
+// agent container status slot populated (terminated/running per state).
+func podWithPhase(phase corev1.PodPhase, state string, exitCode int32) *corev1.Pod {
+	started := metav1.NewTime(time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC))
+	finished := metav1.NewTime(time.Date(2026, 4, 24, 12, 5, 0, 0, time.UTC))
+
+	cs := corev1.ContainerStatus{Name: AgentContainerName}
+	switch state {
+	case "running":
+		cs.State.Running = &corev1.ContainerStateRunning{StartedAt: started}
+	case "terminated":
+		cs.State.Terminated = &corev1.ContainerStateTerminated{
+			StartedAt:  started,
+			FinishedAt: finished,
+			ExitCode:   exitCode,
+		}
+	}
+
+	return &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: "agent-pod", Namespace: "default"},
+		Status: corev1.PodStatus{
+			Phase:             phase,
+			ContainerStatuses: []corev1.ContainerStatus{cs},
+		},
+	}
+}
 
 func TestBridgeStatusFromJob_Complete(t *testing.T) {
 	job := &batchv1.Job{
@@ -286,5 +314,163 @@ func TestBridgeStatusFromPod_NoOverwritePhase(t *testing.T) {
 
 	if status.Phase != kapsisv1alpha1.PhaseRunning {
 		t.Errorf("Phase = %q, want %q (non-PostProcessing annotation should be ignored)", status.Phase, kapsisv1alpha1.PhaseRunning)
+	}
+}
+
+//===============================================================================
+// toAgentPhase (helper unit tests)
+//===============================================================================
+
+func TestToAgentPhase_KnownValuesRoundTrip(t *testing.T) {
+	cases := []kapsisv1alpha1.AgentRequestPhase{
+		kapsisv1alpha1.PhasePending,
+		kapsisv1alpha1.PhaseInitializing,
+		kapsisv1alpha1.PhaseRunning,
+		kapsisv1alpha1.PhasePostProcessing,
+		kapsisv1alpha1.PhaseComplete,
+		kapsisv1alpha1.PhaseFailed,
+	}
+	for _, want := range cases {
+		if got := toAgentPhase(string(want)); got != want {
+			t.Errorf("toAgentPhase(%q) = %q, want %q", want, got, want)
+		}
+	}
+}
+
+func TestToAgentPhase_UnknownFallsBackToRunning(t *testing.T) {
+	if got := toAgentPhase("NotAPhase"); got != kapsisv1alpha1.PhaseRunning {
+		t.Errorf("unknown → want Running, got %q", got)
+	}
+}
+
+func TestToAgentPhase_EmptyFallsBackToRunning(t *testing.T) {
+	if got := toAgentPhase(""); got != kapsisv1alpha1.PhaseRunning {
+		t.Errorf("empty → want Running, got %q", got)
+	}
+}
+
+//===============================================================================
+// applyAnnotations (helper unit tests)
+//===============================================================================
+
+func TestApplyAnnotations_AllFieldsMapped(t *testing.T) {
+	pod := podWithPhase(corev1.PodSucceeded, "terminated", 0)
+	pod.Annotations = map[string]string{
+		AnnotationGist:            "implementing auth",
+		AnnotationMessage:         "all green",
+		AnnotationProgress:        "87",
+		AnnotationCommitSha:       "deadbeef",
+		AnnotationPush:            "success",
+		AnnotationPrURL:           "https://github.com/o/r/pull/1",
+		AnnotationPushFallbackCmd: "git push -u origin feat",
+	}
+
+	status := kapsisv1alpha1.AgentRequestStatus{}
+	applyAnnotations(pod, &status)
+
+	if status.Gist != "implementing auth" {
+		t.Errorf("Gist = %q", status.Gist)
+	}
+	if status.Message != "all green" {
+		t.Errorf("Message = %q", status.Message)
+	}
+	if status.Progress != 87 {
+		t.Errorf("Progress = %d, want 87", status.Progress)
+	}
+	if status.CommitSha != "deadbeef" {
+		t.Errorf("CommitSha = %q", status.CommitSha)
+	}
+	if status.PushStatus != "success" {
+		t.Errorf("PushStatus = %q", status.PushStatus)
+	}
+	if status.PrUrl != "https://github.com/o/r/pull/1" {
+		t.Errorf("PrUrl = %q", status.PrUrl)
+	}
+	if status.PushFallbackCommand != "git push -u origin feat" {
+		t.Errorf("PushFallbackCommand = %q", status.PushFallbackCommand)
+	}
+}
+
+func TestApplyAnnotations_MalformedProgressLeavesZero(t *testing.T) {
+	pod := podWithPhase(corev1.PodRunning, "running", 0)
+	pod.Annotations = map[string]string{AnnotationProgress: "not-a-number"}
+
+	status := kapsisv1alpha1.AgentRequestStatus{}
+	applyAnnotations(pod, &status)
+
+	if status.Progress != 0 {
+		t.Errorf("malformed progress should remain 0, got %d", status.Progress)
+	}
+}
+
+func TestApplyAnnotations_NilMapIsSafe(t *testing.T) {
+	pod := podWithPhase(corev1.PodRunning, "running", 0)
+	pod.Annotations = nil
+
+	status := kapsisv1alpha1.AgentRequestStatus{}
+	applyAnnotations(pod, &status) // must not panic
+	if status.Message != "" || status.Gist != "" {
+		t.Errorf("nil annotations should leave status untouched")
+	}
+}
+
+//===============================================================================
+// applyContainerState (helper unit tests)
+//===============================================================================
+
+func TestApplyContainerState_RunningPopulatesStartedAt(t *testing.T) {
+	pod := podWithPhase(corev1.PodRunning, "running", 0)
+
+	status := kapsisv1alpha1.AgentRequestStatus{}
+	applyContainerState(pod, &status)
+
+	if status.StartedAt == nil {
+		t.Fatal("StartedAt must be set for running container")
+	}
+	if status.CompletedAt != nil {
+		t.Errorf("CompletedAt must be nil for running container")
+	}
+}
+
+func TestApplyContainerState_TerminatedPopulatesBoth(t *testing.T) {
+	pod := podWithPhase(corev1.PodSucceeded, "terminated", 0)
+
+	status := kapsisv1alpha1.AgentRequestStatus{}
+	applyContainerState(pod, &status)
+
+	if status.StartedAt == nil || status.CompletedAt == nil {
+		t.Fatal("terminated container must populate both timestamps")
+	}
+	if !status.CompletedAt.After(status.StartedAt.Time) {
+		t.Errorf("CompletedAt must be after StartedAt")
+	}
+}
+
+func TestApplyContainerState_IgnoresSidecarTermination(t *testing.T) {
+	// A terminated sidecar container must not leak exit code into status.
+	pod := podWithPhase(corev1.PodRunning, "", 0)
+	pod.Status.ContainerStatuses = append(
+		[]corev1.ContainerStatus{{
+			Name: "status-sidecar",
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				ExitCode: 99,
+			}},
+		}},
+		pod.Status.ContainerStatuses...,
+	)
+	// Agent container is running (no exit code).
+	for i, cs := range pod.Status.ContainerStatuses {
+		if cs.Name == AgentContainerName {
+			pod.Status.ContainerStatuses[i].State = corev1.ContainerState{
+				Running: &corev1.ContainerStateRunning{},
+			}
+		}
+	}
+
+	status := kapsisv1alpha1.AgentRequestStatus{}
+	applyContainerState(pod, &status)
+
+	if status.ExitCode != nil {
+		t.Errorf("sidecar termination must not set ExitCode, got %d", *status.ExitCode)
 	}
 }
