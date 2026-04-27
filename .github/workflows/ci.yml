@@ -318,8 +318,11 @@ jobs:
       - name: Generate cache key
         id: cache-key
         run: |
-          # Cache key based on Containerfile, build script, and runner architecture
-          echo "key=kapsis-image-${{ runner.arch }}-${{ hashFiles('Containerfile', 'scripts/build-image.sh', 'scripts/entrypoint.sh', 'scripts/lib/**') }}" >> $GITHUB_OUTPUT
+          # Hash only files actually COPY'd into the container (avoids cache
+          # invalidation when non-container scripts like podman-health.sh change)
+          readarray -t copied < <(grep '^COPY' Containerfile | awk '{print $2}' | grep -v '^--')
+          hash=$(sha256sum Containerfile "${copied[@]}" scripts/build-image.sh 2>/dev/null | sha256sum | cut -d' ' -f1)
+          echo "key=kapsis-image-${{ runner.arch }}-${hash}" >> $GITHUB_OUTPUT
 
       - name: Restore cached container image
         id: cache-restore
@@ -337,7 +340,21 @@ jobs:
             echo "Cached image loaded successfully"
           else
             echo "No cache found, building fresh image..."
-            ./scripts/build-image.sh --name kapsis-test --tag ci
+            # Retry up to 2 times on transient network failures (base image pull)
+            for attempt in 1 2; do
+              echo "Build attempt ${attempt} of 2..."
+              if ./scripts/build-image.sh --name kapsis-test --tag ci; then
+                echo "Build succeeded on attempt ${attempt}"
+                break
+              fi
+              if [[ ${attempt} -lt 2 ]]; then
+                echo "Build failed on attempt ${attempt}, retrying in 15s..."
+                sleep 15
+              else
+                echo "Build failed after ${attempt} attempts"
+                exit 1
+              fi
+            done
           fi
         timeout-minutes: 30
 
