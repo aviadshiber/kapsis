@@ -153,6 +153,19 @@ agent:
   # Default: false (opt-in for safe rollout)
   inject_gist: false
 
+  # Enable LLM-based gist upgrade (requires inject_gist: true)
+  # When true, uses claude-haiku to generate a richer activity summary after each tool call.
+  # Runs asynchronously (hook exits immediately; LLM writes gist.txt in background).
+  # Throttled to one LLM call per gist_llm_interval seconds; git commit and Write tool
+  # calls always bypass the throttle (high-signal events).
+  # Default: false (opt-in — adds Haiku API call per throttle window)
+  gist_llm: false
+
+  # Throttle interval for LLM gist upgrade (seconds between LLM calls)
+  # High-signal tool calls (git commit, Write) always bypass this interval.
+  # Default: 60
+  gist_llm_interval: 60
+
 #===============================================================================
 # FILESYSTEM MOUNTS
 #===============================================================================

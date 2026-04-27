@@ -336,6 +336,28 @@ validate_launch_config() {
         fi
     fi
 
+    # Validate agent.gist_llm if present
+    local gist_llm
+    gist_llm=$(yq -r '.agent.gist_llm // ""' "$config_file" 2>/dev/null)
+    if [[ -n "$gist_llm" && "$gist_llm" != "null" ]]; then
+        if [[ "$gist_llm" == "true" || "$gist_llm" == "false" ]]; then
+            log_pass "Valid agent.gist_llm: $gist_llm"
+        else
+            log_error "Invalid agent.gist_llm: $gist_llm (must be true/false)"
+        fi
+    fi
+
+    # Validate agent.gist_llm_interval if present
+    local gist_llm_interval
+    gist_llm_interval=$(yq -r '.agent.gist_llm_interval // ""' "$config_file" 2>/dev/null)
+    if [[ -n "$gist_llm_interval" && "$gist_llm_interval" != "null" ]]; then
+        if [[ "$gist_llm_interval" =~ ^[1-9][0-9]*$ ]]; then
+            log_pass "Valid agent.gist_llm_interval: $gist_llm_interval"
+        else
+            log_error "Invalid agent.gist_llm_interval: $gist_llm_interval (must be a positive integer)"
+        fi
+    fi
+
     # Validate lsp_servers if present
     validate_lsp_config "$config_file"
 
