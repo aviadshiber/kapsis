@@ -55,15 +55,12 @@ _yaml_escape() {
     printf '%s\n' "$s"
 }
 
-# Generate YAML env: block from a bash array variable name
+# Generate YAML env: block from a bash array variable name.
 # Arguments: $1 = name of the array variable (not the array itself)
 # Output: YAML lines for env entries
+# Uses nameref (bash 4.3+) — avoids eval and shell-injection risk.
 generate_env_yaml() {
-    # Indirect array expansion (bash 3.2 compatible; replaces nameref)
-    # Safety: callers only pass internal variable names, never user input
-    local _gen_arr_name="$1"
-    local _gen_arr
-    eval "_gen_arr=(\"\${${_gen_arr_name}[@]}\")"
+    local -n _gen_arr="$1"  # nameref — safe, no eval needed
     local entry name value
     for entry in "${_gen_arr[@]}"; do
         name="${entry%%=*}"
@@ -82,6 +79,7 @@ generate_env_yaml() {
 #   RESOURCE_CPUS, BRANCH, TASK_INLINE, NETWORK_MODE, SECURITY_PROFILE,
 #   AGENT_COMMAND (string — agent command from config)
 # Optional globals: INLINE_SPEC_FILE, GIT_REMOTE_URL, BASE_BRANCH, DO_PUSH
+# Optional: KAPSIS_K8S_GIT_CRED_SECRET (Secret name, defaults to kapsis-git-creds)
 # Optional argument: $1 = name of extra env vars array (entries as KEY=VALUE)
 generate_agent_request_cr() {
     local extra_env_var_name="${1:-}"
@@ -89,7 +87,7 @@ generate_agent_request_cr() {
     k8s_memory=$(translate_memory_to_k8s "${RESOURCE_MEMORY:-8g}")
     k8s_cpu=$(translate_cpus_to_k8s "${RESOURCE_CPUS:-4}")
 
-    # Build command array YAML from AGENT_COMMAND string
+    # Build command YAML from AGENT_COMMAND string
     local cmd_yaml=""
     if [[ -n "${AGENT_COMMAND:-}" ]]; then
         cmd_yaml="    command:
@@ -102,15 +100,14 @@ generate_agent_request_cr() {
 apiVersion: kapsis.aviadshiber.github.io/v1alpha1
 kind: AgentRequest
 metadata:
-  name: kapsis-${AGENT_ID}
+  name: "kapsis-$(_yaml_escape "$AGENT_ID")"
   labels:
-    # AGENT_CONFIG_TYPE set by parse_config() in launch-agent.sh; falls back to AGENT_NAME
-    kapsis.aviadshiber.github.io/agent-type: ${AGENT_CONFIG_TYPE:-${AGENT_NAME}}
-    kapsis.aviadshiber.github.io/agent-id: ${AGENT_ID}
+    kapsis.aviadshiber.github.io/agent-type: "$(_yaml_escape "${AGENT_CONFIG_TYPE:-${AGENT_NAME}}")"
+    kapsis.aviadshiber.github.io/agent-id: "$(_yaml_escape "$AGENT_ID")"
 spec:
-  image: ${IMAGE_NAME}
   agent:
-    type: ${AGENT_CONFIG_TYPE:-${AGENT_NAME}}
+    type: "$(_yaml_escape "${AGENT_CONFIG_TYPE:-${AGENT_NAME}}")"
+    image: $(_yaml_escape "$IMAGE_NAME")
 ${cmd_yaml}
     workdir: /workspace
   resources:
@@ -118,17 +115,20 @@ ${cmd_yaml}
     cpu: "${k8s_cpu}"
 YAML
 
-    # Git section (only if branch is set)
+    # Workspace / git section (only when a branch is configured)
     if [[ -n "${BRANCH:-}" ]]; then
+        local git_cred_secret="${KAPSIS_K8S_GIT_CRED_SECRET:-kapsis-git-creds}"
         cat <<YAML
-  git:
-    branch: "$(_yaml_escape "$BRANCH")"
-    baseBranch: "$(_yaml_escape "${BASE_BRANCH:-main}")"
-    push: ${DO_PUSH:-false}
+  workspace:
+    git:
+      branch: "$(_yaml_escape "$BRANCH")"
+      baseBranch: "$(_yaml_escape "${BASE_BRANCH:-main}")"
+      push: ${DO_PUSH:-false}
+      credentialSecretRef: "$(_yaml_escape "$git_cred_secret")"
 YAML
-        # Add repoUrl if available
+        # Add git URL if available
         if [[ -n "${GIT_REMOTE_URL:-}" ]]; then
-            echo "    repoUrl: \"$(_yaml_escape "$GIT_REMOTE_URL")\""
+            echo "      url: \"$(_yaml_escape "$GIT_REMOTE_URL")\""
         fi
     fi
 
@@ -140,41 +140,27 @@ YAML
 YAML
     fi
 
-    # Environment section
+    # Environment section — only vars the operator does not already inject.
+    # Removed: KAPSIS_BACKEND, KAPSIS_AGENT_ID, KAPSIS_AGENT_TYPE, KAPSIS_AUDIT_ENABLED
+    #   → operator injects these (appended last, always win).
+    # Removed: KAPSIS_STATUS_AGENT_ID (duplicate of operator-injected KAPSIS_AGENT_ID)
+    # Removed: KAPSIS_STATUS_BRANCH   (duplicate of operator-injected KAPSIS_BRANCH)
+    # Remaining vars are unique to shell-side context and not operator-injected.
+    # NOTE: The webhook blocks operator-reserved names; KAPSIS_STATUS_PROJECT and
+    # KAPSIS_INJECT_GIST are permitted because they are not in the operator reserved set.
     cat <<YAML
   environment:
     vars:
-      - name: KAPSIS_BACKEND
-        value: k8s
-      - name: KAPSIS_AGENT_ID
-        value: "${AGENT_ID}"
-      - name: KAPSIS_AGENT_TYPE
-        value: "${AGENT_NAME}"
-      - name: KAPSIS_STATUS_PROJECT
+      - name: "KAPSIS_STATUS_PROJECT"
         value: "$(_yaml_escape "${KAPSIS_STATUS_PROJECT:-}")"
-      - name: KAPSIS_STATUS_AGENT_ID
-        value: "${AGENT_ID}"
-      - name: KAPSIS_STATUS_BRANCH
-        value: "$(_yaml_escape "${BRANCH:-}")"
-      - name: KAPSIS_INJECT_GIST
+      - name: "KAPSIS_INJECT_GIST"
         value: "${INJECT_GIST:-false}"
 YAML
 
-    # Audit environment variables (if enabled)
-    if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" ]]; then
-        cat <<YAML
-      - name: KAPSIS_AUDIT_ENABLED
-        value: "true"
-      - name: KAPSIS_AUDIT_DIR
-        value: "${CONTAINER_AUDIT_PATH}"
-YAML
-    fi
-
     # Optional: additional env vars from caller
     if [[ -n "$extra_env_var_name" ]]; then
-        local _arr_size
-        eval "_arr_size=\${#${extra_env_var_name}[@]}"
-        if (( _arr_size > 0 )); then
+        local -n _extra_arr="$extra_env_var_name"  # nameref (bash 4.3+)
+        if (( ${#_extra_arr[@]} > 0 )); then
             generate_env_yaml "$extra_env_var_name"
         fi
     fi
@@ -184,18 +170,17 @@ YAML
         cat <<YAML
   liveness:
     enabled: true
-    timeoutSeconds: ${LIVENESS_TIMEOUT:-1800}
+    timeoutSeconds: ${LIVENESS_TIMEOUT:-900}
     gracePeriodSeconds: ${LIVENESS_GRACE_PERIOD:-300}
-    checkIntervalSeconds: ${LIVENESS_CHECK_INTERVAL:-30}
 YAML
     fi
 
-    # Network section
+    # Network and security
     cat <<YAML
   network:
-    mode: ${NETWORK_MODE:-filtered}
+    mode: "$(_yaml_escape "${NETWORK_MODE:-filtered}")"
   security:
-    profile: ${SECURITY_PROFILE:-standard}
+    profile: "$(_yaml_escape "${SECURITY_PROFILE:-standard}")"
     serviceAccountName: kapsis-agent
   ttl: 3600
 YAML

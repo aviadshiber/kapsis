@@ -1,3 +1,7 @@
+---
+# ClusterRoleBinding: allows the operator to watch AgentRequests cluster-wide.
+# This binding is cluster-scoped (no namespace) because the ClusterRole it
+# references grants cross-namespace CRD watch permissions.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
 metadata:
@@ -12,4 +16,24 @@ roleRef:
 subjects:
 - kind: ServiceAccount
   name: controller-manager
-  namespace: system
+  namespace: NAMESPACE
+---
+# RoleBinding: grants the operator namespace-scoped permissions (Jobs, Pods,
+# NetworkPolicies) in the watch namespace. Replace NAMESPACE before applying,
+# or use scripts/k8s-deploy.sh which substitutes it automatically.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: manager-namespace-rolebinding
+  namespace: NAMESPACE
+  labels:
+    app.kubernetes.io/name: kapsis-operator
+    app.kubernetes.io/managed-by: kustomize
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: manager-namespace-role
+subjects:
+- kind: ServiceAccount
+  name: controller-manager
+  namespace: NAMESPACE
