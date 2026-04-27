@@ -345,7 +345,6 @@ _recover_podman_ssh_tunnel() {
     local probe_timeout="${1:-10}"
     local max_retries="${2:-2}"
     local retry_delay="${3:-3}"
-    local machine="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
 
     # Validate inputs — cap at sane upper bounds
     if ! [[ "$max_retries" =~ ^[0-9]+$ ]] || (( max_retries > 5 )); then
