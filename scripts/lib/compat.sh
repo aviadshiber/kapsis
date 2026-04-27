@@ -328,6 +328,7 @@ _recover_podman_ssh_tunnel() {
     local probe_timeout="${1:-10}"
     local max_retries="${2:-2}"
     local retry_delay="${3:-3}"
+    local machine="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
 
     # Validate inputs — cap at sane upper bounds
     if ! [[ "$max_retries" =~ ^[0-9]+$ ]] || (( max_retries > 5 )); then
@@ -345,15 +346,14 @@ _recover_podman_ssh_tunnel() {
 
     # Tunnel is stale — attempt recovery via stop + start
     if [[ -n "$_KAPSIS_TIMEOUT_CMD" ]]; then
-        "$_KAPSIS_TIMEOUT_CMD" 30 podman machine stop podman-machine-default &>/dev/null || true
-        if ! "$_KAPSIS_TIMEOUT_CMD" 60 podman machine start podman-machine-default 2>/dev/null; then
-            # Log start failure for diagnosis (visible with KAPSIS_DEBUG=1)
-            declare -f log_debug &>/dev/null && log_debug "podman machine start failed during SSH recovery"
+        "$_KAPSIS_TIMEOUT_CMD" 30 podman machine stop "$machine" &>/dev/null || true
+        if ! "$_KAPSIS_TIMEOUT_CMD" 60 podman machine start "$machine" 2>/dev/null; then
+            declare -f log_warn &>/dev/null && log_warn "podman machine start failed for '$machine' during SSH tunnel recovery — run: podman machine stop && podman machine start $machine"
         fi
     else
-        podman machine stop podman-machine-default &>/dev/null || true
-        if ! podman machine start podman-machine-default 2>/dev/null; then
-            declare -f log_debug &>/dev/null && log_debug "podman machine start failed during SSH recovery"
+        podman machine stop "$machine" &>/dev/null || true
+        if ! podman machine start "$machine" 2>/dev/null; then
+            declare -f log_warn &>/dev/null && log_warn "podman machine start failed for '$machine' during SSH tunnel recovery — run: podman machine stop && podman machine start $machine"
         fi
     fi
 
