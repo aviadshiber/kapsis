@@ -27,6 +27,7 @@ declare -f log_debug   &>/dev/null || log_debug()   { [[ "${KAPSIS_DEBUG:-}" == 
 declare -f log_success &>/dev/null || log_success() { echo "[OK] $*"; }
 declare -f is_macos    &>/dev/null || is_macos()    { [[ "$(uname -s)" == "Darwin" ]]; }
 declare -f is_linux    &>/dev/null || is_linux()    { [[ "$(uname -s)" == "Linux" ]]; }
+declare -f _kill_vfkit_zombie &>/dev/null || _kill_vfkit_zombie() { pkill -9 -f "vfkit.*${1:-podman-machine-default}" &>/dev/null || true; sleep 3; }
 
 #-------------------------------------------------------------------------------
 # _vfs_timeout_cmd
@@ -229,11 +230,14 @@ _podman_machine_restart() {
     timeout_cmd="$(_vfs_timeout_cmd)"
 
     log_info "Restarting Podman VM '$machine' to recover virtio-fs"
+    local stop_ok=true
     if [[ -n "$timeout_cmd" ]]; then
-        "$timeout_cmd" 30 "$podman_bin" machine stop "$machine" &>/dev/null || true
+        "$timeout_cmd" 30 "$podman_bin" machine stop "$machine" &>/dev/null || stop_ok=false
+        [[ "$stop_ok" == "false" ]] && _kill_vfkit_zombie "$machine"
         "$timeout_cmd" 60 "$podman_bin" machine start "$machine" &>/dev/null || return 1
     else
-        "$podman_bin" machine stop "$machine" &>/dev/null || true
+        "$podman_bin" machine stop "$machine" &>/dev/null || stop_ok=false
+        [[ "$stop_ok" == "false" ]] && _kill_vfkit_zombie "$machine"
         "$podman_bin" machine start "$machine" &>/dev/null || return 1
     fi
     return 0
