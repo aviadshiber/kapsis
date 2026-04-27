@@ -140,6 +140,7 @@ test_probe_invokes_podman_run_with_bind_mount() {
     assert_contains "$argv" "run" "podman should be invoked as 'podman run ...'"
     assert_contains "$argv" "--rm" "probe container should be --rm"
     assert_contains "$argv" "/probe" "probe container should bind-mount /probe"
+    assert_contains "$argv" "--entrypoint" "probe should bypass image entrypoint via --entrypoint sh"
 }
 
 #===============================================================================

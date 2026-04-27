@@ -55,8 +55,10 @@ _vfs_timeout_cmd() {
 # probe_virtio_fs_health [probe_timeout] [probe_image]
 #
 # Verifies that the virtio-fs bind-mount transport is functional on macOS.
-# Spins up a busybox container with a host directory bind-mounted and tries
-# to write+unlink a probe file under `timeout`.
+# Spins up a minimal container (kapsis-sandbox if cached, busybox otherwise)
+# with a host directory bind-mounted and tries to write+unlink a probe file
+# under `timeout`. The image entrypoint is bypassed via --entrypoint sh so
+# the probe does not depend on Kapsis runtime setup (dnsmasq, capabilities).
 #
 # Args (optional):
 #   $1 - probe_timeout in seconds (default: KAPSIS_VFS_PROBE_TIMEOUT or 10)
