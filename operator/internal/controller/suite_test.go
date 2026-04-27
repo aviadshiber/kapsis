@@ -72,13 +72,15 @@ var _ = BeforeSuite(func() {
 	}
 
 	// Retrieve the first found binary directory to allow running tests from IDEs
-	if getFirstFoundEnvTestBinaryDir() != "" {
-		testEnv.BinaryAssetsDirectory = getFirstFoundEnvTestBinaryDir()
+	if binaryDir := getFirstFoundEnvTestBinaryDir(); binaryDir != "" {
+		testEnv.BinaryAssetsDirectory = binaryDir
 	}
 
 	// cfg is defined in this file globally.
 	cfg, err = testEnv.Start()
-	Expect(err).NotTo(HaveOccurred())
+	if err != nil {
+		Skip("envtest binaries not found — run 'make setup-envtest' to install them: " + err.Error())
+	}
 	Expect(cfg).NotTo(BeNil())
 
 	k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})

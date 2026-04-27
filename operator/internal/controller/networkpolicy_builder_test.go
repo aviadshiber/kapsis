@@ -17,6 +17,7 @@ limitations under the License.
 package controller
 
 import (
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
@@ -32,12 +33,31 @@ func crWithNetworkMode(mode string) *kapsisv1alpha1.AgentRequest {
 	return cr
 }
 
-func TestNetworkPolicyName(t *testing.T) {
-	cr := minimalCR()
-	got := NetworkPolicyName(cr)
-	want := cr.Name + "-netpol"
-	if got != want {
-		t.Errorf("NetworkPolicyName() = %q, want %q", got, want)
+// TestNetworkPolicyStableNames verifies the namespace-level stable policy names are used.
+// The old per-agent name ({cr.Name}-netpol) was replaced with stable names per mode.
+func TestNetworkPolicyStableNames(t *testing.T) {
+	tests := []struct {
+		mode string
+		want string
+	}{
+		{NetworkModeFiltered, networkPolicyNameFiltered},
+		{NetworkModeNone, networkPolicyNameNone},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			cr := crWithNetworkMode(tt.mode)
+			np := BuildNetworkPolicy(cr)
+			if np == nil {
+				t.Fatal("BuildNetworkPolicy() returned nil")
+			}
+			if np.Name != tt.want {
+				t.Errorf("Name = %q, want %q", np.Name, tt.want)
+			}
+			// The stable name must never contain the CR name (that would be a regression to per-agent names).
+			if strings.Contains(np.Name, cr.Name) {
+				t.Errorf("NetworkPolicy name %q contains CR name %q — should use stable namespace-level name", np.Name, cr.Name)
+			}
+		})
 	}
 }
 
@@ -77,29 +97,53 @@ func TestBuildNetworkPolicy_ModeNone_DenyAll(t *testing.T) {
 		t.Fatal("BuildNetworkPolicy(none) returned nil, expected deny-all policy")
 	}
 
-	if len(np.Spec.PolicyTypes) != 1 || np.Spec.PolicyTypes[0] != networkingv1.PolicyTypeEgress {
-		t.Errorf("PolicyTypes = %v, want [Egress]", np.Spec.PolicyTypes)
+	// Namespace-level policy: both Ingress and Egress must be listed so the cluster
+	// applies deny-all on both directions.
+	if len(np.Spec.PolicyTypes) != 2 {
+		t.Fatalf("PolicyTypes = %v, want [Ingress Egress]", np.Spec.PolicyTypes)
+	}
+	hasIngress := false
+	hasEgress := false
+	for _, pt := range np.Spec.PolicyTypes {
+		if pt == networkingv1.PolicyTypeIngress {
+			hasIngress = true
+		}
+		if pt == networkingv1.PolicyTypeEgress {
+			hasEgress = true
+		}
+	}
+	if !hasIngress || !hasEgress {
+		t.Errorf("PolicyTypes = %v, want both Ingress and Egress", np.Spec.PolicyTypes)
 	}
 
+	// Deny-all egress: no egress rules.
 	if len(np.Spec.Egress) != 0 {
 		t.Errorf("Egress rules = %d, want 0 (deny-all)", len(np.Spec.Egress))
 	}
 
-	// Verify labels.
-	if np.Labels[LabelAgentID] != cr.Name {
-		t.Errorf("label %s = %q, want %q", LabelAgentID, np.Labels[LabelAgentID], cr.Name)
+	// Deny-all ingress: empty slice (not nil).
+	if np.Spec.Ingress == nil {
+		t.Error("Ingress should be empty slice (not nil) to express deny-all ingress")
 	}
+	if len(np.Spec.Ingress) != 0 {
+		t.Errorf("Ingress rules = %d, want 0 (deny-all)", len(np.Spec.Ingress))
+	}
+
+	// Namespace-level selector: only managed-by label (not per-agent).
+	sel := np.Spec.PodSelector.MatchLabels
+	if sel[LabelManagedBy] != ManagedByValue {
+		t.Errorf("PodSelector %s = %q, want %q", LabelManagedBy, sel[LabelManagedBy], ManagedByValue)
+	}
+	if _, ok := sel[LabelAgentID]; ok {
+		t.Error("PodSelector must NOT contain agent-id label (namespace-level policy)")
+	}
+
+	// NetworkPolicy labels: only managed-by (no agent-id).
 	if np.Labels[LabelManagedBy] != ManagedByValue {
 		t.Errorf("label %s = %q, want %q", LabelManagedBy, np.Labels[LabelManagedBy], ManagedByValue)
 	}
-
-	// Verify pod selector.
-	sel := np.Spec.PodSelector.MatchLabels
-	if sel[LabelAgentID] != cr.Name {
-		t.Errorf("PodSelector %s = %q, want %q", LabelAgentID, sel[LabelAgentID], cr.Name)
-	}
-	if sel[LabelManagedBy] != ManagedByValue {
-		t.Errorf("PodSelector %s = %q, want %q", LabelManagedBy, sel[LabelManagedBy], ManagedByValue)
+	if _, ok := np.Labels[LabelAgentID]; ok {
+		t.Error("NetworkPolicy must NOT carry agent-id label (namespace-level policy)")
 	}
 }
 
@@ -109,6 +153,16 @@ func TestBuildNetworkPolicy_ModeFiltered_EgressRules(t *testing.T) {
 
 	if np == nil {
 		t.Fatal("BuildNetworkPolicy(filtered) returned nil")
+	}
+
+	// Filtered mode: both Ingress and Egress policy types.
+	if len(np.Spec.PolicyTypes) != 2 {
+		t.Fatalf("PolicyTypes = %v, want [Ingress Egress]", np.Spec.PolicyTypes)
+	}
+
+	// Deny-all ingress even in filtered mode.
+	if len(np.Spec.Ingress) != 0 {
+		t.Errorf("Ingress rules = %d, want 0 (deny-all ingress)", len(np.Spec.Ingress))
 	}
 
 	if len(np.Spec.Egress) != 2 {
@@ -148,11 +202,13 @@ func TestBuildNetworkPolicy_ModeOpen_ReturnsNil(t *testing.T) {
 	}
 }
 
-func TestBuildNetworkPolicy_LabelsMatchPod(t *testing.T) {
+// TestBuildNetworkPolicy_SelectorMatchesJobPodLabels verifies that the namespace-level
+// NetworkPolicy selector (LabelManagedBy) matches a label that every agent Job pod carries.
+func TestBuildNetworkPolicy_SelectorMatchesJobPodLabels(t *testing.T) {
 	cr := minimalCR()
-	pod, err := BuildPod(cr)
+	job, err := BuildJob(cr, "")
 	if err != nil {
-		t.Fatalf("BuildPod() error: %v", err)
+		t.Fatalf("BuildJob() error: %v", err)
 	}
 
 	np := BuildNetworkPolicy(cr)
@@ -160,13 +216,14 @@ func TestBuildNetworkPolicy_LabelsMatchPod(t *testing.T) {
 		t.Fatal("BuildNetworkPolicy() returned nil for default mode")
 	}
 
-	// The PodSelector labels must be a subset of the Pod labels.
+	// The PodSelector labels must be a subset of the Job's pod template labels.
+	podLabels := job.Spec.Template.Labels
 	for k, v := range np.Spec.PodSelector.MatchLabels {
-		podVal, ok := pod.Labels[k]
+		podVal, ok := podLabels[k]
 		if !ok {
-			t.Errorf("PodSelector label %q not found on Pod", k)
+			t.Errorf("PodSelector label %q not found on Job pod template", k)
 		} else if podVal != v {
-			t.Errorf("PodSelector label %s = %q, Pod label = %q", k, v, podVal)
+			t.Errorf("PodSelector label %s = %q, Job pod label = %q", k, v, podVal)
 		}
 	}
 }
@@ -180,6 +237,19 @@ func TestBuildNetworkPolicy_Namespace(t *testing.T) {
 	}
 	if np.Namespace != "custom-ns" {
 		t.Errorf("Namespace = %q, want %q", np.Namespace, "custom-ns")
+	}
+}
+
+// TestBuildNetworkPolicy_NoOwnerReference verifies the namespace-level policy
+// has no owner reference (it must outlive individual AgentRequest deletions).
+func TestBuildNetworkPolicy_NoOwnerReference(t *testing.T) {
+	cr := crWithNetworkMode(NetworkModeFiltered)
+	np := BuildNetworkPolicy(cr)
+	if np == nil {
+		t.Fatal("BuildNetworkPolicy() returned nil")
+	}
+	if len(np.OwnerReferences) != 0 {
+		t.Errorf("OwnerReferences = %d, want 0 (namespace-level policy must not be owned)", len(np.OwnerReferences))
 	}
 }
 

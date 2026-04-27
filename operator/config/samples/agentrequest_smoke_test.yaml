@@ -1,0 +1,58 @@
+---
+# Smoke-test AgentRequest — verify the operator is running correctly.
+#
+# Prerequisites:
+#   1. kapsis operator deployed (scripts/k8s-deploy.sh --namespace <ns>)
+#   2. kapsis-agent ServiceAccount exists in the target namespace
+#   3. kapsis-git-creds Secret exists (if git.push: true)
+#
+# Apply:
+#   kubectl apply -n <namespace> -f agentrequest_smoke_test.yaml
+#
+# Watch:
+#   kubectl get agentrequest smoke-test -n <namespace> -w
+#
+apiVersion: kapsis.aviadshiber.github.io/v1alpha1
+kind: AgentRequest
+metadata:
+  name: smoke-test
+  # Replace NAMESPACE with your actual namespace, or set it via:
+  #   kubectl apply -n <namespace> -f agentrequest_smoke_test.yaml
+  namespace: NAMESPACE
+spec:
+  agent:
+    type: claude-cli
+    image: ghcr.io/aviadshiber/kapsis/claude-cli:latest
+    workdir: /workspace
+
+  task:
+    inline: |
+      echo "Kapsis smoke test: $(date)"
+      echo "Agent ID: $KAPSIS_AGENT_ID"
+      echo "Smoke test passed"
+
+  workspace:
+    git:
+      url: https://github.com/aviadshiber/kapsis
+      branch: main
+      baseBranch: main
+      credentialSecretRef: kapsis-git-creds
+      push: false
+
+  security:
+    profile: standard
+    serviceAccountName: kapsis-agent
+
+  network:
+    mode: filtered
+
+  resources:
+    memory: "512Mi"
+    cpu: "500m"
+    workspaceSizeLimit: "2Gi"
+
+  liveness:
+    enabled: true
+    timeoutSeconds: 300
+
+  ttl: 600
