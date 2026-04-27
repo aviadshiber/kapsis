@@ -36,6 +36,9 @@ source "$WORKTREE_SCRIPT_DIR/lib/constants.sh"
 
 # Note: logging functions are provided by lib/logging.sh
 
+# Last git error output — reset before each run_git call, read by create_worktree
+_KAPSIS_LAST_GIT_ERR=""
+
 #===============================================================================
 # GIT COMMAND HELPER
 #
@@ -48,6 +51,7 @@ source "$WORKTREE_SCRIPT_DIR/lib/constants.sh"
 run_git() {
     local git_output
     local git_exit_code
+    _KAPSIS_LAST_GIT_ERR=""
 
     # Capture both stdout and stderr
     git_output=$("$@" 2>&1) && git_exit_code=0 || git_exit_code=$?
