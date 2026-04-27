@@ -371,8 +371,7 @@ _recover_podman_ssh_tunnel() {
             _kill_vfkit_zombie "$machine"
         fi
         if ! "$_KAPSIS_TIMEOUT_CMD" 60 podman machine start "$machine" 2>/dev/null; then
-            # Log start failure for diagnosis (visible with KAPSIS_DEBUG=1)
-            declare -f log_debug &>/dev/null && log_debug "podman machine start failed during SSH recovery"
+            declare -f log_warn &>/dev/null && log_warn "podman machine start failed for '$machine' during SSH tunnel recovery — run: podman machine stop && podman machine start $machine"
         fi
     else
         # No timeout command — podman machine stop will hang indefinitely on a zombie VM.
@@ -383,7 +382,7 @@ _recover_podman_ssh_tunnel() {
             _kill_vfkit_zombie "$machine"
         fi
         if ! podman machine start "$machine" 2>/dev/null; then
-            declare -f log_debug &>/dev/null && log_debug "podman machine start failed during SSH recovery"
+            declare -f log_warn &>/dev/null && log_warn "podman machine start failed for '$machine' during SSH tunnel recovery — run: podman machine stop && podman machine start $machine"
         fi
     fi
 
