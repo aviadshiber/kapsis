@@ -152,9 +152,10 @@ probe_virtio_fs_health() {
         "$timeout_cmd" "$probe_timeout" "$podman_bin" run --rm \
             --cap-drop=ALL --security-opt=no-new-privileges \
             --read-only --network=none \
+            --entrypoint sh \
             -v "${host_dir}:/probe" \
             "$probe_image" \
-            sh -c "$probe_cmd" >/dev/null 2>&1 || rc=$?
+            -c "$probe_cmd" >/dev/null 2>&1 || rc=$?
     else
         # No timeout binary — probe may hang on severely degraded virtio-fs.
         # Document the install hint for the user.
@@ -162,9 +163,10 @@ probe_virtio_fs_health() {
         "$podman_bin" run --rm \
             --cap-drop=ALL --security-opt=no-new-privileges \
             --read-only --network=none \
+            --entrypoint sh \
             -v "${host_dir}:/probe" \
             "$probe_image" \
-            sh -c "$probe_cmd" >/dev/null 2>&1 || rc=$?
+            -c "$probe_cmd" >/dev/null 2>&1 || rc=$?
     fi
 
     if [[ -n "$cleanup_host_dir" ]]; then rm -rf "$cleanup_host_dir" 2>/dev/null || true; fi
