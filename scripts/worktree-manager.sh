@@ -58,9 +58,10 @@ run_git() {
         log_debug "git output: $git_output"
     fi
 
-    # Log failure if non-zero exit
+    # Log failure if non-zero exit; expose for callers via module-level var (Fix #282)
     if [[ $git_exit_code -ne 0 ]]; then
         log_debug "git command failed with exit code: $git_exit_code"
+        _KAPSIS_LAST_GIT_ERR="$git_output"
     fi
 
     return $git_exit_code
@@ -356,6 +357,10 @@ create_worktree() {
     # Verify worktree was actually created
     if [[ ! -d "$worktree_path" ]]; then
         log_error "Worktree directory was not created: $worktree_path"
+        # Surface the actual git error instead of leaving the user to guess (Fix #282)
+        if [[ -n "${_KAPSIS_LAST_GIT_ERR:-}" ]]; then
+            log_error "git worktree add error: $_KAPSIS_LAST_GIT_ERR"
+        fi
         log_error ""
 
         # Check if another worktree has this branch (Fix #1: enhanced diagnostics)
