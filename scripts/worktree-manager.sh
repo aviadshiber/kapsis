@@ -916,13 +916,32 @@ gc_stale_worktrees() {
         local worktree_path="${KAPSIS_WORKTREE_BASE}/${project_name}-${agent_id}"
         [[ -d "$worktree_path" ]] || continue
 
-        # Only clean completed agents
+        # Clean completed agents immediately; age-GC error/failed/killed worktrees (Fix #283)
         local phase
         phase=$(jq -r '.phase // empty' "$status_file" 2>/dev/null) || continue
         if [[ "$phase" == "complete" ]]; then
             log_info "GC: Cleaning stale worktree for completed agent $agent_id"
             cleanup_worktree "$project_path" "$agent_id"
             ((cleaned++)) || true
+        elif [[ "$phase" == "error" || "$phase" == "failed" || "$phase" == "killed" ]]; then
+            local max_age_hours="${KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS:-${KAPSIS_DEFAULT_CLEANUP_WORKTREE_MAX_AGE_HOURS:-168}}"
+            if [[ "$max_age_hours" -gt 0 ]] 2>/dev/null; then
+                if ! declare -f get_dir_mtime &>/dev/null; then
+                    [[ -f "$WORKTREE_SCRIPT_DIR/lib/compat.sh" ]] && source "$WORKTREE_SCRIPT_DIR/lib/compat.sh" || true
+                fi
+                if declare -f get_dir_mtime &>/dev/null; then
+                    local mtime age_secs max_age_secs age_hours
+                    mtime=$(get_dir_mtime "$worktree_path") || continue
+                    age_secs=$(( $(date +%s) - mtime ))
+                    max_age_secs=$(( max_age_hours * 3600 ))
+                    if [[ "$age_secs" -gt "$max_age_secs" ]]; then
+                        age_hours=$(( age_secs / 3600 ))
+                        log_info "GC: Cleaning ${phase} worktree for agent $agent_id (${age_hours}h old, max: ${max_age_hours}h)"
+                        cleanup_worktree "$project_path" "$agent_id"
+                        ((cleaned++)) || true
+                    fi
+                fi
+            fi
         fi
     done
 
