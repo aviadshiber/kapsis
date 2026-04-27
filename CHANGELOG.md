@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.22.0] - 2026-04-27
+## [2.23.0] - 2026-04-27
 
 ### Added
-- Wire KAPSIS_GIST_LLM flags to YAML config (#288)
+- Replace Pod with batch/v1 Job, status sidecar, event-driven reconcile (#286)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Added
+- Wire KAPSIS_GIST_LLM flags to YAML config (#288)
+
 
 ### Fixed
 - Auto-gist hook + stop hook fix (kapsis#285) (#287)
@@ -844,7 +848,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.22.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.23.0...HEAD
+[2.23.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.0
 [2.22.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.22.0
 [2.21.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.21.7
 [2.21.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.21.6
