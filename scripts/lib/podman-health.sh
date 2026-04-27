@@ -55,8 +55,10 @@ _vfs_timeout_cmd() {
 # probe_virtio_fs_health [probe_timeout] [probe_image]
 #
 # Verifies that the virtio-fs bind-mount transport is functional on macOS.
-# Spins up a busybox container with a host directory bind-mounted and tries
-# to write+unlink a probe file under `timeout`.
+# Spins up a minimal container (kapsis-sandbox if cached, busybox otherwise)
+# with a host directory bind-mounted and tries to write+unlink a probe file
+# under `timeout`. The image entrypoint is bypassed via --entrypoint sh so
+# the probe does not depend on Kapsis runtime setup (dnsmasq, capabilities).
 #
 # Args (optional):
 #   $1 - probe_timeout in seconds (default: KAPSIS_VFS_PROBE_TIMEOUT or 10)
@@ -152,9 +154,10 @@ probe_virtio_fs_health() {
         "$timeout_cmd" "$probe_timeout" "$podman_bin" run --rm \
             --cap-drop=ALL --security-opt=no-new-privileges \
             --read-only --network=none \
+            --entrypoint sh \
             -v "${host_dir}:/probe" \
             "$probe_image" \
-            sh -c "$probe_cmd" >/dev/null 2>&1 || rc=$?
+            -c "$probe_cmd" >/dev/null 2>&1 || rc=$?
     else
         # No timeout binary — probe may hang on severely degraded virtio-fs.
         # Document the install hint for the user.
@@ -162,9 +165,10 @@ probe_virtio_fs_health() {
         "$podman_bin" run --rm \
             --cap-drop=ALL --security-opt=no-new-privileges \
             --read-only --network=none \
+            --entrypoint sh \
             -v "${host_dir}:/probe" \
             "$probe_image" \
-            sh -c "$probe_cmd" >/dev/null 2>&1 || rc=$?
+            -c "$probe_cmd" >/dev/null 2>&1 || rc=$?
     fi
 
     if [[ -n "$cleanup_host_dir" ]]; then rm -rf "$cleanup_host_dir" 2>/dev/null || true; fi
