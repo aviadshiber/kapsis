@@ -437,6 +437,11 @@ test_inject_claude_idempotent() {
 }
 
 test_inject_codex_creates_config_if_missing() {
+    # Requires mikefarah/yq (supports eval --inplace); skip if only Python yq available
+    if ! echo 'x: 1' | yq eval '.x' 2>/dev/null | grep -q '^1'; then
+        return 0
+    fi
+
     setup_inject_test_env
     export KAPSIS_STATUS_AGENT_ID="test-agent-4"
 
@@ -461,6 +466,11 @@ test_inject_codex_creates_config_if_missing() {
 }
 
 test_inject_codex_merges_with_existing() {
+    # Requires mikefarah/yq (supports eval --inplace); skip if only Python yq available
+    if ! echo 'x: 1' | yq eval '.x' 2>/dev/null | grep -q '^1'; then
+        return 0
+    fi
+
     setup_inject_test_env
     export KAPSIS_STATUS_AGENT_ID="test-agent-5"
 
@@ -487,6 +497,11 @@ EOF
 }
 
 test_inject_codex_idempotent() {
+    # Requires mikefarah/yq (supports eval --inplace); skip if only Python yq available
+    if ! echo 'x: 1' | yq eval '.x' 2>/dev/null | grep -q '^1'; then
+        return 0
+    fi
+
     setup_inject_test_env
     export KAPSIS_STATUS_AGENT_ID="test-agent-6"
 
