@@ -343,15 +343,28 @@ _recover_podman_ssh_tunnel() {
         return 0
     fi
 
-    # Tunnel is stale — attempt recovery via stop + start
+    # Tunnel is stale — attempt recovery via stop + start.
+    # For zombie VMs where all podman commands hang, kill the vfkit hypervisor
+    # directly when machine stop times out (Issue #273).
+    local _stop_ok=true
     if [[ -n "$_KAPSIS_TIMEOUT_CMD" ]]; then
-        "$_KAPSIS_TIMEOUT_CMD" 30 podman machine stop podman-machine-default &>/dev/null || true
+        "$_KAPSIS_TIMEOUT_CMD" 30 podman machine stop podman-machine-default &>/dev/null || _stop_ok=false
+        if [[ "$_stop_ok" == "false" ]]; then
+            declare -f log_warn &>/dev/null && log_warn "podman machine stop timed out — killing vfkit hypervisor (zombie VM recovery)"
+            pkill -9 -f vfkit &>/dev/null || true
+            sleep 3
+        fi
         if ! "$_KAPSIS_TIMEOUT_CMD" 60 podman machine start podman-machine-default 2>/dev/null; then
             # Log start failure for diagnosis (visible with KAPSIS_DEBUG=1)
             declare -f log_debug &>/dev/null && log_debug "podman machine start failed during SSH recovery"
         fi
     else
-        podman machine stop podman-machine-default &>/dev/null || true
+        podman machine stop podman-machine-default &>/dev/null || _stop_ok=false
+        if [[ "$_stop_ok" == "false" ]]; then
+            declare -f log_warn &>/dev/null && log_warn "podman machine stop failed — killing vfkit hypervisor (zombie VM recovery)"
+            pkill -9 -f vfkit &>/dev/null || true
+            sleep 3
+        fi
         if ! podman machine start podman-machine-default 2>/dev/null; then
             declare -f log_debug &>/dev/null && log_debug "podman machine start failed during SSH recovery"
         fi

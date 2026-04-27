@@ -298,6 +298,42 @@ check_orphan_volumes() {
     return 0
 }
 
+# Check for stale/corrupted registered worktrees (Fix #283)
+check_stale_worktrees() {
+    local project_path="${1:-.}"
+
+    # Only meaningful for git repos
+    if ! git -C "$project_path" rev-parse --git-dir &>/dev/null 2>&1; then
+        return 0
+    fi
+
+    log_info "Checking for stale registered worktrees..."
+
+    # Detect worktrees registered in git but missing or corrupted on disk
+    local stale_count=0
+    stale_count=$(git -C "$project_path" worktree prune --dry-run 2>&1 | grep -c "^Removing" || true)
+
+    if [[ "$stale_count" -gt 0 ]]; then
+        preflight_warn "$stale_count stale worktree(s) registered in git but missing/corrupted on disk"
+        preflight_warn "  Run: git -C $project_path worktree prune"
+    fi
+
+    # Warn when total worktree count is high (subtract 1 for the main worktree)
+    local wt_total=0
+    wt_total=$(git -C "$project_path" worktree list --porcelain 2>/dev/null | grep -c "^worktree " || true)
+    local wt_count=$(( wt_total > 1 ? wt_total - 1 : 0 ))
+    local warn_threshold="${KAPSIS_WORKTREE_COUNT_WARN:-20}"
+
+    if [[ "$wt_count" -gt "$warn_threshold" ]]; then
+        preflight_warn "$wt_count worktrees registered for this project — risk of disk exhaustion"
+        preflight_warn "  Run: kapsis cleanup --worktrees --project $(basename "$project_path")"
+    elif [[ "$stale_count" -eq 0 ]]; then
+        preflight_ok "Worktrees OK ($wt_count registered)"
+    fi
+
+    return 0
+}
+
 # Check available disk space (Fix #191)
 check_disk_space() {
     local warn_mb="${KAPSIS_DISK_WARN_MB:-2048}"    # 2GB default
@@ -356,6 +392,7 @@ preflight_check() {
         check_git_status "$project_path" || true
         check_branch_conflict "$project_path" "$target_branch" || true
         check_existing_worktree "$project_path" "$agent_id" || true
+        check_stale_worktrees "$project_path" || true
     fi
 
     if [[ -n "$spec_file" ]]; then
