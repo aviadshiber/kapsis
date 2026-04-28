@@ -6,14 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.23.1] - 2026-04-27
+## [2.23.6] - 2026-04-27
 
-### Documentation
-- Refresh TEST-COVERAGE-ANALYSIS.md for 2026-04-24 state (#281)
+### Fixed
+- Surface post-zombie-kill start failure as log_warn with remediation hint (#299)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Recover zombie VM by killing vfkit when machine stop hangs (#273) (#295)
+
+
+### Fixed
+- Surface git worktree add error in logs when dir not created (#282) (#293)
+- Bypass entrypoint in virtio-fs health probe (#290)
+
+
+### Changed
+- Bump aquasecurity/trivy-action from 0.35.0 to 0.36.0 in the github-actions group (#291)
+
+
+### Documentation
+- Refresh TEST-COVERAGE-ANALYSIS.md for 2026-04-24 state (#281)
+
 
 ### Added
 - Replace Pod with batch/v1 Job, status sidecar, event-driven reconcile (#286)
@@ -852,7 +869,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.23.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.23.6...HEAD
+[2.23.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.6
+[2.23.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.5
+[2.23.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.3
+[2.23.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.2
 [2.23.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.1
 [2.23.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.0
 [2.22.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.22.0

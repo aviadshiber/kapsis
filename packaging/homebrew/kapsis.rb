@@ -11,9 +11,9 @@ class Kapsis < Formula
 
   # Stable release - automatically updated by CI on each release
   # RELEASE_VERSION_MARKER_START - Do not remove, used by CI
-  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.23.1.tar.gz"
-  sha256 "2233aabdde8db6bde3a2bcf724ea2c2717f54d55eafbd7740b074b85994075b4"
-  version "2.23.1"
+  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.23.6.tar.gz"
+  sha256 "4d179f6eeee33b3d00a9cc081090e470b0591da05db8e394628dfa16033dea4a"
+  version "2.23.6"
   # RELEASE_VERSION_MARKER_END
 
   # Homebrew livecheck - detects new releases automatically

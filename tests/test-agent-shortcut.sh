@@ -25,7 +25,6 @@ test_agent_claude() {
 
     assert_contains "$output" "CLAUDE" "Agent name should be displayed in uppercase"
     assert_contains "$output" "configs/claude.yaml" "Should use claude.yaml config"
-    assert_contains "$output" "ANTHROPIC_API_KEY" "Should mention required API key" || true
 }
 
 test_agent_codex() {

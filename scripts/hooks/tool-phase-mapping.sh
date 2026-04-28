@@ -76,8 +76,12 @@ _load_config() {
         done < <(yq -r ".patterns.${category}[]" "$config_file" 2>/dev/null || true)
     done
 
-    # Load phase ranges
+    # Load phase ranges.
+    # Strip surrounding quotes to handle both mikefarah/yq (no quotes) and
+    # python-yq/jq-backed wrappers which quote the concatenated string output.
     while IFS='=' read -r phase range; do
+        phase="${phase#\"}"; phase="${phase%\"}"
+        range="${range%\"}"
         [[ -n "$phase" && -n "$range" ]] && _PHASE_RANGES["$phase"]="$range"
     done < <(yq '.phase_ranges | to_entries | .[] | .key + "=" + (.value | @json)' "$config_file" 2>/dev/null || true)
 
