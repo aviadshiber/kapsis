@@ -321,23 +321,26 @@ _kill_vfkit_zombie() {
     declare -f log_warn &>/dev/null && log_warn "Killing vfkit hypervisor for '$machine' (zombie VM recovery)"
     pkill -9 -f "vfkit.*${machine}" &>/dev/null || true
 
-    # Remove stale pid/socket files left by the hard-killed hypervisor so that
+    # Remove stale runtime artefacts left by the hard-killed hypervisor so that
     # the subsequent `podman machine start` does not refuse to start or silently
     # reuse a stale socket (Issue #297).  Covers applehv (Podman 5.x), qemu
-    # (Podman 4.x), and the legacy flat layout — never touches config or disk
-    # images (.json, .raw, .qcow2, .ign).
-    local state_base="${HOME}/.local/share/containers/podman/machine"
+    # (Podman 4.x), and the legacy flat layout.
+    # Removed: *.pid  *.sock  *.lock   (runtime-only, safe to delete)
+    # Kept:    *.json *.raw *.qcow2 *.ign  (config/disk — must not be deleted)
+    local state_base="${XDG_DATA_HOME:-${HOME}/.local/share}/containers/podman/machine"
     local machine_dir
     for machine_dir in \
             "${state_base}/applehv/${machine}" \
             "${state_base}/qemu/${machine}" \
             "${state_base}/${machine}"; do
         if [[ -d "$machine_dir" ]]; then
-            rm -f "${machine_dir}"/*.pid "${machine_dir}"/*.sock 2>/dev/null || true
+            rm -f "${machine_dir}"/*.pid "${machine_dir}"/*.sock "${machine_dir}"/*.lock 2>/dev/null || true
             declare -f log_debug &>/dev/null && log_debug "Cleaned stale runtime files in ${machine_dir}"
         fi
     done
 
+    # 3 s for the kernel to fully reap the vfkit process and release any
+    # file-descriptor locks before podman machine start re-opens them.
     sleep 3
 }
 

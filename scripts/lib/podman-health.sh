@@ -27,23 +27,10 @@ declare -f log_debug   &>/dev/null || log_debug()   { [[ "${KAPSIS_DEBUG:-}" == 
 declare -f log_success &>/dev/null || log_success() { echo "[OK] $*"; }
 declare -f is_macos    &>/dev/null || is_macos()    { [[ "$(uname -s)" == "Darwin" ]]; }
 declare -f is_linux    &>/dev/null || is_linux()    { [[ "$(uname -s)" == "Linux" ]]; }
-if ! declare -f _kill_vfkit_zombie &>/dev/null; then
-    _kill_vfkit_zombie() {
-        local machine="${1:-podman-machine-default}"
-        pkill -9 -f "vfkit.*${machine}" &>/dev/null || true
-        local state_base="${HOME}/.local/share/containers/podman/machine"
-        local machine_dir
-        for machine_dir in \
-                "${state_base}/applehv/${machine}" \
-                "${state_base}/qemu/${machine}" \
-                "${state_base}/${machine}"; do
-            if [[ -d "$machine_dir" ]]; then
-                rm -f "${machine_dir}"/*.pid "${machine_dir}"/*.sock 2>/dev/null || true
-            fi
-        done
-        sleep 3
-    }
-fi
+# Intentionally trivial: compat.sh (sourced first in all production paths) owns
+# the full implementation including stale-file cleanup (Issue #297).  This stub
+# only fires in isolated test contexts that load podman-health.sh alone.
+declare -f _kill_vfkit_zombie &>/dev/null || _kill_vfkit_zombie() { pkill -9 -f "vfkit.*${1:-podman-machine-default}" &>/dev/null || true; sleep 3; }
 
 #-------------------------------------------------------------------------------
 # _vfs_timeout_cmd
