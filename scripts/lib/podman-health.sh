@@ -141,10 +141,23 @@ probe_virtio_fs_health() {
     local host_dir="${KAPSIS_VFS_PROBE_HOST_DIR:-}"
     local cleanup_host_dir=""
     if [[ -z "$host_dir" ]]; then
-        if [[ -n "${KAPSIS_WORKTREE_PATH:-}" && -d "${KAPSIS_WORKTREE_PATH}" ]]; then
-            host_dir="$KAPSIS_WORKTREE_PATH"
+        # Validate worktree path: must be under the expected base dir and must not
+        # contain '..' segments (defense-in-depth against env-var pollution).
+        local _wt_path="${KAPSIS_WORKTREE_PATH:-}"
+        local _wt_base="${KAPSIS_WORKTREE_BASE:-${HOME}/.kapsis/worktrees}"
+        local _wt_valid=false
+        if [[ -n "$_wt_path" && -d "$_wt_path" \
+              && "$_wt_path" != *".."* \
+              && "$_wt_path" == "${_wt_base}"/* ]]; then
+            _wt_valid=true
+        fi
+        if [[ "$_wt_valid" == "true" ]]; then
+            host_dir="$_wt_path"
             log_debug "Virtio-fs probe: testing via worktree path $host_dir (covers /Users virtio-fs mount)"
         else
+            if [[ -n "${KAPSIS_WORKTREE_PATH:-}" && "$_wt_valid" != "true" ]]; then
+                log_warn "Virtio-fs probe: KAPSIS_WORKTREE_PATH rejected (failed prefix/traversal check) — falling back to temp dir"
+            fi
             host_dir="$(mktemp -d 2>/dev/null || mktemp -d -t kapsis-vfs-probe)"
             chmod 0700 "$host_dir" 2>/dev/null || true
             cleanup_host_dir="$host_dir"
@@ -181,6 +194,13 @@ probe_virtio_fs_health() {
             -c "$probe_cmd" >/dev/null 2>&1 || rc=$?
     fi
 
+    # Unconditional post-probe cleanup of the sentinel file (review finding).
+    # When the probe container is killed by timeout between 'touch' and 'rm -f'
+    # — which is precisely what happens on a degraded mount — the sentinel is
+    # left inside host_dir.  With the worktree probe path this would show up as
+    # an untracked file in the agent's git tree.  Clean it up regardless of
+    # which path provided host_dir.
+    rm -f "$host_dir/.vfs-probe" 2>/dev/null || true
     if [[ -n "$cleanup_host_dir" ]]; then rm -rf "$cleanup_host_dir" 2>/dev/null || true; fi
 
     if [[ $rc -eq 0 ]]; then

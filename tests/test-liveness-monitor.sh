@@ -1182,7 +1182,7 @@ test_mount_check_early_probe_fires_before_grace() {
         local start_time=$SECONDS
 
         if [[ "$grace" -gt 0 ]]; then
-            if [[ "$mount_check_active" == "true" && "$mount_check_delay" -lt "$grace" ]]; then
+            if [[ "$mount_check_active" == "true" && "$mount_check_delay" -le "$grace" ]]; then
                 sleep "$mount_check_delay"
                 ((mount_check_elapsed += mount_check_delay)) || true
                 _mount_check_with_retries

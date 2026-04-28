@@ -832,7 +832,7 @@ _liveness_monitor_loop() {
     # grace period: fire the early mount probe at mount_check_delay, then sleep the
     # remaining (grace - mount_check_delay) before normal liveness monitoring begins.
     if [[ "$grace" -gt 0 ]]; then
-        if [[ "$mount_check_active" == "true" && "$mount_check_delay" -lt "$grace" ]]; then
+        if [[ "$mount_check_active" == "true" && "$mount_check_delay" -le "$grace" ]]; then
             # Phase 1: sleep until mount_check_delay, then do an early mount probe
             _liveness_log "INFO" "Grace period: early mount check in ${mount_check_delay}s (liveness grace=${grace}s)"
             sleep "$mount_check_delay"
@@ -851,7 +851,8 @@ _liveness_monitor_loop() {
                 ((mount_check_elapsed += remaining_grace)) || true
             fi
         else
-            # Mount check disabled, or mount_check_delay >= grace: sleep full grace
+            # Mount check disabled, or mount_check_delay > grace: sleep full grace
+            _liveness_log "DEBUG" "Early mount check not applicable (mount_check_active=${mount_check_active}, mount_check_delay=${mount_check_delay}s, grace=${grace}s)"
             _liveness_log "INFO" "Grace period: sleeping ${grace}s before monitoring"
             sleep "$grace"
             ((mount_check_elapsed += grace)) || true
