@@ -601,6 +601,109 @@ test_directory_handling() {
 }
 
 #===============================================================================
+# _kill_vfkit_zombie() TESTS
+#===============================================================================
+
+# Seed a machine state dir with both runtime and config files.
+_zombie_seed_machine_dir() {
+    local dir="$1"
+    mkdir -p "$dir"
+    touch "${dir}/agent.pid" "${dir}/api.sock" "${dir}/api.lock"
+    touch "${dir}/disk.raw" "${dir}/config.json" "${dir}/ignition.ign" "${dir}/disk.qcow2"
+}
+
+test_kill_vfkit_zombie_removes_runtime_files() {
+    log_test "_kill_vfkit_zombie: removes .pid/.sock/.lock and preserves .json/.raw/.qcow2/.ign"
+
+    local fake_home
+    fake_home=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-zombie-test.XXXXXX")
+
+    local base="${fake_home}/.local/share/containers/podman/machine"
+    _zombie_seed_machine_dir "${base}/applehv/podman-machine-default"
+    _zombie_seed_machine_dir "${base}/qemu/podman-machine-default"
+
+    # Stub external commands — no real Podman or sleep needed
+    pkill() { return 0; }
+    sleep() { return 0; }
+
+    local saved_xdg="${XDG_DATA_HOME:-}"
+    unset XDG_DATA_HOME
+    HOME="$fake_home" _kill_vfkit_zombie "podman-machine-default"
+    [[ -n "$saved_xdg" ]] && XDG_DATA_HOME="$saved_xdg" || true
+
+    unset -f pkill sleep
+
+    local d="${base}/applehv/podman-machine-default"
+    assert_file_not_exists "${d}/agent.pid"  "applehv: .pid must be removed"
+    assert_file_not_exists "${d}/api.sock"   "applehv: .sock must be removed"
+    assert_file_not_exists "${d}/api.lock"   "applehv: .lock must be removed"
+    assert_file_exists     "${d}/disk.raw"   "applehv: .raw must be preserved"
+    assert_file_exists     "${d}/config.json" "applehv: .json must be preserved"
+    assert_file_exists     "${d}/ignition.ign" "applehv: .ign must be preserved"
+    assert_file_exists     "${d}/disk.qcow2" "applehv: .qcow2 must be preserved"
+
+    d="${base}/qemu/podman-machine-default"
+    assert_file_not_exists "${d}/agent.pid"  "qemu: .pid must be removed"
+    assert_file_not_exists "${d}/api.sock"   "qemu: .sock must be removed"
+    assert_file_not_exists "${d}/api.lock"   "qemu: .lock must be removed"
+    assert_file_exists     "${d}/disk.raw"   "qemu: .raw must be preserved"
+
+    rm -rf "$fake_home"
+}
+
+test_kill_vfkit_zombie_respects_xdg_data_home() {
+    log_test "_kill_vfkit_zombie: uses XDG_DATA_HOME when set"
+
+    local fake_xdg
+    fake_xdg=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-zombie-xdg.XXXXXX")
+    local d="${fake_xdg}/containers/podman/machine/applehv/podman-machine-default"
+    _zombie_seed_machine_dir "$d"
+
+    pkill() { return 0; }
+    sleep() { return 0; }
+
+    XDG_DATA_HOME="$fake_xdg" _kill_vfkit_zombie "podman-machine-default"
+
+    unset -f pkill sleep
+
+    assert_file_not_exists "${d}/agent.pid"   "XDG_DATA_HOME: .pid must be removed"
+    assert_file_not_exists "${d}/api.sock"    "XDG_DATA_HOME: .sock must be removed"
+    assert_file_not_exists "${d}/api.lock"    "XDG_DATA_HOME: .lock must be removed"
+    assert_file_exists     "${d}/disk.raw"    "XDG_DATA_HOME: .raw must be preserved"
+    assert_file_exists     "${d}/config.json" "XDG_DATA_HOME: .json must be preserved"
+
+    rm -rf "$fake_xdg"
+    unset XDG_DATA_HOME
+}
+
+test_kill_vfkit_zombie_scoped_to_named_machine() {
+    log_test "_kill_vfkit_zombie: only cleans the named machine, not siblings"
+
+    local fake_home
+    fake_home=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-zombie-scope.XXXXXX")
+    local base="${fake_home}/.local/share/containers/podman/machine/applehv"
+    _zombie_seed_machine_dir "${base}/target-machine"
+    _zombie_seed_machine_dir "${base}/sibling-machine"
+
+    pkill() { return 0; }
+    sleep() { return 0; }
+
+    local saved_xdg="${XDG_DATA_HOME:-}"
+    unset XDG_DATA_HOME
+    HOME="$fake_home" _kill_vfkit_zombie "target-machine"
+    [[ -n "$saved_xdg" ]] && XDG_DATA_HOME="$saved_xdg" || true
+
+    unset -f pkill sleep
+
+    assert_file_not_exists "${base}/target-machine/agent.pid"   "target: .pid must be removed"
+    assert_file_not_exists "${base}/target-machine/api.sock"    "target: .sock must be removed"
+    assert_file_exists     "${base}/sibling-machine/agent.pid"  "sibling: .pid must not be touched"
+    assert_file_exists     "${base}/sibling-machine/api.sock"   "sibling: .sock must not be touched"
+
+    rm -rf "$fake_home"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -663,6 +766,11 @@ main() {
     run_test test_special_characters_in_filename
     run_test test_symlink_handling
     run_test test_directory_handling
+
+    # _kill_vfkit_zombie() tests
+    run_test test_kill_vfkit_zombie_removes_runtime_files
+    run_test test_kill_vfkit_zombie_respects_xdg_data_home
+    run_test test_kill_vfkit_zombie_scoped_to_named_machine
 
     # Summary
     print_summary
