@@ -975,6 +975,10 @@ gc_stale_worktrees_by_age() {
         return 0
     fi
 
+    # Evidence for H1 (GC I/O concurrency hypothesis): record wall-clock time so
+    # the host log shows whether age-based GC overlaps with a running container.
+    local gc_age_start=$SECONDS
+
     for worktree_dir in "$KAPSIS_WORKTREE_BASE"/"${project_name}"-*/; do
         [[ -d "$worktree_dir" ]] || continue
 
@@ -1002,15 +1006,20 @@ gc_stale_worktrees_by_age() {
         local age_secs=$((now - mtime))
         if [[ "$age_secs" -gt "$max_age_secs" ]]; then
             local age_hours=$((age_secs / 3600))
-            log_info "GC-age: Worktree $dir_name is ${age_hours}h old (max: ${max_age_hours}h)"
+            log_info "GC-age: Worktree $dir_name is ${age_hours}h old (max: ${max_age_hours}h) — removing"
+            local rm_start=$SECONDS
             cleanup_worktree "$project_path" "$agent_id" "$delete_branches"
+            log_info "GC-age: Removed $dir_name in $((SECONDS - rm_start))s"
             ((cleaned++)) || true
         fi
     done
 
+    local gc_age_elapsed=$(( SECONDS - gc_age_start ))
     if [[ "$cleaned" -gt 0 ]]; then
-        log_info "GC-age: Cleaned $cleaned stale worktree(s)"
+        log_info "GC-age: Cleaned $cleaned stale worktree(s) in ${gc_age_elapsed}s"
         prune_worktrees "$project_path"
+    else
+        log_debug "GC-age: No stale worktrees found (elapsed ${gc_age_elapsed}s)"
     fi
 }
 

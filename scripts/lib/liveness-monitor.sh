@@ -816,15 +816,46 @@ _liveness_monitor_loop() {
     local mount_check_delay="$_MOUNT_CHECK_DELAY"
     local mount_check_elapsed=0
 
-    _liveness_log "INFO" "Starting (timeout=${timeout}s, grace=${grace}s, interval=${interval}s, mount_check=${mount_check_active})"
+    _liveness_log "INFO" "Starting (timeout=${timeout}s, grace=${grace}s, interval=${interval}s, mount_check=${mount_check_active}, mount_check_delay=${mount_check_delay}s)"
 
-    # Grace period: sleep before starting checks
+    # Grace period: sleep before starting liveness checks.
+    #
+    # Mount check has its OWN shorter delay (mount_check_delay, default 30s) that is
+    # intentionally independent of the liveness grace period.  Previously, both shared
+    # the same sleep: the full grace period elapsed first, then mount_check_elapsed was
+    # set to grace (300), making the first mount check fire at grace+interval = 330s —
+    # not at the intended 30s.  This created a 330-second blind window where a dropped
+    # virtio-fs mount went undetected (confirmed by forensic timing: 9e9488 failed at
+    # exactly 341s = 300s grace + 30s interval + 11s retry overhead).
+    #
+    # Fix: when mount checking is enabled and mount_check_delay < grace, split the
+    # grace period: fire the early mount probe at mount_check_delay, then sleep the
+    # remaining (grace - mount_check_delay) before normal liveness monitoring begins.
     if [[ "$grace" -gt 0 ]]; then
-        _liveness_log "INFO" "Grace period: sleeping ${grace}s before monitoring"
-        sleep "$grace"
-        # Mount check delay is relative to container start, not post-grace
-        # Account for grace period already elapsed
-        ((mount_check_elapsed += grace)) || true
+        if [[ "$mount_check_active" == "true" && "$mount_check_delay" -lt "$grace" ]]; then
+            # Phase 1: sleep until mount_check_delay, then do an early mount probe
+            _liveness_log "INFO" "Grace period: early mount check in ${mount_check_delay}s (liveness grace=${grace}s)"
+            sleep "$mount_check_delay"
+            ((mount_check_elapsed += mount_check_delay)) || true
+            _liveness_log "INFO" "Early mount check firing (${mount_check_elapsed}s elapsed)"
+            if ! _mount_check_with_retries; then
+                _mount_check_kill_agent
+                return 0
+            fi
+            _liveness_log "INFO" "Early mount check passed"
+            # Phase 2: sleep the remaining grace before liveness monitoring starts
+            local remaining_grace=$(( grace - mount_check_delay ))
+            if [[ "$remaining_grace" -gt 0 ]]; then
+                _liveness_log "INFO" "Sleeping ${remaining_grace}s remaining grace before liveness monitoring"
+                sleep "$remaining_grace"
+                ((mount_check_elapsed += remaining_grace)) || true
+            fi
+        else
+            # Mount check disabled, or mount_check_delay >= grace: sleep full grace
+            _liveness_log "INFO" "Grace period: sleeping ${grace}s before monitoring"
+            sleep "$grace"
+            ((mount_check_elapsed += grace)) || true
+        fi
     fi
 
     # State tracking

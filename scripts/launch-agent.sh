@@ -2543,6 +2543,12 @@ main() {
     if [[ "$BACKEND" == "podman" ]] && is_macos \
        && [[ "${KAPSIS_VFS_PROBE_ENABLED:-true}" == "true" ]]; then
         log_timer_start "vfs_probe"
+        # H3 fix: expose WORKTREE_PATH so probe_virtio_fs_health tests the /Users
+        # virtio-fs mount instead of $TMPDIR (/var/folders), which is a different
+        # transport. Without this, a degraded /Users mount passes the pre-launch probe.
+        if [[ -n "${WORKTREE_PATH:-}" ]]; then
+            export KAPSIS_WORKTREE_PATH="$WORKTREE_PATH"
+        fi
         if ! maybe_autoheal_podman_vm; then
             # Emit the tagged sentinel to stderr so any log-scraping caller
             # sees the same signal as from in-container failures. (Host code

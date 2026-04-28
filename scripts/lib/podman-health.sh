@@ -132,14 +132,23 @@ probe_virtio_fs_health() {
         fi
     fi
 
-    # Use a caller-supplied host dir if given (tests); otherwise create a
-    # throwaway directory so the probe does not pollute ~/.kapsis/status.
+    # Use a caller-supplied host dir if given (tests or explicit override).
+    # Otherwise, prefer the actual worktree path so the probe tests the /Users
+    # virtio-fs mount rather than $TMPDIR which resolves to /var/folders — a
+    # DIFFERENT virtio-fs transport in the Podman VM.  A degraded /Users mount
+    # passes the /var/folders probe silently (H3 fix).
     local host_dir="${KAPSIS_VFS_PROBE_HOST_DIR:-}"
     local cleanup_host_dir=""
     if [[ -z "$host_dir" ]]; then
-        host_dir="$(mktemp -d 2>/dev/null || mktemp -d -t kapsis-vfs-probe)"
-        chmod 0700 "$host_dir" 2>/dev/null || true
-        cleanup_host_dir="$host_dir"
+        if [[ -n "${KAPSIS_WORKTREE_PATH:-}" && -d "${KAPSIS_WORKTREE_PATH}" ]]; then
+            host_dir="$KAPSIS_WORKTREE_PATH"
+            log_debug "Virtio-fs probe: testing via worktree path $host_dir (covers /Users virtio-fs mount)"
+        else
+            host_dir="$(mktemp -d 2>/dev/null || mktemp -d -t kapsis-vfs-probe)"
+            chmod 0700 "$host_dir" 2>/dev/null || true
+            cleanup_host_dir="$host_dir"
+            log_debug "Virtio-fs probe: using temp dir (TMPDIR mount: ${TMPDIR:-/tmp})"
+        fi
     fi
 
     # Remove any stale sentinel from a previous probe run.
