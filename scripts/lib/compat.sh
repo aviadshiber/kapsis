@@ -320,6 +320,24 @@ _kill_vfkit_zombie() {
     local machine="${1:-podman-machine-default}"
     declare -f log_warn &>/dev/null && log_warn "Killing vfkit hypervisor for '$machine' (zombie VM recovery)"
     pkill -9 -f "vfkit.*${machine}" &>/dev/null || true
+
+    # Remove stale pid/socket files left by the hard-killed hypervisor so that
+    # the subsequent `podman machine start` does not refuse to start or silently
+    # reuse a stale socket (Issue #297).  Covers applehv (Podman 5.x), qemu
+    # (Podman 4.x), and the legacy flat layout — never touches config or disk
+    # images (.json, .raw, .qcow2, .ign).
+    local state_base="${HOME}/.local/share/containers/podman/machine"
+    local machine_dir
+    for machine_dir in \
+            "${state_base}/applehv/${machine}" \
+            "${state_base}/qemu/${machine}" \
+            "${state_base}/${machine}"; do
+        if [[ -d "$machine_dir" ]]; then
+            rm -f "${machine_dir}"/*.pid "${machine_dir}"/*.sock 2>/dev/null || true
+            declare -f log_debug &>/dev/null && log_debug "Cleaned stale runtime files in ${machine_dir}"
+        fi
+    done
+
     sleep 3
 }
 
