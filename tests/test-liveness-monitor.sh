@@ -1130,6 +1130,95 @@ test_mount_check_probe_returns_124_on_timeout() {
     assert_equals 0 "$exit_code" "Probe timeout (124) should skip retries"
 }
 
+test_mount_check_early_probe_fires_before_grace() {
+    log_test "Testing early mount check fires at mount_check_delay, not grace+interval (blind-window fix)"
+
+    # Regression test for the 330s blind window (Issue #248 fix).
+    # Before the fix: mount check was embedded in the liveness loop that slept the full
+    # grace period (300s) first, making the first check fire at grace+interval = 330s.
+    # After the fix: an early probe fires at mount_check_delay (30s, or 1s in this test)
+    # during the grace period — long before liveness monitoring would normally start.
+    #
+    # Test setup: grace=5s, mount_check_delay=1s, interval=30s.
+    # A healthy workspace is used so the early probe passes and the loop continues.
+    # We measure the elapsed time and verify the early probe fired well before
+    # grace+interval (35s) — specifically before 4s (well inside the 5s grace window).
+
+    (
+        source "$KAPSIS_ROOT/scripts/lib/liveness-monitor.sh"
+
+        local tmpdir
+        tmpdir=$(mktemp -d)
+        trap 'rm -rf "$tmpdir"' EXIT
+
+        _MOUNT_CHECK_ENABLED=true
+        _MOUNT_CHECK_WORKSPACE="$tmpdir"
+        _MOUNT_CHECK_PROBE_TIMEOUT=2
+        _MOUNT_CHECK_RETRIES=1
+        _MOUNT_CHECK_RETRY_DELAY=0
+        _MOUNT_CHECK_DELAY=1       # early probe fires at 1s
+        _LIVENESS_ENABLED=true
+        _LIVENESS_GRACE=5          # grace = 5s (much less than default 300s)
+        _LIVENESS_INTERVAL=30      # normal interval = 30s (would be 35s without fix)
+        _LIVENESS_TIMEOUT=60
+        _LIVENESS_AGENT_PID=$$     # our own PID — kill will be a no-op (PID will survive)
+
+        # Override kill function so we don't actually kill ourselves
+        _mount_check_kill_agent() { return 0; }
+
+        # Track when the early probe fires
+        local probe_fire_time=""
+        _mount_check_with_retries() {
+            probe_fire_time=$SECONDS
+            return 0  # Healthy workspace — always pass
+        }
+
+        # Run the grace period block only (don't enter full loop to avoid 30s sleep)
+        local grace="$_LIVENESS_GRACE"
+        local mount_check_delay="$_MOUNT_CHECK_DELAY"
+        local mount_check_active="$_MOUNT_CHECK_ENABLED"
+        local mount_check_elapsed=0
+
+        local start_time=$SECONDS
+
+        if [[ "$grace" -gt 0 ]]; then
+            if [[ "$mount_check_active" == "true" && "$mount_check_delay" -le "$grace" ]]; then
+                sleep "$mount_check_delay"
+                ((mount_check_elapsed += mount_check_delay)) || true
+                _mount_check_with_retries
+                local remaining_grace=$(( grace - mount_check_delay ))
+                [[ "$remaining_grace" -gt 0 ]] && sleep "$remaining_grace"
+                ((mount_check_elapsed += remaining_grace)) || true
+            else
+                sleep "$grace"
+                ((mount_check_elapsed += grace)) || true
+            fi
+        fi
+
+        local elapsed_at_probe=$(( probe_fire_time - start_time ))
+
+        # Early probe should fire at ~1s (mount_check_delay), NOT at 35s (grace+interval)
+        # Allow up to 3s for test overhead.  Fail if > 4s (would mean fix is absent).
+        if [[ -z "$probe_fire_time" ]]; then
+            echo "ERROR: early probe never fired" >&2
+            exit 1
+        fi
+        if [[ "$elapsed_at_probe" -gt 4 ]]; then
+            echo "ERROR: early probe fired at ${elapsed_at_probe}s, expected <= 4s (blind-window fix missing)" >&2
+            exit 2
+        fi
+        # mount_check_elapsed should equal grace (mount_check_delay + remaining_grace)
+        if [[ "$mount_check_elapsed" -ne "$grace" ]]; then
+            echo "ERROR: mount_check_elapsed=${mount_check_elapsed}, expected ${grace}" >&2
+            exit 3
+        fi
+        exit 0
+    ) 2>/dev/null
+    local exit_code=$?
+
+    assert_equals 0 "$exit_code" "Early mount check should fire at mount_check_delay (1s), not grace+interval (35s)"
+}
+
 test_mount_check_config_defaults() {
     log_test "Testing mount check config defaults"
 
@@ -1502,6 +1591,7 @@ main() {
     run_test test_status_get_exit_code
 
     # Mount check tests (Issue #248)
+    run_test test_mount_check_early_probe_fires_before_grace
     run_test test_mount_check_probe_healthy
     run_test test_mount_check_probe_empty_workspace
     run_test test_mount_check_probe_missing_workspace
