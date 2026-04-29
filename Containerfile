@@ -530,6 +530,7 @@ COPY scripts/lib/compat.sh /opt/kapsis/lib/compat.sh
 RUN mkdir -p /opt/kapsis/hooks/agent-adapters
 COPY scripts/hooks/kapsis-status-hook.sh /opt/kapsis/hooks/kapsis-status-hook.sh
 COPY scripts/hooks/kapsis-stop-hook.sh /opt/kapsis/hooks/kapsis-stop-hook.sh
+COPY scripts/hooks/kapsis-gist-hook.sh /opt/kapsis/hooks/kapsis-gist-hook.sh
 COPY scripts/hooks/tool-phase-mapping.sh /opt/kapsis/hooks/tool-phase-mapping.sh
 COPY scripts/hooks/agent-adapters/claude-adapter.sh /opt/kapsis/hooks/agent-adapters/claude-adapter.sh
 COPY scripts/hooks/agent-adapters/codex-adapter.sh /opt/kapsis/hooks/agent-adapters/codex-adapter.sh
