@@ -183,7 +183,7 @@ esac
 # Write deterministic gist
 if [[ "$skip" != "true" && -n "$gist" ]]; then
     mkdir -p "$GIST_DIR" 2>/dev/null || true
-    printf '%s\n' "$gist" > "$GIST_FILE"
+    printf '%s\n' "$gist" > "$GIST_FILE" 2>/dev/null || true
 fi
 
 # ─── LLM Gist upgrade (opt-in: KAPSIS_GIST_LLM=true) ────────────────────────

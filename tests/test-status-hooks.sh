@@ -436,6 +436,63 @@ test_inject_claude_idempotent() {
     cleanup_inject_test_env
 }
 
+test_inject_claude_with_gist_enabled() {
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-agent-gist"
+    export KAPSIS_INJECT_GIST="true"
+
+    # Create mock gist hook (must be executable for injection to proceed)
+    touch "$KAPSIS_ROOT/hooks/kapsis-gist-hook.sh"
+    chmod +x "$KAPSIS_ROOT/hooks/kapsis-gist-hook.sh"
+
+    source "$LIB_DIR/inject-status-hooks.sh"
+    inject_claude_hooks >/dev/null 2>&1
+
+    local content
+    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+
+    # Gist hook must appear in settings
+    assert_contains "$content" "kapsis-gist-hook.sh" "Gist hook should be injected when KAPSIS_INJECT_GIST=true"
+
+    # Two PostToolUse entries: gist hook (first) + status hook (second)
+    local hook_count
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    assert_equals "2" "$hook_count" "Should have 2 PostToolUse entries (gist + status)"
+
+    # Gist hook must come before status hook so status reads the current gist.
+    # Check ordering by comparing line positions in the serialized JSON.
+    local gist_line status_line
+    gist_line=$(grep -n "kapsis-gist-hook.sh" "$TEST_HOME/.claude/settings.local.json" | head -1 | cut -d: -f1)
+    status_line=$(grep -n "kapsis-status-hook.sh" "$TEST_HOME/.claude/settings.local.json" | head -1 | cut -d: -f1)
+    assert_true "[[ ${gist_line:-99} -lt ${status_line:-100} ]]" "Gist hook should appear before status hook in JSON"
+
+    unset KAPSIS_INJECT_GIST
+    cleanup_inject_test_env
+}
+
+test_inject_claude_gist_disabled_when_hook_missing() {
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-agent-gist-missing"
+    export KAPSIS_INJECT_GIST="true"
+    # Intentionally do NOT create the gist hook file
+
+    source "$LIB_DIR/inject-status-hooks.sh"
+    inject_claude_hooks >/dev/null 2>&1
+
+    local content
+    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+
+    # Gist hook must NOT appear when the hook file is missing
+    assert_not_contains "$content" "kapsis-gist-hook.sh" \
+        "Gist hook should not be injected when hook file is absent"
+
+    # Status hook must still be injected
+    assert_contains "$content" "kapsis-status-hook.sh" "Status hook should still be injected"
+
+    unset KAPSIS_INJECT_GIST
+    cleanup_inject_test_env
+}
+
 test_inject_codex_creates_config_if_missing() {
     # Requires mikefarah/yq (supports eval --inplace); skip if only Python yq available
     if ! echo 'x: 1' | yq eval '.x' 2>/dev/null | grep -q '^1'; then
@@ -1443,6 +1500,8 @@ run_tests() {
     run_test test_inject_claude_creates_settings_if_missing
     run_test test_inject_claude_merges_with_existing
     run_test test_inject_claude_idempotent
+    run_test test_inject_claude_with_gist_enabled
+    run_test test_inject_claude_gist_disabled_when_hook_missing
     run_test test_inject_codex_creates_config_if_missing
     run_test test_inject_codex_merges_with_existing
     run_test test_inject_codex_idempotent
