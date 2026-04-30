@@ -118,6 +118,8 @@ source "$SCRIPT_DIR/lib/dns-pin.sh"
 
 # Source virtio-fs health probe / auto-heal (Issue #276) — macOS only, no-op on Linux
 source "$SCRIPT_DIR/lib/podman-health.sh"
+# shellcheck source=lib/vfkit-watchdog.sh
+source "$SCRIPT_DIR/lib/vfkit-watchdog.sh"
 
 # Source host-side status volume sync (Issue #276) — no-op when KAPSIS_STATUS_VOLUME unset
 source "$SCRIPT_DIR/lib/status-sync.sh"
@@ -2354,6 +2356,17 @@ main() {
     # Set after caffeinate is started; cleared after it is killed.
     _CAFFEINATE_PID=""
 
+    # PID of vfkit watchdog subshell (Issue #303). macOS-only; empty when
+    # disabled or vfkit not found. Cleaned up in _cleanup_with_completion.
+    _VFKIT_WATCHDOG_PID=""
+
+    # Host-only sentinel path written by the watchdog when vfkit exits.
+    # Lives under $TMPDIR which is host-private on macOS — NOT bind-mounted
+    # into the container. The post-container override requires this file
+    # AS WELL AS status.json's mount_failure entry, so a compromised agent
+    # inside the container cannot forge a mount_failure exit.
+    _VFKIT_FIRED_SENTINEL=""
+
     # Cleanup function that ensures completion message is shown
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
@@ -2364,6 +2377,24 @@ main() {
         if [[ -n "$_CAFFEINATE_PID" ]]; then
             kill "$_CAFFEINATE_PID" 2>/dev/null || true
             _CAFFEINATE_PID=""
+        fi
+        # Stop vfkit watchdog if active (Issue #303). Killed before
+        # backend_cleanup so a stale watchdog cannot SIGTERM the agent's
+        # `podman run` after the container has already exited normally.
+        # `wait` drains the subshell so any in-flight `_status_write` finishes
+        # before this trap runs `status_complete` again — without it, a
+        # `${status}.tmp.$$` from the watchdog can leak.
+        if [[ -n "${_VFKIT_WATCHDOG_PID:-}" ]]; then
+            kill "$_VFKIT_WATCHDOG_PID" 2>/dev/null || true
+            wait "$_VFKIT_WATCHDOG_PID" 2>/dev/null || true
+            _VFKIT_WATCHDOG_PID=""
+        fi
+        # Clean up the host-only watchdog sentinel. The override has already
+        # consumed it by this point; leaving it would not affect this run,
+        # but cleaning it prevents a leftover from confusing a future agent
+        # run with the same AGENT_ID (resume mode).
+        if [[ -n "${_VFKIT_FIRED_SENTINEL:-}" ]]; then
+            rm -f "$_VFKIT_FIRED_SENTINEL" 2>/dev/null || true
         fi
         # Stop host-side status volume sync and flush one final snapshot to
         # the host status dir so post-exit consumers see the definitive state
@@ -2581,6 +2612,22 @@ main() {
         log_debug "Sleep prevention active (caffeinate PID: $_CAFFEINATE_PID)"
     fi
 
+    # vfkit watchdog (Issue #303): host-side ≤10s detection of virtio-fs
+    # drops. Implementation lives in scripts/lib/vfkit-watchdog.sh so the
+    # body is shared with tests. Sets _VFKIT_WATCHDOG_PID on success.
+    # Skipped automatically on Linux, when disabled, or when vfkit is not
+    # found.
+    if [[ "$BACKEND" == "podman" ]]; then
+        # Compute and pre-clean the host-only sentinel path. The watchdog
+        # subshell will create this file when vfkit exits; the override
+        # block requires its presence to upgrade EXIT_CODE (see Issue #303
+        # ensemble review #2 — defense against in-container forgery of
+        # status.json mount_failure entries).
+        _VFKIT_FIRED_SENTINEL="${TMPDIR:-/tmp}/kapsis-${AGENT_ID}.vfkit-fired"
+        rm -f "$_VFKIT_FIRED_SENTINEL" 2>/dev/null || true
+        start_vfkit_watchdog "$AGENT_ID" "" "" "$_VFKIT_FIRED_SENTINEL"
+    fi
+
     # Display progress header (shows sandbox ready status with timer)
     display_header "$AGENT_ID" "$BRANCH" "$NETWORK_MODE"
 
@@ -2691,6 +2738,52 @@ main() {
         if [[ "$status_exit" == "5" ]]; then
             log_warn "Agent completed but process hung (exit code 5 from liveness monitor)"
             EXIT_CODE=5
+        fi
+    fi
+
+    # Check for vfkit watchdog mount failure (Issue #303).
+    #
+    # Trust model (post ensemble review #2):
+    #
+    # The override requires THREE conditions, all-or-nothing:
+    #   1. EXIT_CODE != 0   — exit 0 is preserved (legitimate completion
+    #      before vfkit died must not be retroactively rewritten).
+    #   2. _VFKIT_FIRED_SENTINEL exists on the HOST filesystem at a path
+    #      under $TMPDIR — NOT bind-mounted into the container, so a
+    #      compromised agent inside the container cannot create it. This
+    #      is the authoritative proof that the host-side watchdog actually
+    #      observed vfkit exit.
+    #   3. status.json reports `exit_code: 4` AND `error_type: mount_failure`
+    #      — defense in depth. status.json on macOS is mirrored from the
+    #      container's named volume into the host status dir, so it is NOT
+    #      independently host-trusted; we use it to confirm the watchdog's
+    #      own write but never trust it on its own.
+    #
+    # We DO NOT restrict to signal exit codes (143/137) because pkill may
+    # fail to reach the agent's `podman run` (e.g. podman already detached);
+    # the pipeline can return 1 even though the watchdog correctly observed
+    # vfkit exit. Condition (2) replaces the prior 143/137 restriction as
+    # the trust anchor.
+    if [[ "$EXIT_CODE" -ne 0 ]] \
+       && [[ -n "${_VFKIT_FIRED_SENTINEL:-}" && -f "$_VFKIT_FIRED_SENTINEL" ]]; then
+        local _status_file
+        _status_file="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/kapsis-$(basename "$PROJECT_PATH")-${AGENT_ID}.json"
+        local status_exit_vfkit status_err_vfkit
+        status_exit_vfkit=$(status_get_exit_code 2>/dev/null || echo "")
+        status_err_vfkit=""
+        if [[ -f "$_status_file" ]] \
+           && grep -Eq '"error_type":[[:space:]]*"mount_failure"' "$_status_file" 2>/dev/null; then
+            status_err_vfkit="mount_failure"
+        fi
+        if [[ "$status_exit_vfkit" == "4" && "$status_err_vfkit" == "mount_failure" ]]; then
+            log_warn "Mount failure confirmed by vfkit watchdog (host sentinel + status.json mount_failure) — overriding exit code from $EXIT_CODE to 4"
+            EXIT_CODE=4
+        else
+            # Sentinel present but status.json doesn't agree — possible
+            # status_complete failure inside the watchdog subshell. Still
+            # safe to override because the sentinel is host-trusted.
+            log_warn "Mount failure detected via vfkit watchdog host sentinel (status.json mismatch — disk full?) — overriding exit code from $EXIT_CODE to 4"
+            EXIT_CODE=4
         fi
     fi
 
