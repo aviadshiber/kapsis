@@ -2354,6 +2354,10 @@ main() {
     # Set after caffeinate is started; cleared after it is killed.
     _CAFFEINATE_PID=""
 
+    # PID of vfkit watchdog subshell (Issue #303). macOS-only; empty when
+    # disabled or vfkit not found. Cleaned up in _cleanup_with_completion.
+    _VFKIT_WATCHDOG_PID=""
+
     # Cleanup function that ensures completion message is shown
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
@@ -2364,6 +2368,13 @@ main() {
         if [[ -n "$_CAFFEINATE_PID" ]]; then
             kill "$_CAFFEINATE_PID" 2>/dev/null || true
             _CAFFEINATE_PID=""
+        fi
+        # Stop vfkit watchdog if active (Issue #303). Killed before
+        # backend_cleanup so a stale watchdog cannot SIGTERM the podman
+        # client after the container has already exited normally.
+        if [[ -n "${_VFKIT_WATCHDOG_PID:-}" ]]; then
+            kill "$_VFKIT_WATCHDOG_PID" 2>/dev/null || true
+            _VFKIT_WATCHDOG_PID=""
         fi
         # Stop host-side status volume sync and flush one final snapshot to
         # the host status dir so post-exit consumers see the definitive state
@@ -2581,6 +2592,40 @@ main() {
         log_debug "Sleep prevention active (caffeinate PID: $_CAFFEINATE_PID)"
     fi
 
+    # vfkit watchdog (Issue #303): host-side ≤10s detection of virtio-fs drops.
+    # When vfkit exits, the in-container liveness probe gets stuck in D-state
+    # for ~50s per attempt because FUSE syscalls are TASK_UNINTERRUPTIBLE and
+    # cannot be SIGKILLed. A host-side `kill -0` check is instant, so we
+    # detect the root cause (vfkit gone) directly. Complements PR #301 which
+    # closed the grace-period blind window for in-container detection.
+    if [[ "$BACKEND" == "podman" ]] && is_macos \
+       && [[ "${KAPSIS_VFKIT_WATCHDOG_ENABLED:-true}" == "true" ]]; then
+        local _vfkit_machine="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
+        local _vfkit_pid
+        _vfkit_pid=$(pgrep -n -f "vfkit.*${_vfkit_machine}" 2>/dev/null || true)
+        if [[ -n "$_vfkit_pid" ]]; then
+            local _watchdog_interval="${KAPSIS_VFKIT_WATCHDOG_INTERVAL:-5}"
+            (
+                set +e
+                while kill -0 "$_vfkit_pid" 2>/dev/null; do
+                    sleep "$_watchdog_interval"
+                done
+                # vfkit gone — virtio-fs mounts are gone with it. Write
+                # mount_failure to status.json so the post-container override
+                # below picks it up; SIGTERM the local podman client so the
+                # synchronous backend_run pipeline returns (PIPESTATUS=143).
+                status_set_error_type "mount_failure" 2>/dev/null || true
+                status_complete 4 "Workspace mount lost: vfkit (PID $_vfkit_pid) exited (host-side watchdog). Recovery: podman machine stop && podman machine start, then re-run." 2>/dev/null || true
+                log_warn "KAPSIS_MOUNT_FAILURE[vfkit_watchdog]: vfkit (PID $_vfkit_pid) exited — virtio-fs mounts lost" 2>/dev/null || true
+                pkill -TERM -f "podman run .*--name kapsis-${AGENT_ID}\b" 2>/dev/null || true
+            ) &
+            _VFKIT_WATCHDOG_PID=$!
+            log_debug "vfkit watchdog active (vfkit PID: $_vfkit_pid, poll: ${_watchdog_interval}s, watchdog PID: $_VFKIT_WATCHDOG_PID)"
+        else
+            log_debug "vfkit process not found for machine '$_vfkit_machine' — skipping watchdog"
+        fi
+    fi
+
     # Display progress header (shows sandbox ready status with timer)
     display_header "$AGENT_ID" "$BRANCH" "$NETWORK_MODE"
 
@@ -2691,6 +2736,20 @@ main() {
         if [[ "$status_exit" == "5" ]]; then
             log_warn "Agent completed but process hung (exit code 5 from liveness monitor)"
             EXIT_CODE=5
+        fi
+    fi
+
+    # Check for vfkit watchdog mount failure in status.json (Issue #303).
+    # The host-side watchdog SIGTERMs the podman client after vfkit exits and
+    # writes exit_code=4 + error_type=mount_failure to status.json. Detecting
+    # it here lets the canonical mount_failure branch below run unchanged.
+    # Mirrors the hung-after-completion pattern above.
+    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
+        local status_exit_vfkit
+        status_exit_vfkit=$(status_get_exit_code 2>/dev/null || echo "")
+        if [[ "$status_exit_vfkit" == "4" ]]; then
+            log_warn "Mount failure detected via vfkit watchdog (status.json exit_code=4) — overriding exit code"
+            EXIT_CODE=4
         fi
     fi
 

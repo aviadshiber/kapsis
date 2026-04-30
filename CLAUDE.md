@@ -390,6 +390,8 @@ Host-side in `scripts/launch-agent.sh`, the `KAPSIS_MOUNT_FAILURE:` sentinel in 
 
 **Sleep prevention (Issue #276, macOS only)** — `caffeinate -i -s` runs as a background process for the duration of the agent session, preventing macOS idle and system sleep. Since virtio-fs degradation is triggered by sleep/wake cycles, preventing sleep eliminates the root cause. Controlled by `prevent_sleep: true` in `agent-sandbox.yaml` or `KAPSIS_PREVENT_SLEEP=false` env var. Enabled by default.
 
+**vfkit watchdog (Issue #303, macOS only)** — A host-side bash watchdog polls the vfkit hypervisor every 5s; if vfkit exits, writes `exit_code=4` + `error_type=mount_failure` to status.json within ~10s and SIGTERMs the local podman client. Replaces the in-container liveness probe for the vfkit-exit case specifically — that probe is unreliable here because FUSE syscalls put it in `TASK_UNINTERRUPTIBLE` (D-state) and `SIGKILL` cannot interrupt it, so detection takes ~188s instead of the intended ~55s. Controlled by `KAPSIS_VFKIT_WATCHDOG_ENABLED` (default `true`) and `KAPSIS_VFKIT_WATCHDOG_INTERVAL` (default `5` seconds).
+
 Recovery when auto-heal is refused or fails: `podman machine stop && podman machine start`, then re-run.
 
 ## Hung Agent Detection (Issue #257)
