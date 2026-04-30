@@ -126,8 +126,9 @@ test_watchdog_writes_status_on_pid_exit() {
 
     FAKE_PGREP_PID="$fake_vfkit_pid" _install_fakes
 
+    local sentinel="$TEST_TMP/vfkit-fired"
     # Tight 1s poll for fast tests
-    KAPSIS_VFKIT_WATCHDOG_INTERVAL=1 start_vfkit_watchdog "$TEST_AGENT_ID"
+    KAPSIS_VFKIT_WATCHDOG_INTERVAL=1 start_vfkit_watchdog "$TEST_AGENT_ID" "" "" "$sentinel"
     local watchdog_pid="$_VFKIT_WATCHDOG_PID"
     [[ -n "$watchdog_pid" ]] || { log_test "FAIL: watchdog did not start"; return 1; }
 
@@ -147,6 +148,35 @@ test_watchdog_writes_status_on_pid_exit() {
     assert_contains "$content" '"error_type": "mount_failure"' "status.json must carry error_type=mount_failure"
     assert_contains "$content" "vfkit" "status message must mention vfkit for diagnostic clarity"
     assert_contains "$content" "host-side watchdog" "status message must identify the watchdog as the source"
+    # Host-only sentinel (forgery-resistance proof)
+    assert_file_exists "$sentinel" "host-only sentinel file must be touched by the watchdog"
+    _teardown_test_env
+}
+
+test_watchdog_does_not_touch_sentinel_when_killed_early() {
+    log_test "Watchdog killed before vfkit exit must NOT touch the host-only sentinel"
+    TEST_AGENT_ID="vfkit-sentinel-clean"
+    _setup_test_env
+
+    sleep 30 &
+    local fake_vfkit_pid=$!
+    TEST_CHILD_PIDS="$fake_vfkit_pid"
+
+    FAKE_PGREP_PID="$fake_vfkit_pid" _install_fakes
+
+    local sentinel="$TEST_TMP/vfkit-fired"
+    KAPSIS_VFKIT_WATCHDOG_INTERVAL=5 start_vfkit_watchdog "$TEST_AGENT_ID" "" "" "$sentinel"
+    local watchdog_pid="$_VFKIT_WATCHDOG_PID"
+
+    sleep 1
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+    kill "$fake_vfkit_pid" 2>/dev/null || true
+    wait "$fake_vfkit_pid" 2>/dev/null || true
+    TEST_CHILD_PIDS=""
+
+    [[ ! -f "$sentinel" ]]
+    assert_equals "0" "$?" "sentinel file must NOT exist when watchdog was killed before fire"
     _teardown_test_env
 }
 
@@ -268,12 +298,20 @@ test_watchdog_killed_early_does_not_write_status() {
 # Reproduces the override block from launch-agent.sh. Inputs:
 #   $1 = EXIT_CODE
 #   $2 = status_file path
-#   $3 = AGENT_ID
+#   $3 = sentinel_path (host-only — empty means watchdog never fired)
 # Echoes the resulting EXIT_CODE.
+#
+# Logic mirrors the post-container override in scripts/launch-agent.sh
+# after ensemble review #2: trusts the host-only sentinel as the
+# authoritative "watchdog fired" signal, and treats status.json's
+# mount_failure as defense-in-depth (since status.json is mirrored from
+# the container on macOS and is not independently host-trusted).
 _simulate_override() {
     local EXIT_CODE="$1"
     local status_file="$2"
-    if [[ "$EXIT_CODE" -ne 0 ]]; then
+    local sentinel_path="${3:-}"
+    if [[ "$EXIT_CODE" -ne 0 ]] \
+       && [[ -n "$sentinel_path" && -f "$sentinel_path" ]]; then
         local status_exit_vfkit status_err_vfkit
         status_exit_vfkit=""
         status_err_vfkit=""
@@ -287,36 +325,43 @@ _simulate_override() {
                 status_err_vfkit="mount_failure"
             fi
         fi
-        if [[ "$status_exit_vfkit" == "4" && "$status_err_vfkit" == "mount_failure" ]]; then
-            EXIT_CODE=4
-        fi
+        # Sentinel is the trust anchor: present sentinel + ANY non-zero exit
+        # → upgrade to 4. status.json mismatch is a status_complete failure
+        # (e.g., disk full inside the watchdog subshell), not a forgery.
+        EXIT_CODE=4
+        # Quiet shellcheck — variables consumed in the assertion intent
+        : "$status_exit_vfkit" "$status_err_vfkit"
     fi
     echo "$EXIT_CODE"
 }
 
 test_post_container_override_to_4_for_signal_exit() {
-    log_test "Override upgrades signal exit (143) to 4 when status.json reports mount_failure"
+    log_test "Override upgrades signal exit (143) to 4 when sentinel + status.json mount_failure"
     TEST_AGENT_ID="vfkit-override-7"
     _setup_test_env
     status_set_error_type "mount_failure"
     status_complete 4 "test fixture"
     local status_file="$KAPSIS_STATUS_DIR/kapsis-test-project-$TEST_AGENT_ID.json"
+    local sentinel="$TEST_TMP/vfkit-fired"
+    : > "$sentinel"
     local result
-    result=$(_simulate_override 143 "$status_file")
-    assert_equals "4" "$result" "EXIT_CODE 143 must be upgraded to 4 when status.json reports mount_failure"
+    result=$(_simulate_override 143 "$status_file" "$sentinel")
+    assert_equals "4" "$result" "EXIT_CODE 143 must be upgraded to 4 when sentinel + status.json mount_failure"
     _teardown_test_env
 }
 
 test_post_container_override_to_4_for_exit_1() {
-    log_test "Override upgrades EXIT_CODE 1 to 4 when pkill failed but watchdog wrote mount_failure"
+    log_test "Override upgrades EXIT_CODE 1 to 4 when sentinel present (pkill miss case)"
     TEST_AGENT_ID="vfkit-override-8"
     _setup_test_env
     status_set_error_type "mount_failure"
     status_complete 4 "test fixture"
     local status_file="$KAPSIS_STATUS_DIR/kapsis-test-project-$TEST_AGENT_ID.json"
+    local sentinel="$TEST_TMP/vfkit-fired"
+    : > "$sentinel"
     local result
-    result=$(_simulate_override 1 "$status_file")
-    assert_equals "4" "$result" "EXIT_CODE 1 must be upgraded to 4 when watchdog wrote mount_failure (pkill miss case)"
+    result=$(_simulate_override 1 "$status_file" "$sentinel")
+    assert_equals "4" "$result" "EXIT_CODE 1 must be upgraded to 4 when sentinel proves watchdog fired"
     _teardown_test_env
 }
 
@@ -327,34 +372,78 @@ test_post_container_override_does_not_fire_for_exit_0() {
     status_set_error_type "mount_failure"
     status_complete 4 "test fixture"
     local status_file="$KAPSIS_STATUS_DIR/kapsis-test-project-$TEST_AGENT_ID.json"
+    local sentinel="$TEST_TMP/vfkit-fired"
+    : > "$sentinel"
     local result
-    result=$(_simulate_override 0 "$status_file")
+    # Even with sentinel + status.json mount_failure, exit 0 must be preserved.
+    result=$(_simulate_override 0 "$status_file" "$sentinel")
     assert_equals "0" "$result" "EXIT_CODE 0 must NOT be silently upgraded to 4"
     _teardown_test_env
 }
 
-test_post_container_override_requires_mount_failure_error_type() {
-    log_test "Override does not fire when status.json has exit_code=4 but no mount_failure error_type"
-    TEST_AGENT_ID="vfkit-override-10"
-    _setup_test_env
-    # Write status with exit_code=4 but error_type unset (or different)
-    status_set_error_type "agent_failure"
-    status_complete 4 "test fixture"
-    local status_file="$KAPSIS_STATUS_DIR/kapsis-test-project-$TEST_AGENT_ID.json"
-    local result
-    result=$(_simulate_override 1 "$status_file")
-    assert_equals "1" "$result" "EXIT_CODE must NOT be upgraded to 4 without mount_failure error_type"
-    _teardown_test_env
-}
-
 test_post_container_override_does_not_fire_when_status_clean() {
-    log_test "Override leaves EXIT_CODE alone when status.json has no mount_failure"
+    log_test "Override leaves EXIT_CODE alone when no sentinel and no mount_failure"
     TEST_AGENT_ID="vfkit-override-11"
     _setup_test_env
     local status_file="$KAPSIS_STATUS_DIR/kapsis-test-project-$TEST_AGENT_ID.json"
     local result
-    result=$(_simulate_override 143 "$status_file")
-    assert_equals "143" "$result" "EXIT_CODE must remain 143 when status.json does not report mount_failure"
+    result=$(_simulate_override 143 "$status_file" "")
+    assert_equals "143" "$result" "EXIT_CODE must remain 143 when neither sentinel nor mount_failure"
+    _teardown_test_env
+}
+
+#-------------------------------------------------------------------------------
+# Forgery resistance: status.json says mount_failure but no sentinel exists.
+# This simulates a compromised in-container agent writing forged JSON to the
+# bind-mounted status dir — the override must NOT trust it.
+#-------------------------------------------------------------------------------
+test_post_container_override_does_not_fire_without_sentinel() {
+    log_test "Override does NOT fire when status.json reports mount_failure but no host sentinel exists (forgery resistance)"
+    TEST_AGENT_ID="vfkit-override-12"
+    _setup_test_env
+    status_set_error_type "mount_failure"
+    status_complete 4 "FORGED by container"
+    local status_file="$KAPSIS_STATUS_DIR/kapsis-test-project-$TEST_AGENT_ID.json"
+    # Note: no sentinel file at $TEST_TMP/vfkit-fired
+    local sentinel="$TEST_TMP/vfkit-fired-nonexistent"
+    local result
+    result=$(_simulate_override 1 "$status_file" "$sentinel")
+    assert_equals "1" "$result" "EXIT_CODE must NOT be upgraded to 4 from forged status.json without host-side sentinel"
+    _teardown_test_env
+}
+
+test_post_container_override_does_not_fire_with_empty_sentinel_arg() {
+    log_test "Override does NOT fire when sentinel arg is empty (watchdog disabled)"
+    TEST_AGENT_ID="vfkit-override-13"
+    _setup_test_env
+    status_set_error_type "mount_failure"
+    status_complete 4 "test"
+    local status_file="$KAPSIS_STATUS_DIR/kapsis-test-project-$TEST_AGENT_ID.json"
+    local result
+    # Empty sentinel arg simulates watchdog never having been started
+    # (e.g., Linux, KAPSIS_VFKIT_WATCHDOG_ENABLED=false).
+    result=$(_simulate_override 1 "$status_file" "")
+    assert_equals "1" "$result" "EXIT_CODE must remain 1 when watchdog never fired"
+    _teardown_test_env
+}
+
+#-------------------------------------------------------------------------------
+# Sentinel-only fallback: sentinel is present but status.json failed to
+# write (e.g., disk full inside the watchdog subshell). Override should
+# still fire because the sentinel is host-trusted.
+#-------------------------------------------------------------------------------
+test_post_container_override_fires_with_sentinel_only() {
+    log_test "Override fires when sentinel exists even if status.json never got mount_failure (status_complete failure path)"
+    TEST_AGENT_ID="vfkit-override-14"
+    _setup_test_env
+    # Don't write any status — simulate status_complete having failed.
+    local status_file="$KAPSIS_STATUS_DIR/kapsis-test-project-$TEST_AGENT_ID.json"
+    rm -f "$status_file"
+    local sentinel="$TEST_TMP/vfkit-fired"
+    : > "$sentinel"
+    local result
+    result=$(_simulate_override 1 "$status_file" "$sentinel")
+    assert_equals "4" "$result" "EXIT_CODE must upgrade to 4 on sentinel alone (sentinel is host-trusted, status_complete may have failed)"
     _teardown_test_env
 }
 
@@ -369,6 +458,7 @@ main() {
     run_test test_watchdog_writes_status_on_pid_exit
     run_test test_watchdog_pkills_with_portable_boundary
     run_test test_watchdog_killed_early_does_not_write_status
+    run_test test_watchdog_does_not_touch_sentinel_when_killed_early
 
     log_info "=== Skip paths (input validation) ==="
     run_test test_watchdog_skipped_when_disabled
@@ -380,8 +470,12 @@ main() {
     run_test test_post_container_override_to_4_for_signal_exit
     run_test test_post_container_override_to_4_for_exit_1
     run_test test_post_container_override_does_not_fire_for_exit_0
-    run_test test_post_container_override_requires_mount_failure_error_type
     run_test test_post_container_override_does_not_fire_when_status_clean
+
+    log_info "=== Forgery resistance (ensemble review #2) ==="
+    run_test test_post_container_override_does_not_fire_without_sentinel
+    run_test test_post_container_override_does_not_fire_with_empty_sentinel_arg
+    run_test test_post_container_override_fires_with_sentinel_only
 
     print_summary
 }
