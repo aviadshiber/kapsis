@@ -1,12 +1,12 @@
-# Claude Code Guidelines for Kapsis
+# CLAUDE.md
 
-Essential context for AI assistants working on the Kapsis codebase.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 > **Quick reference:** See `AGENTS.md` for concise repository guidelines shared across all AI agents.
 
 ## Project Overview
 
-Kapsis is a **hermetically isolated AI agent sandbox** (v2.16.6) for running multiple AI coding agents (Claude Code, Codex CLI, Aider, Gemini CLI) in parallel with complete isolation via Podman rootless containers, Copy-on-Write filesystems, and DNS-based network filtering.
+Kapsis is a **hermetically isolated AI agent sandbox** (v2.23.8) for running multiple AI coding agents (Claude Code, Codex CLI, Aider, Gemini CLI) in parallel with complete isolation via Podman rootless containers, Copy-on-Write filesystems, and DNS-based network filtering.
 
 ### Core Isolation Guarantees
 
@@ -39,6 +39,9 @@ kapsis/
 │   ├── install.sh              # Distribution installer
 │   ├── switch-java.sh          # Java version switcher (in-container)
 │   ├── audit-report.sh         # Audit report generation
+│   ├── k8s-deploy.sh           # K8s operator deployment helper
+│   ├── kapsis-ss-inject.py     # Status hook injector (Python)
+│   ├── git-credential-keyring  # Git credential helper using OS keychain
 │   ├── setup-github-protection.sh  # GitHub branch protection setup
 │   ├── setup-homebrew-tap-sync.sh  # Homebrew tap sync setup
 │   ├── setup-package-repos.sh  # Package repository setup
@@ -71,6 +74,9 @@ kapsis/
 │   │   ├── audit.sh            # Audit trail recording
 │   │   ├── audit-patterns.sh   # Audit pattern detection
 │   │   ├── liveness-monitor.sh # Container liveness monitoring
+│   │   ├── podman-health.sh    # Podman VM health probe & auto-heal (macOS)
+│   │   ├── status-sync.sh      # Volume→host status mirror worker (macOS)
+│   │   ├── status.py           # Python status helpers
 │   │   ├── rewrite-plugin-paths.sh # Plugin path rewriting
 │   │   └── k8s-config.sh       # K8s config translator (Docker→K8s format)
 │   ├── backends/               # Backend implementations
@@ -92,7 +98,7 @@ kapsis/
 │   ├── network-allowlist.yaml  # DNS filtering allowlist
 │   ├── tool-phase-mapping.yaml # Tool lifecycle mapping
 │   └── k8s/                    # K8s backend configs and examples
-├── tests/                      # 79 test files using tests/lib/test-framework.sh
+├── tests/                      # 95 test files using tests/lib/test-framework.sh
 │   ├── run-all-tests.sh        # Test runner with category filtering
 │   └── test-*.sh               # Individual test scripts
 ├── docs/                       # Extended documentation (15 guides + designs/)
@@ -103,6 +109,8 @@ kapsis/
 │   ├── internal/controller/    # Reconciliation logic (pod builder, network policy, status bridge)
 │   ├── config/                 # Kustomize manifests, CRD, RBAC
 │   └── test/                   # E2E tests and utilities
+├── maven/                      # Maven config (isolated-settings.xml for in-container builds)
+├── assets/                     # Static artifacts (logos, etc.)
 ├── security/                   # AppArmor & seccomp profiles
 ├── packaging/                  # Debian, Homebrew, RPM packages
 ├── .github/workflows/          # CI/CD (ci, auto-release, release, security, packages, deploy-pages, sync-homebrew-tap)
@@ -229,6 +237,8 @@ Status is written as JSON to `~/.kapsis/status/`.
 | `scripts/lib/audit-patterns.sh` | Audit pattern detection — identifies suspicious activity |
 | `scripts/lib/atomic-copy.sh` | Atomic file copy — safe copy with rollback |
 | `scripts/lib/liveness-monitor.sh` | Container liveness — heartbeat monitoring and recovery |
+| `scripts/lib/podman-health.sh` | Podman VM health probe & auto-heal (macOS pre-launch mount check) |
+| `scripts/lib/status-sync.sh` | Mirrors per-agent named volumes to `~/.kapsis/status/` (macOS) |
 | `scripts/lib/inject-lsp-config.sh` | LSP config injection — editor integration inside containers |
 | `scripts/lib/rewrite-plugin-paths.sh` | Plugin path rewriting — adjusts paths for container mounts |
 | `scripts/lib/ssh-config-compat.sh` | SSH config portability — normalizes SSH config across environments |
