@@ -192,6 +192,11 @@ test_snapshot_file_preserves_permissions() {
 
 test_snapshot_file_fallback_on_failure() {
     log_test "_snapshot_file: falls back to original path when cp fails"
+
+    if ! skip_if_root; then
+        return 0
+    fi
+
     reset_snapshot_state
     _init_snapshot_dir
 

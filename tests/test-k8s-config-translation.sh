@@ -204,7 +204,11 @@ test_generate_cr_valid_yaml() {
     tmpfile=$(mktemp)
     echo "$cr_output" > "$tmpfile"
     local exit_code=0
-    yq eval '.' "$tmpfile" > /dev/null 2>&1 || exit_code=$?
+    if skip_if_not_mikefarah_yq 2>/dev/null; then
+        yq eval '.' "$tmpfile" > /dev/null 2>&1 || exit_code=$?
+    else
+        python3 -c "import yaml, sys; yaml.safe_load(open(sys.argv[1]))" "$tmpfile" > /dev/null 2>&1 || exit_code=$?
+    fi
     rm -f "$tmpfile"
 
     assert_equals 0 "$exit_code" "Generated CR should be valid YAML"
@@ -302,7 +306,11 @@ test_generate_cr_special_chars_valid_yaml() {
     tmpfile=$(mktemp)
     echo "$cr_output" > "$tmpfile"
     local exit_code=0
-    yq eval '.' "$tmpfile" > /dev/null 2>&1 || exit_code=$?
+    if skip_if_not_mikefarah_yq 2>/dev/null; then
+        yq eval '.' "$tmpfile" > /dev/null 2>&1 || exit_code=$?
+    else
+        python3 -c "import yaml, sys; yaml.safe_load(open(sys.argv[1]))" "$tmpfile" > /dev/null 2>&1 || exit_code=$?
+    fi
     rm -f "$tmpfile"
 
     assert_equals 0 "$exit_code" "CR with special characters should be valid YAML"
@@ -373,7 +381,11 @@ test_generate_cr_branch_special_chars_valid_yaml() {
     tmpfile=$(mktemp)
     echo "$cr_output" > "$tmpfile"
     local exit_code=0
-    yq eval '.' "$tmpfile" > /dev/null 2>&1 || exit_code=$?
+    if skip_if_not_mikefarah_yq 2>/dev/null; then
+        yq eval '.' "$tmpfile" > /dev/null 2>&1 || exit_code=$?
+    else
+        python3 -c "import yaml, sys; yaml.safe_load(open(sys.argv[1]))" "$tmpfile" > /dev/null 2>&1 || exit_code=$?
+    fi
     rm -f "$tmpfile"
 
     assert_equals 0 "$exit_code" "CR with special branch chars should be valid YAML"

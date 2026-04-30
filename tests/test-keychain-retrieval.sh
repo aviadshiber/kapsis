@@ -102,8 +102,7 @@ environment:
       account: "api-key"
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -161,8 +160,7 @@ environment:
       mode: "0600"
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -246,8 +244,7 @@ environment:
       service: "third-party-service"
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -283,8 +280,7 @@ environment:
       inject_to_file: "~/.secret3.json"
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -312,8 +308,7 @@ environment:
       account: ["user1@example.com", "user2@example.com", "${USER}@example.com"]
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -343,8 +338,7 @@ environment:
       account: "single-user@example.com"
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -379,8 +373,7 @@ environment:
       service: "service-c"
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -412,8 +405,7 @@ environment:
       account: []
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -447,8 +439,7 @@ environment:
       inject_to: "secret_store"
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -475,8 +466,7 @@ environment:
       inject_to: "env"
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -506,8 +496,7 @@ environment:
       inject_to: "secret_store"
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -552,8 +541,7 @@ environment:
       service: "my-service"
 EOF
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         rm -f "$test_config"
         return 0
     fi
@@ -570,6 +558,10 @@ EOF
 
 test_inject_to_invalid_value_warning() {
     log_test "Testing invalid inject_to value triggers warning in dry-run"
+
+    if ! skip_if_not_mikefarah_yq; then
+        return 0
+    fi
 
     local test_config="$TEST_PROJECT/.kapsis-inject-to-invalid-test.yaml"
     cat > "$test_config" << 'EOF'
