@@ -2354,6 +2354,14 @@ main() {
     # Set after caffeinate is started; cleared after it is killed.
     _CAFFEINATE_PID=""
 
+    # PID of host-side vfkit watchdog subshell (macOS only, Issue #303).
+    # Set after watchdog is started; cleared after it is killed.
+    _VFKIT_WATCHDOG_PID=""
+    # Path to trigger flag file written by the watchdog when vfkit exits mid-run.
+    # File is absent during normal operation; watchdog creates it via touch when
+    # vfkit PID disappears so the parent can override EXIT_CODE to 4.
+    _VFKIT_WATCHDOG_TRIGGERED=""
+
     # Cleanup function that ensures completion message is shown
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
@@ -2365,6 +2373,12 @@ main() {
             kill "$_CAFFEINATE_PID" 2>/dev/null || true
             _CAFFEINATE_PID=""
         fi
+        # Stop vfkit watchdog if active (Issue #303).
+        if [[ -n "$_VFKIT_WATCHDOG_PID" ]]; then
+            kill "$_VFKIT_WATCHDOG_PID" 2>/dev/null || true
+            _VFKIT_WATCHDOG_PID=""
+        fi
+        rm -f "${_VFKIT_WATCHDOG_TRIGGERED:-}" 2>/dev/null || true
         # Stop host-side status volume sync and flush one final snapshot to
         # the host status dir so post-exit consumers see the definitive state
         # (Issue #276). No-op when KAPSIS_STATUS_VOLUME is unset.
@@ -2581,6 +2595,35 @@ main() {
         log_debug "Sleep prevention active (caffeinate PID: $_CAFFEINATE_PID)"
     fi
 
+    # Host-side vfkit watchdog (Issue #303, macOS only).
+    # The in-container liveness probe takes ~50s per attempt when virtiofsd dies
+    # because stat(2) on a dead FUSE mount enters D-state (TASK_UNINTERRUPTIBLE)
+    # and cannot be interrupted by SIGKILL. Detecting vfkit death from the host
+    # via kill -0 is instant, reducing detection time from ~188s to ≤10s.
+    if [[ "$BACKEND" == "podman" ]] && is_macos; then
+        local _vfkit_pid
+        _vfkit_pid=$(pgrep -n -f "vfkit.*${KAPSIS_PODMAN_MACHINE:-podman-machine-default}" 2>/dev/null || true)
+        if [[ -n "$_vfkit_pid" ]]; then
+            _VFKIT_WATCHDOG_TRIGGERED=$(mktemp)
+            rm -f "$_VFKIT_WATCHDOG_TRIGGERED"  # absent = running; present = watchdog fired
+            local _wd_trigger_file="$_VFKIT_WATCHDOG_TRIGGERED"
+            local _wd_container="kapsis-${AGENT_ID}"
+            (
+                while true; do
+                    if ! kill -0 "$_vfkit_pid" 2>/dev/null; then
+                        log_warn "vfkit process (PID $_vfkit_pid) exited — virtio-fs mounts lost"
+                        touch "$_wd_trigger_file"
+                        podman stop "$_wd_container" 2>/dev/null || true
+                        break
+                    fi
+                    sleep 5
+                done
+            ) &
+            _VFKIT_WATCHDOG_PID=$!
+            log_info "vfkit watchdog active (vfkit PID: $_vfkit_pid, poll: 5s)"
+        fi
+    fi
+
     # Display progress header (shows sandbox ready status with timer)
     display_header "$AGENT_ID" "$BRANCH" "$NETWORK_MODE"
 
@@ -2609,6 +2652,16 @@ main() {
     # Run the container via backend
     backend_run "$container_output"
     EXIT_CODE=$(backend_get_exit_code)
+
+    # vfkit watchdog override (Issue #303): if the watchdog detected that vfkit
+    # exited mid-run it stopped the container and created the trigger file.
+    # Override EXIT_CODE to 4 so the exit-code-4 mount-failure path fires.
+    if [[ -f "${_VFKIT_WATCHDOG_TRIGGERED:-}" ]]; then
+        log_warn "vfkit watchdog triggered — overriding exit code to $KAPSIS_EXIT_MOUNT_FAILURE (mount failure)"
+        EXIT_CODE=$KAPSIS_EXIT_MOUNT_FAILURE
+        rm -f "$_VFKIT_WATCHDOG_TRIGGERED"
+        _VFKIT_WATCHDOG_TRIGGERED=""
+    fi
 
     log_timer_end "container"
     log_info "Container exited with code: $EXIT_CODE"
