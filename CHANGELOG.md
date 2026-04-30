@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.23.10] - 2026-04-30
+## [2.24.0] - 2026-04-30
 
-### Documentation
-- Refresh CLAUDE.md with current version and missing scripts (#304)
+### Added
+- Host-side vfkit watchdog for fast mid-run virtio-fs drop detection (#306)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Documentation
+- Refresh CLAUDE.md with current version and missing scripts (#304)
+
 
 ### Fixed
 - Close 330s mount-check blind window + add evidence logging (#301)
@@ -881,7 +885,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.23.10...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.24.0...HEAD
+[2.24.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.24.0
 [2.23.10]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.10
 [2.23.8]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.8
 [2.23.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.7
