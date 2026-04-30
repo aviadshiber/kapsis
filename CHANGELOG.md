@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.23.8] - 2026-04-29
+## [2.23.10] - 2026-04-30
 
-### Fixed
-- Close 330s mount-check blind window + add evidence logging (#301)
+### Documentation
+- Refresh CLAUDE.md with current version and missing scripts (#304)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Close 330s mount-check blind window + add evidence logging (#301)
+
 
 ### Fixed
 - Clean up stale pid/sock files after zombie vfkit kill (#300)
@@ -877,7 +881,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.23.8...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.23.10...HEAD
+[2.23.10]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.10
 [2.23.8]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.8
 [2.23.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.7
 [2.23.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.6
