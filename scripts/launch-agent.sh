@@ -118,6 +118,8 @@ source "$SCRIPT_DIR/lib/dns-pin.sh"
 
 # Source virtio-fs health probe / auto-heal (Issue #276) — macOS only, no-op on Linux
 source "$SCRIPT_DIR/lib/podman-health.sh"
+# shellcheck source=lib/vfkit-watchdog.sh
+source "$SCRIPT_DIR/lib/vfkit-watchdog.sh"
 
 # Source host-side status volume sync (Issue #276) — no-op when KAPSIS_STATUS_VOLUME unset
 source "$SCRIPT_DIR/lib/status-sync.sh"
@@ -2370,10 +2372,14 @@ main() {
             _CAFFEINATE_PID=""
         fi
         # Stop vfkit watchdog if active (Issue #303). Killed before
-        # backend_cleanup so a stale watchdog cannot SIGTERM the podman
-        # client after the container has already exited normally.
+        # backend_cleanup so a stale watchdog cannot SIGTERM the agent's
+        # `podman run` after the container has already exited normally.
+        # `wait` drains the subshell so any in-flight `_status_write` finishes
+        # before this trap runs `status_complete` again — without it, a
+        # `${status}.tmp.$$` from the watchdog can leak.
         if [[ -n "${_VFKIT_WATCHDOG_PID:-}" ]]; then
             kill "$_VFKIT_WATCHDOG_PID" 2>/dev/null || true
+            wait "$_VFKIT_WATCHDOG_PID" 2>/dev/null || true
             _VFKIT_WATCHDOG_PID=""
         fi
         # Stop host-side status volume sync and flush one final snapshot to
@@ -2592,38 +2598,13 @@ main() {
         log_debug "Sleep prevention active (caffeinate PID: $_CAFFEINATE_PID)"
     fi
 
-    # vfkit watchdog (Issue #303): host-side ≤10s detection of virtio-fs drops.
-    # When vfkit exits, the in-container liveness probe gets stuck in D-state
-    # for ~50s per attempt because FUSE syscalls are TASK_UNINTERRUPTIBLE and
-    # cannot be SIGKILLed. A host-side `kill -0` check is instant, so we
-    # detect the root cause (vfkit gone) directly. Complements PR #301 which
-    # closed the grace-period blind window for in-container detection.
-    if [[ "$BACKEND" == "podman" ]] && is_macos \
-       && [[ "${KAPSIS_VFKIT_WATCHDOG_ENABLED:-true}" == "true" ]]; then
-        local _vfkit_machine="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
-        local _vfkit_pid
-        _vfkit_pid=$(pgrep -n -f "vfkit.*${_vfkit_machine}" 2>/dev/null || true)
-        if [[ -n "$_vfkit_pid" ]]; then
-            local _watchdog_interval="${KAPSIS_VFKIT_WATCHDOG_INTERVAL:-5}"
-            (
-                set +e
-                while kill -0 "$_vfkit_pid" 2>/dev/null; do
-                    sleep "$_watchdog_interval"
-                done
-                # vfkit gone — virtio-fs mounts are gone with it. Write
-                # mount_failure to status.json so the post-container override
-                # below picks it up; SIGTERM the local podman client so the
-                # synchronous backend_run pipeline returns (PIPESTATUS=143).
-                status_set_error_type "mount_failure" 2>/dev/null || true
-                status_complete 4 "Workspace mount lost: vfkit (PID $_vfkit_pid) exited (host-side watchdog). Recovery: podman machine stop && podman machine start, then re-run." 2>/dev/null || true
-                log_warn "KAPSIS_MOUNT_FAILURE[vfkit_watchdog]: vfkit (PID $_vfkit_pid) exited — virtio-fs mounts lost" 2>/dev/null || true
-                pkill -TERM -f "podman run .*--name kapsis-${AGENT_ID}\b" 2>/dev/null || true
-            ) &
-            _VFKIT_WATCHDOG_PID=$!
-            log_debug "vfkit watchdog active (vfkit PID: $_vfkit_pid, poll: ${_watchdog_interval}s, watchdog PID: $_VFKIT_WATCHDOG_PID)"
-        else
-            log_debug "vfkit process not found for machine '$_vfkit_machine' — skipping watchdog"
-        fi
+    # vfkit watchdog (Issue #303): host-side ≤10s detection of virtio-fs
+    # drops. Implementation lives in scripts/lib/vfkit-watchdog.sh so the
+    # body is shared with tests. Sets _VFKIT_WATCHDOG_PID on success.
+    # Skipped automatically on Linux, when disabled, or when vfkit is not
+    # found.
+    if [[ "$BACKEND" == "podman" ]]; then
+        start_vfkit_watchdog "$AGENT_ID"
     fi
 
     # Display progress header (shows sandbox ready status with timer)
@@ -2740,15 +2721,36 @@ main() {
     fi
 
     # Check for vfkit watchdog mount failure in status.json (Issue #303).
-    # The host-side watchdog SIGTERMs the podman client after vfkit exits and
-    # writes exit_code=4 + error_type=mount_failure to status.json. Detecting
-    # it here lets the canonical mount_failure branch below run unchanged.
-    # Mirrors the hung-after-completion pattern above.
-    if [[ "$EXIT_CODE" -eq 143 || "$EXIT_CODE" -eq 137 ]]; then
-        local status_exit_vfkit
+    # The host-side watchdog SIGTERMs the agent's `podman run` after vfkit
+    # exits and writes exit_code=4 + error_type=mount_failure to status.json.
+    # Detecting it here lets the canonical mount_failure branch below run
+    # unchanged.
+    #
+    # Trust model: status.json is written from the HOST (macOS named volume
+    # → host status dir on macOS, bind mount on Linux — but watchdog is
+    # macOS-only). We additionally guard on error_type=mount_failure so a
+    # plain "exit 4" written from inside the container cannot upgrade an
+    # arbitrary failure into a mount_failure path.
+    #
+    # We DO NOT restrict to signal exit codes (143/137) because pkill may
+    # fail to reach the agent's `podman run` (e.g. if podman has already
+    # detached, or pgrep finds nothing): the pipeline can return 1 even
+    # though the watchdog correctly observed vfkit exit. Exit 0 IS preserved
+    # — a legitimate completion before vfkit died must not be overridden.
+    if [[ "$EXIT_CODE" -ne 0 ]]; then
+        local status_exit_vfkit status_err_vfkit
         status_exit_vfkit=$(status_get_exit_code 2>/dev/null || echo "")
-        if [[ "$status_exit_vfkit" == "4" ]]; then
-            log_warn "Mount failure detected via vfkit watchdog (status.json exit_code=4) — overriding exit code"
+        status_err_vfkit=""
+        if [[ -f "${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/kapsis-$(basename "$PROJECT_PATH")-${AGENT_ID}.json" ]]; then
+            # Lightweight grep — avoid jq dependency. _status_write quotes the
+            # value, so the regex anchors on the JSON string form.
+            if grep -Eq '"error_type":[[:space:]]*"mount_failure"' \
+                "${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/kapsis-$(basename "$PROJECT_PATH")-${AGENT_ID}.json" 2>/dev/null; then
+                status_err_vfkit="mount_failure"
+            fi
+        fi
+        if [[ "$status_exit_vfkit" == "4" && "$status_err_vfkit" == "mount_failure" ]]; then
+            log_warn "Mount failure detected via vfkit watchdog (status.json exit_code=4 error_type=mount_failure) — overriding exit code from $EXIT_CODE"
             EXIT_CODE=4
         fi
     fi
