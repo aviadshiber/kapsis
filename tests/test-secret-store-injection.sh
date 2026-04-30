@@ -23,8 +23,7 @@ LAUNCH_SCRIPT="$KAPSIS_ROOT/scripts/launch-agent.sh"
 test_inject_to_field_in_yq_pipeline() {
     log_test "Testing inject_to field is included in yq pipeline output"
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         return 0
     fi
 
@@ -58,8 +57,7 @@ EOF
 test_inject_to_with_inject_to_file_coexist() {
     log_test "Testing inject_to and inject_to_file can coexist"
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         return 0
     fi
 
@@ -92,8 +90,7 @@ EOF
 test_yq_expr_includes_inject_file_template() {
     log_test "Testing YQ expression includes inject_file_template as base64-encoded 10th field"
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         return 0
     fi
 
@@ -135,8 +132,7 @@ EOF
 test_yq_expr_empty_template_produces_empty_base64() {
     log_test "Testing YQ expression produces base64 of empty string when no template specified"
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         return 0
     fi
 
@@ -190,6 +186,10 @@ EOF
 test_build_config_secret_store_toggle() {
     log_test "Testing ENABLE_SECRET_STORE build arg from build-config library"
 
+    if ! skip_if_not_mikefarah_yq; then
+        return 0
+    fi
+
     # Source the build config library
     source "$KAPSIS_ROOT/scripts/lib/build-config.sh"
 
@@ -211,6 +211,10 @@ test_build_config_secret_store_toggle() {
 
 test_build_config_minimal_no_secret_store() {
     log_test "Testing minimal profile disables secret store"
+
+    if ! skip_if_not_mikefarah_yq; then
+        return 0
+    fi
 
     # Source the build config library
     source "$KAPSIS_ROOT/scripts/lib/build-config.sh"
@@ -286,8 +290,7 @@ test_yq_expr_shared_between_launch_and_tests() {
 test_yq_expr_includes_keyring_collection() {
     log_test "Testing YQ expression includes keyring_collection and keyring_profile as 7th and 8th fields"
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         return 0
     fi
 
@@ -353,8 +356,7 @@ test_entrypoint_has_keyring_compat() {
 test_keyring_collection_coexists_with_inject_to() {
     log_test "Testing keyring_collection works alongside inject_to: secret_store"
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         return 0
     fi
 
@@ -385,8 +387,7 @@ EOF
 test_keyring_profile_overrides_account() {
     log_test "Testing keyring_profile overrides account in YQ pipeline output"
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         return 0
     fi
 

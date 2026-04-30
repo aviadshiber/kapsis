@@ -1368,3 +1368,46 @@ assert_sanitized_git_secure() {
 
     return 0
 }
+
+# skip_if_not_mikefarah_yq
+# Skips the current test when mikefarah/yq is not available.
+# Expressions like `select(kind == "seq")` and `yq eval '.'` are mikefarah/yq v4
+# syntax; they fail silently or produce errors with the Python yq wrapper (which
+# uses jq under the hood and does not expose the `kind` builtin).
+skip_if_not_mikefarah_yq() {
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not available"
+        return 1
+    fi
+    if ! yq --version 2>&1 | grep -qE '(mikefarah|version v[0-9]+\.[0-9]+\.[0-9]+)'; then
+        log_skip "mikefarah/yq required (Python yq wrapper detected)"
+        return 1
+    fi
+    return 0
+}
+
+# skip_if_root
+# Skips the current test when running as the root user.
+# Tests that rely on file-permission restrictions (chmod 000) to simulate
+# failure paths are meaningless under root because the kernel ignores DAC
+# permission bits for UID 0.
+skip_if_root() {
+    if [[ "$(id -u)" -eq 0 ]]; then
+        log_skip "Running as root — file-permission tests are not meaningful"
+        return 1
+    fi
+    return 0
+}
+
+# skip_if_commit_signing_active
+# Skips the current test when git commit signing is configured.
+# Tests that perform git commits inside temporary repos will fail when a
+# system-wide gpgsign=true hook delegates to a signing server that rejects
+# commits created in the test environment.
+skip_if_commit_signing_active() {
+    if git config --global commit.gpgsign 2>/dev/null | grep -qi "true"; then
+        log_skip "git commit signing is active — commit tests require unsigned commits"
+        return 1
+    fi
+    return 0
+}

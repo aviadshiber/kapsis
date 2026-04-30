@@ -461,8 +461,7 @@ test_writes_credential_map_with_correct_permissions() {
 test_git_credential_for_in_yq_pipeline() {
     log_test "YQ expression includes git_credential_for as 9th field"
 
-    if ! command -v yq &> /dev/null; then
-        log_skip "yq not available"
+    if ! skip_if_not_mikefarah_yq; then
         return 0
     fi
 
