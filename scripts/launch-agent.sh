@@ -893,6 +893,12 @@ parse_config() {
         NETWORK_DNS_PIN_FALLBACK=$(yq eval '.network.dns_pinning.fallback // "dynamic"' "$CONFIG_FILE" 2>/dev/null || echo "dynamic")
         NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
         NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        # Failure-rate thresholds (Issue #216): env vars take precedence over config
+        local _dns_max_rate
+        _dns_max_rate=$(yq eval '.network.dns_pinning.max_failure_rate // "0.5"' "$CONFIG_FILE" 2>/dev/null || echo "0.5")
+        KAPSIS_DNS_MAX_FAILURE_RATE_PCT="${KAPSIS_DNS_MAX_FAILURE_RATE_PCT:-$(echo "$_dns_max_rate" | awk '{printf "%d", $1 * 100}')}"
+        KAPSIS_DNS_MAX_FAILURES="${KAPSIS_DNS_MAX_FAILURES:-$(yq eval '.network.dns_pinning.max_failures // "10"' "$CONFIG_FILE" 2>/dev/null || echo "10")}"
+        export KAPSIS_DNS_MAX_FAILURE_RATE_PCT KAPSIS_DNS_MAX_FAILURES
 
         # Parse cleanup configuration (Fix #183)
         # Env vars take precedence over YAML via ${VAR:-$(yq ...)} pattern
@@ -2235,11 +2241,10 @@ build_container_command() {
                         fi
                     fi
                 else
-                    if [[ "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" == "abort" ]]; then
-                        log_error "DNS pinning failed with fallback=abort - aborting container launch"
-                        exit 1
-                    fi
-                    log_warn "DNS pinning failed - continuing with dynamic DNS (degraded security)"
+                    # resolve_allowlist_domains returned non-zero:
+                    # either failure-rate threshold exceeded (Issue #216) or fallback=abort.
+                    # The function has already logged the specific reason and remediation steps.
+                    exit 1
                 fi
             fi
 
