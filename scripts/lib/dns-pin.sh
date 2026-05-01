@@ -58,11 +58,16 @@ type log_success &>/dev/null || log_success() { echo "[DNS-PIN] SUCCESS: $*" >&2
 #   $2 - Resolution timeout in seconds (default: 5)
 #   $3 - Fallback behavior: "dynamic" (default) or "abort"
 #
+# Env vars (set by launch-agent.sh from config):
+#   KAPSIS_DNS_MAX_FAILURE_RATE_PCT - Integer 0-100: abort if failure% exceeds this (default: 50)
+#   KAPSIS_DNS_MAX_FAILURES         - Integer: abort if failure count exceeds this (default: 10)
+#   KAPSIS_DNS_FORCE_LAUNCH         - Set to "1" to bypass failure threshold check
+#
 # Output:
 #   domain IP1 IP2 ...
 #   (one line per domain with resolved IPs, space-separated)
 #
-# Returns: 0 on success (even partial), 1 on complete failure with abort mode
+# Returns: 0 on success (even partial), 1 if threshold exceeded or fallback=abort with failures
 resolve_allowlist_domains() {
     local domain_list="$1"
     local timeout="${2:-5}"
@@ -73,6 +78,7 @@ resolve_allowlist_domains() {
     local resolved_count=0
     local failed_count=0
     local wildcard_count=0
+    local -a failed_domains=()
 
     log_debug "Resolving domains with timeout=${timeout}s, fallback=${fallback}"
 
@@ -113,15 +119,64 @@ resolve_allowlist_domains() {
         else
             log_warn "Failed to resolve domain: $domain"
             failed_count=$((failed_count + 1))
+            failed_domains+=("$domain")
         fi
     done
 
     log_info "DNS pinning: resolved $resolved_count domains, $failed_count failed, $wildcard_count wildcards skipped"
 
-    # Handle failures based on fallback mode
-    if [[ "$failed_count" -gt 0 ]] && [[ "$fallback" == "abort" ]]; then
-        log_error "DNS resolution failed with fallback=abort"
-        return 1
+    if [[ "$failed_count" -gt 0 ]]; then
+        # Failure rate threshold check — aborts launch before wasting agent runtime
+        # Wildcards are excluded from the denominator (they can never be pinned by design)
+        local total_pinnable=$(( resolved_count + failed_count ))
+        local fail_rate_pct=0
+        if (( total_pinnable > 0 )); then
+            fail_rate_pct=$(( failed_count * 100 / total_pinnable ))
+        fi
+
+        local max_rate_pct="${KAPSIS_DNS_MAX_FAILURE_RATE_PCT:-50}"
+        local max_abs="${KAPSIS_DNS_MAX_FAILURES:-10}"
+
+        if [[ "${KAPSIS_DNS_FORCE_LAUNCH:-}" != "1" ]]; then
+            local threshold_exceeded=false
+            if (( fail_rate_pct > max_rate_pct )); then
+                log_error "DNS pinning: failure rate ${fail_rate_pct}% exceeds threshold ${max_rate_pct}% (${failed_count}/${total_pinnable} pinnable domains failed)"
+                threshold_exceeded=true
+            elif (( failed_count > max_abs )); then
+                log_error "DNS pinning: ${failed_count} domains failed, exceeds absolute threshold of ${max_abs}"
+                threshold_exceeded=true
+            fi
+
+            if [[ "$threshold_exceeded" == "true" ]]; then
+                local show_count=$(( ${#failed_domains[@]} < 5 ? ${#failed_domains[@]} : 5 ))
+                log_error "Failing domains (showing ${show_count} of ${failed_count}):"
+                for (( i=0; i<show_count; i++ )); do
+                    log_error "  - ${failed_domains[$i]}"
+                done
+                log_error "Container launch aborted — agent would fail mid-task without network access"
+                log_error "Remediation:"
+                log_error "  1. Check VPN/network connectivity and retry"
+                log_error "  2. Remove unreachable domains from allowlist"
+                log_error "  3. Raise threshold: dns_pinning.max_failure_rate in config (current: ${max_rate_pct}%)"
+                log_error "  4. Force bypass (unsafe): export KAPSIS_DNS_FORCE_LAUNCH=1"
+                return 1
+            fi
+        else
+            log_warn "DNS pinning: KAPSIS_DNS_FORCE_LAUNCH=1 — bypassing failure threshold check"
+        fi
+
+        # Handle based on fallback mode (threshold not exceeded or force-bypassed)
+        if [[ "$fallback" == "abort" ]]; then
+            log_error "DNS resolution failed with fallback=abort (${failed_count} domain(s) unresolved)"
+            return 1
+        fi
+
+        # fallback=dynamic: loud warning listing actual failing domains (not just a count)
+        log_warn "DNS pinning: ${failed_count} domain(s) will use dynamic DNS (IPs unverified at launch):"
+        for d in "${failed_domains[@]}"; do
+            log_warn "  - $d"
+        done
+        log_warn "Set dns_pinning.fallback: abort to block launch on any failure"
     fi
 
     return 0
