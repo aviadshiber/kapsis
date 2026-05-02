@@ -631,6 +631,19 @@ network:
     # Default: true
     protect_dns_files: true
 
+    # Abort launch if more than this many non-wildcard domains fail to resolve.
+    # -1 disables the absolute count check (default).
+    # Example: max_failures: 5 → abort if more than 5 domains fail.
+    max_failures: -1
+
+    # Abort launch if the fraction of failed non-wildcard domains exceeds this threshold.
+    # Range: 0.0–1.0. -1 disables the rate check.
+    # Wildcards (*.domain.com) are excluded from both numerator and denominator
+    # because they cannot be pre-resolved by design.
+    # Default: 0.5 (abort when more than 50% of resolvable domains fail).
+    # Override at runtime: export KAPSIS_SKIP_DNS_CHECK=true
+    max_failure_rate: 0.5
+
 #===============================================================================
 # GIT HOOKS
 #===============================================================================

@@ -893,6 +893,8 @@ parse_config() {
         NETWORK_DNS_PIN_FALLBACK=$(yq eval '.network.dns_pinning.fallback // "dynamic"' "$CONFIG_FILE" 2>/dev/null || echo "dynamic")
         NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
         NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        NETWORK_DNS_PIN_MAX_FAILURES=$(yq eval '.network.dns_pinning.max_failures // "-1"' "$CONFIG_FILE" 2>/dev/null || echo "-1")
+        NETWORK_DNS_PIN_MAX_FAILURE_RATE=$(yq eval '.network.dns_pinning.max_failure_rate // "0.5"' "$CONFIG_FILE" 2>/dev/null || echo "0.5")
 
         # Parse cleanup configuration (Fix #183)
         # Env vars take precedence over YAML via ${VAR:-$(yq ...)} pattern
@@ -2210,8 +2212,32 @@ build_container_command() {
             # This prevents DNS manipulation attacks inside the container
             if [[ "${NETWORK_DNS_PIN_ENABLED:-true}" == "true" ]] && [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
                 log_info "DNS pinning: resolving allowlist domains on host..."
+                # Use a temp file to read back resolved/failed counts from the subshell (Issue #216)
+                local _dns_counts_file
+                _dns_counts_file=$(mktemp)
                 local resolved_data
-                if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
+                if KAPSIS_DNS_COUNTS_FILE="$_dns_counts_file" \
+                   resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
+                    # Read counts written by resolve_allowlist_domains (cross-subshell)
+                    local _dns_resolved=0 _dns_failed=0
+                    read -r _dns_resolved _dns_failed < "$_dns_counts_file" || true
+                    rm -f "$_dns_counts_file"
+
+                    # Check failure thresholds (Issue #216) — skip when KAPSIS_SKIP_DNS_CHECK is set
+                    if [[ "${KAPSIS_SKIP_DNS_CHECK:-false}" == "true" ]]; then
+                        log_warn "KAPSIS_SKIP_DNS_CHECK=true: DNS failure threshold check is disabled"
+                    elif ! check_dns_failure_threshold \
+                            "$_dns_resolved" \
+                            "$_dns_failed" \
+                            "${NETWORK_DNS_PIN_MAX_FAILURES:--1}" \
+                            "${NETWORK_DNS_PIN_MAX_FAILURE_RATE:-0.5}"; then
+                        log_error "Aborting launch: DNS resolution failures exceed threshold."
+                        log_error "  Resolved: $_dns_resolved  Failed: $_dns_failed"
+                        log_error "  Check VPN/network connectivity and retry."
+                        log_error "  To skip this check: export KAPSIS_SKIP_DNS_CHECK=true"
+                        exit 1
+                    fi
+
                     if [[ -n "$resolved_data" ]]; then
                         # Create temp file for pinned DNS (cleaned up in _cleanup_with_completion)
                         DNS_PIN_FILE=$(mktemp)
@@ -2235,6 +2261,7 @@ build_container_command() {
                         fi
                     fi
                 else
+                    rm -f "$_dns_counts_file"
                     if [[ "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" == "abort" ]]; then
                         log_error "DNS pinning failed with fallback=abort - aborting container launch"
                         exit 1
