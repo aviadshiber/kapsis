@@ -27,6 +27,10 @@
 [[ -n "${_KAPSIS_DNS_PIN_LOADED:-}" ]] && return 0
 _KAPSIS_DNS_PIN_LOADED=1
 
+# If set, resolve_allowlist_domains writes "resolved failed" counts here so callers
+# can read them even when the function runs in a $() subshell.
+: "${KAPSIS_DNS_COUNTS_FILE:=}"
+
 # Source compat.sh for resolve_domain_ips() if not already sourced
 _DNS_PIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if ! type resolve_domain_ips &>/dev/null; then
@@ -118,10 +122,69 @@ resolve_allowlist_domains() {
 
     log_info "DNS pinning: resolved $resolved_count domains, $failed_count failed, $wildcard_count wildcards skipped"
 
+    # Write counts to file so callers can read them across the subshell boundary
+    # (wildcards excluded — they are never resolvable by design)
+    if [[ -n "${KAPSIS_DNS_COUNTS_FILE:-}" ]]; then
+        echo "$resolved_count $failed_count" > "$KAPSIS_DNS_COUNTS_FILE"
+    fi
+
     # Handle failures based on fallback mode
     if [[ "$failed_count" -gt 0 ]] && [[ "$fallback" == "abort" ]]; then
         log_error "DNS resolution failed with fallback=abort"
         return 1
+    fi
+
+    return 0
+}
+
+#===============================================================================
+# DNS FAILURE THRESHOLD CHECK (Issue #216)
+#===============================================================================
+
+# check_dns_failure_threshold <resolved> <failed> [max_failures] [max_failure_rate]
+#
+# Evaluates whether the DNS resolution failure counts exceed configured thresholds.
+# Wildcards are excluded from all arithmetic — they are never resolvable by design.
+#
+# Arguments:
+#   $1 - Number of successfully resolved domains
+#   $2 - Number of failed (non-wildcard) domains
+#   $3 - Max absolute failures allowed (-1 = disabled, default: -1)
+#   $4 - Max failure rate as a decimal 0.0–1.0 (-1 = disabled, default: 0.5)
+#
+# Returns:
+#   0 - Failure counts are within acceptable thresholds (proceed with launch)
+#   1 - Threshold exceeded (caller should abort launch or warn)
+check_dns_failure_threshold() {
+    local resolved="${1:-0}"
+    local failed="${2:-0}"
+    local max_failures="${3:--1}"
+    local max_failure_rate="${4:-0.5}"
+
+    # Nothing failed — always pass
+    if [[ "$failed" -eq 0 ]]; then
+        return 0
+    fi
+
+    local total=$(( resolved + failed ))
+
+    # Absolute count check
+    if [[ "$max_failures" != "-1" ]] && [[ "$failed" -gt "$max_failures" ]]; then
+        log_error "DNS threshold exceeded: $failed domain(s) failed to resolve (max_failures=$max_failures)"
+        return 1
+    fi
+
+    # Rate check — skip if disabled (-1) or total is zero
+    if [[ "$max_failure_rate" != "-1" ]] && [[ "$total" -gt 0 ]]; then
+        # Integer arithmetic: compare failed*100 / total against rate*100
+        local rate_pct=$(( failed * 100 / total ))
+        local threshold_pct
+        # Convert decimal rate to integer percentage (e.g. 0.5 → 50)
+        threshold_pct=$(awk "BEGIN { printf \"%d\", $max_failure_rate * 100 }")
+        if [[ "$rate_pct" -gt "$threshold_pct" ]]; then
+            log_error "DNS threshold exceeded: $failed/$total domains failed ($rate_pct% > ${threshold_pct}% max_failure_rate)"
+            return 1
+        fi
     fi
 
     return 0
