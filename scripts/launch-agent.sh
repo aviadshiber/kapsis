@@ -2212,16 +2212,18 @@ build_container_command() {
             # This prevents DNS manipulation attacks inside the container
             if [[ "${NETWORK_DNS_PIN_ENABLED:-true}" == "true" ]] && [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
                 log_info "DNS pinning: resolving allowlist domains on host..."
-                # Use a temp file to read back resolved/failed counts from the subshell (Issue #216)
+                # Use a temp file to read back resolved/failed counts from the subshell (Issue #216).
+                # Export so the variable is visible inside the $() subshell running resolve_allowlist_domains.
                 local _dns_counts_file
                 _dns_counts_file=$(mktemp)
+                export KAPSIS_DNS_COUNTS_FILE="$_dns_counts_file"
                 local resolved_data
-                if KAPSIS_DNS_COUNTS_FILE="$_dns_counts_file" \
-                   resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
+                if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
                     # Read counts written by resolve_allowlist_domains (cross-subshell)
                     local _dns_resolved=0 _dns_failed=0
                     read -r _dns_resolved _dns_failed < "$_dns_counts_file" || true
                     rm -f "$_dns_counts_file"
+                    unset KAPSIS_DNS_COUNTS_FILE
 
                     # Check failure thresholds (Issue #216) — skip when KAPSIS_SKIP_DNS_CHECK is set
                     if [[ "${KAPSIS_SKIP_DNS_CHECK:-false}" == "true" ]]; then
@@ -2262,6 +2264,7 @@ build_container_command() {
                     fi
                 else
                     rm -f "$_dns_counts_file"
+                    unset KAPSIS_DNS_COUNTS_FILE
                     if [[ "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" == "abort" ]]; then
                         log_error "DNS pinning failed with fallback=abort - aborting container launch"
                         exit 1
