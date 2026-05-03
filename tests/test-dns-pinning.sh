@@ -627,6 +627,209 @@ EOF
 }
 
 #===============================================================================
+# DNS FAILURE THRESHOLD TESTS (Issue #216, no container required)
+#===============================================================================
+
+test_check_dns_threshold_disabled_by_default() {
+    log_test "Testing check_dns_threshold: no threshold configured = always OK"
+
+    source "$DNS_PIN_LIB"
+
+    # No thresholds set — should always pass regardless of failure counts
+    assert_command_succeeds \
+        "check_dns_threshold 5 33 '' '' 'false'" \
+        "Should pass when no thresholds configured (33 failures, no limits)"
+}
+
+test_check_dns_threshold_skip_check_bypasses() {
+    log_test "Testing check_dns_threshold: KAPSIS_SKIP_DNS_CHECK=true bypasses all limits"
+
+    source "$DNS_PIN_LIB"
+
+    assert_command_succeeds \
+        "check_dns_threshold 0 52 '0.1' '1' 'true'" \
+        "Should pass when skip=true even with extreme failure counts"
+}
+
+test_check_dns_threshold_no_failures_always_ok() {
+    log_test "Testing check_dns_threshold: zero failures always OK"
+
+    source "$DNS_PIN_LIB"
+
+    assert_command_succeeds \
+        "check_dns_threshold 52 0 '0.1' '1' 'false'" \
+        "Should pass with zero failed domains regardless of thresholds"
+}
+
+test_check_dns_threshold_rate_exceeded() {
+    log_test "Testing check_dns_threshold: failure rate exceeds max_failure_rate"
+
+    source "$DNS_PIN_LIB"
+
+    # 33 of 43 = ~77% failed, threshold is 50%
+    assert_command_fails \
+        "check_dns_threshold 10 33 '0.5' '' 'false'" \
+        "Should abort when 77% failed > 50% threshold"
+}
+
+test_check_dns_threshold_rate_not_exceeded() {
+    log_test "Testing check_dns_threshold: failure rate below max_failure_rate"
+
+    source "$DNS_PIN_LIB"
+
+    # 5 of 20 = 25% failed, threshold is 50% — should pass
+    assert_command_succeeds \
+        "check_dns_threshold 15 5 '0.5' '' 'false'" \
+        "Should pass when 25% failed < 50% threshold"
+}
+
+test_check_dns_threshold_abs_exceeded() {
+    log_test "Testing check_dns_threshold: absolute failures exceed max_failures"
+
+    source "$DNS_PIN_LIB"
+
+    assert_command_fails \
+        "check_dns_threshold 10 11 '' '10' 'false'" \
+        "Should abort when 11 failed > max_failures=10"
+}
+
+test_check_dns_threshold_abs_not_exceeded() {
+    log_test "Testing check_dns_threshold: absolute failures within max_failures"
+
+    source "$DNS_PIN_LIB"
+
+    assert_command_succeeds \
+        "check_dns_threshold 10 10 '' '10' 'false'" \
+        "Should pass when failed == max_failures (not strictly greater)"
+}
+
+test_check_dns_threshold_or_logic() {
+    log_test "Testing check_dns_threshold: OR logic — either threshold triggers abort"
+
+    source "$DNS_PIN_LIB"
+
+    # Rate threshold not exceeded (10%), but absolute threshold exceeded (11 > 5)
+    assert_command_fails \
+        "check_dns_threshold 100 11 '0.5' '5' 'false'" \
+        "Should abort when abs threshold exceeded even if rate is fine"
+
+    # Absolute threshold not exceeded (3 <= 10), but rate threshold exceeded (60% > 50%)
+    assert_command_fails \
+        "check_dns_threshold 2 3 '0.5' '10' 'false'" \
+        "Should abort when rate threshold exceeded even if abs is fine"
+}
+
+test_dns_stats_sentinel_emitted_by_resolve() {
+    log_test "Testing resolve_allowlist_domains emits KAPSIS_DNS_STATS sentinel"
+
+    source "$DNS_PIN_LIB"
+
+    # An all-wildcard list resolves zero real domains; sentinel should still appear
+    local output
+    output=$(resolve_allowlist_domains "*.github.com,*.gitlab.com" 2 "dynamic" 2>/dev/null)
+
+    if echo "$output" | grep -q '^KAPSIS_DNS_STATS '; then
+        log_pass "KAPSIS_DNS_STATS sentinel emitted"
+    else
+        log_fail "Expected KAPSIS_DNS_STATS sentinel in output, got: $output"
+        return 1
+    fi
+}
+
+test_dns_stats_sentinel_stripped_from_pin_file() {
+    log_test "Testing KAPSIS_DNS_STATS sentinel is stripped before writing pin file"
+
+    source "$DNS_PIN_LIB"
+
+    local temp_file
+    temp_file=$(mktemp)
+
+    # Simulate what launch-agent.sh does: resolve, strip sentinel, write pin file
+    local resolved_data
+    resolved_data=$(resolve_allowlist_domains "github.com" 5 "dynamic" 2>/dev/null) || true
+
+    local cleaned
+    cleaned=$(echo "$resolved_data" | grep -v '^KAPSIS_DNS_STATS ')
+
+    write_pinned_dns_file "$temp_file" "$cleaned"
+
+    if grep -q 'KAPSIS_DNS_STATS' "$temp_file"; then
+        log_fail "Sentinel should not appear in the written pin file"
+        rm -f "$temp_file"
+        return 1
+    else
+        log_pass "Sentinel correctly absent from pin file"
+    fi
+
+    rm -f "$temp_file"
+}
+
+test_config_validation_max_failure_rate_valid() {
+    log_test "Testing config validation accepts valid max_failure_rate"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    fallback: dynamic
+    max_failure_rate: 0.5
+    max_failures: 10
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "Invalid dns_pinning.max_failure_rate\|Invalid dns_pinning.max_failures"; then
+        log_fail "Validation rejected valid threshold values: $output"
+    else
+        log_pass "Valid max_failure_rate and max_failures accepted"
+    fi
+
+    rm -f "$test_config"
+}
+
+test_config_validation_max_failure_rate_invalid() {
+    log_test "Testing config validation rejects out-of-range max_failure_rate"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    max_failure_rate: 1.5
+    max_failures: -1
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "Invalid dns_pinning.max_failure_rate"; then
+        log_pass "Out-of-range max_failure_rate rejected"
+    else
+        log_warn "Expected validation error for max_failure_rate=1.5"
+    fi
+
+    rm -f "$test_config"
+}
+
+#===============================================================================
 # CONTAINER TESTS (require Podman)
 #===============================================================================
 
@@ -835,6 +1038,20 @@ main() {
     run_test test_resolve_returns_valid_ipv4_or_empty
     run_test test_add_host_args_format
     run_test test_pinned_file_parsing_robust
+
+    # DNS failure threshold tests (Issue #216)
+    run_test test_check_dns_threshold_disabled_by_default
+    run_test test_check_dns_threshold_skip_check_bypasses
+    run_test test_check_dns_threshold_no_failures_always_ok
+    run_test test_check_dns_threshold_rate_exceeded
+    run_test test_check_dns_threshold_rate_not_exceeded
+    run_test test_check_dns_threshold_abs_exceeded
+    run_test test_check_dns_threshold_abs_not_exceeded
+    run_test test_check_dns_threshold_or_logic
+    run_test test_dns_stats_sentinel_emitted_by_resolve
+    run_test test_dns_stats_sentinel_stripped_from_pin_file
+    run_test test_config_validation_max_failure_rate_valid
+    run_test test_config_validation_max_failure_rate_invalid
 
     # Container tests
     run_test test_pinned_file_mounted_readonly

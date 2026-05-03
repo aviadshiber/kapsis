@@ -893,6 +893,10 @@ parse_config() {
         NETWORK_DNS_PIN_FALLBACK=$(yq eval '.network.dns_pinning.fallback // "dynamic"' "$CONFIG_FILE" 2>/dev/null || echo "dynamic")
         NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
         NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        # Issue #216: failure-rate threshold — empty string = disabled (opt-in only)
+        NETWORK_DNS_PIN_MAX_FAILURE_RATE=$(yq eval '.network.dns_pinning.max_failure_rate // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        NETWORK_DNS_PIN_MAX_FAILURES=$(yq eval '.network.dns_pinning.max_failures // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        KAPSIS_SKIP_DNS_CHECK="${KAPSIS_SKIP_DNS_CHECK:-false}"
 
         # Parse cleanup configuration (Fix #183)
         # Env vars take precedence over YAML via ${VAR:-$(yq ...)} pattern
@@ -2212,6 +2216,27 @@ build_container_command() {
                 log_info "DNS pinning: resolving allowlist domains on host..."
                 local resolved_data
                 if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
+                    # Issue #216: extract the KAPSIS_DNS_STATS sentinel emitted by resolve_allowlist_domains
+                    # (it travels via stdout through the $() subshell) then strip it before writing the pin file
+                    local dns_stats_line dns_resolved dns_failed
+                    dns_stats_line=$(echo "$resolved_data" | grep '^KAPSIS_DNS_STATS ' || true)
+                    resolved_data=$(echo "$resolved_data" | grep -v '^KAPSIS_DNS_STATS ')
+
+                    # Evaluate failure-rate threshold when either limit is configured
+                    if [[ -n "$dns_stats_line" ]]; then
+                        dns_resolved=$(echo "$dns_stats_line" | grep -o 'resolved=[0-9]*' | cut -d= -f2)
+                        dns_failed=$(echo "$dns_stats_line" | grep -o 'failed=[0-9]*' | cut -d= -f2)
+                        if ! check_dns_threshold \
+                                "${dns_resolved:-0}" "${dns_failed:-0}" \
+                                "${NETWORK_DNS_PIN_MAX_FAILURE_RATE:-}" \
+                                "${NETWORK_DNS_PIN_MAX_FAILURES:-}" \
+                                "${KAPSIS_SKIP_DNS_CHECK:-false}"; then
+                            log_error "Aborting launch: DNS resolution quality is below the configured threshold."
+                            log_error "  Check your VPN/network and retry, or set KAPSIS_SKIP_DNS_CHECK=true to bypass."
+                            exit 7
+                        fi
+                    fi
+
                     if [[ -n "$resolved_data" ]]; then
                         # Create temp file for pinned DNS (cleaned up in _cleanup_with_completion)
                         DNS_PIN_FILE=$(mktemp)
@@ -2834,6 +2859,7 @@ main() {
     #   4 = Mount failure (virtio-fs drop)
     #   5 = Agent completed but process hung (stuck child process)
     #   6 = Commit failure (agent produced work but git commit failed)
+    #   7 = DNS resolution failure rate exceeded threshold (Issue #216) — pre-launch abort
     if [[ "$EXIT_CODE" -eq 4 ]]; then
         # Mount failure detected via sentinel (Issue #248)
         FINAL_EXIT_CODE=4

@@ -169,6 +169,18 @@ network:
     # Sets chmod 444 after DNS setup (agent runs as non-root, cannot override)
     protect_dns_files: true
 
+    # Issue #216: Abort launch when too many domains fail to resolve.
+    # Both thresholds are disabled by default (empty = no check).
+    # Either threshold exceeding its limit triggers abort (OR logic).
+    # Denominator: resolved + failed only (wildcards are excluded).
+    # Override: set KAPSIS_SKIP_DNS_CHECK=true to bypass.
+    #
+    # Abort if more than N% of non-wildcard domains fail to resolve:
+    # max_failure_rate: 0.5   # 0.0–1.0; e.g. 0.5 = abort when >50% fail
+    #
+    # Abort if more than N domains fail to resolve (absolute count):
+    # max_failures: 10
+
   # Allowed ports (documented for reference)
   # Note: Port filtering is NOT enforced - only DNS filtering
   # These are the typical ports that allowed services use
