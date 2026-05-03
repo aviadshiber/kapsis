@@ -118,6 +118,10 @@ resolve_allowlist_domains() {
 
     log_info "DNS pinning: resolved $resolved_count domains, $failed_count failed, $wildcard_count wildcards skipped"
 
+    # Emit stats sentinel for caller to extract failure counts through the subshell boundary
+    # Format chosen to be unparseable as a domain IP line (prefix prevents confusion)
+    echo "KAPSIS_DNS_STATS resolved=${resolved_count} failed=${failed_count} wildcards=${wildcard_count}"
+
     # Handle failures based on fallback mode
     if [[ "$failed_count" -gt 0 ]] && [[ "$fallback" == "abort" ]]; then
         log_error "DNS resolution failed with fallback=abort"
@@ -315,6 +319,54 @@ validate_pinned_entry() {
             fi
         done
     done
+
+    return 0
+}
+
+# check_dns_threshold <resolved> <failed> <max_failure_rate> <max_failures> <skip_check>
+#
+# Evaluates whether DNS resolution quality is acceptable for container launch (Issue #216).
+# Called after resolve_allowlist_domains; both thresholds use OR logic — either breach aborts.
+#
+# Arguments:
+#   $1 - resolved_count (non-wildcard domains that resolved)
+#   $2 - failed_count   (non-wildcard domains that failed)
+#   $3 - max_failure_rate  (0.0–1.0 fraction; empty = disabled)
+#   $4 - max_failures      (absolute integer count; empty = disabled)
+#   $5 - skip_check        ("true" = bypass all threshold checks)
+#
+# Returns: 0 = OK to launch, 1 = threshold exceeded (caller should abort)
+check_dns_threshold() {
+    local resolved="${1:-0}"
+    local failed="${2:-0}"
+    local max_rate="${3:-}"
+    local max_abs="${4:-}"
+    local skip="${5:-false}"
+
+    [[ "$skip" == "true" ]] && return 0
+    [[ "$failed" -eq 0 ]] && return 0
+    [[ -z "$max_rate" && -z "$max_abs" ]] && return 0
+
+    local total=$(( resolved + failed ))
+    [[ "$total" -eq 0 ]] && return 0
+
+    # Absolute failures threshold (OR logic with rate threshold)
+    if [[ -n "$max_abs" ]] && [[ "$failed" -gt "$max_abs" ]]; then
+        log_error "DNS threshold exceeded: $failed failed domain(s) > max_failures=${max_abs}"
+        log_error "  Remedy: check your VPN/network, or set KAPSIS_SKIP_DNS_CHECK=true to bypass"
+        return 1
+    fi
+
+    # Failure rate threshold — use awk to avoid bc dependency and handle floats
+    if [[ -n "$max_rate" ]]; then
+        if awk "BEGIN{exit ($failed / $total > $max_rate) ? 0 : 1}"; then
+            local pct
+            pct=$(awk "BEGIN{printf \"%.0f\", $failed / $total * 100}")
+            log_error "DNS threshold exceeded: ${pct}% failed (${failed}/${total}) > max_failure_rate=${max_rate}"
+            log_error "  Remedy: check your VPN/network, or set KAPSIS_SKIP_DNS_CHECK=true to bypass"
+            return 1
+        fi
+    fi
 
     return 0
 }
