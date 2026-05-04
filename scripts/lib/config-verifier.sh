@@ -532,6 +532,26 @@ validate_network_config() {
         fi
     fi
 
+    local dns_pin_max_rate
+    dns_pin_max_rate=$(yq -r '.network.dns_pinning.max_failure_rate // "null"' "$config_file" 2>/dev/null)
+    if [[ "$dns_pin_max_rate" != "null" ]]; then
+        if awk -v v="$dns_pin_max_rate" 'BEGIN { exit (v ~ /^[0-9]*\.?[0-9]+$/ && v+0 >= 0 && v+0 <= 1) ? 0 : 1 }' 2>/dev/null; then
+            log_pass "Valid dns_pinning.max_failure_rate: $dns_pin_max_rate"
+        else
+            log_error "Invalid dns_pinning.max_failure_rate: $dns_pin_max_rate (must be a number between 0.0 and 1.0)"
+        fi
+    fi
+
+    local dns_pin_max_failures
+    dns_pin_max_failures=$(yq -r '.network.dns_pinning.max_failures // "null"' "$config_file" 2>/dev/null)
+    if [[ "$dns_pin_max_failures" != "null" ]]; then
+        if [[ "$dns_pin_max_failures" =~ ^[0-9]+$ ]] && [[ "$dns_pin_max_failures" -gt 0 ]]; then
+            log_pass "Valid dns_pinning.max_failures: $dns_pin_max_failures"
+        else
+            log_error "Invalid dns_pinning.max_failures: $dns_pin_max_failures (must be a positive integer)"
+        fi
+    fi
+
     return 0
 }
 

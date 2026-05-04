@@ -169,6 +169,17 @@ network:
     # Sets chmod 444 after DNS setup (agent runs as non-root, cannot override)
     protect_dns_files: true
 
+    # Abort container launch when too many domains fail to resolve on the host.
+    # Prevents wasting a long agent run when VPN/DNS is broken at launch time.
+    # Both thresholds are checked independently; either can trigger an abort.
+    # Override at runtime with: KAPSIS_SKIP_DNS_CHECK=true
+    #
+    # Abort if more than N% of domains fail to resolve (fraction 0.0-1.0):
+    # max_failure_rate: 0.5
+    #
+    # Abort if more than N domains fail to resolve (absolute count):
+    # max_failures: 10
+
   # Allowed ports (documented for reference)
   # Note: Port filtering is NOT enforced - only DNS filtering
   # These are the typical ports that allowed services use
