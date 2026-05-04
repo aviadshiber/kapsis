@@ -627,6 +627,206 @@ EOF
 }
 
 #===============================================================================
+# THRESHOLD TESTS (Issue #216 — abort launch when DNS failure rate too high)
+#===============================================================================
+
+test_threshold_max_failures_triggers_exit2() {
+    log_test "Testing resolve_allowlist_domains returns 2 when max_failures exceeded"
+
+    source "$DNS_PIN_LIB"
+
+    # Use all-invalid domains so every one fails, max_failures=1
+    local rc=0
+    resolve_allowlist_domains \
+        "this-will-not-resolve-xyz123.invalid,also-not-real-abc987.invalid" \
+        2 "dynamic" "" "1" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "Exit code 2 returned when failures exceed max_failures"
+    elif [[ "$rc" -eq 0 ]]; then
+        log_skip "All domains resolved unexpectedly (DNS returns 0.0.0.0 for all?) — skipping"
+    else
+        log_fail "Expected exit code 2, got: $rc"
+        return 1
+    fi
+}
+
+test_threshold_max_failure_rate_triggers_exit2() {
+    log_test "Testing resolve_allowlist_domains returns 2 when max_failure_rate exceeded"
+
+    source "$DNS_PIN_LIB"
+
+    # 2 invalid domains out of 2 = 100% failure rate; threshold 0.4 (40%) should trigger
+    local rc=0
+    resolve_allowlist_domains \
+        "this-will-not-resolve-xyz123.invalid,also-not-real-abc987.invalid" \
+        2 "dynamic" "0.4" "" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "Exit code 2 returned when failure rate exceeds max_failure_rate"
+    elif [[ "$rc" -eq 0 ]]; then
+        log_skip "All domains resolved unexpectedly (DNS returns 0.0.0.0 for all?) — skipping"
+    else
+        log_fail "Expected exit code 2, got: $rc"
+        return 1
+    fi
+}
+
+test_threshold_under_limit_returns_0() {
+    log_test "Testing resolve_allowlist_domains returns 0 when failures stay under threshold"
+
+    source "$DNS_PIN_LIB"
+
+    # max_failures=100 — even if some domains fail, 2 failures won't exceed 100
+    local rc=0
+    resolve_allowlist_domains \
+        "this-will-not-resolve-xyz123.invalid,also-not-real-abc987.invalid" \
+        2 "dynamic" "" "100" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "Exit code 0 returned when failures are under max_failures threshold"
+    elif [[ "$rc" -eq 2 ]]; then
+        log_fail "Threshold triggered unexpectedly — more than 100 failures?"
+        return 1
+    else
+        log_fail "Unexpected exit code: $rc"
+        return 1
+    fi
+}
+
+test_threshold_env_var_max_failures() {
+    log_test "Testing KAPSIS_DNS_MAX_FAILURES env var is respected"
+
+    source "$DNS_PIN_LIB"
+
+    export KAPSIS_DNS_MAX_FAILURES=1
+    local rc=0
+    # Pass no positional threshold args — function should pick up the env var
+    resolve_allowlist_domains \
+        "this-will-not-resolve-xyz123.invalid,also-not-real-abc987.invalid" \
+        2 "dynamic" >/dev/null 2>&1 || rc=$?
+    unset KAPSIS_DNS_MAX_FAILURES
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "KAPSIS_DNS_MAX_FAILURES env var triggers exit code 2"
+    elif [[ "$rc" -eq 0 ]]; then
+        log_skip "All domains resolved unexpectedly — skipping"
+    else
+        log_fail "Expected exit code 2, got: $rc"
+        return 1
+    fi
+}
+
+test_threshold_env_var_max_failure_rate() {
+    log_test "Testing KAPSIS_DNS_MAX_FAILURE_RATE env var is respected"
+
+    source "$DNS_PIN_LIB"
+
+    export KAPSIS_DNS_MAX_FAILURE_RATE=0.1
+    local rc=0
+    resolve_allowlist_domains \
+        "this-will-not-resolve-xyz123.invalid,also-not-real-abc987.invalid" \
+        2 "dynamic" >/dev/null 2>&1 || rc=$?
+    unset KAPSIS_DNS_MAX_FAILURE_RATE
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "KAPSIS_DNS_MAX_FAILURE_RATE env var triggers exit code 2"
+    elif [[ "$rc" -eq 0 ]]; then
+        log_skip "All domains resolved unexpectedly — skipping"
+    else
+        log_fail "Expected exit code 2, got: $rc"
+        return 1
+    fi
+}
+
+test_threshold_no_limit_set_returns_0() {
+    log_test "Testing resolve_allowlist_domains returns 0 with no threshold configured"
+
+    source "$DNS_PIN_LIB"
+
+    # No threshold args and no env vars — failures are silently tolerated (existing behavior)
+    unset KAPSIS_DNS_MAX_FAILURES KAPSIS_DNS_MAX_FAILURE_RATE
+    local rc=0
+    resolve_allowlist_domains \
+        "this-will-not-resolve-xyz123.invalid" \
+        2 "dynamic" "" "" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "No threshold — failures tolerated, exit code 0"
+    elif [[ "$rc" -eq 2 ]]; then
+        log_fail "Threshold triggered when none was configured"
+        return 1
+    else
+        log_fail "Unexpected exit code: $rc"
+        return 1
+    fi
+}
+
+test_config_validation_max_failure_rate_valid() {
+    log_test "Testing config validation accepts valid max_failure_rate values"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    max_failure_rate: 0.5
+    max_failures: 10
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "Invalid dns_pinning.max_failure_rate\|Invalid dns_pinning.max_failures"; then
+        log_fail "Valid values rejected by config verifier: $output"
+        rm -f "$test_config"
+        return 1
+    else
+        log_pass "Valid max_failure_rate and max_failures accepted"
+    fi
+
+    rm -f "$test_config"
+}
+
+test_config_validation_max_failure_rate_invalid() {
+    log_test "Testing config validation rejects invalid max_failure_rate values"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    max_failure_rate: 1.5
+    max_failures: -1
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "Invalid dns_pinning.max_failure_rate"; then
+        log_pass "Invalid max_failure_rate (>1.0) correctly rejected"
+    else
+        log_warn "Expected validation error for max_failure_rate=1.5"
+    fi
+
+    rm -f "$test_config"
+}
+
+#===============================================================================
 # CONTAINER TESTS (require Podman)
 #===============================================================================
 
@@ -835,6 +1035,16 @@ main() {
     run_test test_resolve_returns_valid_ipv4_or_empty
     run_test test_add_host_args_format
     run_test test_pinned_file_parsing_robust
+
+    # Threshold tests (Issue #216)
+    run_test test_threshold_max_failures_triggers_exit2
+    run_test test_threshold_max_failure_rate_triggers_exit2
+    run_test test_threshold_under_limit_returns_0
+    run_test test_threshold_env_var_max_failures
+    run_test test_threshold_env_var_max_failure_rate
+    run_test test_threshold_no_limit_set_returns_0
+    run_test test_config_validation_max_failure_rate_valid
+    run_test test_config_validation_max_failure_rate_invalid
 
     # Container tests
     run_test test_pinned_file_mounted_readonly

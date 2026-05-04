@@ -48,7 +48,7 @@ type log_success &>/dev/null || log_success() { echo "[DNS-PIN] SUCCESS: $*" >&2
 # DOMAIN RESOLUTION
 #===============================================================================
 
-# resolve_allowlist_domains <comma-domains> [timeout] [fallback]
+# resolve_allowlist_domains <comma-domains> [timeout] [fallback] [max_failure_rate] [max_failures]
 #
 # Resolves comma-separated domains to IP addresses on the host.
 # Skips wildcards (emitting security warning) and returns pinned mappings.
@@ -57,16 +57,25 @@ type log_success &>/dev/null || log_success() { echo "[DNS-PIN] SUCCESS: $*" >&2
 #   $1 - Comma-separated list of domains (from KAPSIS_DNS_ALLOWLIST)
 #   $2 - Resolution timeout in seconds (default: 5)
 #   $3 - Fallback behavior: "dynamic" (default) or "abort"
+#   $4 - Max failure rate as fraction 0.0-1.0, e.g. "0.5" (50%); empty = no check
+#        Falls back to KAPSIS_DNS_MAX_FAILURE_RATE env var if arg is empty.
+#   $5 - Max absolute failure count, e.g. "10"; empty = no check
+#        Falls back to KAPSIS_DNS_MAX_FAILURES env var if arg is empty.
 #
 # Output:
 #   domain IP1 IP2 ...
 #   (one line per domain with resolved IPs, space-separated)
 #
-# Returns: 0 on success (even partial), 1 on complete failure with abort mode
+# Returns:
+#   0 - success (even partial)
+#   1 - any failure with fallback=abort
+#   2 - DNS failure threshold exceeded (max_failure_rate or max_failures)
 resolve_allowlist_domains() {
     local domain_list="$1"
     local timeout="${2:-5}"
     local fallback="${3:-dynamic}"
+    local max_failure_rate="${4:-${KAPSIS_DNS_MAX_FAILURE_RATE:-}}"
+    local max_failures="${5:-${KAPSIS_DNS_MAX_FAILURES:-}}"
 
     [[ -z "$domain_list" ]] && return 0
 
@@ -117,6 +126,34 @@ resolve_allowlist_domains() {
     done
 
     log_info "DNS pinning: resolved $resolved_count domains, $failed_count failed, $wildcard_count wildcards skipped"
+
+    # Threshold-based abort check — returns 2 so callers can distinguish from fallback=abort (1).
+    # Both max_failure_rate and max_failures are checked independently; either can trigger.
+    if [[ "$failed_count" -gt 0 ]] && [[ -n "$max_failure_rate" || -n "$max_failures" ]]; then
+        local total_count=$(( resolved_count + failed_count ))
+
+        # Absolute failure count threshold
+        if [[ -n "$max_failures" ]] && (( failed_count > max_failures )); then
+            log_error "DNS resolution failure threshold exceeded: $failed_count/$total_count domains failed (max allowed: $max_failures)"
+            log_error "Check VPN/network connectivity and retry."
+            log_error "Override: set KAPSIS_SKIP_DNS_CHECK=true to bypass this check"
+            return 2
+        fi
+
+        # Failure rate threshold (float comparison via awk; awk exits 0 when threshold exceeded)
+        if [[ -n "$max_failure_rate" ]] && (( total_count > 0 )); then
+            if awk -v f="$failed_count" -v t="$total_count" -v m="$max_failure_rate" \
+                   'BEGIN { exit (f/t > m) ? 0 : 1 }'; then
+                local pct max_pct
+                pct=$(awk -v f="$failed_count" -v t="$total_count" 'BEGIN { printf "%.0f", (f/t)*100 }')
+                max_pct=$(awk -v m="$max_failure_rate" 'BEGIN { printf "%.0f", m*100 }')
+                log_error "DNS resolution failure rate ${pct}% exceeds threshold ${max_pct}%: $failed_count/$total_count domains failed"
+                log_error "Check VPN/network connectivity and retry."
+                log_error "Override: set KAPSIS_SKIP_DNS_CHECK=true to bypass this check"
+                return 2
+            fi
+        fi
+    fi
 
     # Handle failures based on fallback mode
     if [[ "$failed_count" -gt 0 ]] && [[ "$fallback" == "abort" ]]; then

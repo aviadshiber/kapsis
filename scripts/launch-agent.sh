@@ -893,6 +893,8 @@ parse_config() {
         NETWORK_DNS_PIN_FALLBACK=$(yq eval '.network.dns_pinning.fallback // "dynamic"' "$CONFIG_FILE" 2>/dev/null || echo "dynamic")
         NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
         NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        NETWORK_DNS_MAX_FAILURE_RATE=$(yq eval '.network.dns_pinning.max_failure_rate // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        NETWORK_DNS_MAX_FAILURES=$(yq eval '.network.dns_pinning.max_failures // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse cleanup configuration (Fix #183)
         # Env vars take precedence over YAML via ${VAR:-$(yq ...)} pattern
@@ -2210,8 +2212,16 @@ build_container_command() {
             # This prevents DNS manipulation attacks inside the container
             if [[ "${NETWORK_DNS_PIN_ENABLED:-true}" == "true" ]] && [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
                 log_info "DNS pinning: resolving allowlist domains on host..."
-                local resolved_data
-                if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
+                local resolved_data dns_pin_rc
+                dns_pin_rc=0
+                resolved_data=$(resolve_allowlist_domains \
+                    "$NETWORK_ALLOWLIST_DOMAINS" \
+                    "${NETWORK_DNS_PIN_TIMEOUT:-5}" \
+                    "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" \
+                    "${NETWORK_DNS_MAX_FAILURE_RATE:-}" \
+                    "${NETWORK_DNS_MAX_FAILURES:-}") || dns_pin_rc=$?
+
+                if [[ "$dns_pin_rc" -eq 0 ]]; then
                     if [[ -n "$resolved_data" ]]; then
                         # Create temp file for pinned DNS (cleaned up in _cleanup_with_completion)
                         DNS_PIN_FILE=$(mktemp)
@@ -2234,7 +2244,17 @@ build_container_command() {
                             CONTAINER_CMD+=("-e" "KAPSIS_DNS_PIN_ENABLED=true")
                         fi
                     fi
+                elif [[ "$dns_pin_rc" -eq 2 ]]; then
+                    # Threshold exceeded (max_failure_rate or max_failures)
+                    if [[ "${KAPSIS_SKIP_DNS_CHECK:-false}" == "true" ]]; then
+                        log_warn "DNS failure threshold exceeded but KAPSIS_SKIP_DNS_CHECK=true — proceeding with degraded security"
+                    else
+                        log_error "Aborting container launch due to high DNS resolution failure rate."
+                        log_error "Set KAPSIS_SKIP_DNS_CHECK=true to bypass this check."
+                        exit 1
+                    fi
                 else
+                    # rc=1: fallback=abort or other partial failure
                     if [[ "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" == "abort" ]]; then
                         log_error "DNS pinning failed with fallback=abort - aborting container launch"
                         exit 1
