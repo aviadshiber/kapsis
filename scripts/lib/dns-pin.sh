@@ -147,8 +147,8 @@ resolve_allowlist_domains() {
 # Arguments:
 #   $1 - Number of successfully resolved concrete domains
 #   $2 - Number of failed concrete domains
-#   $3 - Max failure rate percent (0-100, integer); default KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURE_RATE
-#   $4 - Max absolute failures; default KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURES
+#   $3 - Max failure rate percent (0-100, integer); default 0 (disabled)
+#   $4 - Max absolute failures; default 0 (disabled)
 #
 # Environment:
 #   KAPSIS_SKIP_DNS_CHECK=true - bypass for break-glass situations (logs WARN)
@@ -157,8 +157,8 @@ resolve_allowlist_domains() {
 check_dns_failure_threshold() {
     local dns_resolved="$1"
     local dns_failed="$2"
-    local max_rate="${3:-${KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURE_RATE:-25}}"
-    local max_count="${4:-${KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURES:-5}}"
+    local max_rate="${3:-${KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURE_RATE:-0}}"
+    local max_count="${4:-${KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURES:-0}}"
 
     local dns_total
     dns_total=$(( dns_resolved + dns_failed )) || true

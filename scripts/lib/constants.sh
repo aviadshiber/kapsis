@@ -96,27 +96,6 @@ readonly KAPSIS_DEFAULT_EPHEMERAL_PATTERNS="**/__pycache__/
 readonly KAPSIS_DEFAULT_NETWORK_MODE="filtered"
 
 #===============================================================================
-# DNS FAILURE THRESHOLD (Issue #216)
-#
-# Abort container launch when DNS failure rate or count exceeds these defaults.
-# Both thresholds must be exceeded simultaneously (AND logic) to trigger abort,
-# preventing false positives from small allowlists or a handful of failing domains.
-#
-# max_failure_rate: percentage of concrete (non-wildcard) domains that may fail
-#                  before launch is aborted. 0 = disabled. Integer 0-100.
-# max_failures:    absolute number of concrete domain failures that trigger abort.
-#                  0 = disabled. Combined with rate: abort only when BOTH exceeded.
-#
-# Override at runtime: KAPSIS_SKIP_DNS_CHECK=true (emits WARN, for break-glass use)
-# Override in config:  network.dns_pinning.max_failure_rate / max_failures
-#===============================================================================
-
-# 0 = feature disabled by default (opt-in). Set both >0 in config to enable.
-# Recommended values when enabling: max_failure_rate=25, max_failures=5
-readonly KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURE_RATE=0
-readonly KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURES=0
-
-#===============================================================================
 # CONTAINER REGISTRY
 #
 # Default registry for pre-built Kapsis images.
