@@ -893,6 +893,9 @@ parse_config() {
         NETWORK_DNS_PIN_FALLBACK=$(yq eval '.network.dns_pinning.fallback // "dynamic"' "$CONFIG_FILE" 2>/dev/null || echo "dynamic")
         NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
         NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        # Failure-rate abort thresholds (Issue #216): integers 0-100 (percent) / absolute count
+        NETWORK_DNS_PIN_MAX_FAILURE_RATE=$(yq eval '.network.dns_pinning.max_failure_rate // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        NETWORK_DNS_PIN_MAX_FAILURES=$(yq eval '.network.dns_pinning.max_failures // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse cleanup configuration (Fix #183)
         # Env vars take precedence over YAML via ${VAR:-$(yq ...)} pattern
@@ -2210,8 +2213,20 @@ build_container_command() {
             # This prevents DNS manipulation attacks inside the container
             if [[ "${NETWORK_DNS_PIN_ENABLED:-true}" == "true" ]] && [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
                 log_info "DNS pinning: resolving allowlist domains on host..."
-                local resolved_data
-                if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
+                local resolved_data dns_metrics_file
+                dns_metrics_file=$(mktemp)
+                if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" "$dns_metrics_file"); then
+                    # Abort if too many domains failed to resolve (Issue #216)
+                    local _dns_resolved _dns_failed _dns_wildcards
+                    read -r _dns_resolved _dns_failed _dns_wildcards < "$dns_metrics_file" 2>/dev/null || true
+                    rm -f "$dns_metrics_file"
+                    if ! check_dns_failure_threshold \
+                            "${_dns_resolved:-0}" "${_dns_failed:-0}" \
+                            "${NETWORK_DNS_PIN_MAX_FAILURE_RATE:-}" \
+                            "${NETWORK_DNS_PIN_MAX_FAILURES:-}"; then
+                        exit 1
+                    fi
+
                     if [[ -n "$resolved_data" ]]; then
                         # Create temp file for pinned DNS (cleaned up in _cleanup_with_completion)
                         DNS_PIN_FILE=$(mktemp)
@@ -2235,6 +2250,7 @@ build_container_command() {
                         fi
                     fi
                 else
+                    rm -f "$dns_metrics_file"
                     if [[ "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" == "abort" ]]; then
                         log_error "DNS pinning failed with fallback=abort - aborting container launch"
                         exit 1

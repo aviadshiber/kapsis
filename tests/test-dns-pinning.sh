@@ -627,6 +627,189 @@ EOF
 }
 
 #===============================================================================
+# DNS FAILURE THRESHOLD TESTS (Issue #216, no container required)
+#===============================================================================
+
+test_resolve_allowlist_writes_metrics_file() {
+    log_test "Testing resolve_allowlist_domains writes metrics to optional file"
+
+    source "$DNS_PIN_LIB"
+
+    local metrics_file
+    metrics_file=$(mktemp)
+
+    # Resolve a mix: one IP address (instant pass) + one definitely invalid domain
+    resolve_allowlist_domains "8.8.8.8,this-domain-xyz123.invalid" 2 "dynamic" "$metrics_file" >/dev/null 2>&1 || true
+
+    if [[ ! -f "$metrics_file" ]]; then
+        log_fail "Metrics file was not written"
+        return 1
+    fi
+
+    local dns_resolved dns_failed dns_wildcards
+    read -r dns_resolved dns_failed dns_wildcards < "$metrics_file"
+
+    rm -f "$metrics_file"
+
+    if [[ -z "$dns_resolved" ]]; then
+        log_fail "Metrics file is empty or unreadable"
+        return 1
+    fi
+
+    if [[ "$dns_resolved" -ge 0 && "$dns_failed" -ge 0 && "$dns_wildcards" -ge 0 ]]; then
+        log_pass "Metrics file written: resolved=$dns_resolved failed=$dns_failed wildcards=$dns_wildcards"
+    else
+        log_fail "Metrics values out of range: resolved=$dns_resolved failed=$dns_failed wildcards=$dns_wildcards"
+        return 1
+    fi
+}
+
+test_resolve_allowlist_metrics_excludes_wildcards() {
+    log_test "Testing metrics denominator excludes wildcards (only concrete domains counted)"
+
+    source "$DNS_PIN_LIB"
+
+    local metrics_file
+    metrics_file=$(mktemp)
+
+    # 1 concrete IP + 2 wildcards — wildcards must not appear in resolved+failed
+    resolve_allowlist_domains "8.8.8.8,*.github.com,*.npmjs.org" 2 "dynamic" "$metrics_file" >/dev/null 2>&1 || true
+
+    local dns_resolved dns_failed dns_wildcards
+    read -r dns_resolved dns_failed dns_wildcards < "$metrics_file"
+    rm -f "$metrics_file"
+
+    if [[ "$dns_wildcards" -eq 2 ]]; then
+        log_pass "Wildcard count is correct ($dns_wildcards)"
+    else
+        log_fail "Expected 2 wildcards, got: $dns_wildcards"
+        return 1
+    fi
+
+    local dns_total
+    dns_total=$(( dns_resolved + dns_failed )) || true
+    if [[ "$dns_total" -eq 1 ]]; then
+        log_pass "Denominator excludes wildcards (total concrete=$dns_total)"
+    else
+        log_fail "Expected 1 concrete domain in denominator, got: $dns_total"
+        return 1
+    fi
+}
+
+test_check_dns_failure_threshold_below_thresholds() {
+    log_test "Testing check_dns_failure_threshold: below both thresholds allows launch"
+
+    source "$KAPSIS_ROOT/scripts/lib/constants.sh" 2>/dev/null || true
+    source "$DNS_PIN_LIB"
+
+    # 90 resolved, 3 failed = 3.3% rate, count=3 — both under defaults (25%/5)
+    if check_dns_failure_threshold 90 3 25 5 2>/dev/null; then
+        log_pass "Launch not blocked below thresholds"
+    else
+        log_fail "Should not abort when below thresholds"
+        return 1
+    fi
+}
+
+test_check_dns_failure_threshold_both_exceeded_aborts() {
+    log_test "Testing check_dns_failure_threshold: both thresholds exceeded aborts"
+
+    source "$KAPSIS_ROOT/scripts/lib/constants.sh" 2>/dev/null || true
+    source "$DNS_PIN_LIB"
+
+    # 10 resolved, 8 failed = 44% rate, count=8 — both exceed defaults (25%/5)
+    if ! check_dns_failure_threshold 10 8 25 5 2>/dev/null; then
+        log_pass "Launch correctly blocked when both thresholds exceeded"
+    else
+        log_fail "Should abort when both thresholds exceeded"
+        return 1
+    fi
+}
+
+test_check_dns_failure_threshold_and_logic_rate_only() {
+    log_test "Testing check_dns_failure_threshold: AND logic — high rate but low count allows launch"
+
+    source "$KAPSIS_ROOT/scripts/lib/constants.sh" 2>/dev/null || true
+    source "$DNS_PIN_LIB"
+
+    # 3 resolved, 2 failed = 40% rate (>25%) but count=2 (<5) — AND logic: no abort
+    if check_dns_failure_threshold 3 2 25 5 2>/dev/null; then
+        log_pass "Launch allowed: high rate but absolute count below threshold (AND logic)"
+    else
+        log_fail "AND logic failed: should not abort when count is below threshold"
+        return 1
+    fi
+}
+
+test_check_dns_failure_threshold_and_logic_count_only() {
+    log_test "Testing check_dns_failure_threshold: AND logic — high count but low rate allows launch"
+
+    source "$KAPSIS_ROOT/scripts/lib/constants.sh" 2>/dev/null || true
+    source "$DNS_PIN_LIB"
+
+    # 100 resolved, 6 failed = 5.6% rate (<25%) but count=6 (>5) — AND logic: no abort
+    if check_dns_failure_threshold 100 6 25 5 2>/dev/null; then
+        log_pass "Launch allowed: high count but rate below threshold (AND logic)"
+    else
+        log_fail "AND logic failed: should not abort when rate is below threshold"
+        return 1
+    fi
+}
+
+test_check_dns_failure_threshold_disabled_by_zeros() {
+    log_test "Testing check_dns_failure_threshold: disabled when both thresholds are 0"
+
+    source "$DNS_PIN_LIB"
+
+    # Even 100% failure should be allowed when feature is disabled (both 0)
+    if check_dns_failure_threshold 0 50 0 0 2>/dev/null; then
+        log_pass "Threshold check correctly disabled when max_rate=0 and max_failures=0"
+    else
+        log_fail "Should not abort when feature disabled via both-zero config"
+        return 1
+    fi
+}
+
+test_check_dns_failure_threshold_skip_env_var() {
+    log_test "Testing check_dns_failure_threshold: KAPSIS_SKIP_DNS_CHECK=true bypasses check"
+
+    source "$DNS_PIN_LIB"
+
+    local output rc
+    export KAPSIS_SKIP_DNS_CHECK=true
+    output=$(check_dns_failure_threshold 0 100 25 5 2>&1)
+    rc=$?
+    unset KAPSIS_SKIP_DNS_CHECK
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "KAPSIS_SKIP_DNS_CHECK=true bypasses threshold check"
+    else
+        log_fail "Should not abort when KAPSIS_SKIP_DNS_CHECK=true (rc=$rc)"
+        return 1
+    fi
+
+    if echo "$output" | grep -qi "bypassed\|degraded"; then
+        log_pass "Override emits warning as expected"
+    else
+        log_warn "Expected bypass warning in output (got: $output)"
+    fi
+}
+
+test_check_dns_failure_threshold_no_domains() {
+    log_test "Testing check_dns_failure_threshold: no concrete domains is a no-op"
+
+    source "$DNS_PIN_LIB"
+
+    # All wildcards, nothing resolved or failed
+    if check_dns_failure_threshold 0 0 25 5 2>/dev/null; then
+        log_pass "No-op when zero concrete domains attempted"
+    else
+        log_fail "Should not abort when no concrete domains were attempted"
+        return 1
+    fi
+}
+
+#===============================================================================
 # CONTAINER TESTS (require Podman)
 #===============================================================================
 
@@ -835,6 +1018,17 @@ main() {
     run_test test_resolve_returns_valid_ipv4_or_empty
     run_test test_add_host_args_format
     run_test test_pinned_file_parsing_robust
+
+    # DNS failure threshold tests (Issue #216)
+    run_test test_resolve_allowlist_writes_metrics_file
+    run_test test_resolve_allowlist_metrics_excludes_wildcards
+    run_test test_check_dns_failure_threshold_below_thresholds
+    run_test test_check_dns_failure_threshold_both_exceeded_aborts
+    run_test test_check_dns_failure_threshold_and_logic_rate_only
+    run_test test_check_dns_failure_threshold_and_logic_count_only
+    run_test test_check_dns_failure_threshold_disabled_by_zeros
+    run_test test_check_dns_failure_threshold_skip_env_var
+    run_test test_check_dns_failure_threshold_no_domains
 
     # Container tests
     run_test test_pinned_file_mounted_readonly
