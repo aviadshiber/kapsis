@@ -160,7 +160,8 @@ check_dns_failure_threshold() {
     local max_rate="${3:-${KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURE_RATE:-25}}"
     local max_count="${4:-${KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURES:-5}}"
 
-    local dns_total=$(( dns_resolved + dns_failed ))
+    local dns_total
+    dns_total=$(( dns_resolved + dns_failed )) || true
     [[ "$dns_total" -eq 0 ]] && return 0
 
     # Break-glass override — emit a visible warning for auditors
@@ -174,7 +175,8 @@ check_dns_failure_threshold() {
         return 0
     fi
 
-    local actual_rate=$(( dns_failed * 100 / dns_total ))
+    local actual_rate
+    actual_rate=$(( dns_failed * 100 / dns_total )) || true
 
     # Abort only when BOTH thresholds are exceeded simultaneously
     if [[ "$dns_failed" -gt "$max_count" && "$actual_rate" -gt "$max_rate" ]]; then

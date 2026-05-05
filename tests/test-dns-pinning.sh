@@ -686,7 +686,8 @@ test_resolve_allowlist_metrics_excludes_wildcards() {
         return 1
     fi
 
-    local dns_total=$(( dns_resolved + dns_failed ))
+    local dns_total
+    dns_total=$(( dns_resolved + dns_failed )) || true
     if [[ "$dns_total" -eq 1 ]]; then
         log_pass "Denominator excludes wildcards (total concrete=$dns_total)"
     else
