@@ -180,9 +180,13 @@ network:
     # max_failures: absolute number of failures that, combined with the rate check,
     #   triggers abort. 0 = absolute check disabled. Set both to 0 to disable entirely.
     #
+    # DISABLED BY DEFAULT (both 0). Set both >0 to enable, for example:
+    #   max_failure_rate: 25   # abort if >25% of resolvable domains fail ...
+    #   max_failures: 5        # ... AND more than 5 absolute failures
+    #
     # Override at runtime: KAPSIS_SKIP_DNS_CHECK=true (logs a WARN — break-glass only)
-    max_failure_rate: 25   # abort if >25% of resolvable domains fail ...
-    max_failures: 5        # ... AND more than 5 absolute failures
+    max_failure_rate: 0   # 0 = disabled
+    max_failures: 0       # 0 = disabled
 
   # Allowed ports (documented for reference)
   # Note: Port filtering is NOT enforced - only DNS filtering

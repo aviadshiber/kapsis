@@ -111,11 +111,10 @@ readonly KAPSIS_DEFAULT_NETWORK_MODE="filtered"
 # Override in config:  network.dns_pinning.max_failure_rate / max_failures
 #===============================================================================
 
-# Abort if >25% of concrete domains fail (catches widespread DNS outage)
-readonly KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURE_RATE=25
-
-# AND if at least 5 concrete domains fail (avoids noise on tiny allowlists)
-readonly KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURES=5
+# 0 = feature disabled by default (opt-in). Set both >0 in config to enable.
+# Recommended values when enabling: max_failure_rate=25, max_failures=5
+readonly KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURE_RATE=0
+readonly KAPSIS_DEFAULT_DNS_PIN_MAX_FAILURES=0
 
 #===============================================================================
 # CONTAINER REGISTRY
