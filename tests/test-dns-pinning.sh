@@ -774,9 +774,10 @@ test_check_dns_failure_threshold_skip_env_var() {
 
     source "$DNS_PIN_LIB"
 
-    local output
-    KAPSIS_SKIP_DNS_CHECK=true output=$(check_dns_failure_threshold 0 100 25 5 2>&1)
-    local rc=$?
+    local output rc
+    export KAPSIS_SKIP_DNS_CHECK=true
+    output=$(check_dns_failure_threshold 0 100 25 5 2>&1)
+    rc=$?
     unset KAPSIS_SKIP_DNS_CHECK
 
     if [[ "$rc" -eq 0 ]]; then
