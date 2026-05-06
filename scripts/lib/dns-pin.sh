@@ -48,7 +48,7 @@ type log_success &>/dev/null || log_success() { echo "[DNS-PIN] SUCCESS: $*" >&2
 # DOMAIN RESOLUTION
 #===============================================================================
 
-# resolve_allowlist_domains <comma-domains> [timeout] [fallback]
+# resolve_allowlist_domains <comma-domains> [timeout] [fallback] [max_failure_rate] [max_failures]
 #
 # Resolves comma-separated domains to IP addresses on the host.
 # Skips wildcards (emitting security warning) and returns pinned mappings.
@@ -57,16 +57,22 @@ type log_success &>/dev/null || log_success() { echo "[DNS-PIN] SUCCESS: $*" >&2
 #   $1 - Comma-separated list of domains (from KAPSIS_DNS_ALLOWLIST)
 #   $2 - Resolution timeout in seconds (default: 5)
 #   $3 - Fallback behavior: "dynamic" (default) or "abort"
+#   $4 - Max failure rate 0.0–1.0 before aborting launch (default: "1.0" = disabled)
+#   $5 - Max absolute failure count before aborting launch (default: "-1" = disabled)
 #
 # Output:
 #   domain IP1 IP2 ...
 #   (one line per domain with resolved IPs, space-separated)
 #
-# Returns: 0 on success (even partial), 1 on complete failure with abort mode
+# Returns: 0 on success (even partial), 1 on failure (abort mode or threshold exceeded)
+#
+# Set KAPSIS_SKIP_DNS_CHECK=true to bypass threshold checks (useful for --force launches).
 resolve_allowlist_domains() {
     local domain_list="$1"
     local timeout="${2:-5}"
     local fallback="${3:-dynamic}"
+    local max_failure_rate="${4:-1.0}"
+    local max_failures="${5:--1}"
 
     [[ -z "$domain_list" ]] && return 0
 
@@ -74,7 +80,7 @@ resolve_allowlist_domains() {
     local failed_count=0
     local wildcard_count=0
 
-    log_debug "Resolving domains with timeout=${timeout}s, fallback=${fallback}"
+    log_debug "Resolving domains with timeout=${timeout}s, fallback=${fallback}, max_failure_rate=${max_failure_rate}, max_failures=${max_failures}"
 
     # Split by comma and process each domain
     IFS=',' read -ra domains <<< "$domain_list"
@@ -116,12 +122,39 @@ resolve_allowlist_domains() {
         fi
     done
 
+    local total_count=$(( resolved_count + failed_count ))
     log_info "DNS pinning: resolved $resolved_count domains, $failed_count failed, $wildcard_count wildcards skipped"
 
-    # Handle failures based on fallback mode
+    # Gate 1: fallback=abort — any failure is fatal
     if [[ "$failed_count" -gt 0 ]] && [[ "$fallback" == "abort" ]]; then
         log_error "DNS resolution failed with fallback=abort"
         return 1
+    fi
+
+    # Gate 2: threshold check — independent of fallback, bypassable via KAPSIS_SKIP_DNS_CHECK
+    if [[ "${KAPSIS_SKIP_DNS_CHECK:-false}" != "true" ]] && [[ "$failed_count" -gt 0 ]] && [[ "$total_count" -gt 0 ]]; then
+        # Absolute failure count threshold
+        if [[ "$max_failures" -ge 0 ]] && [[ "$failed_count" -gt "$max_failures" ]]; then
+            log_error "DNS failure threshold exceeded: $failed_count failed domains (limit: $max_failures)"
+            log_error "  Resolved $resolved_count/$total_count domains. Check VPN/network and retry."
+            log_error "  Override with: KAPSIS_SKIP_DNS_CHECK=true"
+            return 1
+        fi
+
+        # Failure rate threshold — use awk for float comparison (bash has no float arithmetic)
+        if awk -v rate="$max_failure_rate" 'BEGIN { exit (rate >= 1.0) }'; then
+            local rate_exceeded
+            rate_exceeded=$(awk -v failed="$failed_count" -v total="$total_count" -v limit="$max_failure_rate" \
+                'BEGIN { print (failed / total > limit) ? "yes" : "no" }')
+            if [[ "$rate_exceeded" == "yes" ]]; then
+                local pct
+                pct=$(awk -v f="$failed_count" -v t="$total_count" 'BEGIN { printf "%.0f", f/t*100 }')
+                log_error "DNS failure rate exceeded: $failed_count/$total_count domains failed (${pct}%, limit: $(awk -v r="$max_failure_rate" 'BEGIN { printf "%.0f", r*100 }')%)"
+                log_error "  Check VPN/network and retry."
+                log_error "  Override with: KAPSIS_SKIP_DNS_CHECK=true"
+                return 1
+            fi
+        fi
     fi
 
     return 0
