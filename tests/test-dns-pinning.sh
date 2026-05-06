@@ -803,6 +803,247 @@ EOF
 }
 
 #===============================================================================
+# FAILURE THRESHOLD TESTS (Issue #216)
+#===============================================================================
+
+# Simulate resolve_allowlist_domains with a stubbed resolve_domain_ips so we can
+# control which domains "fail" without real network calls.
+
+_stub_resolve_domain_ips() {
+    local domain="$1"
+    # Domains starting with "fail" return empty (resolution failure)
+    if [[ "$domain" == fail* ]]; then
+        return 0  # empty output = failure
+    fi
+    echo "1.2.3.4"
+}
+
+test_threshold_rate_below_limit_succeeds() {
+    log_test "Testing resolve_allowlist_domains succeeds when failure rate is below limit"
+
+    source "$DNS_PIN_LIB"
+    # Override resolve_domain_ips for this test
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+
+    # 1 failure out of 4 = 25%, limit is 50% → should succeed
+    local output exit_code
+    output=$(resolve_allowlist_domains "ok1.com,ok2.com,ok3.com,fail1.com" 1 "dynamic" "0.5" "-1" 2>&1)
+    exit_code=$?
+
+    if [[ "$exit_code" -eq 0 ]]; then
+        log_pass "Below-threshold failure rate correctly allows launch"
+    else
+        log_fail "Expected exit 0 for below-threshold failure rate, got: $exit_code"
+        return 1
+    fi
+
+    unset -f resolve_domain_ips
+}
+
+test_threshold_rate_exceeded_aborts() {
+    log_test "Testing resolve_allowlist_domains aborts when failure rate exceeds limit"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+
+    # 3 failures out of 4 = 75%, limit is 50% → should fail
+    local output exit_code
+    output=$(resolve_allowlist_domains "ok1.com,fail1.com,fail2.com,fail3.com" 1 "dynamic" "0.5" "-1" 2>&1)
+    exit_code=$?
+
+    if [[ "$exit_code" -ne 0 ]]; then
+        log_pass "Exceeded failure rate correctly aborts launch"
+    else
+        log_fail "Expected non-zero exit for exceeded failure rate, got: $exit_code"
+        unset -f resolve_domain_ips
+        return 1
+    fi
+
+    if echo "$output" | grep -q "failure rate exceeded"; then
+        log_pass "Abort message mentions failure rate"
+    else
+        log_fail "Expected 'failure rate exceeded' in output, got: $output"
+        unset -f resolve_domain_ips
+        return 1
+    fi
+
+    unset -f resolve_domain_ips
+}
+
+test_threshold_max_failures_count_exceeded_aborts() {
+    log_test "Testing resolve_allowlist_domains aborts when absolute failure count exceeds max_failures"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+
+    # 2 failures, limit is 1 → should fail
+    local output exit_code
+    output=$(resolve_allowlist_domains "ok1.com,fail1.com,fail2.com" 1 "dynamic" "1.0" "1" 2>&1)
+    exit_code=$?
+
+    if [[ "$exit_code" -ne 0 ]]; then
+        log_pass "Exceeded absolute failure count correctly aborts launch"
+    else
+        log_fail "Expected non-zero exit for exceeded max_failures, got: $exit_code"
+        unset -f resolve_domain_ips
+        return 1
+    fi
+
+    if echo "$output" | grep -q "failure threshold exceeded"; then
+        log_pass "Abort message mentions failure threshold"
+    else
+        log_fail "Expected 'failure threshold exceeded' in output, got: $output"
+        unset -f resolve_domain_ips
+        return 1
+    fi
+
+    unset -f resolve_domain_ips
+}
+
+test_threshold_max_failures_disabled_allows_launch() {
+    log_test "Testing max_failures=-1 disables absolute count check"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+
+    # 3 failures, max_failures=-1 (disabled), rate limit=1.0 → should succeed
+    local exit_code
+    resolve_allowlist_domains "ok1.com,fail1.com,fail2.com,fail3.com" 1 "dynamic" "1.0" "-1" >/dev/null 2>&1
+    exit_code=$?
+
+    if [[ "$exit_code" -eq 0 ]]; then
+        log_pass "max_failures=-1 correctly disables absolute count check"
+    else
+        log_fail "Expected exit 0 when max_failures=-1, got: $exit_code"
+        unset -f resolve_domain_ips
+        return 1
+    fi
+
+    unset -f resolve_domain_ips
+}
+
+test_threshold_skip_dns_check_bypass() {
+    log_test "Testing KAPSIS_SKIP_DNS_CHECK=true bypasses threshold abort"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+
+    # 3 failures out of 4 = 75%, limit is 50% → would abort, but bypass is set
+    local exit_code
+    KAPSIS_SKIP_DNS_CHECK=true \
+        resolve_allowlist_domains "ok1.com,fail1.com,fail2.com,fail3.com" 1 "dynamic" "0.5" "-1" >/dev/null 2>&1
+    exit_code=$?
+
+    if [[ "$exit_code" -eq 0 ]]; then
+        log_pass "KAPSIS_SKIP_DNS_CHECK=true correctly bypasses threshold"
+    else
+        log_fail "Expected exit 0 with KAPSIS_SKIP_DNS_CHECK=true, got: $exit_code"
+        unset -f resolve_domain_ips
+        return 1
+    fi
+
+    unset -f resolve_domain_ips
+}
+
+test_threshold_rate_at_boundary_succeeds() {
+    log_test "Testing failure rate exactly at limit does not abort (limit is exclusive)"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+
+    # 1 failure out of 2 = 50%, limit is 50% → 50% is NOT greater than 50%, should succeed
+    local exit_code
+    resolve_allowlist_domains "ok1.com,fail1.com" 1 "dynamic" "0.5" "-1" >/dev/null 2>&1
+    exit_code=$?
+
+    if [[ "$exit_code" -eq 0 ]]; then
+        log_pass "Failure rate exactly at limit correctly allows launch (boundary is exclusive)"
+    else
+        log_fail "Expected exit 0 at exact boundary, got: $exit_code"
+        unset -f resolve_domain_ips
+        return 1
+    fi
+
+    unset -f resolve_domain_ips
+}
+
+test_config_validation_max_failure_rate_valid() {
+    log_test "Testing config validation accepts valid max_failure_rate values"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    fallback: dynamic
+    max_failure_rate: 0.5
+    max_failures: 10
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "\[FAIL\].*max_failure_rate"; then
+        log_fail "Valid max_failure_rate 0.5 should not fail validation"
+        rm -f "$test_config"
+        return 1
+    fi
+    log_pass "Valid max_failure_rate and max_failures accepted"
+
+    rm -f "$test_config"
+}
+
+test_config_validation_max_failure_rate_invalid() {
+    log_test "Testing config validation rejects out-of-range max_failure_rate"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    max_failure_rate: 1.5
+    max_failures: -5
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "Invalid dns_pinning.max_failure_rate"; then
+        log_pass "Out-of-range max_failure_rate correctly rejected"
+    else
+        log_fail "Expected validation error for max_failure_rate: 1.5"
+        rm -f "$test_config"
+        return 1
+    fi
+
+    if echo "$output" | grep -q "Invalid dns_pinning.max_failures"; then
+        log_pass "Invalid max_failures (-5) correctly rejected"
+    else
+        log_fail "Expected validation error for max_failures: -5"
+        rm -f "$test_config"
+        return 1
+    fi
+
+    rm -f "$test_config"
+}
+
+#===============================================================================
 # RUN TESTS
 #===============================================================================
 
@@ -835,6 +1076,16 @@ main() {
     run_test test_resolve_returns_valid_ipv4_or_empty
     run_test test_add_host_args_format
     run_test test_pinned_file_parsing_robust
+
+    # Failure threshold tests (Issue #216)
+    run_test test_threshold_rate_below_limit_succeeds
+    run_test test_threshold_rate_exceeded_aborts
+    run_test test_threshold_max_failures_count_exceeded_aborts
+    run_test test_threshold_max_failures_disabled_allows_launch
+    run_test test_threshold_skip_dns_check_bypass
+    run_test test_threshold_rate_at_boundary_succeeds
+    run_test test_config_validation_max_failure_rate_valid
+    run_test test_config_validation_max_failure_rate_invalid
 
     # Container tests
     run_test test_pinned_file_mounted_readonly

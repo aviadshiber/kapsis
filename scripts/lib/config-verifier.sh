@@ -532,6 +532,28 @@ validate_network_config() {
         fi
     fi
 
+    local dns_pin_max_rate
+    dns_pin_max_rate=$(yq -r '.network.dns_pinning.max_failure_rate // "null"' "$config_file" 2>/dev/null)
+    if [[ "$dns_pin_max_rate" != "null" ]]; then
+        # Must be a number in range [0.0, 1.0]
+        if awk -v v="$dns_pin_max_rate" 'BEGIN { exit !(v ~ /^[0-9]*\.?[0-9]+$/ && v+0 >= 0 && v+0 <= 1) }'; then
+            log_pass "Valid dns_pinning.max_failure_rate: $dns_pin_max_rate"
+        else
+            log_error "Invalid dns_pinning.max_failure_rate: $dns_pin_max_rate (must be a number between 0.0 and 1.0)"
+        fi
+    fi
+
+    local dns_pin_max_failures
+    dns_pin_max_failures=$(yq -r '.network.dns_pinning.max_failures // "null"' "$config_file" 2>/dev/null)
+    if [[ "$dns_pin_max_failures" != "null" ]]; then
+        # Must be an integer >= -1 (-1 = disabled)
+        if [[ "$dns_pin_max_failures" =~ ^-?[0-9]+$ ]] && [[ "$dns_pin_max_failures" -ge -1 ]]; then
+            log_pass "Valid dns_pinning.max_failures: $dns_pin_max_failures"
+        else
+            log_error "Invalid dns_pinning.max_failures: $dns_pin_max_failures (must be an integer >= -1)"
+        fi
+    fi
+
     return 0
 }
 
@@ -826,15 +848,23 @@ main() {
                 if [[ "$dirname" == *"/agents"* ]]; then
                     validate_agent_profile "$config_file"
                 else
-                    # Determine by content: launch configs have agent.command
-                    if yq -r '.agent.command // "null"' "$config_file" 2>/dev/null | grep -qv '^null$'; then
-                        validate_launch_config "$config_file"
-                    elif yq -r '.name // "null"' "$config_file" 2>/dev/null | grep -qv '^null$'; then
-                        validate_agent_profile "$config_file"
-                    else
-                        log_warn "Unknown config type, attempting launch config validation"
-                        validate_launch_config "$config_file"
-                    fi
+                    local config_type
+                    config_type=$(detect_config_type "$config_file")
+                    case "$config_type" in
+                        network)
+                            validate_network_config "$config_file"
+                            ;;
+                        launch)
+                            validate_launch_config "$config_file"
+                            ;;
+                        agent)
+                            validate_agent_profile "$config_file"
+                            ;;
+                        *)
+                            log_warn "Unknown config type, attempting launch config validation"
+                            validate_launch_config "$config_file"
+                            ;;
+                    esac
                 fi
                 ;;
             *)
