@@ -169,6 +169,22 @@ network:
     # Sets chmod 444 after DNS setup (agent runs as non-root, cannot override)
     protect_dns_files: true
 
+    # Abort launch when DNS failure rate exceeds a threshold (Issue #216).
+    # Prevents wasting agent runtime when host DNS/VPN is broken.
+    # Both thresholds are DISABLED by default (opt-in). Either one firing triggers abort.
+    # Override at runtime with: KAPSIS_DNS_THRESHOLD_SKIP=true
+    #
+    # max_failure_rate: abort if fraction of concrete domains failing exceeds this.
+    #   Wildcards are excluded from the denominator.
+    #   Tune conservatively — many build profiles only use a subset of the allowlist.
+    #   Example: 0.8 aborts if >80% of resolvable domains fail.
+    #   max_failure_rate: 0.8
+    #
+    # max_failures: abort if the absolute count of failed domains exceeds this.
+    #   Useful for small allowlists where a rate threshold is less meaningful.
+    #   Example: 10 aborts if more than 10 domains fail to resolve.
+    #   max_failures: 10
+
   # Allowed ports (documented for reference)
   # Note: Port filtering is NOT enforced - only DNS filtering
   # These are the typical ports that allowed services use
