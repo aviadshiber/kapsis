@@ -627,6 +627,227 @@ EOF
 }
 
 #===============================================================================
+# FAILURE THRESHOLD TESTS (Issue #216, no container required)
+#===============================================================================
+
+# Helper: stub resolve_domain_ips to return fixed results based on domain name.
+# Domains starting with "fail-" return empty; all others return a fake IP.
+_stub_resolve_domain_ips() {
+    local domain="$1"
+    if [[ "$domain" == fail-* ]]; then
+        echo ""
+    else
+        echo "1.2.3.4"
+    fi
+}
+
+test_threshold_disabled_by_default() {
+    log_test "Testing check_dns_failure_threshold with both thresholds disabled returns 0"
+
+    source "$DNS_PIN_LIB"
+
+    _DNS_RESOLVED_COUNT=2
+    _DNS_FAILED_COUNT=33
+
+    assert_command_succeeds "check_dns_failure_threshold '' ''" \
+        "Disabled thresholds should never abort"
+}
+
+test_threshold_max_failures_below_limit() {
+    log_test "Testing max_failures: failures below limit returns 0"
+
+    source "$DNS_PIN_LIB"
+
+    _DNS_RESOLVED_COUNT=19
+    _DNS_FAILED_COUNT=5
+
+    assert_command_succeeds "check_dns_failure_threshold '' '10'" \
+        "5 failures < max_failures=10 should pass"
+}
+
+test_threshold_max_failures_exceeded() {
+    log_test "Testing max_failures: failures exceed limit returns 1"
+
+    source "$DNS_PIN_LIB"
+
+    _DNS_RESOLVED_COUNT=19
+    _DNS_FAILED_COUNT=33
+
+    assert_command_fails "check_dns_failure_threshold '' '10'" \
+        "33 failures > max_failures=10 should abort"
+}
+
+test_threshold_max_failure_rate_below_limit() {
+    log_test "Testing max_failure_rate: rate below limit returns 0"
+
+    source "$DNS_PIN_LIB"
+
+    _DNS_RESOLVED_COUNT=19
+    _DNS_FAILED_COUNT=3
+
+    # 3/22 ≈ 13.6% < 80%
+    assert_command_succeeds "check_dns_failure_threshold '0.8' ''" \
+        "13.6% failure rate < 0.8 should pass"
+}
+
+test_threshold_max_failure_rate_exceeded() {
+    log_test "Testing max_failure_rate: rate exceeds limit returns 1"
+
+    source "$DNS_PIN_LIB"
+
+    _DNS_RESOLVED_COUNT=19
+    _DNS_FAILED_COUNT=33
+
+    # 33/52 ≈ 63.5% > 50%
+    assert_command_fails "check_dns_failure_threshold '0.5' ''" \
+        "63.5% failure rate > 0.5 should abort"
+}
+
+test_threshold_or_semantics_rate_triggers() {
+    log_test "Testing OR semantics: rate threshold triggers even when count is under limit"
+
+    source "$DNS_PIN_LIB"
+
+    _DNS_RESOLVED_COUNT=1
+    _DNS_FAILED_COUNT=9
+
+    # 9/10 = 90% > 0.5; but 9 < max_failures=20 — rate alone should trigger
+    assert_command_fails "check_dns_failure_threshold '0.5' '20'" \
+        "Rate threshold should trigger abort regardless of count threshold"
+}
+
+test_threshold_or_semantics_count_triggers() {
+    log_test "Testing OR semantics: count threshold triggers even when rate is under limit"
+
+    source "$DNS_PIN_LIB"
+
+    _DNS_RESOLVED_COUNT=90
+    _DNS_FAILED_COUNT=11
+
+    # 11/101 ≈ 10.9% < 80%; but 11 > max_failures=10 — count alone should trigger
+    assert_command_fails "check_dns_failure_threshold '0.8' '10'" \
+        "Count threshold should trigger abort regardless of rate threshold"
+}
+
+test_threshold_zero_concrete_domains() {
+    log_test "Testing threshold with zero concrete domains (all wildcards) returns 0"
+
+    source "$DNS_PIN_LIB"
+
+    _DNS_RESOLVED_COUNT=0
+    _DNS_FAILED_COUNT=0
+
+    # 0 concrete domains — divide-by-zero guard, should never abort
+    assert_command_succeeds "check_dns_failure_threshold '0.5' '0'" \
+        "Zero concrete domains should never trigger threshold abort"
+}
+
+test_threshold_all_fail_rate_1() {
+    log_test "Testing max_failure_rate=1.0 only aborts when 100% fail"
+
+    source "$DNS_PIN_LIB"
+
+    # 50% failure — should NOT abort at rate=1.0
+    _DNS_RESOLVED_COUNT=5
+    _DNS_FAILED_COUNT=5
+    assert_command_succeeds "check_dns_failure_threshold '1.0' ''" \
+        "50% failure < max_failure_rate=1.0 should pass"
+
+    # 100% failure — should abort
+    _DNS_RESOLVED_COUNT=0
+    _DNS_FAILED_COUNT=5
+    assert_command_fails "check_dns_failure_threshold '1.0' ''" \
+        "100% failure rate should abort at max_failure_rate=1.0"
+}
+
+test_threshold_globals_set_by_resolve() {
+    log_test "Testing _DNS_RESOLVED/FAILED_COUNT globals set by resolve_allowlist_domains"
+
+    # Stub resolve_domain_ips so test is network-independent
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+
+    _DNS_RESOLVED_COUNT=0
+    _DNS_FAILED_COUNT=0
+
+    # 2 resolvable + 2 failing + 1 wildcard
+    local tmp
+    tmp=$(mktemp)
+    resolve_allowlist_domains "github.com,gitlab.com,fail-one.invalid,fail-two.invalid,*.wildcard.com" 1 "dynamic" \
+        > "$tmp"
+    rm -f "$tmp"
+
+    if [[ "$_DNS_RESOLVED_COUNT" -eq 2 && "$_DNS_FAILED_COUNT" -eq 2 && "$_DNS_WILDCARD_COUNT" -eq 1 ]]; then
+        log_pass "Globals: resolved=$_DNS_RESOLVED_COUNT failed=$_DNS_FAILED_COUNT wildcards=$_DNS_WILDCARD_COUNT"
+    else
+        log_fail "Expected resolved=2 failed=2 wildcards=1, got resolved=$_DNS_RESOLVED_COUNT failed=$_DNS_FAILED_COUNT wildcards=$_DNS_WILDCARD_COUNT"
+        return 1
+    fi
+}
+
+test_config_validation_max_failure_rate_valid() {
+    log_test "Testing config validation accepts valid max_failure_rate"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    max_failure_rate: 0.8
+    max_failures: 10
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "\[FAIL\].*max_failure_rate\|\[FAIL\].*max_failures"; then
+        log_fail "Valid max_failure_rate/max_failures rejected by verifier"
+        rm -f "$test_config"
+        return 1
+    fi
+    log_pass "Valid max_failure_rate and max_failures accepted"
+    rm -f "$test_config"
+}
+
+test_config_validation_max_failure_rate_invalid() {
+    log_test "Testing config validation rejects invalid max_failure_rate"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    max_failure_rate: 1.5
+    max_failures: -3
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "\[FAIL\].*max_failure_rate"; then
+        log_pass "Invalid max_failure_rate (1.5) correctly rejected"
+    else
+        log_warn "Expected validation error for max_failure_rate=1.5"
+    fi
+
+    rm -f "$test_config"
+}
+
+#===============================================================================
 # CONTAINER TESTS (require Podman)
 #===============================================================================
 
@@ -835,6 +1056,20 @@ main() {
     run_test test_resolve_returns_valid_ipv4_or_empty
     run_test test_add_host_args_format
     run_test test_pinned_file_parsing_robust
+
+    # Failure threshold tests (Issue #216)
+    run_test test_threshold_disabled_by_default
+    run_test test_threshold_max_failures_below_limit
+    run_test test_threshold_max_failures_exceeded
+    run_test test_threshold_max_failure_rate_below_limit
+    run_test test_threshold_max_failure_rate_exceeded
+    run_test test_threshold_or_semantics_rate_triggers
+    run_test test_threshold_or_semantics_count_triggers
+    run_test test_threshold_zero_concrete_domains
+    run_test test_threshold_all_fail_rate_1
+    run_test test_threshold_globals_set_by_resolve
+    run_test test_config_validation_max_failure_rate_valid
+    run_test test_config_validation_max_failure_rate_invalid
 
     # Container tests
     run_test test_pinned_file_mounted_readonly

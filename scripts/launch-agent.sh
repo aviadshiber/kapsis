@@ -893,6 +893,9 @@ parse_config() {
         NETWORK_DNS_PIN_FALLBACK=$(yq eval '.network.dns_pinning.fallback // "dynamic"' "$CONFIG_FILE" 2>/dev/null || echo "dynamic")
         NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
         NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        # Failure threshold — disabled by default (empty = opt-in only)
+        NETWORK_DNS_PIN_MAX_FAILURE_RATE=$(yq eval '.network.dns_pinning.max_failure_rate // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        NETWORK_DNS_PIN_MAX_FAILURES=$(yq eval '.network.dns_pinning.max_failures // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse cleanup configuration (Fix #183)
         # Env vars take precedence over YAML via ${VAR:-$(yq ...)} pattern
@@ -2210,8 +2213,33 @@ build_container_command() {
             # This prevents DNS manipulation attacks inside the container
             if [[ "${NETWORK_DNS_PIN_ENABLED:-true}" == "true" ]] && [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
                 log_info "DNS pinning: resolving allowlist domains on host..."
+                # Redirect stdout to a temp file so resolve_allowlist_domains() runs in
+                # the current shell (not a subshell), allowing _DNS_RESOLVED_COUNT /
+                # _DNS_FAILED_COUNT globals to survive for the threshold check below.
+                local _dns_resolve_tmp
+                _dns_resolve_tmp=$(mktemp)
+                local _dns_pin_rc=0
+                resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" \
+                    > "$_dns_resolve_tmp" || _dns_pin_rc=$?
+
                 local resolved_data
-                if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
+                resolved_data=$(cat "$_dns_resolve_tmp")
+                rm -f "$_dns_resolve_tmp"
+
+                if [[ "$_dns_pin_rc" -eq 0 ]]; then
+                    # Check failure threshold (Issue #216) — skip if KAPSIS_DNS_THRESHOLD_SKIP is set
+                    if [[ "${KAPSIS_DNS_THRESHOLD_SKIP:-false}" != "true" ]]; then
+                        if ! check_dns_failure_threshold \
+                                "${NETWORK_DNS_PIN_MAX_FAILURE_RATE:-}" \
+                                "${NETWORK_DNS_PIN_MAX_FAILURES:-}"; then
+                            log_error "DNS failure threshold exceeded — set KAPSIS_DNS_THRESHOLD_SKIP=true to override"
+                            log_error "Check VPN/network connectivity and retry, or lower max_failure_rate/max_failures in config"
+                            exit 1
+                        fi
+                    else
+                        log_warn "DNS failure threshold check skipped (KAPSIS_DNS_THRESHOLD_SKIP=true)"
+                    fi
+
                     if [[ -n "$resolved_data" ]]; then
                         # Create temp file for pinned DNS (cleaned up in _cleanup_with_completion)
                         DNS_PIN_FILE=$(mktemp)

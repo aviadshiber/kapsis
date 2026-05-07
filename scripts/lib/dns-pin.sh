@@ -48,10 +48,19 @@ type log_success &>/dev/null || log_success() { echo "[DNS-PIN] SUCCESS: $*" >&2
 # DOMAIN RESOLUTION
 #===============================================================================
 
+# Global counters set by resolve_allowlist_domains() after each call.
+# Callers can read these immediately after the function returns.
+_DNS_RESOLVED_COUNT=0
+_DNS_FAILED_COUNT=0
+_DNS_WILDCARD_COUNT=0
+
 # resolve_allowlist_domains <comma-domains> [timeout] [fallback]
 #
 # Resolves comma-separated domains to IP addresses on the host.
 # Skips wildcards (emitting security warning) and returns pinned mappings.
+#
+# After returning, the global vars _DNS_RESOLVED_COUNT, _DNS_FAILED_COUNT,
+# and _DNS_WILDCARD_COUNT hold the final counts for the caller to inspect.
 #
 # Arguments:
 #   $1 - Comma-separated list of domains (from KAPSIS_DNS_ALLOWLIST)
@@ -118,12 +127,83 @@ resolve_allowlist_domains() {
 
     log_info "DNS pinning: resolved $resolved_count domains, $failed_count failed, $wildcard_count wildcards skipped"
 
+    # Expose counts to the caller via globals (subshell-safe via process substitution
+    # callers should NOT use $() to call this function if they need the globals).
+    _DNS_RESOLVED_COUNT=$resolved_count
+    _DNS_FAILED_COUNT=$failed_count
+    _DNS_WILDCARD_COUNT=$wildcard_count
+
     # Handle failures based on fallback mode
     if [[ "$failed_count" -gt 0 ]] && [[ "$fallback" == "abort" ]]; then
         log_error "DNS resolution failed with fallback=abort"
         return 1
     fi
 
+    return 0
+}
+
+#===============================================================================
+# FAILURE THRESHOLD CHECK
+#===============================================================================
+
+# check_dns_failure_threshold [max_failure_rate] [max_failures]
+#
+# Evaluates the DNS resolution result (from _DNS_RESOLVED_COUNT / _DNS_FAILED_COUNT
+# set by resolve_allowlist_domains) against configurable thresholds.
+#
+# Wildcards are excluded from the denominator — they are never resolved.
+# Denominator is (resolved + failed), i.e., pingable concrete domains only.
+#
+# Either threshold triggers abort (OR semantics). Both are optional; pass ""
+# to disable a threshold.
+#
+# Arguments:
+#   $1 - max_failure_rate: float 0.0-1.0 (abort if rate > this). "" = disabled.
+#   $2 - max_failures: int >= 0 (abort if count > this). "" = disabled.
+#
+# Returns:
+#   0 - thresholds not exceeded (or both disabled, or no pingable domains)
+#   1 - threshold exceeded; caller should abort
+check_dns_failure_threshold() {
+    local max_failure_rate="${1:-}"
+    local max_failures="${2:-}"
+
+    # Both disabled — nothing to check
+    if [[ -z "$max_failure_rate" && -z "$max_failures" ]]; then
+        return 0
+    fi
+
+    local resolved="${_DNS_RESOLVED_COUNT:-0}"
+    local failed="${_DNS_FAILED_COUNT:-0}"
+    local total=$(( resolved + failed ))
+
+    # No concrete (pingable) domains — nothing meaningful to measure
+    if [[ "$total" -eq 0 ]]; then
+        log_debug "DNS threshold: no concrete domains to evaluate (all wildcards or empty)"
+        return 0
+    fi
+
+    # Check absolute count threshold
+    if [[ -n "$max_failures" ]] && [[ "$failed" -gt "$max_failures" ]]; then
+        log_error "DNS threshold exceeded: $failed failed domains > max_failures=$max_failures (resolved $resolved/$total)"
+        return 1
+    fi
+
+    # Check rate threshold using awk for float arithmetic
+    if [[ -n "$max_failure_rate" ]]; then
+        local rate_exceeded
+        rate_exceeded=$(awk -v failed="$failed" -v total="$total" -v limit="$max_failure_rate" \
+            'BEGIN { rate = failed / total; print (rate >= limit) ? "1" : "0" }')
+        if [[ "$rate_exceeded" == "1" ]]; then
+            local pct
+            pct=$(awk -v failed="$failed" -v total="$total" \
+                'BEGIN { printf "%.0f", (failed / total) * 100 }')
+            log_error "DNS threshold exceeded: ${pct}% of domains failed (${failed}/${total}) > max_failure_rate=${max_failure_rate}"
+            return 1
+        fi
+    fi
+
+    log_debug "DNS threshold check passed: ${failed}/${total} failed"
     return 0
 }
 
