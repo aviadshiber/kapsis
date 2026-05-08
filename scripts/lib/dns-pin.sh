@@ -119,10 +119,10 @@ resolve_allowlist_domains() {
     local total_count=$((resolved_count + failed_count))
     log_info "DNS pinning: resolved $resolved_count domains, $failed_count failed, $wildcard_count wildcards skipped"
 
-    # Export stats for caller threshold checking (side-channel since stdout is captured)
-    # Format: "resolved=N failed=N total=N"
-    KAPSIS_DNS_RESOLVE_STATS="resolved=${resolved_count} failed=${failed_count} total=${total_count}"
-    export KAPSIS_DNS_RESOLVE_STATS
+    # Emit a sentinel line on stdout so the caller can parse stats even when this
+    # function runs inside a command substitution subshell (where env exports are lost).
+    # The caller strips this line before writing the pinned DNS file.
+    echo "__KAPSIS_DNS_STATS__ resolved=${resolved_count} failed=${failed_count} total=${total_count}"
 
     # Handle failures based on fallback mode
     if [[ "$failed_count" -gt 0 ]] && [[ "$fallback" == "abort" ]]; then
