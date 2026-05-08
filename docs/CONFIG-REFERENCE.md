@@ -631,6 +631,18 @@ network:
     # Default: true
     protect_dns_files: true
 
+    # Abort launch if more than N% of resolvable domains fail to resolve (0.0–1.0).
+    # Wildcards are excluded from the denominator (they are never resolvable).
+    # Default: unset (disabled — preserves existing behaviour)
+    # Example: 0.5 aborts if more than 50% of domains fail (e.g. VPN is down)
+    # Override at runtime: KAPSIS_SKIP_DNS_CHECK=true
+    # max_failure_rate: 0.5
+
+    # Abort launch if more than N domains fail to resolve (absolute count).
+    # If both max_failure_rate and max_failures are set, either condition triggers abort.
+    # Default: unset (disabled)
+    # max_failures: 10
+
 #===============================================================================
 # GIT HOOKS
 #===============================================================================

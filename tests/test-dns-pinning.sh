@@ -803,6 +803,161 @@ EOF
 }
 
 #===============================================================================
+# DNS FAILURE RATE THRESHOLD TESTS (Issue #216)
+#===============================================================================
+
+test_resolve_allowlist_emits_stats_sentinel() {
+    log_test "Testing resolve_allowlist_domains emits __KAPSIS_DNS_STATS__ sentinel on stdout"
+
+    source "$DNS_PIN_LIB"
+
+    # Use an IP literal (always resolves via passthrough, no DNS lookup) + a bogus domain
+    # (always fails). This makes counts deterministic regardless of CI DNS filtering.
+    local output
+    output=$(resolve_allowlist_domains "192.0.2.1,this-domain-does-not-exist-kapsis-test-xyz.invalid" 3 "dynamic" 2>/dev/null || true)
+
+    local stats_line
+    stats_line=$(echo "$output" | grep '^__KAPSIS_DNS_STATS__' || true)
+
+    if [[ -n "$stats_line" ]]; then
+        log_pass "Sentinel emitted: ${stats_line}"
+        # Verify format: __KAPSIS_DNS_STATS__ resolved=N failed=N total=N
+        if echo "$stats_line" | grep -qE '__KAPSIS_DNS_STATS__ resolved=[0-9]+ failed=[0-9]+ total=[0-9]+'; then
+            log_pass "Sentinel has expected format"
+            # IP literal always resolves; bogus domain always fails — assert exact counts
+            if echo "$stats_line" | grep -q 'resolved=1 failed=1 total=2'; then
+                log_pass "Sentinel counts correct (resolved=1 failed=1 total=2)"
+            else
+                log_fail "Unexpected counts in sentinel: ${stats_line}"
+                return 1
+            fi
+        else
+            log_fail "Sentinel format unexpected: ${stats_line}"
+            return 1
+        fi
+    else
+        log_fail "__KAPSIS_DNS_STATS__ sentinel not found in resolve_allowlist_domains output"
+        return 1
+    fi
+}
+
+test_resolve_allowlist_sentinel_stripped_from_pinned_data() {
+    log_test "Testing sentinel line is not present in data written to pinned DNS file"
+
+    source "$DNS_PIN_LIB"
+
+    local output
+    output=$(resolve_allowlist_domains "192.0.2.1" 3 "dynamic" 2>/dev/null || true)
+    # Simulate what launch-agent.sh does: strip the sentinel before writing
+    local pinned_data
+    pinned_data=$(echo "$output" | grep -v '^__KAPSIS_DNS_STATS__' || true)
+
+    local tmp_file
+    tmp_file=$(mktemp)
+    write_pinned_dns_file "$tmp_file" "$pinned_data"
+
+    if grep -q '__KAPSIS_DNS_STATS__' "$tmp_file" 2>/dev/null; then
+        log_fail "Sentinel line found in pinned DNS file (should have been stripped)"
+        rm -f "$tmp_file"
+        return 1
+    else
+        log_pass "Sentinel correctly absent from pinned DNS file"
+    fi
+
+    rm -f "$tmp_file"
+}
+
+test_dns_failure_rate_threshold_arithmetic() {
+    log_test "Testing DNS failure rate threshold arithmetic (awk calculation)"
+
+    # Simulate the rate check logic used in launch-agent.sh
+    local _rate_exceeded
+
+    # 33 failures out of 52 total = 63.5% > 50% threshold — should abort
+    _rate_exceeded=$(awk -v failed=33 -v total=52 -v threshold=0.5 \
+        'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
+    if [[ "$_rate_exceeded" == "1" ]]; then
+        log_pass "63.5% failure rate correctly exceeds 50% threshold"
+    else
+        log_fail "63.5% failure rate should exceed 50% threshold but got: $_rate_exceeded"
+        return 1
+    fi
+
+    # 5 failures out of 52 total = 9.6% < 50% threshold — should not abort
+    _rate_exceeded=$(awk -v failed=5 -v total=52 -v threshold=0.5 \
+        'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
+    if [[ "$_rate_exceeded" == "0" ]]; then
+        log_pass "9.6% failure rate correctly does not exceed 50% threshold"
+    else
+        log_fail "9.6% failure rate should not exceed 50% threshold but got: $_rate_exceeded"
+        return 1
+    fi
+
+    # Edge: exactly at threshold (50% = 50%) — should NOT abort (strictly greater-than)
+    _rate_exceeded=$(awk -v failed=1 -v total=2 -v threshold=0.5 \
+        'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
+    if [[ "$_rate_exceeded" == "0" ]]; then
+        log_pass "Exactly 50% failure rate does not exceed 50% threshold (strict >)"
+    else
+        log_fail "Exactly 50% failure rate should not trigger abort (uses strict >) but got: $_rate_exceeded"
+        return 1
+    fi
+}
+
+test_dns_failure_rate_zero_tolerance_zero_failures() {
+    log_test "Testing threshold=0.0 with zero failures does not abort (0.0 is not > 0.0)"
+
+    local _rate_exceeded
+    _rate_exceeded=$(awk -v failed=0 -v total=10 -v threshold=0.0 \
+        'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
+    if [[ "$_rate_exceeded" == "0" ]]; then
+        log_pass "Zero failures with threshold=0.0 does not abort"
+    else
+        log_fail "Zero failures should never abort (got: $_rate_exceeded)"
+        return 1
+    fi
+}
+
+test_dns_stats_zero_total_skips_rate_check() {
+    log_test "Testing failure rate check is skipped when total=0 (all wildcards — no division by zero)"
+
+    # Mirror the guard in launch-agent.sh: only call awk when total > 0
+    local _dns_total=0
+    local _rate_exceeded="0"
+    if [[ "$_dns_total" -gt 0 ]]; then
+        _rate_exceeded=$(awk -v failed=0 -v total="$_dns_total" -v threshold=0.5 \
+            'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
+    fi
+    if [[ "$_rate_exceeded" == "0" ]]; then
+        log_pass "total=0 correctly skips rate check (no division by zero, no abort)"
+    else
+        log_fail "total=0 should not trigger abort (got: $_rate_exceeded)"
+        return 1
+    fi
+}
+
+test_dns_stats_total_excludes_wildcards() {
+    log_test "Testing KAPSIS_DNS_RESOLVE_STATS total excludes wildcards"
+
+    source "$DNS_PIN_LIB"
+    unset KAPSIS_DNS_RESOLVE_STATS
+
+    # Only wildcards — total should be 0 (wildcards skipped, not counted as failed)
+    resolve_allowlist_domains "*.github.com,*.npmjs.org" 3 "dynamic" >/dev/null 2>&1 || true
+
+    local _failed _total
+    _failed=$(echo "${KAPSIS_DNS_RESOLVE_STATS:-}" | grep -o 'failed=[0-9]*' | cut -d= -f2)
+    _total=$(echo "${KAPSIS_DNS_RESOLVE_STATS:-}" | grep -o 'total=[0-9]*' | cut -d= -f2)
+
+    if [[ "${_failed:-0}" == "0" ]] && [[ "${_total:-0}" == "0" ]]; then
+        log_pass "Wildcards excluded from total: total=0 failed=0 (no false abort)"
+    else
+        log_fail "Wildcards must not be counted in failed/total (would cause false abort): failed=${_failed:-?} total=${_total:-?}"
+        return 1
+    fi
+}
+
+#===============================================================================
 # RUN TESTS
 #===============================================================================
 
@@ -830,6 +985,14 @@ main() {
     run_test test_default_config_has_dns_pinning
     run_test test_count_pinned_domains
     run_test test_get_pinned_domains
+
+    # DNS failure rate threshold tests (Issue #216)
+    run_test test_resolve_allowlist_emits_stats_sentinel
+    run_test test_resolve_allowlist_sentinel_stripped_from_pinned_data
+    run_test test_dns_failure_rate_threshold_arithmetic
+    run_test test_dns_failure_rate_zero_tolerance_zero_failures
+    run_test test_dns_stats_zero_total_skips_rate_check
+    run_test test_dns_stats_total_excludes_wildcards
 
     # Property-based tests
     run_test test_resolve_returns_valid_ipv4_or_empty
