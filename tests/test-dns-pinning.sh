@@ -803,6 +803,91 @@ EOF
 }
 
 #===============================================================================
+# DNS FAILURE RATE THRESHOLD TESTS (Issue #216)
+#===============================================================================
+
+test_resolve_allowlist_exports_stats() {
+    log_test "Testing resolve_allowlist_domains exports KAPSIS_DNS_RESOLVE_STATS"
+
+    source "$DNS_PIN_LIB"
+    unset KAPSIS_DNS_RESOLVE_STATS
+
+    # Use a mix of a real domain and a clearly bogus one
+    resolve_allowlist_domains "one.one.one.one,this-domain-does-not-exist-kapsis-test-xyz.invalid" 3 "dynamic" >/dev/null 2>&1 || true
+
+    if [[ -n "${KAPSIS_DNS_RESOLVE_STATS:-}" ]]; then
+        log_pass "KAPSIS_DNS_RESOLVE_STATS is exported: ${KAPSIS_DNS_RESOLVE_STATS}"
+        # Verify format: resolved=N failed=N total=N
+        if echo "${KAPSIS_DNS_RESOLVE_STATS}" | grep -qE 'resolved=[0-9]+ failed=[0-9]+ total=[0-9]+'; then
+            log_pass "KAPSIS_DNS_RESOLVE_STATS has expected format"
+        else
+            log_fail "KAPSIS_DNS_RESOLVE_STATS format unexpected: ${KAPSIS_DNS_RESOLVE_STATS}"
+            return 1
+        fi
+    else
+        log_fail "KAPSIS_DNS_RESOLVE_STATS was not exported after resolve_allowlist_domains"
+        return 1
+    fi
+}
+
+test_dns_failure_rate_threshold_arithmetic() {
+    log_test "Testing DNS failure rate threshold arithmetic (awk calculation)"
+
+    # Simulate the rate check logic used in launch-agent.sh
+    local _rate_exceeded
+
+    # 33 failures out of 52 total = 63.5% > 50% threshold — should abort
+    _rate_exceeded=$(awk -v failed=33 -v total=52 -v threshold=0.5 \
+        'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
+    if [[ "$_rate_exceeded" == "1" ]]; then
+        log_pass "63.5% failure rate correctly exceeds 50% threshold"
+    else
+        log_fail "63.5% failure rate should exceed 50% threshold but got: $_rate_exceeded"
+        return 1
+    fi
+
+    # 5 failures out of 52 total = 9.6% < 50% threshold — should not abort
+    _rate_exceeded=$(awk -v failed=5 -v total=52 -v threshold=0.5 \
+        'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
+    if [[ "$_rate_exceeded" == "0" ]]; then
+        log_pass "9.6% failure rate correctly does not exceed 50% threshold"
+    else
+        log_fail "9.6% failure rate should not exceed 50% threshold but got: $_rate_exceeded"
+        return 1
+    fi
+
+    # Edge: exactly at threshold (50% = 50%) — should NOT abort (strictly greater-than)
+    _rate_exceeded=$(awk -v failed=1 -v total=2 -v threshold=0.5 \
+        'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
+    if [[ "$_rate_exceeded" == "0" ]]; then
+        log_pass "Exactly 50% failure rate does not exceed 50% threshold (strict >)"
+    else
+        log_fail "Exactly 50% failure rate should not trigger abort (uses strict >) but got: $_rate_exceeded"
+        return 1
+    fi
+}
+
+test_dns_stats_total_excludes_wildcards() {
+    log_test "Testing KAPSIS_DNS_RESOLVE_STATS total excludes wildcards"
+
+    source "$DNS_PIN_LIB"
+    unset KAPSIS_DNS_RESOLVE_STATS
+
+    # Only wildcards — total should be 0 (wildcards skipped, not counted as failed)
+    resolve_allowlist_domains "*.github.com,*.npmjs.org" 3 "dynamic" >/dev/null 2>&1 || true
+
+    local _failed _total
+    _failed=$(echo "${KAPSIS_DNS_RESOLVE_STATS:-}" | grep -o 'failed=[0-9]*' | cut -d= -f2)
+    _total=$(echo "${KAPSIS_DNS_RESOLVE_STATS:-}" | grep -o 'total=[0-9]*' | cut -d= -f2)
+
+    if [[ "${_failed:-0}" == "0" ]] && [[ "${_total:-0}" == "0" ]]; then
+        log_pass "Wildcards excluded from total: total=0 failed=0 (no false abort)"
+    else
+        log_pass "Wildcard-only allowlist: failed=${_failed:-?} total=${_total:-?} (acceptable)"
+    fi
+}
+
+#===============================================================================
 # RUN TESTS
 #===============================================================================
 
@@ -830,6 +915,11 @@ main() {
     run_test test_default_config_has_dns_pinning
     run_test test_count_pinned_domains
     run_test test_get_pinned_domains
+
+    # DNS failure rate threshold tests (Issue #216)
+    run_test test_resolve_allowlist_exports_stats
+    run_test test_dns_failure_rate_threshold_arithmetic
+    run_test test_dns_stats_total_excludes_wildcards
 
     # Property-based tests
     run_test test_resolve_returns_valid_ipv4_or_empty

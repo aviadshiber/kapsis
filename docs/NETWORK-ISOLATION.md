@@ -584,6 +584,14 @@ network:
 
     # Protect /etc/resolv.conf and /etc/hosts
     protect_dns_files: true
+
+    # Abort if more than N% of domains fail to resolve (0.0–1.0).
+    # Useful to catch VPN/DNS outages before wasting compute.
+    # Default: unset. Override: KAPSIS_SKIP_DNS_CHECK=true
+    # max_failure_rate: 0.5
+
+    # Abort if more than N domains fail to resolve (absolute count).
+    # max_failures: 10
 ```
 
 ### Defense-in-Depth Layers

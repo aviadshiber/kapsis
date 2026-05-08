@@ -893,6 +893,8 @@ parse_config() {
         NETWORK_DNS_PIN_FALLBACK=$(yq eval '.network.dns_pinning.fallback // "dynamic"' "$CONFIG_FILE" 2>/dev/null || echo "dynamic")
         NETWORK_DNS_PIN_TIMEOUT=$(yq eval '.network.dns_pinning.resolve_timeout // "5"' "$CONFIG_FILE" 2>/dev/null || echo "5")
         NETWORK_DNS_PIN_PROTECT=$(yq eval '.network.dns_pinning.protect_dns_files // "true"' "$CONFIG_FILE" 2>/dev/null || echo "true")
+        NETWORK_DNS_PIN_MAX_FAILURE_RATE=$(yq eval '.network.dns_pinning.max_failure_rate // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        NETWORK_DNS_PIN_MAX_FAILURES=$(yq eval '.network.dns_pinning.max_failures // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse cleanup configuration (Fix #183)
         # Env vars take precedence over YAML via ${VAR:-$(yq ...)} pattern
@@ -2212,6 +2214,42 @@ build_container_command() {
                 log_info "DNS pinning: resolving allowlist domains on host..."
                 local resolved_data
                 if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
+                    # Check DNS failure rate threshold (Issue #216)
+                    # Aborts if too many domains failed to resolve — indicating broken DNS/VPN
+                    if [[ -z "${KAPSIS_SKIP_DNS_CHECK:-}" ]] && [[ -n "${KAPSIS_DNS_RESOLVE_STATS:-}" ]]; then
+                        local _dns_failed _dns_total
+                        _dns_failed=$(echo "${KAPSIS_DNS_RESOLVE_STATS}" | grep -o 'failed=[0-9]*' | cut -d= -f2)
+                        _dns_total=$(echo "${KAPSIS_DNS_RESOLVE_STATS}" | grep -o 'total=[0-9]*' | cut -d= -f2)
+                        _dns_failed="${_dns_failed:-0}"
+                        _dns_total="${_dns_total:-0}"
+
+                        local _dns_abort=0
+
+                        # Absolute failure count threshold
+                        if [[ -n "${NETWORK_DNS_PIN_MAX_FAILURES:-}" ]] && [[ "$_dns_failed" -gt "${NETWORK_DNS_PIN_MAX_FAILURES}" ]]; then
+                            log_error "DNS pre-flight failed: $_dns_failed domain(s) failed to resolve (threshold: ${NETWORK_DNS_PIN_MAX_FAILURES})"
+                            _dns_abort=1
+                        fi
+
+                        # Failure rate threshold (0.0–1.0)
+                        if [[ -n "${NETWORK_DNS_PIN_MAX_FAILURE_RATE:-}" ]] && [[ "$_dns_total" -gt 0 ]]; then
+                            # Use awk for floating-point comparison
+                            local _rate_exceeded
+                            _rate_exceeded=$(awk -v failed="$_dns_failed" -v total="$_dns_total" \
+                                -v threshold="${NETWORK_DNS_PIN_MAX_FAILURE_RATE}" \
+                                'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
+                            if [[ "$_rate_exceeded" == "1" ]]; then
+                                log_error "DNS pre-flight failed: $_dns_failed/$_dns_total domain(s) failed to resolve (rate exceeds ${NETWORK_DNS_PIN_MAX_FAILURE_RATE})"
+                                _dns_abort=1
+                            fi
+                        fi
+
+                        if [[ "$_dns_abort" -eq 1 ]]; then
+                            log_error "Check your VPN / network connectivity and retry, or set KAPSIS_SKIP_DNS_CHECK=true to bypass."
+                            exit 1
+                        fi
+                    fi
+
                     if [[ -n "$resolved_data" ]]; then
                         # Create temp file for pinned DNS (cleaned up in _cleanup_with_completion)
                         DNS_PIN_FILE=$(mktemp)
