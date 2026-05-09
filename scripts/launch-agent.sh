@@ -2069,7 +2069,8 @@ handle_existing_worktree() {
     # Handle --force-clean: remove existing worktree
     if [[ "$FORCE_CLEAN" == "true" ]]; then
         log_warn "Force-clean requested: removing existing worktree..."
-        cleanup_worktree "$PROJECT_PATH" "$existing_agent_id"
+        cleanup_worktree "$PROJECT_PATH" "$existing_agent_id" \
+            || log_warn "Worktree cleanup failed for agent '$existing_agent_id' — manual removal may be needed: git worktree remove $existing_worktree"
         log_info "Existing worktree removed. Continuing with fresh start."
         return 0
     fi
@@ -2112,7 +2113,8 @@ handle_existing_worktree() {
                 ;;
             s)
                 log_warn "Starting fresh: removing existing worktree..."
-                cleanup_worktree "$PROJECT_PATH" "$existing_agent_id"
+                cleanup_worktree "$PROJECT_PATH" "$existing_agent_id" \
+                    || log_warn "Worktree cleanup failed for agent '$existing_agent_id' — manual removal may be needed: git worktree remove $existing_worktree"
                 log_info "Existing worktree removed. Continuing with fresh start."
                 return 0
                 ;;
@@ -2497,7 +2499,11 @@ main() {
 
     log_timer_start "config"
     resolve_config
-    validate_config_security "$CONFIG_FILE"
+    if ! validate_config_security "$CONFIG_FILE"; then
+        status_complete 1 "Config security validation failed"
+        _STATUS_COMPLETE_SHOWN=true
+        exit 1
+    fi
     parse_config
     validate_agent_command "$AGENT_COMMAND"
     log_timer_end "config"
@@ -2513,7 +2519,11 @@ main() {
 
     # Handle existing worktree for branch (Fix #1: resume/force-clean)
     if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]] && [[ "$DRY_RUN" != "true" ]]; then
-        handle_existing_worktree
+        if ! handle_existing_worktree; then
+            status_complete 1 "Failed to resolve existing worktree for branch '${BRANCH}'"
+            _STATUS_COMPLETE_SHOWN=true
+            exit 1
+        fi
     fi
 
     # Run pre-flight validation for worktree mode (skip in dry-run)
@@ -2532,7 +2542,11 @@ main() {
     # Setup sandbox (worktree/overlay) — only for backends that support it
     if backend_supports "worktree" || backend_supports "overlay"; then
         log_timer_start "sandbox_setup"
-        setup_sandbox
+        if ! setup_sandbox; then
+            status_complete 1 "Sandbox setup failed (mode: ${SANDBOX_MODE:-unknown})"
+            _STATUS_COMPLETE_SHOWN=true
+            exit 1
+        fi
         log_timer_end "sandbox_setup"
     else
         log_info "Backend '$BACKEND' handles sandbox setup in-cluster"
@@ -2545,11 +2559,27 @@ main() {
     # Podman-specific: generate volume mounts, env vars, secrets env-file
     # K8s backend generates its own CR with this info
     if [[ "$BACKEND" == "podman" ]]; then
-        generate_volume_mounts
-        generate_env_vars
-        write_secrets_env_file
+        if ! generate_volume_mounts; then
+            status_complete 1 "Failed to generate container volume mounts"
+            _STATUS_COMPLETE_SHOWN=true
+            exit 1
+        fi
+        if ! generate_env_vars; then
+            status_complete 1 "Failed to generate container environment variables"
+            _STATUS_COMPLETE_SHOWN=true
+            exit 1
+        fi
+        if ! write_secrets_env_file; then
+            status_complete 1 "Failed to write secrets env-file"
+            _STATUS_COMPLETE_SHOWN=true
+            exit 1
+        fi
     fi
-    backend_build_spec
+    if ! backend_build_spec; then
+        status_complete 1 "Failed to build container spec for backend '${BACKEND}'"
+        _STATUS_COMPLETE_SHOWN=true
+        exit 1
+    fi
     status_phase "preparing" 20 "Container configured"
 
     echo ""
@@ -2672,7 +2702,8 @@ main() {
         # status.json mount_failure entries).
         _VFKIT_FIRED_SENTINEL="${TMPDIR:-/tmp}/kapsis-${AGENT_ID}.vfkit-fired"
         rm -f "$_VFKIT_FIRED_SENTINEL" 2>/dev/null || true
-        start_vfkit_watchdog "$AGENT_ID" "" "" "$_VFKIT_FIRED_SENTINEL"
+        start_vfkit_watchdog "$AGENT_ID" "" "" "$_VFKIT_FIRED_SENTINEL" \
+            || log_warn "vfkit watchdog failed to start — mount failure detection disabled for this session"
     fi
 
     # Display progress header (shows sandbox ready status with timer)
@@ -2867,7 +2898,8 @@ main() {
     # Auto-cleanup agent volumes after session end (Fix #191)
     if [[ "$BACKEND" == "podman" ]] && [[ "$KEEP_VOLUMES" != "true" ]]; then
         log_debug "Auto-cleaning volumes for agent $AGENT_ID (use --keep-volumes to preserve)..."
-        cleanup_agent_volumes "$AGENT_ID"
+        cleanup_agent_volumes "$AGENT_ID" \
+            || log_warn "Volume cleanup failed for agent $AGENT_ID — volumes may accumulate (use 'kapsis-cleanup' to reclaim)"
     fi
 
     log_timer_end "total"
@@ -3023,7 +3055,11 @@ post_container_worktree() {
 
     # Re-point sanitized git objects symlink BEFORE any git operations (#219)
     # Must happen first so git status and sync_index_from_container work correctly
-    repoint_sanitized_git_objects "$SANITIZED_GIT_PATH" "$OBJECTS_PATH"
+    if ! repoint_sanitized_git_objects "$SANITIZED_GIT_PATH" "$OBJECTS_PATH"; then
+        log_error "Failed to repoint sanitized git objects symlink — post-container git operations may fail"
+        _pcg_rc=1
+        return 1
+    fi
 
     # Show changes summary
     cd "$WORKTREE_PATH"
@@ -3123,7 +3159,8 @@ post_container_worktree() {
     else
         log_info "Auto-cleaning worktree (use --keep-worktree or KAPSIS_KEEP_WORKTREE=true to preserve)..."
         local delete_branch="${KAPSIS_CLEANUP_BRANCH_ENABLED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_ENABLED:-false}}"
-        cleanup_worktree "$PROJECT_PATH" "$AGENT_ID" "$delete_branch"
+        cleanup_worktree "$PROJECT_PATH" "$AGENT_ID" "$delete_branch" \
+            || log_warn "Worktree cleanup failed for agent '$AGENT_ID' — manual removal may be needed: git worktree remove ${WORKTREE_PATH:-<worktree>}"
         prune_worktrees "$PROJECT_PATH"
     fi
 
