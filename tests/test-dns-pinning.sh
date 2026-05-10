@@ -1002,6 +1002,74 @@ test_threshold_listing_omits_resolved_domains() {
     _restore_resolve_domain_ips
 }
 
+test_threshold_wins_over_fallback_abort() {
+    log_test "Testing threshold breach (rc=2) takes precedence over fallback=abort (rc=1)"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # fallback=abort would normally return 1 on any failure; threshold breach
+    # should short-circuit to 2 first.
+    local rc=0
+    resolve_allowlist_domains "fail-a.test" 1 "abort" "" "0" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "Threshold breach correctly preempts fallback=abort"
+    else
+        log_fail "Expected rc=2 (threshold wins), got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_skip_check_does_not_relax_resolver_rc() {
+    log_test "Testing KAPSIS_SKIP_DNS_CHECK does NOT change resolver rc (bypass is caller policy)"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # The bypass env var lives at the launch-agent.sh dispatch layer; the
+    # resolver itself must always emit rc=2 when threshold is breached so the
+    # caller has full information to decide.
+    local rc=0
+    KAPSIS_SKIP_DNS_CHECK=true \
+        resolve_allowlist_domains "fail-a.test" 1 "dynamic" "" "0" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "Resolver rc=2 unaffected by KAPSIS_SKIP_DNS_CHECK (caller decides)"
+    else
+        log_fail "Expected rc=2 regardless of bypass, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_launch_agent_bypass_dispatch_warns_not_aborts() {
+    log_test "Testing launch-agent.sh dispatch: KAPSIS_SKIP_DNS_CHECK=true on rc=2 warns instead of aborting"
+
+    # Verify the dispatch source has both branches and warns under bypass.
+    # This is a static check — the full integration runs in container tests.
+    local launch_script="$KAPSIS_ROOT/scripts/launch-agent.sh"
+
+    if ! grep -A 5 'dns_pin_rc.*-eq 2' "$launch_script" | grep -q 'KAPSIS_SKIP_DNS_CHECK'; then
+        log_fail "launch-agent.sh rc=2 dispatch missing KAPSIS_SKIP_DNS_CHECK branch"
+        return 1
+    fi
+    if ! grep -A 8 'dns_pin_rc.*-eq 2' "$launch_script" | grep -q 'log_warn.*KAPSIS_SKIP_DNS_CHECK'; then
+        log_fail "Bypass branch should log_warn, not silently proceed"
+        return 1
+    fi
+    if ! grep -A 12 'dns_pin_rc.*-eq 2' "$launch_script" | grep -q 'exit 1'; then
+        log_fail "Non-bypass branch should exit 1"
+        return 1
+    fi
+    log_pass "launch-agent.sh has both bypass-warn and non-bypass-abort branches"
+}
+
 test_threshold_invalid_env_var_ignored() {
     log_test "Testing invalid KAPSIS_DNS_MAX_FAILURES env var is ignored, not aborted"
 
@@ -1305,6 +1373,9 @@ main() {
     run_test test_threshold_preview_truncation_at_exactly_11
     run_test test_threshold_listing_omits_resolved_domains
     run_test test_threshold_invalid_env_var_ignored
+    run_test test_threshold_wins_over_fallback_abort
+    run_test test_threshold_skip_check_does_not_relax_resolver_rc
+    run_test test_launch_agent_bypass_dispatch_warns_not_aborts
 
     # Property-based tests
     run_test test_resolve_returns_valid_ipv4_or_empty

@@ -545,10 +545,12 @@ validate_network_config() {
     local dns_pin_max_failures
     dns_pin_max_failures=$(yq -r '.network.dns_pinning.max_failures // "null"' "$config_file" 2>/dev/null)
     if [[ "$dns_pin_max_failures" != "null" ]]; then
-        if [[ "$dns_pin_max_failures" =~ ^[0-9]+$ ]] && [[ "$dns_pin_max_failures" -gt 0 ]]; then
+        # Accept 0 as a legal "any failure aborts" zero-tolerance setting (symmetric
+        # with max_failure_rate=0.0 which is also accepted).
+        if [[ "$dns_pin_max_failures" =~ ^[0-9]+$ ]]; then
             log_pass "Valid dns_pinning.max_failures: $dns_pin_max_failures"
         else
-            log_error "Invalid dns_pinning.max_failures: $dns_pin_max_failures (must be a positive integer)"
+            log_error "Invalid dns_pinning.max_failures: $dns_pin_max_failures (must be a non-negative integer)"
         fi
     fi
 

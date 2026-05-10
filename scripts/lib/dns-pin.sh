@@ -50,7 +50,9 @@ type log_success &>/dev/null || log_success() { echo "[DNS-PIN] SUCCESS: $*" >&2
 
 # Print the failing-domain list during a threshold abort. Caps the output at
 # _DNS_FAILED_DOMAIN_PREVIEW lines so a 500-domain allowlist doesn't flood the log.
-_DNS_FAILED_DOMAIN_PREVIEW=10
+# Override with KAPSIS_DNS_FAILED_PREVIEW (e.g. =200 for full list, =0 to silence).
+: "${_DNS_FAILED_DOMAIN_PREVIEW:=${KAPSIS_DNS_FAILED_PREVIEW:-10}}"
+readonly _DNS_FAILED_DOMAIN_PREVIEW
 _log_failed_domains() {
     local total=$#
     [[ "$total" -eq 0 ]] && return 0
@@ -66,7 +68,7 @@ _log_failed_domains() {
         i=$((i + 1))
     done
     if (( total > shown )); then
-        log_error "  ... and $(( total - shown )) more (set KAPSIS_DEBUG=1 for the full list above)"
+        log_error "  ... and $(( total - shown )) more (see WARN entries above for the full list, or KAPSIS_DNS_FAILED_PREVIEW=N to widen)"
     fi
 }
 
