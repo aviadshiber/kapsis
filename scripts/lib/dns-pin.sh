@@ -48,6 +48,25 @@ type log_success &>/dev/null || log_success() { echo "[DNS-PIN] SUCCESS: $*" >&2
 # DOMAIN RESOLUTION
 #===============================================================================
 
+# Print the failing-domain list during a threshold abort. Caps the output at
+# _DNS_FAILED_DOMAIN_PREVIEW lines so a 500-domain allowlist doesn't flood the log.
+_DNS_FAILED_DOMAIN_PREVIEW=10
+_log_failed_domains() {
+    local total=$#
+    [[ "$total" -eq 0 ]] && return 0
+    local shown=$(( total < _DNS_FAILED_DOMAIN_PREVIEW ? total : _DNS_FAILED_DOMAIN_PREVIEW ))
+    log_error "Failing domains (showing $shown of $total):"
+    local i=0
+    for d in "$@"; do
+        (( i < shown )) || break
+        log_error "  - $d"
+        i=$((i + 1))
+    done
+    if (( total > shown )); then
+        log_error "  ... and $(( total - shown )) more (set KAPSIS_DEBUG=1 for the full list above)"
+    fi
+}
+
 # resolve_allowlist_domains <comma-domains> [timeout] [fallback] [max_failure_rate] [max_failures]
 #
 # Resolves comma-separated domains to IP addresses on the host.
@@ -82,6 +101,7 @@ resolve_allowlist_domains() {
     local resolved_count=0
     local failed_count=0
     local wildcard_count=0
+    local -a failed_domains=()
 
     log_debug "Resolving domains with timeout=${timeout}s, fallback=${fallback}"
 
@@ -122,6 +142,7 @@ resolve_allowlist_domains() {
         else
             log_warn "Failed to resolve domain: $domain"
             failed_count=$((failed_count + 1))
+            failed_domains+=("$domain")
         fi
     done
 
@@ -134,6 +155,7 @@ resolve_allowlist_domains() {
         # Absolute failure count threshold
         if [[ -n "$max_failures" ]] && (( failed_count > max_failures )); then
             log_error "DNS resolution failure threshold exceeded: $failed_count/$total_count domains failed (max allowed: $max_failures)"
+            _log_failed_domains "${failed_domains[@]}"
             log_error "Check VPN/network connectivity and retry."
             log_error "Override: set KAPSIS_SKIP_DNS_CHECK=true to bypass this check"
             return 2
@@ -147,6 +169,7 @@ resolve_allowlist_domains() {
                 pct=$(awk -v f="$failed_count" -v t="$total_count" 'BEGIN { printf "%.0f", (f/t)*100 }')
                 max_pct=$(awk -v m="$max_failure_rate" 'BEGIN { printf "%.0f", m*100 }')
                 log_error "DNS resolution failure rate ${pct}% exceeds threshold ${max_pct}%: $failed_count/$total_count domains failed"
+                _log_failed_domains "${failed_domains[@]}"
                 log_error "Check VPN/network connectivity and retry."
                 log_error "Override: set KAPSIS_SKIP_DNS_CHECK=true to bypass this check"
                 return 2
