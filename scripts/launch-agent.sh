@@ -3175,7 +3175,7 @@ post_container_worktree() {
         log_info "Auto-cleaning worktree (use --keep-worktree or KAPSIS_KEEP_WORKTREE=true to preserve)..."
         local delete_branch="${KAPSIS_CLEANUP_BRANCH_ENABLED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_ENABLED:-false}}"
         cleanup_worktree "$PROJECT_PATH" "$AGENT_ID" "$delete_branch" \
-            || log_warn "Worktree cleanup encountered errors; run: git worktree prune"
+            || log_warn "Worktree cleanup failed for agent '$AGENT_ID' — manual removal may be needed: git worktree remove '${WORKTREE_PATH:-<worktree>}'"
         prune_worktrees "$PROJECT_PATH" || true
     fi
 
