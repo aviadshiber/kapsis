@@ -2070,7 +2070,7 @@ handle_existing_worktree() {
     if [[ "$FORCE_CLEAN" == "true" ]]; then
         log_warn "Force-clean requested: removing existing worktree..."
         cleanup_worktree "$PROJECT_PATH" "$existing_agent_id" \
-            || log_warn "Worktree cleanup failed for agent '$existing_agent_id' — manual removal may be needed: git worktree remove $existing_worktree"
+            || log_warn "Worktree cleanup failed for agent '$existing_agent_id' — manual removal may be needed: git worktree remove '$existing_worktree'"
         log_info "Existing worktree removed. Continuing with fresh start."
         return 0
     fi
@@ -2114,7 +2114,7 @@ handle_existing_worktree() {
             s)
                 log_warn "Starting fresh: removing existing worktree..."
                 cleanup_worktree "$PROJECT_PATH" "$existing_agent_id" \
-                    || log_warn "Worktree cleanup failed for agent '$existing_agent_id' — manual removal may be needed: git worktree remove $existing_worktree"
+                    || log_warn "Worktree cleanup failed for agent '$existing_agent_id' — manual removal may be needed: git worktree remove '$existing_worktree'"
                 log_info "Existing worktree removed. Continuing with fresh start."
                 return 0
                 ;;
@@ -2472,6 +2472,11 @@ main() {
 
     log_timer_start "config"
     resolve_config
+    # Guards below use `if ! func` rather than bare calls. Several of these functions
+    # currently reach failure via internal `exit 1` (not `return 1`), so the guard
+    # catches only residual command-substitution / printf failures on those paths.
+    # The pattern is intentionally forward-compatible: if inner exits are ever converted
+    # to returns, the guards will absorb them without further changes here.
     if ! validate_config_security "$CONFIG_FILE"; then
         status_complete 1 "Config security validation failed"
         _STATUS_COMPLETE_SHOWN=true
@@ -3064,6 +3069,9 @@ post_container_worktree() {
     # Must happen first so git status and sync_index_from_container work correctly
     if ! repoint_sanitized_git_objects "$SANITIZED_GIT_PATH" "$OBJECTS_PATH"; then
         log_error "Failed to repoint sanitized git objects symlink — post-container git operations may fail"
+        # Mark commit as failed so the post-container chain routes to exit 6 (commit_failure)
+        # and preserves the worktree for manual recovery, rather than misreporting push_failure.
+        status_set_commit_info "failed"
         _pcg_rc=1
         return 1
     fi
@@ -3167,7 +3175,7 @@ post_container_worktree() {
         log_info "Auto-cleaning worktree (use --keep-worktree or KAPSIS_KEEP_WORKTREE=true to preserve)..."
         local delete_branch="${KAPSIS_CLEANUP_BRANCH_ENABLED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_ENABLED:-false}}"
         cleanup_worktree "$PROJECT_PATH" "$AGENT_ID" "$delete_branch" \
-            || log_warn "Worktree cleanup failed for agent '$AGENT_ID' — manual removal may be needed: git worktree remove ${WORKTREE_PATH:-<worktree>}"
+            || log_warn "Worktree cleanup failed for agent '$AGENT_ID' — manual removal may be needed: git worktree remove '${WORKTREE_PATH:-<worktree>}'"
         prune_worktrees "$PROJECT_PATH"
     fi
 
