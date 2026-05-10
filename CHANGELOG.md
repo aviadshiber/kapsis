@@ -6,7 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.25.1] - 2026-05-10
+## [2.25.2] - 2026-05-10
+
+### Changed
+- Bump github/codeql-action from 4.35.2 to 4.35.3 in the github-actions group (#312)
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Changed
 - Redesign #216 with distinct return code, list failing domains (#319)
@@ -14,9 +21,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Unmask real container errors in failure preview (#320)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Added
 - Host-side vfkit watchdog for fast mid-run virtio-fs drop detection (#306)
@@ -892,7 +896,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.25.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.25.2...HEAD
+[2.25.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.2
 [2.25.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.1
 [2.24.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.24.0
 [2.23.10]: https://github.com/aviadshiber/kapsis/releases/tag/v2.23.10
