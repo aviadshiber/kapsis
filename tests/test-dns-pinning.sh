@@ -643,6 +643,16 @@ _stub_resolve_domain_ips() {
     fi
 }
 
+# Restore the real resolve_domain_ips after a test stubbed it. Compat.sh has a
+# load guard, so a plain `source` is a no-op once the file's been loaded; clear
+# the guard first to force re-definition of the function we replaced.
+_restore_resolve_domain_ips() {
+    unset -f resolve_domain_ips 2>/dev/null || true
+    unset _KAPSIS_COMPAT_LOADED
+    # shellcheck disable=SC1090
+    source "$COMPAT_LIB"
+}
+
 test_threshold_max_failures_triggers_exit2() {
     log_test "Testing resolve_allowlist_domains returns 2 when max_failures exceeded"
 
@@ -657,10 +667,10 @@ test_threshold_max_failures_triggers_exit2() {
         log_pass "Exit code 2 returned when failures exceed max_failures"
     else
         log_fail "Expected exit code 2, got: $rc"
-        unset -f resolve_domain_ips
+        _restore_resolve_domain_ips
         return 1
     fi
-    unset -f resolve_domain_ips
+    _restore_resolve_domain_ips
 }
 
 test_threshold_max_failure_rate_triggers_exit2() {
@@ -677,10 +687,10 @@ test_threshold_max_failure_rate_triggers_exit2() {
         log_pass "Exit code 2 returned when failure rate exceeds max_failure_rate"
     else
         log_fail "Expected exit code 2, got: $rc"
-        unset -f resolve_domain_ips
+        _restore_resolve_domain_ips
         return 1
     fi
-    unset -f resolve_domain_ips
+    _restore_resolve_domain_ips
 }
 
 test_threshold_under_limit_returns_0() {
@@ -697,10 +707,10 @@ test_threshold_under_limit_returns_0() {
         log_pass "Exit code 0 when failures are under max_failures threshold"
     else
         log_fail "Expected exit code 0, got: $rc"
-        unset -f resolve_domain_ips
+        _restore_resolve_domain_ips
         return 1
     fi
-    unset -f resolve_domain_ips
+    _restore_resolve_domain_ips
 }
 
 test_threshold_env_var_max_failures() {
@@ -718,10 +728,10 @@ test_threshold_env_var_max_failures() {
         log_pass "KAPSIS_DNS_MAX_FAILURES env var triggers exit code 2"
     else
         log_fail "Expected exit code 2, got: $rc"
-        unset -f resolve_domain_ips
+        _restore_resolve_domain_ips
         return 1
     fi
-    unset -f resolve_domain_ips
+    _restore_resolve_domain_ips
 }
 
 test_threshold_env_var_max_failure_rate() {
@@ -739,10 +749,10 @@ test_threshold_env_var_max_failure_rate() {
         log_pass "KAPSIS_DNS_MAX_FAILURE_RATE env var triggers exit code 2"
     else
         log_fail "Expected exit code 2, got: $rc"
-        unset -f resolve_domain_ips
+        _restore_resolve_domain_ips
         return 1
     fi
-    unset -f resolve_domain_ips
+    _restore_resolve_domain_ips
 }
 
 test_threshold_no_limit_set_returns_0() {
@@ -759,10 +769,10 @@ test_threshold_no_limit_set_returns_0() {
         log_pass "No threshold — failures tolerated, exit code 0"
     else
         log_fail "Expected exit code 0, got: $rc"
-        unset -f resolve_domain_ips
+        _restore_resolve_domain_ips
         return 1
     fi
-    unset -f resolve_domain_ips
+    _restore_resolve_domain_ips
 }
 
 test_threshold_zero_concrete_domains() {
@@ -779,10 +789,10 @@ test_threshold_zero_concrete_domains() {
         log_pass "All-wildcard list with strict thresholds does not abort"
     else
         log_fail "Expected exit code 0 for all-wildcard list, got: $rc"
-        unset -f resolve_domain_ips
+        _restore_resolve_domain_ips
         return 1
     fi
-    unset -f resolve_domain_ips
+    _restore_resolve_domain_ips
 }
 
 test_threshold_lists_failing_domains() {
@@ -798,7 +808,7 @@ test_threshold_lists_failing_domains() {
 
     if [[ "$rc" -ne 2 ]]; then
         log_fail "Expected exit 2, got: $rc"
-        unset -f resolve_domain_ips
+        _restore_resolve_domain_ips
         return 1
     fi
 
@@ -806,10 +816,10 @@ test_threshold_lists_failing_domains() {
         log_pass "Both failing domains listed in abort output"
     else
         log_fail "Failing domains not listed in output. Got: $output"
-        unset -f resolve_domain_ips
+        _restore_resolve_domain_ips
         return 1
     fi
-    unset -f resolve_domain_ips
+    _restore_resolve_domain_ips
 }
 
 test_threshold_failing_domain_preview_caps_at_10() {
@@ -825,7 +835,7 @@ test_threshold_failing_domain_preview_caps_at_10() {
 
     if [[ "$rc" -ne 2 ]]; then
         log_fail "Expected exit 2, got: $rc"
-        unset -f resolve_domain_ips
+        _restore_resolve_domain_ips
         return 1
     fi
 
@@ -833,10 +843,10 @@ test_threshold_failing_domain_preview_caps_at_10() {
         log_pass "Preview correctly shows 10 of 12 with 'and 2 more'"
     else
         log_fail "Expected truncation summary missing. Got: $output"
-        unset -f resolve_domain_ips
+        _restore_resolve_domain_ips
         return 1
     fi
-    unset -f resolve_domain_ips
+    _restore_resolve_domain_ips
 }
 
 test_config_validation_max_failure_rate_valid() {
