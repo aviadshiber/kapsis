@@ -658,6 +658,7 @@ test_threshold_max_failures_triggers_exit2() {
 
     source "$DNS_PIN_LIB"
     resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
 
     # 2 failures, max_failures=1
     local rc=0
@@ -678,6 +679,7 @@ test_threshold_max_failure_rate_triggers_exit2() {
 
     source "$DNS_PIN_LIB"
     resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
 
     # 2/2 = 100% > 0.4
     local rc=0
@@ -698,6 +700,7 @@ test_threshold_under_limit_returns_0() {
 
     source "$DNS_PIN_LIB"
     resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
 
     # 2 failures, max_failures=100 (well under)
     local rc=0
@@ -718,6 +721,7 @@ test_threshold_env_var_max_failures() {
 
     source "$DNS_PIN_LIB"
     resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
 
     export KAPSIS_DNS_MAX_FAILURES=1
     local rc=0
@@ -739,6 +743,7 @@ test_threshold_env_var_max_failure_rate() {
 
     source "$DNS_PIN_LIB"
     resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
 
     export KAPSIS_DNS_MAX_FAILURE_RATE=0.1
     local rc=0
@@ -760,6 +765,7 @@ test_threshold_no_limit_set_returns_0() {
 
     source "$DNS_PIN_LIB"
     resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
 
     unset KAPSIS_DNS_MAX_FAILURES KAPSIS_DNS_MAX_FAILURE_RATE
     local rc=0
@@ -780,6 +786,7 @@ test_threshold_zero_concrete_domains() {
 
     source "$DNS_PIN_LIB"
     resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
 
     # All wildcards — no resolved, no failed, no divide-by-zero, no abort.
     local rc=0
@@ -800,6 +807,7 @@ test_threshold_lists_failing_domains() {
 
     source "$DNS_PIN_LIB"
     resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
 
     local output rc=0
     output=$(resolve_allowlist_domains \
@@ -827,6 +835,7 @@ test_threshold_failing_domain_preview_caps_at_10() {
 
     source "$DNS_PIN_LIB"
     resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
 
     # 12 failures — preview should show 10 with "and 2 more"
     local domain_list="fail-1.test,fail-2.test,fail-3.test,fail-4.test,fail-5.test,fail-6.test,fail-7.test,fail-8.test,fail-9.test,fail-10.test,fail-11.test,fail-12.test"
@@ -843,6 +852,173 @@ test_threshold_failing_domain_preview_caps_at_10() {
         log_pass "Preview correctly shows 10 of 12 with 'and 2 more'"
     else
         log_fail "Expected truncation summary missing. Got: $output"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_rate_at_boundary_passes() {
+    log_test "Testing rate exactly at threshold does not abort (strict > comparison)"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # 1 fail / 2 total = 0.5; threshold = 0.5; strict > means rc=0
+    local rc=0
+    resolve_allowlist_domains "ok.test,fail-a.test" 1 "dynamic" "0.5" "" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "rate=0.5 with threshold=0.5 does not abort"
+    else
+        log_fail "Expected rc=0 at boundary, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_rate_zero_with_no_failures_passes() {
+    log_test "Testing max_failure_rate=0.0 with zero failures does not abort"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # All resolve, max_failure_rate=0.0 — 0/N = 0.0, not > 0.0
+    local rc=0
+    resolve_allowlist_domains "ok-1.test,ok-2.test,ok-3.test" 1 "dynamic" "0.0" "" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "max_failure_rate=0.0 with zero failures does not abort"
+    else
+        log_fail "Expected rc=0, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_wildcards_excluded_from_count() {
+    log_test "Testing wildcards excluded from threshold denominator"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # 3 wildcards + 1 concrete failure. If wildcards counted, 1/4 = 25% < 50%, would pass.
+    # If wildcards excluded (correct), 1/1 = 100% > 50%, must abort.
+    local rc=0
+    resolve_allowlist_domains "*.a.test,*.b.test,*.c.test,fail-x.test" 1 "dynamic" "0.5" "" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "Wildcards excluded from denominator (1/1 = 100% triggers abort)"
+    else
+        log_fail "Expected rc=2 (wildcards excluded), got: $rc — wildcards may be counted"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_preview_no_truncation_at_exactly_10() {
+    log_test "Testing preview at exactly 10 failures shows no 'and N more' summary"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    local domain_list="fail-1.test,fail-2.test,fail-3.test,fail-4.test,fail-5.test,fail-6.test,fail-7.test,fail-8.test,fail-9.test,fail-10.test"
+    local output rc=0
+    output=$(resolve_allowlist_domains "$domain_list" 1 "dynamic" "" "0" 2>&1) || rc=$?
+
+    if [[ "$rc" -ne 2 ]]; then
+        log_fail "Expected rc=2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+
+    if echo "$output" | grep -q "showing 10 of 10" && ! echo "$output" | grep -q "and .* more"; then
+        log_pass "Exactly 10 failures: shows all 10, no 'and N more' line"
+    else
+        log_fail "Boundary failure at N=10: got '$output'"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_preview_truncation_at_exactly_11() {
+    log_test "Testing preview at 11 failures shows 'and 1 more' (off-by-one boundary)"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    local domain_list="fail-1.test,fail-2.test,fail-3.test,fail-4.test,fail-5.test,fail-6.test,fail-7.test,fail-8.test,fail-9.test,fail-10.test,fail-11.test"
+    local output rc=0
+    output=$(resolve_allowlist_domains "$domain_list" 1 "dynamic" "" "0" 2>&1) || rc=$?
+
+    if [[ "$rc" -ne 2 ]]; then
+        log_fail "Expected rc=2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+
+    if echo "$output" | grep -q "showing 10 of 11" && echo "$output" | grep -q "and 1 more"; then
+        log_pass "11 failures: shows 10 of 11 plus 'and 1 more'"
+    else
+        log_fail "Off-by-one at N=11: got '$output'"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_listing_omits_resolved_domains() {
+    log_test "Testing failing-domain listing does not include successfully resolved domains"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    local output rc=0
+    output=$(resolve_allowlist_domains "ok-good.test,fail-a.test" 1 "dynamic" "" "0" 2>&1) || rc=$?
+
+    if [[ "$rc" -ne 2 ]]; then
+        log_fail "Expected rc=2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+
+    if echo "$output" | grep -q "  - fail-a.test" && ! echo "$output" | grep -q "  - ok-good.test"; then
+        log_pass "Listing includes failed domain only, not the resolved one"
+    else
+        log_fail "Listing has wrong contents: $output"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_invalid_env_var_ignored() {
+    log_test "Testing invalid KAPSIS_DNS_MAX_FAILURES env var is ignored, not aborted"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # Non-numeric value — should be rejected with log_error, threshold disabled
+    export KAPSIS_DNS_MAX_FAILURES="not-a-number"
+    local rc=0
+    resolve_allowlist_domains "fail-a.test,fail-b.test" 1 "dynamic" >/dev/null 2>&1 || rc=$?
+    unset KAPSIS_DNS_MAX_FAILURES
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "Non-numeric env var ignored (rc=0, no false abort)"
+    else
+        log_fail "Expected rc=0 (invalid input ignored), got: $rc"
         _restore_resolve_domain_ips
         return 1
     fi
@@ -1122,6 +1298,13 @@ main() {
     run_test test_threshold_lists_failing_domains
     run_test test_threshold_failing_domain_preview_caps_at_10
     run_test test_threshold_zero_concrete_domains
+    run_test test_threshold_rate_at_boundary_passes
+    run_test test_threshold_rate_zero_with_no_failures_passes
+    run_test test_threshold_wildcards_excluded_from_count
+    run_test test_threshold_preview_no_truncation_at_exactly_10
+    run_test test_threshold_preview_truncation_at_exactly_11
+    run_test test_threshold_listing_omits_resolved_domains
+    run_test test_threshold_invalid_env_var_ignored
 
     # Property-based tests
     run_test test_resolve_returns_valid_ipv4_or_empty
