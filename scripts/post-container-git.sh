@@ -368,7 +368,10 @@ commit_changes() {
 
     # Validate staged files and remove suspicious ones
     # This catches literal ~ paths, .kapsis/ files, and accidental submodules
-    validate_staged_files "$worktree_path"
+    if ! validate_staged_files "$worktree_path"; then
+        log_error "Staged file validation failed; aborting commit to prevent unsafe files from reaching the repo"
+        return 1
+    fi
 
     # Log count after validation
     local post_validate_count
@@ -379,7 +382,10 @@ commit_changes() {
 
     # Sanitize staged files - strip dangerous invisible characters
     # This prevents Trojan Source attacks (CVE-2021-42574) and similar exploits
-    sanitize_staged_files "$worktree_path"
+    if ! sanitize_staged_files "$worktree_path"; then
+        log_error "Staged file sanitization failed; refusing to commit (Trojan Source / CVE-2021-42574 mitigation)"
+        return 1
+    fi
 
     # Log count after sanitization
     local post_sanitize_count
@@ -886,7 +892,7 @@ post_container_git() {
     log_debug "Changes detected, proceeding with commit"
 
     # Update status: committing phase
-    status_phase "committing" 92 "Staging and committing changes"
+    status_phase "committing" 92 "Staging and committing changes" || true
 
     # Record pre-commit SHA for verification (Fix #3)
     status_record_pre_commit "$worktree_path"
@@ -914,9 +920,10 @@ post_container_git() {
     log_debug "Commit successful"
 
     # Verify commit was created and no uncommitted changes remain (Fix #3)
-    local verify_result
-    status_verify_commit "$worktree_path"
-    verify_result=$?
+    # Use || capture pattern: status_verify_commit returns 2 for uncommitted-remain, 1 for error.
+    # A bare call + $? assignment races with set -e — the script exits before verify_result is set.
+    local verify_result=0
+    status_verify_commit "$worktree_path" || verify_result=$?
     if [[ $verify_result -eq 2 ]]; then
         log_warn "Commit created but uncommitted changes remain!"
         log_warn "Uncommitted files: $(git -C "$worktree_path" status --porcelain | wc -l | tr -d ' ')"
@@ -927,7 +934,7 @@ post_container_git() {
     # Push if enabled (--push flag)
     if [[ "$do_push" == "true" ]]; then
         # Update status: pushing phase
-        status_phase "pushing" 97 "Pushing to remote"
+        status_phase "pushing" 97 "Pushing to remote" || true
 
         log_debug "Pushing changes to remote..."
         local push_result
