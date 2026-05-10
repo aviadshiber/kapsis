@@ -627,6 +627,537 @@ EOF
 }
 
 #===============================================================================
+# THRESHOLD TESTS (Issue #216 — abort launch when DNS failure rate too high)
+#
+# These tests stub resolve_domain_ips so the threshold logic runs against
+# fixed, deterministic outcomes — no real DNS, no log_skip on flaky networks.
+# Domains prefixed "fail-" return empty (failure); all others return 1.2.3.4.
+#===============================================================================
+
+_stub_resolve_domain_ips() {
+    local domain="$1"
+    if [[ "$domain" == fail-* ]]; then
+        echo ""  # empty = resolution failure
+    else
+        echo "1.2.3.4"
+    fi
+}
+
+# Restore the real resolve_domain_ips after a test stubbed it. Compat.sh has a
+# load guard, so a plain `source` is a no-op once the file's been loaded; clear
+# the guard first to force re-definition of the function we replaced.
+_restore_resolve_domain_ips() {
+    unset -f resolve_domain_ips 2>/dev/null || true
+    unset _KAPSIS_COMPAT_LOADED
+    # shellcheck disable=SC1090
+    source "$COMPAT_LIB"
+}
+
+test_threshold_max_failures_triggers_exit2() {
+    log_test "Testing resolve_allowlist_domains returns 2 when max_failures exceeded"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # 2 failures, max_failures=1
+    local rc=0
+    resolve_allowlist_domains "fail-a.test,fail-b.test" 1 "dynamic" "" "1" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "Exit code 2 returned when failures exceed max_failures"
+    else
+        log_fail "Expected exit code 2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_max_failure_rate_triggers_exit2() {
+    log_test "Testing resolve_allowlist_domains returns 2 when max_failure_rate exceeded"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # 2/2 = 100% > 0.4
+    local rc=0
+    resolve_allowlist_domains "fail-a.test,fail-b.test" 1 "dynamic" "0.4" "" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "Exit code 2 returned when failure rate exceeds max_failure_rate"
+    else
+        log_fail "Expected exit code 2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_under_limit_returns_0() {
+    log_test "Testing resolve_allowlist_domains returns 0 when failures stay under threshold"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # 2 failures, max_failures=100 (well under)
+    local rc=0
+    resolve_allowlist_domains "fail-a.test,fail-b.test" 1 "dynamic" "" "100" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "Exit code 0 when failures are under max_failures threshold"
+    else
+        log_fail "Expected exit code 0, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_env_var_max_failures() {
+    log_test "Testing KAPSIS_DNS_MAX_FAILURES env var is respected"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    export KAPSIS_DNS_MAX_FAILURES=1
+    local rc=0
+    resolve_allowlist_domains "fail-a.test,fail-b.test" 1 "dynamic" >/dev/null 2>&1 || rc=$?
+    unset KAPSIS_DNS_MAX_FAILURES
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "KAPSIS_DNS_MAX_FAILURES env var triggers exit code 2"
+    else
+        log_fail "Expected exit code 2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_env_var_max_failure_rate() {
+    log_test "Testing KAPSIS_DNS_MAX_FAILURE_RATE env var is respected"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    export KAPSIS_DNS_MAX_FAILURE_RATE=0.1
+    local rc=0
+    resolve_allowlist_domains "fail-a.test,fail-b.test" 1 "dynamic" >/dev/null 2>&1 || rc=$?
+    unset KAPSIS_DNS_MAX_FAILURE_RATE
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "KAPSIS_DNS_MAX_FAILURE_RATE env var triggers exit code 2"
+    else
+        log_fail "Expected exit code 2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_no_limit_set_returns_0() {
+    log_test "Testing resolve_allowlist_domains returns 0 with no threshold configured"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    unset KAPSIS_DNS_MAX_FAILURES KAPSIS_DNS_MAX_FAILURE_RATE
+    local rc=0
+    resolve_allowlist_domains "fail-a.test" 1 "dynamic" "" "" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "No threshold — failures tolerated, exit code 0"
+    else
+        log_fail "Expected exit code 0, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_zero_concrete_domains() {
+    log_test "Testing zero-concrete-domains (all wildcards) does not trigger rate threshold"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # All wildcards — no resolved, no failed, no divide-by-zero, no abort.
+    local rc=0
+    resolve_allowlist_domains "*.github.com,*.npmjs.org" 1 "dynamic" "0.0" "0" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "All-wildcard list with strict thresholds does not abort"
+    else
+        log_fail "Expected exit code 0 for all-wildcard list, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_lists_failing_domains() {
+    log_test "Testing abort message includes the failing domains"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    local output rc=0
+    output=$(resolve_allowlist_domains \
+        "ok.test,fail-alpha.test,fail-beta.test" \
+        1 "dynamic" "" "1" 2>&1) || rc=$?
+
+    if [[ "$rc" -ne 2 ]]; then
+        log_fail "Expected exit 2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+
+    if echo "$output" | grep -q "fail-alpha.test" && echo "$output" | grep -q "fail-beta.test"; then
+        log_pass "Both failing domains listed in abort output"
+    else
+        log_fail "Failing domains not listed in output. Got: $output"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_failing_domain_preview_caps_at_10() {
+    log_test "Testing failing-domain preview caps at 10 with 'N more' summary"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # 12 failures — preview should show 10 with "and 2 more"
+    local domain_list="fail-1.test,fail-2.test,fail-3.test,fail-4.test,fail-5.test,fail-6.test,fail-7.test,fail-8.test,fail-9.test,fail-10.test,fail-11.test,fail-12.test"
+    local output rc=0
+    output=$(resolve_allowlist_domains "$domain_list" 1 "dynamic" "" "0" 2>&1) || rc=$?
+
+    if [[ "$rc" -ne 2 ]]; then
+        log_fail "Expected exit 2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+
+    if echo "$output" | grep -q "showing 10 of 12" && echo "$output" | grep -q "and 2 more"; then
+        log_pass "Preview correctly shows 10 of 12 with 'and 2 more'"
+    else
+        log_fail "Expected truncation summary missing. Got: $output"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_rate_at_boundary_passes() {
+    log_test "Testing rate exactly at threshold does not abort (strict > comparison)"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # 1 fail / 2 total = 0.5; threshold = 0.5; strict > means rc=0
+    local rc=0
+    resolve_allowlist_domains "ok.test,fail-a.test" 1 "dynamic" "0.5" "" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "rate=0.5 with threshold=0.5 does not abort"
+    else
+        log_fail "Expected rc=0 at boundary, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_rate_zero_with_no_failures_passes() {
+    log_test "Testing max_failure_rate=0.0 with zero failures does not abort"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # All resolve, max_failure_rate=0.0 — 0/N = 0.0, not > 0.0
+    local rc=0
+    resolve_allowlist_domains "ok-1.test,ok-2.test,ok-3.test" 1 "dynamic" "0.0" "" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "max_failure_rate=0.0 with zero failures does not abort"
+    else
+        log_fail "Expected rc=0, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_wildcards_excluded_from_count() {
+    log_test "Testing wildcards excluded from threshold denominator"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # 3 wildcards + 1 concrete failure. If wildcards counted, 1/4 = 25% < 50%, would pass.
+    # If wildcards excluded (correct), 1/1 = 100% > 50%, must abort.
+    local rc=0
+    resolve_allowlist_domains "*.a.test,*.b.test,*.c.test,fail-x.test" 1 "dynamic" "0.5" "" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "Wildcards excluded from denominator (1/1 = 100% triggers abort)"
+    else
+        log_fail "Expected rc=2 (wildcards excluded), got: $rc — wildcards may be counted"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_preview_no_truncation_at_exactly_10() {
+    log_test "Testing preview at exactly 10 failures shows no 'and N more' summary"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    local domain_list="fail-1.test,fail-2.test,fail-3.test,fail-4.test,fail-5.test,fail-6.test,fail-7.test,fail-8.test,fail-9.test,fail-10.test"
+    local output rc=0
+    output=$(resolve_allowlist_domains "$domain_list" 1 "dynamic" "" "0" 2>&1) || rc=$?
+
+    if [[ "$rc" -ne 2 ]]; then
+        log_fail "Expected rc=2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+
+    if echo "$output" | grep -q "showing 10 of 10" && ! echo "$output" | grep -q "and .* more"; then
+        log_pass "Exactly 10 failures: shows all 10, no 'and N more' line"
+    else
+        log_fail "Boundary failure at N=10: got '$output'"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_preview_truncation_at_exactly_11() {
+    log_test "Testing preview at 11 failures shows 'and 1 more' (off-by-one boundary)"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    local domain_list="fail-1.test,fail-2.test,fail-3.test,fail-4.test,fail-5.test,fail-6.test,fail-7.test,fail-8.test,fail-9.test,fail-10.test,fail-11.test"
+    local output rc=0
+    output=$(resolve_allowlist_domains "$domain_list" 1 "dynamic" "" "0" 2>&1) || rc=$?
+
+    if [[ "$rc" -ne 2 ]]; then
+        log_fail "Expected rc=2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+
+    if echo "$output" | grep -q "showing 10 of 11" && echo "$output" | grep -q "and 1 more"; then
+        log_pass "11 failures: shows 10 of 11 plus 'and 1 more'"
+    else
+        log_fail "Off-by-one at N=11: got '$output'"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_listing_omits_resolved_domains() {
+    log_test "Testing failing-domain listing does not include successfully resolved domains"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    local output rc=0
+    output=$(resolve_allowlist_domains "ok-good.test,fail-a.test" 1 "dynamic" "" "0" 2>&1) || rc=$?
+
+    if [[ "$rc" -ne 2 ]]; then
+        log_fail "Expected rc=2, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+
+    if echo "$output" | grep -q "  - fail-a.test" && ! echo "$output" | grep -q "  - ok-good.test"; then
+        log_pass "Listing includes failed domain only, not the resolved one"
+    else
+        log_fail "Listing has wrong contents: $output"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_wins_over_fallback_abort() {
+    log_test "Testing threshold breach (rc=2) takes precedence over fallback=abort (rc=1)"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # fallback=abort would normally return 1 on any failure; threshold breach
+    # should short-circuit to 2 first.
+    local rc=0
+    resolve_allowlist_domains "fail-a.test" 1 "abort" "" "0" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "Threshold breach correctly preempts fallback=abort"
+    else
+        log_fail "Expected rc=2 (threshold wins), got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_threshold_skip_check_does_not_relax_resolver_rc() {
+    log_test "Testing KAPSIS_SKIP_DNS_CHECK does NOT change resolver rc (bypass is caller policy)"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # The bypass env var lives at the launch-agent.sh dispatch layer; the
+    # resolver itself must always emit rc=2 when threshold is breached so the
+    # caller has full information to decide.
+    local rc=0
+    KAPSIS_SKIP_DNS_CHECK=true \
+        resolve_allowlist_domains "fail-a.test" 1 "dynamic" "" "0" >/dev/null 2>&1 || rc=$?
+
+    if [[ "$rc" -eq 2 ]]; then
+        log_pass "Resolver rc=2 unaffected by KAPSIS_SKIP_DNS_CHECK (caller decides)"
+    else
+        log_fail "Expected rc=2 regardless of bypass, got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_launch_agent_bypass_dispatch_warns_not_aborts() {
+    log_test "Testing launch-agent.sh dispatch: KAPSIS_SKIP_DNS_CHECK=true on rc=2 warns instead of aborting"
+
+    # Verify the dispatch source has both branches and warns under bypass.
+    # This is a static check — the full integration runs in container tests.
+    local launch_script="$KAPSIS_ROOT/scripts/launch-agent.sh"
+
+    if ! grep -A 5 'dns_pin_rc.*-eq 2' "$launch_script" | grep -q 'KAPSIS_SKIP_DNS_CHECK'; then
+        log_fail "launch-agent.sh rc=2 dispatch missing KAPSIS_SKIP_DNS_CHECK branch"
+        return 1
+    fi
+    if ! grep -A 8 'dns_pin_rc.*-eq 2' "$launch_script" | grep -q 'log_warn.*KAPSIS_SKIP_DNS_CHECK'; then
+        log_fail "Bypass branch should log_warn, not silently proceed"
+        return 1
+    fi
+    if ! grep -A 12 'dns_pin_rc.*-eq 2' "$launch_script" | grep -q 'exit 1'; then
+        log_fail "Non-bypass branch should exit 1"
+        return 1
+    fi
+    log_pass "launch-agent.sh has both bypass-warn and non-bypass-abort branches"
+}
+
+test_threshold_invalid_env_var_ignored() {
+    log_test "Testing invalid KAPSIS_DNS_MAX_FAILURES env var is ignored, not aborted"
+
+    source "$DNS_PIN_LIB"
+    resolve_domain_ips() { _stub_resolve_domain_ips "$1"; }
+    trap '_restore_resolve_domain_ips' RETURN
+
+    # Non-numeric value — should be rejected with log_error, threshold disabled
+    export KAPSIS_DNS_MAX_FAILURES="not-a-number"
+    local rc=0
+    resolve_allowlist_domains "fail-a.test,fail-b.test" 1 "dynamic" >/dev/null 2>&1 || rc=$?
+    unset KAPSIS_DNS_MAX_FAILURES
+
+    if [[ "$rc" -eq 0 ]]; then
+        log_pass "Non-numeric env var ignored (rc=0, no false abort)"
+    else
+        log_fail "Expected rc=0 (invalid input ignored), got: $rc"
+        _restore_resolve_domain_ips
+        return 1
+    fi
+    _restore_resolve_domain_ips
+}
+
+test_config_validation_max_failure_rate_valid() {
+    log_test "Testing config validation accepts valid max_failure_rate values"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    max_failure_rate: 0.5
+    max_failures: 10
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "Invalid dns_pinning.max_failure_rate\|Invalid dns_pinning.max_failures"; then
+        log_fail "Valid values rejected by config verifier: $output"
+        rm -f "$test_config"
+        return 1
+    else
+        log_pass "Valid max_failure_rate and max_failures accepted"
+    fi
+
+    rm -f "$test_config"
+}
+
+test_config_validation_max_failure_rate_invalid() {
+    log_test "Testing config validation rejects invalid max_failure_rate values"
+
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+
+    local test_config
+    test_config=$(mktemp).yaml
+    cat > "$test_config" << 'EOF'
+network:
+  mode: filtered
+  dns_pinning:
+    enabled: true
+    max_failure_rate: 1.5
+    max_failures: -1
+EOF
+
+    local output
+    output=$("$CONFIG_VERIFIER" "$test_config" 2>&1) || true
+
+    if echo "$output" | grep -q "Invalid dns_pinning.max_failure_rate"; then
+        log_pass "Invalid max_failure_rate (>1.0) correctly rejected"
+    else
+        log_warn "Expected validation error for max_failure_rate=1.5"
+    fi
+
+    rm -f "$test_config"
+}
+
+#===============================================================================
 # CONTAINER TESTS (require Podman)
 #===============================================================================
 
@@ -803,161 +1334,6 @@ EOF
 }
 
 #===============================================================================
-# DNS FAILURE RATE THRESHOLD TESTS (Issue #216)
-#===============================================================================
-
-test_resolve_allowlist_emits_stats_sentinel() {
-    log_test "Testing resolve_allowlist_domains emits __KAPSIS_DNS_STATS__ sentinel on stdout"
-
-    source "$DNS_PIN_LIB"
-
-    # Use an IP literal (always resolves via passthrough, no DNS lookup) + a bogus domain
-    # (always fails). This makes counts deterministic regardless of CI DNS filtering.
-    local output
-    output=$(resolve_allowlist_domains "192.0.2.1,this-domain-does-not-exist-kapsis-test-xyz.invalid" 3 "dynamic" 2>/dev/null || true)
-
-    local stats_line
-    stats_line=$(echo "$output" | grep '^__KAPSIS_DNS_STATS__' || true)
-
-    if [[ -n "$stats_line" ]]; then
-        log_pass "Sentinel emitted: ${stats_line}"
-        # Verify format: __KAPSIS_DNS_STATS__ resolved=N failed=N total=N
-        if echo "$stats_line" | grep -qE '__KAPSIS_DNS_STATS__ resolved=[0-9]+ failed=[0-9]+ total=[0-9]+'; then
-            log_pass "Sentinel has expected format"
-            # IP literal always resolves; bogus domain always fails — assert exact counts
-            if echo "$stats_line" | grep -q 'resolved=1 failed=1 total=2'; then
-                log_pass "Sentinel counts correct (resolved=1 failed=1 total=2)"
-            else
-                log_fail "Unexpected counts in sentinel: ${stats_line}"
-                return 1
-            fi
-        else
-            log_fail "Sentinel format unexpected: ${stats_line}"
-            return 1
-        fi
-    else
-        log_fail "__KAPSIS_DNS_STATS__ sentinel not found in resolve_allowlist_domains output"
-        return 1
-    fi
-}
-
-test_resolve_allowlist_sentinel_stripped_from_pinned_data() {
-    log_test "Testing sentinel line is not present in data written to pinned DNS file"
-
-    source "$DNS_PIN_LIB"
-
-    local output
-    output=$(resolve_allowlist_domains "192.0.2.1" 3 "dynamic" 2>/dev/null || true)
-    # Simulate what launch-agent.sh does: strip the sentinel before writing
-    local pinned_data
-    pinned_data=$(echo "$output" | grep -v '^__KAPSIS_DNS_STATS__' || true)
-
-    local tmp_file
-    tmp_file=$(mktemp)
-    write_pinned_dns_file "$tmp_file" "$pinned_data"
-
-    if grep -q '__KAPSIS_DNS_STATS__' "$tmp_file" 2>/dev/null; then
-        log_fail "Sentinel line found in pinned DNS file (should have been stripped)"
-        rm -f "$tmp_file"
-        return 1
-    else
-        log_pass "Sentinel correctly absent from pinned DNS file"
-    fi
-
-    rm -f "$tmp_file"
-}
-
-test_dns_failure_rate_threshold_arithmetic() {
-    log_test "Testing DNS failure rate threshold arithmetic (awk calculation)"
-
-    # Simulate the rate check logic used in launch-agent.sh
-    local _rate_exceeded
-
-    # 33 failures out of 52 total = 63.5% > 50% threshold — should abort
-    _rate_exceeded=$(awk -v failed=33 -v total=52 -v threshold=0.5 \
-        'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
-    if [[ "$_rate_exceeded" == "1" ]]; then
-        log_pass "63.5% failure rate correctly exceeds 50% threshold"
-    else
-        log_fail "63.5% failure rate should exceed 50% threshold but got: $_rate_exceeded"
-        return 1
-    fi
-
-    # 5 failures out of 52 total = 9.6% < 50% threshold — should not abort
-    _rate_exceeded=$(awk -v failed=5 -v total=52 -v threshold=0.5 \
-        'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
-    if [[ "$_rate_exceeded" == "0" ]]; then
-        log_pass "9.6% failure rate correctly does not exceed 50% threshold"
-    else
-        log_fail "9.6% failure rate should not exceed 50% threshold but got: $_rate_exceeded"
-        return 1
-    fi
-
-    # Edge: exactly at threshold (50% = 50%) — should NOT abort (strictly greater-than)
-    _rate_exceeded=$(awk -v failed=1 -v total=2 -v threshold=0.5 \
-        'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
-    if [[ "$_rate_exceeded" == "0" ]]; then
-        log_pass "Exactly 50% failure rate does not exceed 50% threshold (strict >)"
-    else
-        log_fail "Exactly 50% failure rate should not trigger abort (uses strict >) but got: $_rate_exceeded"
-        return 1
-    fi
-}
-
-test_dns_failure_rate_zero_tolerance_zero_failures() {
-    log_test "Testing threshold=0.0 with zero failures does not abort (0.0 is not > 0.0)"
-
-    local _rate_exceeded
-    _rate_exceeded=$(awk -v failed=0 -v total=10 -v threshold=0.0 \
-        'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
-    if [[ "$_rate_exceeded" == "0" ]]; then
-        log_pass "Zero failures with threshold=0.0 does not abort"
-    else
-        log_fail "Zero failures should never abort (got: $_rate_exceeded)"
-        return 1
-    fi
-}
-
-test_dns_stats_zero_total_skips_rate_check() {
-    log_test "Testing failure rate check is skipped when total=0 (all wildcards — no division by zero)"
-
-    # Mirror the guard in launch-agent.sh: only call awk when total > 0
-    local _dns_total=0
-    local _rate_exceeded="0"
-    if [[ "$_dns_total" -gt 0 ]]; then
-        _rate_exceeded=$(awk -v failed=0 -v total="$_dns_total" -v threshold=0.5 \
-            'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }')
-    fi
-    if [[ "$_rate_exceeded" == "0" ]]; then
-        log_pass "total=0 correctly skips rate check (no division by zero, no abort)"
-    else
-        log_fail "total=0 should not trigger abort (got: $_rate_exceeded)"
-        return 1
-    fi
-}
-
-test_dns_stats_total_excludes_wildcards() {
-    log_test "Testing KAPSIS_DNS_RESOLVE_STATS total excludes wildcards"
-
-    source "$DNS_PIN_LIB"
-    unset KAPSIS_DNS_RESOLVE_STATS
-
-    # Only wildcards — total should be 0 (wildcards skipped, not counted as failed)
-    resolve_allowlist_domains "*.github.com,*.npmjs.org" 3 "dynamic" >/dev/null 2>&1 || true
-
-    local _failed _total
-    _failed=$(echo "${KAPSIS_DNS_RESOLVE_STATS:-}" | grep -o 'failed=[0-9]*' | cut -d= -f2)
-    _total=$(echo "${KAPSIS_DNS_RESOLVE_STATS:-}" | grep -o 'total=[0-9]*' | cut -d= -f2)
-
-    if [[ "${_failed:-0}" == "0" ]] && [[ "${_total:-0}" == "0" ]]; then
-        log_pass "Wildcards excluded from total: total=0 failed=0 (no false abort)"
-    else
-        log_fail "Wildcards must not be counted in failed/total (would cause false abort): failed=${_failed:-?} total=${_total:-?}"
-        return 1
-    fi
-}
-
-#===============================================================================
 # RUN TESTS
 #===============================================================================
 
@@ -986,18 +1362,35 @@ main() {
     run_test test_count_pinned_domains
     run_test test_get_pinned_domains
 
-    # DNS failure rate threshold tests (Issue #216)
-    run_test test_resolve_allowlist_emits_stats_sentinel
-    run_test test_resolve_allowlist_sentinel_stripped_from_pinned_data
-    run_test test_dns_failure_rate_threshold_arithmetic
-    run_test test_dns_failure_rate_zero_tolerance_zero_failures
-    run_test test_dns_stats_zero_total_skips_rate_check
-    run_test test_dns_stats_total_excludes_wildcards
+    # DNS failure rate threshold tests (Issue #216) — uses stubbed resolve_domain_ips
+    run_test test_threshold_lists_failing_domains
+    run_test test_threshold_failing_domain_preview_caps_at_10
+    run_test test_threshold_zero_concrete_domains
+    run_test test_threshold_rate_at_boundary_passes
+    run_test test_threshold_rate_zero_with_no_failures_passes
+    run_test test_threshold_wildcards_excluded_from_count
+    run_test test_threshold_preview_no_truncation_at_exactly_10
+    run_test test_threshold_preview_truncation_at_exactly_11
+    run_test test_threshold_listing_omits_resolved_domains
+    run_test test_threshold_invalid_env_var_ignored
+    run_test test_threshold_wins_over_fallback_abort
+    run_test test_threshold_skip_check_does_not_relax_resolver_rc
+    run_test test_launch_agent_bypass_dispatch_warns_not_aborts
 
     # Property-based tests
     run_test test_resolve_returns_valid_ipv4_or_empty
     run_test test_add_host_args_format
     run_test test_pinned_file_parsing_robust
+
+    # Threshold tests (Issue #216)
+    run_test test_threshold_max_failures_triggers_exit2
+    run_test test_threshold_max_failure_rate_triggers_exit2
+    run_test test_threshold_under_limit_returns_0
+    run_test test_threshold_env_var_max_failures
+    run_test test_threshold_env_var_max_failure_rate
+    run_test test_threshold_no_limit_set_returns_0
+    run_test test_config_validation_max_failure_rate_valid
+    run_test test_config_validation_max_failure_rate_invalid
 
     # Container tests
     run_test test_pinned_file_mounted_readonly

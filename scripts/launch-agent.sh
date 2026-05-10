@@ -2212,53 +2212,16 @@ build_container_command() {
             # This prevents DNS manipulation attacks inside the container
             if [[ "${NETWORK_DNS_PIN_ENABLED:-true}" == "true" ]] && [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
                 log_info "DNS pinning: resolving allowlist domains on host..."
-                local resolved_data
-                if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
-                    # Extract the stats sentinel emitted by resolve_allowlist_domains.
-                    # The sentinel is embedded in stdout so it survives the subshell boundary
-                    # (env exports from command substitution subshells are discarded by bash).
-                    local _dns_stats_line
-                    _dns_stats_line=$(echo "${resolved_data}" | grep '^__KAPSIS_DNS_STATS__' || true)
-                    # Strip the sentinel before writing to the pinned DNS file
-                    resolved_data=$(echo "${resolved_data}" | grep -v '^__KAPSIS_DNS_STATS__' || true)
+                local resolved_data dns_pin_rc
+                dns_pin_rc=0
+                resolved_data=$(resolve_allowlist_domains \
+                    "$NETWORK_ALLOWLIST_DOMAINS" \
+                    "${NETWORK_DNS_PIN_TIMEOUT:-5}" \
+                    "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" \
+                    "${NETWORK_DNS_PIN_MAX_FAILURE_RATE:-}" \
+                    "${NETWORK_DNS_PIN_MAX_FAILURES:-}") || dns_pin_rc=$?
 
-                    # Check DNS failure rate threshold (Issue #216)
-                    # Aborts if too many domains failed to resolve — indicating broken DNS/VPN
-                    if [[ -z "${KAPSIS_SKIP_DNS_CHECK:-}" ]] && [[ -n "${_dns_stats_line}" ]]; then
-                        local _dns_failed _dns_total
-                        _dns_failed=$(echo "${_dns_stats_line}" | grep -o 'failed=[0-9]*' | cut -d= -f2 || true)
-                        _dns_total=$(echo "${_dns_stats_line}" | grep -o 'total=[0-9]*' | cut -d= -f2 || true)
-                        _dns_failed="${_dns_failed:-0}"
-                        _dns_total="${_dns_total:-0}"
-
-                        local _dns_abort=0
-
-                        # Absolute failure count threshold
-                        if [[ -n "${NETWORK_DNS_PIN_MAX_FAILURES:-}" ]] && [[ "$_dns_failed" -gt "${NETWORK_DNS_PIN_MAX_FAILURES}" ]]; then
-                            log_error "DNS pre-flight failed: $_dns_failed domain(s) failed to resolve (threshold: ${NETWORK_DNS_PIN_MAX_FAILURES})"
-                            _dns_abort=1
-                        fi
-
-                        # Failure rate threshold (0.0–1.0)
-                        if [[ -n "${NETWORK_DNS_PIN_MAX_FAILURE_RATE:-}" ]] && [[ "$_dns_total" -gt 0 ]]; then
-                            local _rate_exceeded
-                            _rate_exceeded=$(awk -v failed="$_dns_failed" -v total="$_dns_total" \
-                                -v threshold="${NETWORK_DNS_PIN_MAX_FAILURE_RATE}" \
-                                'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }' || true)
-                            if [[ "$_rate_exceeded" == "1" ]]; then
-                                log_error "DNS pre-flight failed: $_dns_failed/$_dns_total domain(s) failed to resolve (rate exceeds ${NETWORK_DNS_PIN_MAX_FAILURE_RATE})"
-                                _dns_abort=1
-                            fi
-                        fi
-
-                        if [[ "$_dns_abort" -eq 1 ]]; then
-                            log_error "Check your VPN / network connectivity and retry, or set KAPSIS_SKIP_DNS_CHECK=true to bypass."
-                            exit 1
-                        fi
-                    elif [[ -n "${KAPSIS_SKIP_DNS_CHECK:-}" ]]; then
-                        log_warn "SECURITY: DNS failure threshold check bypassed via KAPSIS_SKIP_DNS_CHECK"
-                    fi
-
+                if [[ "$dns_pin_rc" -eq 0 ]]; then
                     if [[ -n "$resolved_data" ]]; then
                         # Create temp file for pinned DNS (cleaned up in _cleanup_with_completion)
                         DNS_PIN_FILE=$(mktemp)
@@ -2281,7 +2244,17 @@ build_container_command() {
                             CONTAINER_CMD+=("-e" "KAPSIS_DNS_PIN_ENABLED=true")
                         fi
                     fi
+                elif [[ "$dns_pin_rc" -eq 2 ]]; then
+                    # Threshold exceeded (max_failure_rate or max_failures)
+                    if [[ "${KAPSIS_SKIP_DNS_CHECK:-false}" == "true" ]]; then
+                        log_warn "DNS failure threshold exceeded but KAPSIS_SKIP_DNS_CHECK=true — proceeding with degraded security"
+                    else
+                        log_error "Aborting container launch due to high DNS resolution failure rate."
+                        log_error "Set KAPSIS_SKIP_DNS_CHECK=true to bypass this check."
+                        exit 1
+                    fi
                 else
+                    # rc=1: fallback=abort or other partial failure
                     if [[ "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" == "abort" ]]; then
                         log_error "DNS pinning failed with fallback=abort - aborting container launch"
                         exit 1

@@ -587,12 +587,19 @@ network:
 
     # Abort if more than N% of domains fail to resolve (0.0–1.0).
     # Useful to catch VPN/DNS outages before wasting compute.
+    # On abort, the error lists up to 10 of the failing domains so you
+    # can immediately see which destinations are unreachable.
     # Default: unset. Override: KAPSIS_SKIP_DNS_CHECK=true
     # max_failure_rate: 0.5
 
     # Abort if more than N domains fail to resolve (absolute count).
     # max_failures: 10
 ```
+
+The check is implemented inside `resolve_allowlist_domains` and signalled via
+return code: `0` for success (even partial), `1` for `fallback: abort` failures,
+and `2` for threshold breaches. `launch-agent.sh` distinguishes these to log
+the appropriate guidance and honor `KAPSIS_SKIP_DNS_CHECK`.
 
 ### Defense-in-Depth Layers
 

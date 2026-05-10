@@ -633,6 +633,8 @@ network:
 
     # Abort launch if more than N% of resolvable domains fail to resolve (0.0–1.0).
     # Wildcards are excluded from the denominator (they are never resolvable).
+    # When triggered, the abort message lists up to 10 of the failing domains so
+    # you can immediately see which destinations are unreachable.
     # Default: unset (disabled — preserves existing behaviour)
     # Example: 0.5 aborts if more than 50% of domains fail (e.g. VPN is down)
     # Override at runtime: KAPSIS_SKIP_DNS_CHECK=true
