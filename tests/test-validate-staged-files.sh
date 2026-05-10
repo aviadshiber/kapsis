@@ -433,7 +433,7 @@ test_returns_0_for_filter_only() {
     git add __pycache__/module.pyc app.py
 
     local rc=0
-    KAPSIS_DEFAULT_EPHEMERAL_PATTERNS="**/__pycache__/" validate_staged_files "$TEST_REPO" || rc=$?
+    validate_staged_files "$TEST_REPO" || rc=$?
 
     if [[ $rc -ne 0 ]]; then
         log_fail "Expected return 0 after ephemeral-only filtering, got $rc"
