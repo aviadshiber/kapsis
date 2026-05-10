@@ -2692,34 +2692,68 @@ main() {
         KAPSIS_STATUS_VOLUME=""
     fi
 
-    # Log full container output to log file for debugging
+    # Log container output to log file. On non-zero exit, log at INFO so the
+    # full output is always preserved (no KAPSIS_DEBUG required) — this is the
+    # only place the underlying error is recorded for post-mortem. On success,
+    # keep log_debug to avoid noisy logs during normal runs.
     if [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
-        log_debug "=== Container output start ==="
+        local _output_log_fn=log_debug
+        if [[ "$EXIT_CODE" -ne 0 ]]; then
+            _output_log_fn=log_info
+        fi
+        "$_output_log_fn" "=== Container output start ==="
         while IFS= read -r line; do
             # Strip ANSI codes for log file (sed required for ANSI escape regex)
             local clean_line
             # shellcheck disable=SC2001
             clean_line=$(echo "$line" | sed 's/\x1b\[[0-9;]*m//g')
-            log_debug "  $clean_line"
+            "$_output_log_fn" "  $clean_line"
         done < "$container_output"
-        log_debug "=== Container output end ==="
+        "$_output_log_fn" "=== Container output end ==="
     fi
 
-    # On error, capture specific error lines for display
+    # On error, capture specific error lines for the bot/CLI display preview.
+    # Two-phase selection so the real failure cause isn't masked by chatty
+    # warnings: DNS filter setup emits one `SECURITY: Wildcard ... cannot be
+    # IP-pinned` line per wildcard domain in the allowlist (~10/run), which
+    # would otherwise consume every slot in a single grep | head -10 and drop
+    # the actual [ERROR] line off the bottom.
     if [[ "$EXIT_CODE" -ne 0 ]] && [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
         # Strip ANSI codes and get relevant error lines
         local stripped_output
         stripped_output=$(sed 's/\x1b\[[0-9;]*m//g' "$container_output")
 
-        # Try to find ERROR lines or common error patterns (grep returns 1 if no matches)
-        CONTAINER_ERROR_OUTPUT=$(echo "$stripped_output" | grep -E '\[ERROR\]|SECURITY:|unbound variable|command not found|Permission denied' | head -10 || true)
+        # Phase 1: hard error patterns (grep returns 1 if no matches → || true).
+        local phase1
+        phase1=$(echo "$stripped_output" \
+            | grep -E '\[ERROR\]|unbound variable|command not found|Permission denied' \
+            | head -10 || true)
 
-        # If no specific error lines, get the last 10 lines
-        if [[ -z "$CONTAINER_ERROR_OUTPUT" ]]; then
+        # Phase 2: fill remaining slots (up to 10 total) with SECURITY warnings,
+        # but EXCLUDE the wildcard-cannot-be-IP-pinned reminders that fire on
+        # every startup. A real security-relevant SECURITY: message can still
+        # surface this way.
+        local phase1_count phase2_budget phase2
+        phase1_count=$([[ -n "$phase1" ]] && printf '%s\n' "$phase1" | grep -c '^' || echo 0)
+        phase2_budget=$((10 - phase1_count))
+        phase2=""
+        if (( phase2_budget > 0 )); then
+            phase2=$(echo "$stripped_output" \
+                | grep -E 'SECURITY:' \
+                | grep -v 'Wildcard.*cannot be IP-pinned' \
+                | head -n "$phase2_budget" || true)
+        fi
+
+        if [[ -n "$phase1" || -n "$phase2" ]]; then
+            # Drop empty lines from the join so layout is clean when one phase
+            # produced nothing.
+            CONTAINER_ERROR_OUTPUT=$(printf '%s\n%s\n' "$phase1" "$phase2" | sed '/^$/d')
+            log_debug "Found error patterns in container output"
+        else
+            # No specific error lines matched — fall back to the last 10 lines
+            # so the operator at least sees the tail of execution.
             CONTAINER_ERROR_OUTPUT=$(echo "$stripped_output" | tail -10)
             log_debug "No specific error patterns found, using last 10 lines"
-        else
-            log_debug "Found error patterns in container output"
         fi
         log_debug "CONTAINER_ERROR_OUTPUT: $CONTAINER_ERROR_OUTPUT"
     fi
