@@ -2214,53 +2214,16 @@ build_container_command() {
             # This prevents DNS manipulation attacks inside the container
             if [[ "${NETWORK_DNS_PIN_ENABLED:-true}" == "true" ]] && [[ -n "${NETWORK_ALLOWLIST_DOMAINS:-}" ]]; then
                 log_info "DNS pinning: resolving allowlist domains on host..."
-                local resolved_data
-                if resolved_data=$(resolve_allowlist_domains "$NETWORK_ALLOWLIST_DOMAINS" "${NETWORK_DNS_PIN_TIMEOUT:-5}" "${NETWORK_DNS_PIN_FALLBACK:-dynamic}"); then
-                    # Extract the stats sentinel emitted by resolve_allowlist_domains.
-                    # The sentinel is embedded in stdout so it survives the subshell boundary
-                    # (env exports from command substitution subshells are discarded by bash).
-                    local _dns_stats_line
-                    _dns_stats_line=$(echo "${resolved_data}" | grep '^__KAPSIS_DNS_STATS__' || true)
-                    # Strip the sentinel before writing to the pinned DNS file
-                    resolved_data=$(echo "${resolved_data}" | grep -v '^__KAPSIS_DNS_STATS__' || true)
+                local resolved_data dns_pin_rc
+                dns_pin_rc=0
+                resolved_data=$(resolve_allowlist_domains \
+                    "$NETWORK_ALLOWLIST_DOMAINS" \
+                    "${NETWORK_DNS_PIN_TIMEOUT:-5}" \
+                    "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" \
+                    "${NETWORK_DNS_PIN_MAX_FAILURE_RATE:-}" \
+                    "${NETWORK_DNS_PIN_MAX_FAILURES:-}") || dns_pin_rc=$?
 
-                    # Check DNS failure rate threshold (Issue #216)
-                    # Aborts if too many domains failed to resolve — indicating broken DNS/VPN
-                    if [[ -z "${KAPSIS_SKIP_DNS_CHECK:-}" ]] && [[ -n "${_dns_stats_line}" ]]; then
-                        local _dns_failed _dns_total
-                        _dns_failed=$(echo "${_dns_stats_line}" | grep -o 'failed=[0-9]*' | cut -d= -f2 || true)
-                        _dns_total=$(echo "${_dns_stats_line}" | grep -o 'total=[0-9]*' | cut -d= -f2 || true)
-                        _dns_failed="${_dns_failed:-0}"
-                        _dns_total="${_dns_total:-0}"
-
-                        local _dns_abort=0
-
-                        # Absolute failure count threshold
-                        if [[ -n "${NETWORK_DNS_PIN_MAX_FAILURES:-}" ]] && [[ "$_dns_failed" -gt "${NETWORK_DNS_PIN_MAX_FAILURES}" ]]; then
-                            log_error "DNS pre-flight failed: $_dns_failed domain(s) failed to resolve (threshold: ${NETWORK_DNS_PIN_MAX_FAILURES})"
-                            _dns_abort=1
-                        fi
-
-                        # Failure rate threshold (0.0–1.0)
-                        if [[ -n "${NETWORK_DNS_PIN_MAX_FAILURE_RATE:-}" ]] && [[ "$_dns_total" -gt 0 ]]; then
-                            local _rate_exceeded
-                            _rate_exceeded=$(awk -v failed="$_dns_failed" -v total="$_dns_total" \
-                                -v threshold="${NETWORK_DNS_PIN_MAX_FAILURE_RATE}" \
-                                'BEGIN { rate = failed / total; print (rate > threshold) ? "1" : "0" }' || true)
-                            if [[ "$_rate_exceeded" == "1" ]]; then
-                                log_error "DNS pre-flight failed: $_dns_failed/$_dns_total domain(s) failed to resolve (rate exceeds ${NETWORK_DNS_PIN_MAX_FAILURE_RATE})"
-                                _dns_abort=1
-                            fi
-                        fi
-
-                        if [[ "$_dns_abort" -eq 1 ]]; then
-                            log_error "Check your VPN / network connectivity and retry, or set KAPSIS_SKIP_DNS_CHECK=true to bypass."
-                            exit 1
-                        fi
-                    elif [[ -n "${KAPSIS_SKIP_DNS_CHECK:-}" ]]; then
-                        log_warn "SECURITY: DNS failure threshold check bypassed via KAPSIS_SKIP_DNS_CHECK"
-                    fi
-
+                if [[ "$dns_pin_rc" -eq 0 ]]; then
                     if [[ -n "$resolved_data" ]]; then
                         # Create temp file for pinned DNS (cleaned up in _cleanup_with_completion)
                         DNS_PIN_FILE=$(mktemp)
@@ -2283,7 +2246,17 @@ build_container_command() {
                             CONTAINER_CMD+=("-e" "KAPSIS_DNS_PIN_ENABLED=true")
                         fi
                     fi
+                elif [[ "$dns_pin_rc" -eq 2 ]]; then
+                    # Threshold exceeded (max_failure_rate or max_failures)
+                    if [[ "${KAPSIS_SKIP_DNS_CHECK:-false}" == "true" ]]; then
+                        log_warn "DNS failure threshold exceeded but KAPSIS_SKIP_DNS_CHECK=true — proceeding with degraded security"
+                    else
+                        log_error "Aborting container launch due to high DNS resolution failure rate."
+                        log_error "Set KAPSIS_SKIP_DNS_CHECK=true to bypass this check."
+                        exit 1
+                    fi
                 else
+                    # rc=1: fallback=abort or other partial failure
                     if [[ "${NETWORK_DNS_PIN_FALLBACK:-dynamic}" == "abort" ]]; then
                         log_error "DNS pinning failed with fallback=abort - aborting container launch"
                         exit 1
@@ -2750,34 +2723,68 @@ main() {
         KAPSIS_STATUS_VOLUME=""
     fi
 
-    # Log full container output to log file for debugging
+    # Log container output to log file. On non-zero exit, log at INFO so the
+    # full output is always preserved (no KAPSIS_DEBUG required) — this is the
+    # only place the underlying error is recorded for post-mortem. On success,
+    # keep log_debug to avoid noisy logs during normal runs.
     if [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
-        log_debug "=== Container output start ==="
+        local _output_log_fn=log_debug
+        if [[ "$EXIT_CODE" -ne 0 ]]; then
+            _output_log_fn=log_info
+        fi
+        "$_output_log_fn" "=== Container output start ==="
         while IFS= read -r line; do
             # Strip ANSI codes for log file (sed required for ANSI escape regex)
             local clean_line
             # shellcheck disable=SC2001
             clean_line=$(echo "$line" | sed 's/\x1b\[[0-9;]*m//g')
-            log_debug "  $clean_line"
+            "$_output_log_fn" "  $clean_line"
         done < "$container_output"
-        log_debug "=== Container output end ==="
+        "$_output_log_fn" "=== Container output end ==="
     fi
 
-    # On error, capture specific error lines for display
+    # On error, capture specific error lines for the bot/CLI display preview.
+    # Two-phase selection so the real failure cause isn't masked by chatty
+    # warnings: DNS filter setup emits one `SECURITY: Wildcard ... cannot be
+    # IP-pinned` line per wildcard domain in the allowlist (~10/run), which
+    # would otherwise consume every slot in a single grep | head -10 and drop
+    # the actual [ERROR] line off the bottom.
     if [[ "$EXIT_CODE" -ne 0 ]] && [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
         # Strip ANSI codes and get relevant error lines
         local stripped_output
         stripped_output=$(sed 's/\x1b\[[0-9;]*m//g' "$container_output")
 
-        # Try to find ERROR lines or common error patterns (grep returns 1 if no matches)
-        CONTAINER_ERROR_OUTPUT=$(echo "$stripped_output" | grep -E '\[ERROR\]|SECURITY:|unbound variable|command not found|Permission denied' | head -10 || true)
+        # Phase 1: hard error patterns (grep returns 1 if no matches → || true).
+        local phase1
+        phase1=$(echo "$stripped_output" \
+            | grep -E '\[ERROR\]|unbound variable|command not found|Permission denied' \
+            | head -10 || true)
 
-        # If no specific error lines, get the last 10 lines
-        if [[ -z "$CONTAINER_ERROR_OUTPUT" ]]; then
+        # Phase 2: fill remaining slots (up to 10 total) with SECURITY warnings,
+        # but EXCLUDE the wildcard-cannot-be-IP-pinned reminders that fire on
+        # every startup. A real security-relevant SECURITY: message can still
+        # surface this way.
+        local phase1_count phase2_budget phase2
+        phase1_count=$([[ -n "$phase1" ]] && printf '%s\n' "$phase1" | grep -c '^' || echo 0)
+        phase2_budget=$((10 - phase1_count))
+        phase2=""
+        if (( phase2_budget > 0 )); then
+            phase2=$(echo "$stripped_output" \
+                | grep -E 'SECURITY:' \
+                | grep -v 'Wildcard.*cannot be IP-pinned' \
+                | head -n "$phase2_budget" || true)
+        fi
+
+        if [[ -n "$phase1" || -n "$phase2" ]]; then
+            # Drop empty lines from the join so layout is clean when one phase
+            # produced nothing.
+            CONTAINER_ERROR_OUTPUT=$(printf '%s\n%s\n' "$phase1" "$phase2" | sed '/^$/d')
+            log_debug "Found error patterns in container output"
+        else
+            # No specific error lines matched — fall back to the last 10 lines
+            # so the operator at least sees the tail of execution.
             CONTAINER_ERROR_OUTPUT=$(echo "$stripped_output" | tail -10)
             log_debug "No specific error patterns found, using last 10 lines"
-        else
-            log_debug "Found error patterns in container output"
         fi
         log_debug "CONTAINER_ERROR_OUTPUT: $CONTAINER_ERROR_OUTPUT"
     fi
