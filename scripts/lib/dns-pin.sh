@@ -56,10 +56,13 @@ _log_failed_domains() {
     [[ "$total" -eq 0 ]] && return 0
     local shown=$(( total < _DNS_FAILED_DOMAIN_PREVIEW ? total : _DNS_FAILED_DOMAIN_PREVIEW ))
     log_error "Failing domains (showing $shown of $total):"
-    local i=0
+    local i=0 d_safe
     for d in "$@"; do
         (( i < shown )) || break
-        log_error "  - $d"
+        # Strip control chars (incl. ANSI escapes / newlines) — domains come from
+        # user-controlled YAML allowlist, must not corrupt logs or terminal.
+        d_safe=$(printf '%s' "$d" | tr -d '[:cntrl:]')
+        log_error "  - $d_safe"
         i=$((i + 1))
     done
     if (( total > shown )); then
@@ -89,12 +92,32 @@ _log_failed_domains() {
 #   0 - success (even partial)
 #   1 - any failure with fallback=abort
 #   2 - DNS failure threshold exceeded (max_failure_rate or max_failures)
+#
+# Precedence: rc=2 short-circuits before rc=1, so a threshold breach wins over
+# fallback=abort. This is intentional — the threshold is the user's explicit
+# pre-flight policy and produces the most actionable error (lists failing domains).
 resolve_allowlist_domains() {
     local domain_list="$1"
     local timeout="${2:-5}"
     local fallback="${3:-dynamic}"
     local max_failure_rate="${4:-${KAPSIS_DNS_MAX_FAILURE_RATE:-}}"
     local max_failures="${5:-${KAPSIS_DNS_MAX_FAILURES:-}}"
+
+    # Validate threshold inputs — reject non-numeric values early so arithmetic
+    # below can't false-abort on whitespace or unbound-variable on letters.
+    # max_failure_rate: float in [0.0, 1.0]; max_failures: non-negative integer.
+    if [[ -n "$max_failure_rate" ]]; then
+        if ! [[ "$max_failure_rate" =~ ^(0(\.[0-9]+)?|1(\.0+)?)$ ]]; then
+            log_error "Invalid max_failure_rate: '$max_failure_rate' (expected float 0.0–1.0); ignoring"
+            max_failure_rate=""
+        fi
+    fi
+    if [[ -n "$max_failures" ]]; then
+        if ! [[ "$max_failures" =~ ^[0-9]+$ ]]; then
+            log_error "Invalid max_failures: '$max_failures' (expected non-negative integer); ignoring"
+            max_failures=""
+        fi
+    fi
 
     [[ -z "$domain_list" ]] && return 0
 
