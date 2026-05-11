@@ -396,6 +396,102 @@ EOF
 }
 
 #===============================================================================
+# TEST CASES: return-code contract (security vs. filter vs. clean)
+#===============================================================================
+
+test_returns_0_for_clean_staging() {
+    log_test "validate_staged_files returns 0 when nothing suspicious is staged"
+
+    setup_test_repo "rc-clean"
+    cd "$TEST_REPO"
+
+    echo "legitimate change" > src.txt
+    git add src.txt
+
+    local rc=0
+    validate_staged_files "$TEST_REPO" || rc=$?
+
+    if [[ $rc -ne 0 ]]; then
+        log_fail "Expected return 0 for clean staging, got $rc"
+        cleanup_test_repo
+        return 1
+    fi
+
+    cleanup_test_repo
+}
+
+test_returns_0_for_filter_only() {
+    log_test "validate_staged_files returns 0 when only ephemeral artifacts are filtered"
+
+    setup_test_repo "rc-filter"
+    cd "$TEST_REPO"
+
+    # Add a legitimate file alongside an ephemeral artifact; ephemeral gets stripped, return 0
+    mkdir -p __pycache__
+    echo "cache" > __pycache__/module.pyc
+    echo "real change" > app.py
+    git add __pycache__/module.pyc app.py
+
+    local rc=0
+    validate_staged_files "$TEST_REPO" || rc=$?
+
+    if [[ $rc -ne 0 ]]; then
+        log_fail "Expected return 0 after ephemeral-only filtering, got $rc"
+        cleanup_test_repo
+        return 1
+    fi
+
+    cleanup_test_repo
+}
+
+test_returns_1_for_tilde_path() {
+    log_test "validate_staged_files returns 1 when literal ~ paths are staged"
+
+    setup_test_repo "rc-tilde"
+    cd "$TEST_REPO"
+
+    # shellcheck disable=SC2088
+    mkdir -p '~/.config'
+    # shellcheck disable=SC2088
+    echo "leaked" > '~/.config/secret'
+    # shellcheck disable=SC2088
+    git add '~/.config/secret'
+
+    local rc=0
+    validate_staged_files "$TEST_REPO" || rc=$?
+
+    if [[ $rc -ne 1 ]]; then
+        log_fail "Expected return 1 for staged tilde path (security abort), got $rc"
+        cleanup_test_repo
+        return 1
+    fi
+
+    cleanup_test_repo
+}
+
+test_returns_1_for_kapsis_internal() {
+    log_test "validate_staged_files returns 1 when .kapsis/ internal files are staged"
+
+    setup_test_repo "rc-kapsis"
+    cd "$TEST_REPO"
+
+    mkdir -p .kapsis
+    echo "internal" > .kapsis/status.json
+    git add .kapsis/status.json
+
+    local rc=0
+    validate_staged_files "$TEST_REPO" || rc=$?
+
+    if [[ $rc -ne 1 ]]; then
+        log_fail "Expected return 1 for .kapsis/ file (security abort), got $rc"
+        cleanup_test_repo
+        return 1
+    fi
+
+    cleanup_test_repo
+}
+
+#===============================================================================
 # TEST RUNNER
 #===============================================================================
 
@@ -414,6 +510,10 @@ main() {
     run_test test_handles_mixed_files
     run_test test_regression_claude_plugins_submodule
     run_test test_regression_kapsis_task_spec
+    run_test test_returns_0_for_clean_staging
+    run_test test_returns_0_for_filter_only
+    run_test test_returns_1_for_tilde_path
+    run_test test_returns_1_for_kapsis_internal
 
     print_summary
     return "$TESTS_FAILED"

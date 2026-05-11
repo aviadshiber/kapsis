@@ -1763,8 +1763,8 @@ main() {
             "${KAPSIS_STATUS_AGENT_ID}" \
             "${KAPSIS_STATUS_BRANCH:-}" \
             "${KAPSIS_SANDBOX_MODE:-overlay}" \
-            ""
-        status_phase "running" 25 "Agent starting execution"
+            "" || true
+        status_phase "running" 25 "Agent starting execution" || true
 
         # Set up agent-specific status tracking (hooks or fallback monitor)
         setup_status_tracking
