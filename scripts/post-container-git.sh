@@ -92,7 +92,13 @@ validate_staged_files() {
 
     cd "$worktree_path"
 
-    local has_issues=0
+    # has_security_issues: literal ~ paths, .kapsis/ internals, accidental submodules.
+    # These are always dangerous — return 1 so commit_changes aborts immediately.
+    # has_filter_issues: ephemeral artifacts, KAPSIS_COMMIT_EXCLUDE patterns.
+    # These are normal filtering — return 0 so commit_changes can check whether
+    # anything substantive remains staged (and return 2 if nothing does).
+    local has_security_issues=0
+    local has_filter_issues=0
     local suspicious_files=()
 
     # Check for literal ~ paths in staged files
@@ -106,7 +112,7 @@ validate_staged_files() {
             log_warn "  - $f"
             suspicious_files+=("$f")
         done <<< "$tilde_files"
-        has_issues=1
+        has_security_issues=1
     fi
 
     # Check for .kapsis/ internal files
@@ -118,7 +124,7 @@ validate_staged_files() {
             log_warn "  - $f"
             suspicious_files+=("$f")
         done <<< "$kapsis_files"
-        has_issues=1
+        has_security_issues=1
     fi
 
     # Check for submodule references (mode 160000)
@@ -134,7 +140,7 @@ validate_staged_files() {
             log_warn "  - $path (submodule)"
             suspicious_files+=("$path")
         done <<< "$submodule_refs"
-        has_issues=1
+        has_security_issues=1
     fi
 
     # Pre-compute staged file list for pattern checks below
@@ -158,7 +164,7 @@ validate_staged_files() {
                     log_info "  - $f (ephemeral artifact)"
                     suspicious_files+=("$f")
                 done <<< "$matched_files"
-                has_issues=1
+                has_filter_issues=1
             fi
         done <<< "$ephemeral_patterns"
     fi
@@ -180,13 +186,13 @@ validate_staged_files() {
                     log_info "  - $f (excluded by KAPSIS_COMMIT_EXCLUDE)"
                     suspicious_files+=("$f")
                 done <<< "$matched_files"
-                has_issues=1
+                has_filter_issues=1
             fi
         done <<< "$exclude_patterns"
     fi
 
-    # If issues found, unstage the suspicious files
-    if [[ $has_issues -eq 1 ]]; then
+    # Unstage all collected files (security-dangerous + filtered)
+    if [[ $has_security_issues -eq 1 ]] || [[ $has_filter_issues -eq 1 ]]; then
         log_warn "Removing excluded files from staging..."
         for file in "${suspicious_files[@]}"; do
             if [[ -n "$file" ]]; then
@@ -201,7 +207,10 @@ validate_staged_files() {
             rm -rf "~" 2>/dev/null || true
         fi
 
-        log_info "Excluded files removed from staging. Continuing with clean files."
+        if [[ $has_security_issues -eq 1 ]]; then
+            log_warn "Suspicious files removed from staging area; aborting commit so caller can retry with clean files."
+            return 1
+        fi
     fi
 
     return 0
@@ -895,7 +904,7 @@ post_container_git() {
     status_phase "committing" 92 "Staging and committing changes" || true
 
     # Record pre-commit SHA for verification (Fix #3)
-    status_record_pre_commit "$worktree_path"
+    status_record_pre_commit "$worktree_path" || true
 
     # Commit changes
     log_debug "Committing changes..."
@@ -920,7 +929,7 @@ post_container_git() {
     log_debug "Commit successful"
 
     # Verify commit was created and no uncommitted changes remain (Fix #3)
-    # Use || capture pattern: status_verify_commit returns 2 for uncommitted-remain, 1 for error.
+    # Use || capture pattern: status_verify_commit returns 0 (verified) or 2 (uncommitted remain).
     # A bare call + $? assignment races with set -e — the script exits before verify_result is set.
     local verify_result=0
     status_verify_commit "$worktree_path" || verify_result=$?
@@ -937,9 +946,8 @@ post_container_git() {
         status_phase "pushing" 97 "Pushing to remote" || true
 
         log_debug "Pushing changes to remote..."
-        local push_result
-        push_changes "$worktree_path" "$remote" "$remote_branch"
-        push_result=$?
+        local push_result=0
+        push_changes "$worktree_path" "$remote" "$remote_branch" || push_result=$?
 
         if [[ $push_result -eq 0 ]]; then
             log_debug "Push successful and verified"
