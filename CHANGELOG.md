@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.25.3] - 2026-05-10
+## [2.25.5] - 2026-05-11
 
 ### Fixed
-- Guard critical unguarded function calls (closes #261) (#317)
+- Restore set -e guards dropped during #318/#317 conflict resolution
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Guard critical unguarded function calls (closes #261) (#317)
+
 
 ### Changed
 - Bump github/codeql-action from 4.35.2 to 4.35.3 in the github-actions group (#312)
@@ -900,7 +904,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.25.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.25.5...HEAD
+[2.25.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.5
 [2.25.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.3
 [2.25.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.2
 [2.25.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.1
