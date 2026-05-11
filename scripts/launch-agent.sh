@@ -1268,6 +1268,14 @@ add_common_volume_mounts() {
         VOLUME_MOUNTS+=("-v" "${audit_dir}:${CONTAINER_AUDIT_PATH}")
     fi
 
+    # Conversation JSONL (post-mortem preservation — Issue #265)
+    # Mounted per-agent so conversation history survives container death (OOM,
+    # crash, rm -f). Bind mount outlives the container overlay the same way
+    # /kapsis-status does. TTL-based cleanup in kapsis-cleanup (default 7 days).
+    local conv_dir="${KAPSIS_CONVERSATIONS_DIR:-$HOME/.kapsis/conversations/${AGENT_ID}}"
+    ensure_dir "$conv_dir"
+    VOLUME_MOUNTS+=("-v" "${conv_dir}:${CONTAINER_CONVERSATIONS_PATH}")
+
     # Maven repository (isolated per agent)
     VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")
 

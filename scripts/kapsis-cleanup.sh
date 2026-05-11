@@ -49,6 +49,7 @@ LOG_DIR="${KAPSIS_LOG_DIR:-$KAPSIS_DIR/logs}"
 SANDBOX_DIR="${KAPSIS_SANDBOX_DIR:-$HOME/.ai-sandboxes}"
 SANITIZED_GIT_DIR="${KAPSIS_SANITIZED_GIT_DIR:-$KAPSIS_DIR/sanitized-git}"
 AUDIT_DIR="${KAPSIS_AUDIT_DIR:-$KAPSIS_DIR/audit}"
+CONVERSATIONS_DIR="${KAPSIS_CONVERSATIONS_BASE_DIR:-$KAPSIS_DIR/conversations}"
 
 # Options
 DRY_RUN=false
@@ -115,6 +116,7 @@ WHAT GETS CLEANED:
     Status files    Completed status files in ~/.kapsis/status/
     Sanitized git   Temporary git dirs in ~/.kapsis/sanitized-git/
     Audit files     Old audit trail files in ~/.kapsis/audit/ (TTL-based or --all)
+    Conversations   Old agent conversation dirs in ~/.kapsis/conversations/ (7-day TTL or --all)
     Containers      Stopped kapsis-* containers (with --containers)
     Volumes         Build cache volumes (with --volumes)
     Images          Kapsis container images (with --images or --all)
@@ -848,6 +850,81 @@ clean_audit() {
     fi
 }
 
+# Clean per-agent conversation directories (Issue #265)
+# Removes directories older than KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS (default 7 days).
+# In --all mode removes everything regardless of age.
+clean_conversations() {
+    section "Conversation Directories"
+
+    if [[ ! -d "$CONVERSATIONS_DIR" ]]; then
+        echo "  No conversations directory found"
+        return
+    fi
+
+    # Refuse to traverse a symlinked top-level dir (see clean_worktrees).
+    if [[ -L "$CONVERSATIONS_DIR" ]]; then
+        echo -e "  ${YELLOW}Conversations dir is a symlink; refusing to clean${NC}"
+        return
+    fi
+
+    local count=0
+    local total_size=0
+    local ttl_days="${KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS:-7}"
+    local now
+    now=$(date +%s)
+    local ttl_seconds=$((ttl_days * 86400))
+
+    for conv_dir in "$CONVERSATIONS_DIR"/*/; do
+        [[ -d "$conv_dir" ]] || continue
+        # Security: skip symlinks to prevent following attacks (see clean_sandboxes).
+        [[ -L "$conv_dir" ]] && continue
+        local name
+        name=$(basename "$conv_dir")
+
+        # Apply project/agent filter when set
+        if [[ -n "$PROJECT_FILTER" ]] && [[ "$name" != *"${PROJECT_FILTER}"* ]]; then
+            continue
+        fi
+        if [[ -n "$AGENT_FILTER" ]] && [[ "$name" != *"${AGENT_FILTER}"* ]]; then
+            continue
+        fi
+
+        # In --all mode clean everything; otherwise only expire past TTL
+        if [[ "$CLEAN_ALL" != "true" ]]; then
+            local mtime
+            mtime=$(get_file_mtime "$conv_dir" 2>/dev/null) || continue
+            [[ -z "$mtime" ]] && continue
+            local age=$((now - mtime))
+            if [[ "$age" -le "$ttl_seconds" ]]; then
+                continue
+            fi
+        fi
+
+        local size
+        size=$(get_dir_size "$conv_dir")
+        local size_human
+        size_human=$(format_size "$size")
+
+        if [[ "$DRY_RUN" == "true" ]]; then
+            print_item "conversation" "$name" "$size_human"
+        else
+            rm -rf "$conv_dir"
+            print_item "conversation" "$name" "$size_human"
+        fi
+
+        ((total_size += size)) || true
+        ((count++)) || true
+    done
+
+    if (( count == 0 )); then
+        echo "  No expired conversation directories to clean"
+    else
+        echo -e "  ${BOLD}Total: $count conversation directories ($(format_size $total_size))${NC}"
+        ((TOTAL_SIZE_FREED += total_size)) || true
+        ((ITEMS_CLEANED += count)) || true
+    fi
+}
+
 # Clean SSH cache
 clean_ssh_cache() {
     section "SSH Host Key Cache"
@@ -1425,6 +1502,7 @@ main() {
         clean_status
         clean_sanitized_git
         clean_audit
+        clean_conversations
     elif [[ "$CLEAN_WORKTREES" == "true" ]]; then
         # Selective: `--worktrees` alone -- run only clean_worktrees.
         # Skipped when --all (already handled by the default block above).
