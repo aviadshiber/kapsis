@@ -2467,8 +2467,8 @@ main() {
     # Initialize status reporting (after we have PROJECT_PATH and AGENT_ID)
     local project_name
     project_name=$(basename "$PROJECT_PATH")
-    status_init "$project_name" "$AGENT_ID" "$BRANCH" "" ""
-    status_phase "initializing" 5 "Inputs validated"
+    status_init "$project_name" "$AGENT_ID" "$BRANCH" "" "" || true
+    status_phase "initializing" 5 "Inputs validated" || true
 
     log_timer_start "config"
     resolve_config
@@ -2485,7 +2485,7 @@ main() {
     parse_config
     validate_agent_command "$AGENT_COMMAND"
     log_timer_end "config"
-    status_phase "initializing" 10 "Configuration loaded"
+    status_phase "initializing" 10 "Configuration loaded" || true
 
     generate_branch_name
 
@@ -2514,7 +2514,7 @@ main() {
             exit 1
         fi
         log_timer_end "preflight"
-        status_phase "initializing" 15 "Pre-flight check passed"
+        status_phase "initializing" 15 "Pre-flight check passed" || true
     fi
 
     # Setup sandbox (worktree/overlay) — only for backends that support it
@@ -2531,8 +2531,8 @@ main() {
     fi
 
     # Update status with sandbox mode and worktree path now that we know them
-    status_init "$project_name" "$AGENT_ID" "$BRANCH" "$SANDBOX_MODE" "${WORKTREE_PATH:-}"
-    status_phase "preparing" 18 "Sandbox ready"
+    status_init "$project_name" "$AGENT_ID" "$BRANCH" "$SANDBOX_MODE" "${WORKTREE_PATH:-}" || true
+    status_phase "preparing" 18 "Sandbox ready" || true
 
     # Podman-specific: generate volume mounts, env vars, secrets env-file
     # K8s backend generates its own CR with this info
@@ -2558,7 +2558,7 @@ main() {
         _STATUS_COMPLETE_SHOWN=true
         exit 1
     fi
-    status_phase "preparing" 20 "Container configured"
+    status_phase "preparing" 20 "Container configured" || true
 
     echo ""
     log_info "Agent Configuration:"
@@ -2691,7 +2691,7 @@ main() {
     # Note: Secret sanitization is handled by _log()
     log_debug "Container command: ${CONTAINER_CMD[*]}"
     log_timer_start "container"
-    status_phase "starting" 22 "Launching container"
+    status_phase "starting" 22 "Launching container" || true
 
     # Start host-side sync of the /kapsis-status named volume (macOS only).
     # No-op on Linux where /kapsis-status is a direct bind mount and on K8s
@@ -2879,7 +2879,7 @@ main() {
 
     rm -f "$container_output"
     # Update status to post_processing (Fix #3: don't report "completed" until commit verified)
-    status_phase "post_processing" 85 "Processing agent output (exit code: $EXIT_CODE)"
+    status_phase "post_processing" 85 "Processing agent output (exit code: $EXIT_CODE)" || true
 
     echo ""
     echo "┌────────────────────────────────────────────────────────────────────┐"
@@ -3176,7 +3176,7 @@ post_container_worktree() {
         local delete_branch="${KAPSIS_CLEANUP_BRANCH_ENABLED:-${KAPSIS_DEFAULT_CLEANUP_BRANCH_ENABLED:-false}}"
         cleanup_worktree "$PROJECT_PATH" "$AGENT_ID" "$delete_branch" \
             || log_warn "Worktree cleanup failed for agent '$AGENT_ID' — manual removal may be needed: git worktree remove '${WORKTREE_PATH:-<worktree>}'"
-        prune_worktrees "$PROJECT_PATH"
+        prune_worktrees "$PROJECT_PATH" || true
     fi
 
     # Propagate post-container failure to caller so POST_EXIT_CODE is set (Issue #256)

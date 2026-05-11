@@ -92,7 +92,13 @@ validate_staged_files() {
 
     cd "$worktree_path"
 
-    local has_issues=0
+    # has_security_issues: literal ~ paths, .kapsis/ internals, accidental submodules.
+    # These are always dangerous — return 1 so commit_changes aborts immediately.
+    # has_filter_issues: ephemeral artifacts, KAPSIS_COMMIT_EXCLUDE patterns.
+    # These are normal filtering — return 0 so commit_changes can check whether
+    # anything substantive remains staged (and return 2 if nothing does).
+    local has_security_issues=0
+    local has_filter_issues=0
     local suspicious_files=()
 
     # Check for literal ~ paths in staged files
@@ -106,7 +112,7 @@ validate_staged_files() {
             log_warn "  - $f"
             suspicious_files+=("$f")
         done <<< "$tilde_files"
-        has_issues=1
+        has_security_issues=1
     fi
 
     # Check for .kapsis/ internal files
@@ -118,7 +124,7 @@ validate_staged_files() {
             log_warn "  - $f"
             suspicious_files+=("$f")
         done <<< "$kapsis_files"
-        has_issues=1
+        has_security_issues=1
     fi
 
     # Check for submodule references (mode 160000)
@@ -134,7 +140,7 @@ validate_staged_files() {
             log_warn "  - $path (submodule)"
             suspicious_files+=("$path")
         done <<< "$submodule_refs"
-        has_issues=1
+        has_security_issues=1
     fi
 
     # Pre-compute staged file list for pattern checks below
@@ -158,7 +164,7 @@ validate_staged_files() {
                     log_info "  - $f (ephemeral artifact)"
                     suspicious_files+=("$f")
                 done <<< "$matched_files"
-                has_issues=1
+                has_filter_issues=1
             fi
         done <<< "$ephemeral_patterns"
     fi
@@ -180,13 +186,13 @@ validate_staged_files() {
                     log_info "  - $f (excluded by KAPSIS_COMMIT_EXCLUDE)"
                     suspicious_files+=("$f")
                 done <<< "$matched_files"
-                has_issues=1
+                has_filter_issues=1
             fi
         done <<< "$exclude_patterns"
     fi
 
-    # If issues found, unstage the suspicious files
-    if [[ $has_issues -eq 1 ]]; then
+    # Unstage all collected files (security-dangerous + filtered)
+    if [[ $has_security_issues -eq 1 ]] || [[ $has_filter_issues -eq 1 ]]; then
         log_warn "Removing excluded files from staging..."
         for file in "${suspicious_files[@]}"; do
             if [[ -n "$file" ]]; then
@@ -201,7 +207,10 @@ validate_staged_files() {
             rm -rf "~" 2>/dev/null || true
         fi
 
-        log_info "Excluded files removed from staging. Continuing with clean files."
+        if [[ $has_security_issues -eq 1 ]]; then
+            log_warn "Suspicious files removed from staging area; aborting commit so caller can retry with clean files."
+            return 1
+        fi
     fi
 
     return 0
@@ -368,7 +377,10 @@ commit_changes() {
 
     # Validate staged files and remove suspicious ones
     # This catches literal ~ paths, .kapsis/ files, and accidental submodules
-    validate_staged_files "$worktree_path"
+    if ! validate_staged_files "$worktree_path"; then
+        log_error "Staged file validation failed; aborting commit to prevent unsafe files from reaching the repo"
+        return 1
+    fi
 
     # Log count after validation
     local post_validate_count
@@ -379,7 +391,10 @@ commit_changes() {
 
     # Sanitize staged files - strip dangerous invisible characters
     # This prevents Trojan Source attacks (CVE-2021-42574) and similar exploits
-    sanitize_staged_files "$worktree_path"
+    if ! sanitize_staged_files "$worktree_path"; then
+        log_error "Staged file sanitization failed; refusing to commit (Trojan Source / CVE-2021-42574 mitigation)"
+        return 1
+    fi
 
     # Log count after sanitization
     local post_sanitize_count
@@ -886,10 +901,10 @@ post_container_git() {
     log_debug "Changes detected, proceeding with commit"
 
     # Update status: committing phase
-    status_phase "committing" 92 "Staging and committing changes"
+    status_phase "committing" 92 "Staging and committing changes" || true
 
     # Record pre-commit SHA for verification (Fix #3)
-    status_record_pre_commit "$worktree_path"
+    status_record_pre_commit "$worktree_path" || true
 
     # Commit changes
     log_debug "Committing changes..."
@@ -914,9 +929,10 @@ post_container_git() {
     log_debug "Commit successful"
 
     # Verify commit was created and no uncommitted changes remain (Fix #3)
-    local verify_result
-    status_verify_commit "$worktree_path"
-    verify_result=$?
+    # Use || capture pattern: status_verify_commit returns 0 (verified) or 2 (uncommitted remain).
+    # A bare call + $? assignment races with set -e — the script exits before verify_result is set.
+    local verify_result=0
+    status_verify_commit "$worktree_path" || verify_result=$?
     if [[ $verify_result -eq 2 ]]; then
         log_warn "Commit created but uncommitted changes remain!"
         log_warn "Uncommitted files: $(git -C "$worktree_path" status --porcelain | wc -l | tr -d ' ')"
@@ -927,12 +943,11 @@ post_container_git() {
     # Push if enabled (--push flag)
     if [[ "$do_push" == "true" ]]; then
         # Update status: pushing phase
-        status_phase "pushing" 97 "Pushing to remote"
+        status_phase "pushing" 97 "Pushing to remote" || true
 
         log_debug "Pushing changes to remote..."
-        local push_result
-        push_changes "$worktree_path" "$remote" "$remote_branch"
-        push_result=$?
+        local push_result=0
+        push_changes "$worktree_path" "$remote" "$remote_branch" || push_result=$?
 
         if [[ $push_result -eq 0 ]]; then
             log_debug "Push successful and verified"

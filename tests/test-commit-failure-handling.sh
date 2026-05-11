@@ -295,6 +295,42 @@ HOOKEOF
     cleanup_test_repo
 }
 
+test_commit_changes_returns_1_on_security_violation() {
+    log_test "commit_changes() returns 1 when staged .kapsis/ or tilde files are detected"
+
+    setup_test_repo "security-violation"
+    cd "$TEST_REPO"
+
+    # Stage a legitimate file and a .kapsis/ internal file
+    echo "real agent output" > agent-result.txt
+    mkdir -p .kapsis
+    echo '{"phase":"running"}' > .kapsis/status.json
+    git add agent-result.txt .kapsis/status.json
+
+    local exit_code=0
+    commit_changes "$TEST_REPO" "feat: test security abort" "agent-test" "" || exit_code=$?
+
+    if [[ $exit_code -eq 1 ]]; then
+        log_info "  ✓ commit_changes returned 1 on security-class file detection"
+    else
+        log_fail "commit_changes returned $exit_code, expected 1 (security abort)"
+        cleanup_test_repo
+        return 1
+    fi
+
+    # The legitimate file should still be staged (only .kapsis/ was removed)
+    local still_staged
+    still_staged=$(git diff --cached --name-only | grep "^agent-result.txt" || echo "")
+    if [[ -z "$still_staged" ]]; then
+        log_fail "agent-result.txt should still be staged after security abort"
+        cleanup_test_repo
+        return 1
+    fi
+
+    log_info "  ✓ Legitimate files remain staged; .kapsis/ removed before abort"
+    cleanup_test_repo
+}
+
 test_push_failure_branch_still_works() {
     log_test "Push failure path still sets FINAL_EXIT_CODE=\$POST_EXIT_CODE"
 
@@ -335,6 +371,7 @@ main() {
 
     # Behavioral tests (use real git repo)
     run_test test_commit_changes_returns_1_on_failure
+    run_test test_commit_changes_returns_1_on_security_violation
 
     # Print summary
     print_summary
