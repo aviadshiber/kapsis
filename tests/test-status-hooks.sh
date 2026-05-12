@@ -868,11 +868,11 @@ test_render_gist_instructions_substitutes_path() {
     source "$LIB_DIR/inject-status-hooks.sh"
 
     local rendered
-    KAPSIS_GIST_FILE="/kapsis-status/gist.txt" rendered=$(render_gist_instructions)
+    rendered=$(KAPSIS_GIST_FILE="/kapsis-status/gist.txt" render_gist_instructions)
     assert_contains "$rendered" "/kapsis-status/gist.txt" "Overlay path should be substituted"
     assert_not_contains "$rendered" "@@KAPSIS_GIST_FILE@@" "Placeholder must be fully replaced"
 
-    KAPSIS_GIST_FILE="/workspace/.kapsis/gist.txt" rendered=$(render_gist_instructions)
+    rendered=$(KAPSIS_GIST_FILE="/workspace/.kapsis/gist.txt" render_gist_instructions)
     assert_contains "$rendered" "/workspace/.kapsis/gist.txt" "Worktree path should be substituted"
 
     cleanup_inject_test_env
