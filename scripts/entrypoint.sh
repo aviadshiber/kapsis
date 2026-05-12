@@ -1334,15 +1334,19 @@ inject_progress_instructions() {
 
     # Append instructions to task spec (copy to writable location first)
     local injected_spec="$kapsis_dir/task-spec-with-progress.md"
+    local write_err
+    write_err=$(mktemp)
     if ! {
         cat "$task_spec"
         echo ""
         echo ""
         cat "$instructions"
-    } > "$injected_spec" 2>/dev/null; then
-        log_warn "Could not write $injected_spec — skipping progress injection"
+    } > "$injected_spec" 2>"$write_err"; then
+        log_warn "Could not write $injected_spec — skipping progress injection: $(tr '\n' ' ' <"$write_err")"
+        rm -f "$write_err"
         return 0
     fi
+    rm -f "$write_err"
 
     # If gist tracking is enabled, render gist instructions with the live
     # $KAPSIS_GIST_FILE path substituted and append onto the same spec. This is
@@ -1350,15 +1354,19 @@ inject_progress_instructions() {
     # since CLAUDE.md / AGENTS.md appends are skipped there.
     if [[ "${KAPSIS_INJECT_GIST:-false}" == "true" ]]; then
         local inject_script="$KAPSIS_HOME/lib/inject-status-hooks.sh"
+        local rendered_gist append_err
         if [[ -x "$inject_script" ]]; then
             if rendered_gist=$("$inject_script" --render-gist-instructions 2>/dev/null); then
-                {
+                append_err=$(mktemp)
+                if ! {
                     echo ""
                     echo "---"
                     echo ""
                     echo "$rendered_gist"
-                } >> "$injected_spec" 2>/dev/null \
-                    || log_warn "Could not append gist instructions to $injected_spec"
+                } >> "$injected_spec" 2>"$append_err"; then
+                    log_warn "Could not append gist instructions to $injected_spec: $(tr '\n' ' ' <"$append_err")"
+                fi
+                rm -f "$append_err"
             fi
         fi
     fi

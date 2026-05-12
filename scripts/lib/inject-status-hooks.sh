@@ -12,6 +12,10 @@
 #
 # Usage: Called automatically by entrypoint.sh for supported agents
 #        Or call directly: ./inject-status-hooks.sh [agent-type]
+#        Or render the gist preamble standalone (used by entrypoint.sh to
+#        append it onto the injected task spec in overlay mode):
+#          ./inject-status-hooks.sh --render-gist-instructions
+#        Honours $KAPSIS_GIST_FILE for placeholder substitution.
 #
 # Environment:
 #   KAPSIS_STATUS_AGENT_ID - Required: Agent ID for status tracking
@@ -288,8 +292,23 @@ render_gist_instructions() {
         return 1
     fi
 
-    # Use awk so we don't need to escape sed delimiters; gist_file is a path.
-    awk -v gf="$gist_file" '{ gsub(/@@KAPSIS_GIST_FILE@@/, gf); print }' "$template"
+    # Use index()-based splitting rather than gsub() so neither the path nor
+    # the placeholder is parsed for special characters (gsub's replacement
+    # parser would consume `&` and `\`; awk's `-v` would consume `\s`, `\n`,
+    # ...). Pass the path via ENVIRON to skip -v's escape processing too.
+    # Today the only callers set paths like /kapsis-status/gist.txt — this
+    # keeps the helper safe for any future caller without an escape audit.
+    KAPSIS_GIST_FILE_RENDER="$gist_file" awk '
+        BEGIN { gf = ENVIRON["KAPSIS_GIST_FILE_RENDER"]; needle = "@@KAPSIS_GIST_FILE@@"; nlen = length(needle) }
+        {
+            out = ""; line = $0
+            while ((pos = index(line, needle)) > 0) {
+                out = out substr(line, 1, pos - 1) gf
+                line = substr(line, pos + nlen)
+            }
+            print out line
+        }
+    ' "$template"
 }
 
 inject_gist_instructions() {

@@ -893,6 +893,39 @@ test_status_read_gist_accepts_kapsis_status_volume() {
     status_read_gist_file "/kapsis-status/../etc/passwd" >/dev/null 2>&1 || true
     assert_equals "$before" "${_KAPSIS_GIST:-}" "Traversal must still be rejected"
 
+    # Positive acceptance: a real file under /kapsis-status/ must be read and
+    # update _KAPSIS_GIST. Skip gracefully if the test environment can't create
+    # /kapsis-status/ (non-root host, no sudo) — exercised in container CI.
+    if mkdir -p /kapsis-status 2>/dev/null && [[ -w /kapsis-status ]]; then
+        local gist_file="/kapsis-status/gist-test-$$.txt"
+        echo "exploring authentication flow" > "$gist_file"
+        # Reset rate-limit state and re-read
+        _KAPSIS_GIST_LAST_READ=""
+        _KAPSIS_GIST_LAST_MTIME=""
+        status_read_gist_file "$gist_file" >/dev/null 2>&1 || true
+        assert_contains "${_KAPSIS_GIST:-}" "authentication" \
+            "Real file under /kapsis-status/ must be accepted and read"
+        rm -f "$gist_file"
+    fi
+
+    cleanup_inject_test_env
+}
+
+test_render_gist_instructions_escapes_special_chars() {
+    # Issue #328 review feedback: awk gsub() treats `&` and `\` specially in
+    # the replacement string. Verify paths containing them substitute
+    # literally (defensive — production paths never contain these).
+    setup_inject_test_env
+    source "$LIB_DIR/inject-status-hooks.sh"
+
+    local rendered
+    rendered=$(KAPSIS_GIST_FILE='/tmp/has&amp/gist.txt' render_gist_instructions)
+    assert_contains "$rendered" "/tmp/has&amp/gist.txt" "& must be substituted literally"
+    assert_not_contains "$rendered" "@@KAPSIS_GIST_FILE@@" "Placeholder must be fully replaced"
+
+    rendered=$(KAPSIS_GIST_FILE='/tmp/back\slash/gist.txt' render_gist_instructions)
+    assert_contains "$rendered" '/tmp/back\slash/gist.txt' "Backslash must be substituted literally"
+
     cleanup_inject_test_env
 }
 
@@ -1588,6 +1621,7 @@ run_tests() {
     run_test test_inject_gist_readonly_workspace
     run_test test_inject_gist_overlay_mode_skipped
     run_test test_render_gist_instructions_substitutes_path
+    run_test test_render_gist_instructions_escapes_special_chars
     run_test test_status_read_gist_accepts_kapsis_status_volume
 
     log_info "=== Agent Type Inference ==="
