@@ -69,6 +69,7 @@ kapsis/
 │   │   ├── progress-monitor.sh # Progress tracking
 │   │   ├── inject-status-hooks.sh # Status hook injection
 │   │   ├── inject-lsp-config.sh   # LSP configuration injection
+│   │   ├── inject-plugin-hooks.sh # Plugin hook injection (Claude Code plugins)
 │   │   ├── build-config.sh     # Build configuration parser
 │   │   ├── atomic-copy.sh      # Atomic file copy operations
 │   │   ├── audit.sh            # Audit trail recording
@@ -144,6 +145,7 @@ kapsis/
 | Security vulnerability scan | `docs/SECURITY-VULNERABILITY-SCAN.md` |
 | Agent profiles design | `docs/designs/agent-profiles-architecture.md` |
 | Agent profiles | `configs/agents/*.yaml` |
+| Plugin hook injection | `docs/PLUGINS.md` |
 | Security policy | `SECURITY.md` |
 | AI agent guidelines | `AGENTS.md` |
 
@@ -240,6 +242,7 @@ Status is written as JSON to `~/.kapsis/status/`.
 | `scripts/lib/podman-health.sh` | Podman VM health probe & auto-heal (macOS pre-launch mount check) |
 | `scripts/lib/status-sync.sh` | Mirrors per-agent named volumes to `~/.kapsis/status/` (macOS) |
 | `scripts/lib/inject-lsp-config.sh` | LSP config injection — editor integration inside containers |
+| `scripts/lib/inject-plugin-hooks.sh` | Plugin hook injection — merges Claude Code plugin hooks into settings.local.json |
 | `scripts/lib/rewrite-plugin-paths.sh` | Plugin path rewriting — adjusts paths for container mounts |
 | `scripts/lib/ssh-config-compat.sh` | SSH config portability — normalizes SSH config across environments |
 | `scripts/backends/podman.sh` | Podman backend — local container execution |

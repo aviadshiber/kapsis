@@ -166,6 +166,20 @@ agent:
   # Default: 60
   gist_llm_interval: 60
 
+  # Inject Claude Code plugin hooks from the host into the container.
+  # When true, Kapsis merges hooks from each host-enabled (and whitelisted) plugin's
+  # hooks/hooks.json into ~/.claude/settings.local.json at container startup.
+  # Only applies to claude-cli / claude / claude-code agent types.
+  # Default: false (opt-in)
+  install_plugins: false
+
+  # Restrict which plugins may be injected (optional allowlist).
+  # Must be a JSON array of exact plugin ids (e.g. ["deeperdive-java-linter@m"]).
+  # Empty array [] or omitting the key allows all host-enabled plugins.
+  # Corrupted (non-array) value is fail-closed: no plugins are injected.
+  # Default: [] (allow all host-enabled plugins)
+  plugin_whitelist: []
+
 #===============================================================================
 # FILESYSTEM MOUNTS
 #===============================================================================

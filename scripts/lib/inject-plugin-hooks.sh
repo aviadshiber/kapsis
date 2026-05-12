@@ -275,7 +275,7 @@ inject_plugin_hooks() {
         # Emits {settings: <merged>, plugin_hook_count: N} so the caller gets
         # both values without a follow-up jq fork.
         local tmp_file plugin_hook_count
-        tmp_file=$(mktemp)
+        tmp_file=$(mktemp -p "$(dirname "$settings_local")")
         if jq \
             --slurpfile plugin_data "$hooks_file" \
             --arg plugin_root "$install_path" \
@@ -313,17 +313,16 @@ inject_plugin_hooks() {
             )
             | {settings: ., plugin_hook_count: $plugin_hook_count}
             ' \
-            "$settings_local" > "$tmp_file" 2>/dev/null; then
-            # Split combined result into settings (atomic mv) + count (log)
-            plugin_hook_count=$(jq -r '.plugin_hook_count' "$tmp_file")
-            jq -c '.settings' "$tmp_file" > "${tmp_file}.settings" \
-                && mv "${tmp_file}.settings" "$settings_local"
-            rm -f "$tmp_file"
+            "$settings_local" > "$tmp_file" 2>/dev/null \
+            && plugin_hook_count=$(jq -r '.plugin_hook_count' "$tmp_file" 2>/dev/null) \
+            && jq -c '.settings' "$tmp_file" > "${tmp_file}.settings" 2>/dev/null \
+            && mv "${tmp_file}.settings" "$settings_local"; then
+            rm -f "$tmp_file" "${tmp_file}.settings"
             chmod 600 "$settings_local"
             log_info "Loaded plugin ${plugin_id} (plugin_hooks=${plugin_hook_count}, root=${install_path})"
             merged_count=$((merged_count + 1))
         else
-            rm -f "$tmp_file"
+            rm -f "$tmp_file" "${tmp_file}.settings"
             log_warn "Plugin ${plugin_id}: jq merge failed — skipping (other plugins still processed)"
         fi
     done < <(printf '%s' "$candidates_json" | jq -r '.[] | "\(.id)\t\(.installPath)"')
