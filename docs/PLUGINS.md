@@ -1,6 +1,6 @@
 # Claude Code plugin support
 
-Claude Code's `--print` / headless mode does load plugins from settings as interactive mode would. The reason Kapsis needs its own plugin-hook injection step is that the container starts from a CoW-filtered subset of `~/.claude/` and runs without the interactive trust dialog plugins rely on at first install, so the loader sees an environment in which the host's plugin hooks are not auto-registered into the active hook chain. This page describes the opt-in mechanism Kapsis provides to bring **plugin hooks** back into the container.
+Claude Code's `--print` / headless mode does **not** load plugins from settings as interactive mode would. The reason Kapsis needs its own plugin-hook injection step is that the container starts from a CoW-filtered subset of `~/.claude/` and runs without the interactive trust dialog plugins rely on at first install, so the loader sees an environment in which the host's plugin hooks are not auto-registered into the active hook chain. This page describes the opt-in mechanism Kapsis provides to bring **plugin hooks** back into the container.
 
 ## What gets loaded
 
