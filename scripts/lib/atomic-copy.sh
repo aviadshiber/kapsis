@@ -94,6 +94,53 @@ _atomic_count_files() {
 }
 
 #-------------------------------------------------------------------------------
+# _atomic_scratch_base
+#
+# Returns a writable scratch base directory for cross-filesystem fallback,
+# preferring the per-user XDG runtime tmpfs (0700 by default on Linux) over
+# the world-readable /tmp. Honours KAPSIS_SCRATCH_DIR override.
+#
+# Issue #328: defaulting to /tmp leaked credential filenames/sizes in the
+# directory listing on multi-user hosts. Per-user runtime dir keeps both
+# names and contents private.
+#-------------------------------------------------------------------------------
+_atomic_scratch_base() {
+    if [[ -n "${KAPSIS_SCRATCH_DIR:-}" ]]; then
+        echo "$KAPSIS_SCRATCH_DIR"
+        return 0
+    fi
+    if [[ -n "${XDG_RUNTIME_DIR:-}" ]] && [[ -d "$XDG_RUNTIME_DIR" ]] && [[ -w "$XDG_RUNTIME_DIR" ]]; then
+        echo "$XDG_RUNTIME_DIR"
+        return 0
+    fi
+    echo "${TMPDIR:-/tmp}"
+}
+
+#-------------------------------------------------------------------------------
+# _atomic_run_mktemp <flag-args...> -- <template>
+#
+# Runs mktemp with stdout and stderr captured to separate sinks (Issue #328:
+# previous `2>&1`-into-a-single-var conflated stderr warnings with the path
+# on success). Sets _ATOMIC_MKTEMP_PATH on success, _ATOMIC_MKTEMP_ERR on
+# failure. Returns mktemp's exit code.
+#
+# Usage:
+#   _atomic_run_mktemp -d "/parent/.atomic-copy-dir-XXXXXX"
+#-------------------------------------------------------------------------------
+_atomic_run_mktemp() {
+    local err_file rc
+    err_file="${TMPDIR:-/tmp}/.kapsis-mktemp-err.$$.${RANDOM}"
+    _ATOMIC_MKTEMP_PATH=""
+    _ATOMIC_MKTEMP_ERR=""
+    _ATOMIC_MKTEMP_PATH=$(mktemp "$@" 2>"$err_file") && rc=0 || rc=$?
+    if [[ -f "$err_file" ]]; then
+        _ATOMIC_MKTEMP_ERR=$(cat "$err_file" 2>/dev/null || true)
+        rm -f "$err_file" 2>/dev/null || true
+    fi
+    return "$rc"
+}
+
+#-------------------------------------------------------------------------------
 # atomic_copy_file <src> <dst>
 #
 # Atomically copies a single file with validation.
@@ -117,18 +164,42 @@ atomic_copy_file() {
     # Ensure destination directory exists
     mkdir -p "$(dirname "$dst")" 2>/dev/null || true
 
-    # Create temp file in same directory as dst (required for atomic mv)
-    local tmp_file
-    tmp_file=$(mktemp "$(dirname "$dst")/.atomic-copy-XXXXXX") || {
-        log_warn "atomic_copy_file: mktemp failed for $(basename "$dst")"
-        # Fallback to direct copy
-        cp -p "$src" "$dst" 2>/dev/null || true
+    # Create temp file in same directory as dst (required for atomic mv).
+    # Issue #328: capture mktemp stderr without conflating it with stdout
+    # (the path on success), so warnings emitted on success don't poison
+    # the captured path.
+    local tmp_file=""
+    local mktemp_err=""
+    if _atomic_run_mktemp "$(dirname "$dst")/.atomic-copy-XXXXXX"; then
+        tmp_file="$_ATOMIC_MKTEMP_PATH"
+    else
+        mktemp_err="$_ATOMIC_MKTEMP_ERR"
+    fi
+
+    if [[ -z "$tmp_file" ]] || [[ ! -e "$tmp_file" ]]; then
+        log_warn "atomic_copy_file: mktemp failed for $(basename "$dst"): ${mktemp_err:-no stderr}"
+
+        # Issue #328: degraded path when dirname(dst) can't host a temp file.
+        # We do a single direct cp into dst (atomicity is already lost when
+        # the parent rejected mktemp; staging through scratch buys nothing
+        # for single files and adds two file copies).
+        local fallback_err
+        fallback_err=$(cp -p "$src" "$dst" 2>&1) || {
+            log_warn "atomic_copy_file: fallback cp failed for $(basename "$dst"): ${fallback_err:-no stderr}"
+            return 1
+        }
         chmod u+w "$dst" 2>/dev/null || true
+        if _atomic_validate_file "$src" "$dst"; then
+            return 0
+        fi
+        log_warn "atomic_copy_file: validation failed for $(basename "$dst") (fallback path) — removing corrupt copy"
+        rm -f "$dst" 2>/dev/null || true
         return 1
-    }
+    fi
 
     # Copy to temp file
-    if cp -p "$src" "$tmp_file" 2>/dev/null; then
+    local cp_err
+    if cp_err=$(cp -p "$src" "$tmp_file" 2>&1); then
         # Atomic rename to destination
         mv "$tmp_file" "$dst"
         chmod u+w "$dst" 2>/dev/null || true
@@ -144,7 +215,7 @@ atomic_copy_file() {
         return 1
     else
         rm -f "$tmp_file" 2>/dev/null || true
-        log_warn "atomic_copy_file: cp failed for $(basename "$dst")"
+        log_warn "atomic_copy_file: cp failed for $(basename "$dst"): ${cp_err:-no stderr}"
         return 1
     fi
 }
@@ -170,19 +241,115 @@ atomic_copy_dir() {
         return 1
     fi
 
-    # Create temp directory alongside destination (same filesystem for atomic mv)
-    local tmp_dir
-    tmp_dir=$(mktemp -d "$(dirname "$dst")/.atomic-copy-dir-XXXXXX") || {
-        log_warn "atomic_copy_dir: mktemp failed for $(basename "$dst")"
-        # Fallback to direct copy
-        mkdir -p "$dst" 2>/dev/null || true
-        cp -rp "$src/." "$dst/" 2>/dev/null || true
-        find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
+    # Create temp directory alongside destination (same filesystem for atomic mv).
+    # Issue #328: capture mktemp stderr without conflating it with stdout
+    # (the path on success) so warnings emitted on success don't poison
+    # the captured path.
+    local tmp_dir=""
+    local mktemp_err=""
+    if _atomic_run_mktemp -d "$(dirname "$dst")/.atomic-copy-dir-XXXXXX"; then
+        tmp_dir="$_ATOMIC_MKTEMP_PATH"
+    else
+        mktemp_err="$_ATOMIC_MKTEMP_ERR"
+    fi
+
+    if [[ -z "$tmp_dir" ]] || [[ ! -d "$tmp_dir" ]]; then
+        log_warn "atomic_copy_dir: mktemp failed for $(basename "$dst"): ${mktemp_err:-no stderr}"
+
+        # Issue #328: cross-filesystem fallback. dirname(dst) may be RO; try
+        # a writable scratch outside the destination tree and stage there
+        # before a best-effort, non-atomic copy into dst. Atomicity is lost
+        # but the alternative is a guaranteed failure.
+        local scratch_base
+        scratch_base=$(_atomic_scratch_base)
+        mkdir -p "$scratch_base" 2>/dev/null || true
+        chmod 0700 "$scratch_base" 2>/dev/null || true  # tighten if newly created
+        local scratch_err=""
+        if _atomic_run_mktemp -d "${scratch_base}/.kapsis-atomic-copy-XXXXXX"; then
+            tmp_dir="$_ATOMIC_MKTEMP_PATH"
+        else
+            scratch_err="$_ATOMIC_MKTEMP_ERR"
+            tmp_dir=""
+        fi
+
+        if [[ -z "$tmp_dir" ]] || [[ ! -d "$tmp_dir" ]]; then
+            log_warn "atomic_copy_dir: scratch mktemp in ${scratch_base} also failed: ${scratch_err:-no stderr}"
+            # Last resort: copy directly to dst with surfaced stderr.
+            # Issue #328 (review finding #1): return reflects whether the
+            # direct cp actually succeeded, so callers don't log a false
+            # "validation failed" for data that's intact on disk.
+            local direct_err direct_rc
+            mkdir -p "$dst" 2>/dev/null || true
+            direct_err=$(cp -rp "$src/." "$dst/" 2>&1) && direct_rc=0 || direct_rc=$?
+            find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
+            if [[ $direct_rc -ne 0 ]]; then
+                log_warn "atomic_copy_dir: direct cp failed for $(basename "$dst"): ${direct_err:-no stderr}"
+                return 1
+            fi
+            # Validate file count matches; only then can we report success.
+            local _src_n _dst_n
+            _src_n=$(_atomic_count_files "$src")
+            _dst_n=$(_atomic_count_files "$dst")
+            if [[ "$_src_n" -eq "$_dst_n" ]]; then
+                log_debug "atomic_copy_dir: last-resort direct cp succeeded for $(basename "$dst")"
+                return 0
+            fi
+            log_warn "atomic_copy_dir: direct cp left mismatched file count for $(basename "$dst") (src=${_src_n} dst=${_dst_n})"
+            return 1
+        fi
+
+        log_debug "atomic_copy_dir: using cross-fs scratch ${tmp_dir} for $(basename "$dst")"
+        local cp_err
+        if cp_err=$(cp -rp "$src/." "$tmp_dir/" 2>&1); then
+            find "$tmp_dir" -type d -exec chmod u+w {} + 2>/dev/null || true
+
+            # Issue #328 (review finding #2): the stage cp into dst must not
+            # validate against a pre-populated dst — stale files would either
+            # mask a real success (count mismatch → false failure) or hide
+            # leftover state (matching count → false success). Clear dst
+            # contents first; preserve dst's own permissions/ownership.
+            if [[ -d "$dst" ]]; then
+                find "$dst" -mindepth 1 -delete 2>/dev/null || true
+            else
+                mkdir -p "$dst" 2>/dev/null || true
+                # Preserve source's dir mode for new dst (e.g. 0700 for .ssh)
+                if command -v get_file_mode &>/dev/null; then
+                    local _src_mode
+                    _src_mode=$(get_file_mode "$src" 2>/dev/null || echo "")
+                    if [[ -n "$_src_mode" ]]; then
+                        chmod "$_src_mode" "$dst" 2>/dev/null || true
+                    fi
+                fi
+            fi
+
+            local stage_err
+            stage_err=$(cp -rp "$tmp_dir/." "$dst/" 2>&1) || {
+                log_warn "atomic_copy_dir: stage cp into $dst failed: ${stage_err:-no stderr}"
+                rm -rf "$tmp_dir" 2>/dev/null || true
+                return 1
+            }
+            find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
+            rm -rf "$tmp_dir" 2>/dev/null || true
+
+            # Compare tmp_dir (what we staged) vs dst — would be src vs dst
+            # but tmp_dir was already validated against src above via cp rc.
+            local src_count dst_count
+            src_count=$(_atomic_count_files "$src")
+            dst_count=$(_atomic_count_files "$dst")
+            if [[ "$src_count" -eq "$dst_count" ]]; then
+                return 0
+            fi
+            log_warn "atomic_copy_dir: scratch-path file count mismatch (src=${src_count} dst=${dst_count}) for $(basename "$dst")"
+            return 1
+        fi
+        log_warn "atomic_copy_dir: scratch-stage cp failed for $(basename "$dst"): ${cp_err:-no stderr}"
+        rm -rf "$tmp_dir" 2>/dev/null || true
         return 1
-    }
+    fi
 
     # Copy contents to temp directory (preserve permissions)
-    if cp -rp "$src/." "$tmp_dir/" 2>/dev/null; then
+    local cp_err
+    if cp_err=$(cp -rp "$src/." "$tmp_dir/" 2>&1); then
         find "$tmp_dir" -type d -exec chmod u+w {} + 2>/dev/null || true
 
         # Validate: compare file counts
@@ -201,13 +368,14 @@ atomic_copy_dir() {
         rm -rf "$tmp_dir" 2>/dev/null || true
     else
         rm -rf "$tmp_dir" 2>/dev/null || true
-        log_warn "atomic_copy_dir: cp failed for $(basename "$dst")"
+        log_warn "atomic_copy_dir: cp failed for $(basename "$dst"): ${cp_err:-no stderr}"
     fi
 
     # Fallback: copy directly (better to have potentially incomplete files than none)
     log_warn "atomic_copy_dir: using fallback copy for $(basename "$dst")"
+    local fallback_err
     mkdir -p "$dst" 2>/dev/null || true
-    cp -rp "$src/." "$dst/" 2>/dev/null || true
+    fallback_err=$(cp -rp "$src/." "$dst/" 2>&1) || log_warn "atomic_copy_dir: fallback cp failed for $(basename "$dst"): ${fallback_err:-no stderr}"
     find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
     return 1
 }
