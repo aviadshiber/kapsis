@@ -557,6 +557,183 @@ test_atomic_copy_file_rollback_removes_dst_on_validation_failure() {
 }
 
 #===============================================================================
+# RO-PARENT FALLBACK TESTS (Issue #328)
+#
+# When dirname($dst) is read-only, the original mktemp-in-parent strategy
+# fails twice (mktemp fail → fallback cp to same RO parent also fails).
+# These tests cover the scratch-dir fallback that lets atomic_copy_dir
+# succeed when $dst itself is writable but its parent isn't.
+#
+# We simulate RO parent by overriding `mktemp` to fail for the specific
+# pattern the library uses (a path prefix containing the destination's
+# parent). This works regardless of test-runner uid (root bypasses
+# chmod 555, so chmod-based simulation isn't portable across CI envs).
+#===============================================================================
+
+# Reset the library state after a test that overrode internals
+_reset_atomic_copy_lib() {
+    unset -f mktemp 2>/dev/null || true
+    unset _KAPSIS_ATOMIC_COPY_LOADED
+    # shellcheck disable=SC1091
+    source "$KAPSIS_ROOT/scripts/lib/atomic-copy.sh"
+}
+
+test_atomic_copy_dir_ro_parent_writable_dst() {
+    log_test "atomic_copy_dir: succeeds via scratch fallback when mktemp-in-parent fails but dst is writable"
+
+    local src="$TEST_TEMP_DIR/src/ro_parent_src"
+    local parent="$TEST_TEMP_DIR/dst/ro_parent_case"
+    local dst="$parent/payload"
+
+    mkdir -p "$src" "$dst"
+    echo "alpha" > "$src/a.txt"
+    echo "beta" > "$src/b.txt"
+
+    # Simulate "dirname(dst) is read-only" by making mktemp fail for any
+    # path under $parent, while still letting it succeed for the scratch dir.
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    mktemp() {
+        local args=("$@")
+        for a in "${args[@]}"; do
+            if [[ "$a" == "$parent/"* ]]; then
+                echo "mktemp: failed to create directory via template '$a': Read-only file system" >&2
+                return 1
+            fi
+        done
+        command mktemp "$@"
+    }
+
+    KAPSIS_SCRATCH_DIR="$TEST_TEMP_DIR/scratch" atomic_copy_dir "$src" "$dst" 2>/dev/null
+    local rc=$?
+
+    _reset_atomic_copy_lib
+
+    assert_equals "0" "$rc" "Scratch-dir fallback should succeed when dst itself is writable"
+    assert_file_exists "$dst/a.txt" "a.txt should reach dst via scratch path"
+    assert_file_exists "$dst/b.txt" "b.txt should reach dst via scratch path"
+}
+
+test_atomic_copy_dir_ro_parent_ro_dst() {
+    log_test "atomic_copy_dir: fails cleanly with surfaced error when both parent and dst are RO"
+
+    local src="$TEST_TEMP_DIR/src/double_ro_src"
+    local parent="$TEST_TEMP_DIR/dst/double_ro_case"
+    local dst="$parent/payload"
+
+    mkdir -p "$src" "$dst"
+    echo "stuff" > "$src/x.txt"
+
+    # Simulate both parent AND dst RO: mktemp fails everywhere except
+    # scratch; cp into dst will then fail.
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    mktemp() {
+        local args=("$@")
+        for a in "${args[@]}"; do
+            if [[ "$a" == "$parent/"* ]] || [[ "$a" == "$dst/"* ]]; then
+                echo "mktemp: failed to create '$a': Read-only file system" >&2
+                return 1
+            fi
+        done
+        command mktemp "$@"
+    }
+    # And block writes into dst by overriding cp to fail for that path
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    cp() {
+        local last="${*: -1}"
+        if [[ "$last" == "$dst/"* ]] || [[ "$last" == "$dst/" ]]; then
+            echo "cp: cannot create '$last': Read-only file system" >&2
+            return 1
+        fi
+        command cp "$@"
+    }
+
+    local stderr_capture
+    stderr_capture=$(KAPSIS_SCRATCH_DIR="$TEST_TEMP_DIR/scratch" atomic_copy_dir "$src" "$dst" 2>&1) || true
+
+    _reset_atomic_copy_lib
+    unset -f cp 2>/dev/null || true
+
+    assert_contains "$stderr_capture" "mktemp failed" "stderr should surface the mktemp failure"
+}
+
+test_atomic_copy_dir_surfaces_mktemp_stderr() {
+    log_test "atomic_copy_dir: mktemp stderr is surfaced in warning, not swallowed (Issue #328)"
+
+    local src="$TEST_TEMP_DIR/src/stderr_src"
+    local parent="$TEST_TEMP_DIR/dst/stderr_case"
+    local dst="$parent/payload"
+
+    mkdir -p "$src" "$parent"
+    echo "diag" > "$src/x.txt"
+
+    local marker="UNIQUE_MKTEMP_DIAG_98765"
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    mktemp() {
+        local args=("$@")
+        for a in "${args[@]}"; do
+            if [[ "$a" == "$parent/"* ]]; then
+                echo "mktemp: $marker" >&2
+                return 1
+            fi
+        done
+        command mktemp "$@"
+    }
+
+    local stderr_capture
+    stderr_capture=$(KAPSIS_SCRATCH_DIR="$TEST_TEMP_DIR/scratch" atomic_copy_dir "$src" "$dst" 2>&1) || true
+
+    _reset_atomic_copy_lib
+
+    assert_contains "$stderr_capture" "$marker" "Warning should include the underlying mktemp stderr text"
+}
+
+test_atomic_copy_file_surfaces_cp_stderr() {
+    log_test "atomic_copy_file: cp/mktemp stderr is surfaced when copy fails (Issue #328)"
+
+    local src="$TEST_TEMP_DIR/src/cp_err_src.txt"
+    local dst_parent="$TEST_TEMP_DIR/dst/cp_err_parent"
+    local dst="$dst_parent/file.txt"
+
+    mkdir -p "$(dirname "$src")" "$dst_parent"
+    echo "diag" > "$src"
+
+    local marker="UNIQUE_FILE_CP_DIAG_54321"
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    mktemp() {
+        local args=("$@")
+        for a in "${args[@]}"; do
+            if [[ "$a" == "$dst_parent/"* ]]; then
+                echo "mktemp: $marker" >&2
+                return 1
+            fi
+        done
+        command mktemp "$@"
+    }
+    # Also fail the fallback cp so we exercise the surfaced-error path
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    cp() {
+        local last="${*: -1}"
+        if [[ "$last" == "$dst" ]]; then
+            echo "cp: cannot create '$dst': Read-only file system" >&2
+            return 1
+        fi
+        command cp "$@"
+    }
+
+    local stderr_capture
+    stderr_capture=$(atomic_copy_file "$src" "$dst" 2>&1) || true
+
+    _reset_atomic_copy_lib
+    unset -f cp 2>/dev/null || true
+
+    if [[ "$stderr_capture" == *"$marker"* ]] || [[ "$stderr_capture" == *"fallback cp failed"* ]]; then
+        log_pass "Warning surfaces underlying failure"
+    else
+        log_fail "Warning should surface mktemp/cp failure; got: $stderr_capture"
+    fi
+}
+
+#===============================================================================
 # TEST RUNNER
 #===============================================================================
 
@@ -602,6 +779,12 @@ main() {
     run_test test_atomic_copy_file_rollback_removes_corrupt_dst
     run_test test_atomic_copy_file_rollback_validation_detects_mismatch
     run_test test_atomic_copy_file_rollback_removes_dst_on_validation_failure
+
+    # RO-parent fallback tests (issue #328)
+    run_test test_atomic_copy_dir_ro_parent_writable_dst
+    run_test test_atomic_copy_dir_ro_parent_ro_dst
+    run_test test_atomic_copy_dir_surfaces_mktemp_stderr
+    run_test test_atomic_copy_file_surfaces_cp_stderr
 
     # Summary
     print_summary
