@@ -349,6 +349,21 @@ readonly KAPSIS_STATUS_VOLUME_SUFFIX="-status"
 readonly KAPSIS_DEFAULT_STATUS_SYNC_INTERVAL=5
 
 #===============================================================================
+# CONVERSATION PERSISTENCE (Issue #265)
+#
+# Agent conversation JSONL is mounted from a per-agent host directory into the
+# container so it survives container death (OOM, crash, rm -f). Same pattern
+# as /kapsis-status — a bind-mount that outlives the container overlay.
+# Per-agent isolation: ~/.kapsis/conversations/<agent-id>/
+#===============================================================================
+
+# Container mount point for Claude Code conversation JSONL files
+readonly CONTAINER_CONVERSATIONS_PATH="/home/developer/.claude/conversations"
+
+# Default TTL (days) for conversation directory cleanup in kapsis-cleanup
+readonly KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS=7
+
+#===============================================================================
 # SLEEP PREVENTION (Issue #276)
 #
 # On macOS, preventing the system from sleeping while an agent is running
