@@ -611,10 +611,22 @@ setup_staged_config_overlays() {
     # or the atomic_copy fallback to succeed. If it isn't, every staged config
     # fails identically with a cryptic "cp failed" warning. Detect it once
     # up front and tell the operator what to look at.
+    #
+    # Review finding #3: downstream auth/credential paths need to know the
+    # configs were skipped so they can fail with a clear "auth will not work"
+    # message rather than a cryptic "key not found". Export a state flag and
+    # write a structured sentinel to /kapsis-status so kapsis-status.sh can
+    # surface it. Still return 0 — the entrypoint continues so the agent can
+    # report the auth-skipped state cleanly, but no caller mistakes the
+    # absence of staged configs for a successful install.
     if [[ ! -w "$HOME" ]]; then
-        log_warn "HOME ($HOME) is not writable — staged configs cannot be installed"
+        log_warn "KAPSIS-AUTH-WARNING: HOME ($HOME) is not writable — staged configs cannot be installed"
         log_warn "Likely causes: read-only root filesystem (security profile=paranoid), missing chown on container HOME, or a broken bind-mount over HOME"
-        log_warn "Continuing without staged configs; agents that need credentials may fail to authenticate"
+        log_warn "Downstream agents that need credentials (.ssh, .claude, .config/...) WILL fail to authenticate"
+        export KAPSIS_STAGED_CONFIGS_SKIPPED=1
+        if [[ -d /kapsis-status ]] && [[ -w /kapsis-status ]]; then
+            printf 'HOME_NOT_WRITABLE\n' > /kapsis-status/staged-configs-skipped 2>/dev/null || true
+        fi
         return 0
     fi
 
