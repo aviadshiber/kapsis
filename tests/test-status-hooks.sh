@@ -829,6 +829,73 @@ test_inject_gist_explicit_false() {
     cleanup_inject_test_env
 }
 
+test_inject_gist_overlay_mode_skipped() {
+    # Issue #328: in overlay mode the workspace is read-only by design, so
+    # inject_gist_instructions must skip all workspace writes (CLAUDE.md /
+    # AGENTS.md / .kapsis) cleanly — the agent gets gist guidance via the
+    # task-spec injection path instead.
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-gist-overlay"
+    export KAPSIS_INJECT_GIST="true"
+    export KAPSIS_SANDBOX_MODE="overlay"
+
+    local workspace
+    workspace=$(mktemp -d)
+    export KAPSIS_WORKSPACE="$workspace"
+    echo "# Project" > "$workspace/CLAUDE.md"
+    echo "# Agents" > "$workspace/AGENTS.md"
+
+    source "$LIB_DIR/inject-status-hooks.sh"
+    local exit_code
+    inject_gist_instructions >/dev/null 2>&1
+    exit_code=$?
+
+    assert_equals "0" "$exit_code" "Should exit 0 in overlay mode (graceful skip)"
+    assert_equals "# Project" "$(cat "$workspace/CLAUDE.md")" "CLAUDE.md must be unchanged in overlay mode"
+    assert_equals "# Agents" "$(cat "$workspace/AGENTS.md")" "AGENTS.md must be unchanged in overlay mode"
+    assert_true "[[ ! -d '$workspace/.kapsis' ]]" ".kapsis directory must not be created in overlay mode"
+
+    unset KAPSIS_SANDBOX_MODE
+    rm -rf "$workspace"
+    cleanup_inject_test_env
+}
+
+test_render_gist_instructions_substitutes_path() {
+    # Issue #328: render_gist_instructions replaces @@KAPSIS_GIST_FILE@@ with
+    # the live $KAPSIS_GIST_FILE so overlay-mode agents see /kapsis-status/...
+    # while worktree-mode agents see /workspace/.kapsis/...
+    setup_inject_test_env
+    source "$LIB_DIR/inject-status-hooks.sh"
+
+    local rendered
+    KAPSIS_GIST_FILE="/kapsis-status/gist.txt" rendered=$(render_gist_instructions)
+    assert_contains "$rendered" "/kapsis-status/gist.txt" "Overlay path should be substituted"
+    assert_not_contains "$rendered" "@@KAPSIS_GIST_FILE@@" "Placeholder must be fully replaced"
+
+    KAPSIS_GIST_FILE="/workspace/.kapsis/gist.txt" rendered=$(render_gist_instructions)
+    assert_contains "$rendered" "/workspace/.kapsis/gist.txt" "Worktree path should be substituted"
+
+    cleanup_inject_test_env
+}
+
+test_status_read_gist_accepts_kapsis_status_volume() {
+    # Issue #328: status_read_gist_file() must accept paths under
+    # /kapsis-status/ (overlay mode) in addition to /workspace/.kapsis/
+    # (worktree mode), while still rejecting traversal attempts.
+    setup_inject_test_env
+    # shellcheck source=/dev/null
+    source "$LIB_DIR/status.sh"
+
+    local before="${_KAPSIS_GIST:-}"
+    status_read_gist_file "/etc/passwd" >/dev/null 2>&1 || true
+    assert_equals "$before" "${_KAPSIS_GIST:-}" "Non-allowed path must not update gist state"
+
+    status_read_gist_file "/kapsis-status/../etc/passwd" >/dev/null 2>&1 || true
+    assert_equals "$before" "${_KAPSIS_GIST:-}" "Traversal must still be rejected"
+
+    cleanup_inject_test_env
+}
+
 test_inject_gist_readonly_workspace() {
     setup_inject_test_env
     export KAPSIS_STATUS_AGENT_ID="test-gist-7"
@@ -1519,6 +1586,9 @@ run_tests() {
     run_test test_inject_gist_no_markdown_files
     run_test test_inject_gist_explicit_false
     run_test test_inject_gist_readonly_workspace
+    run_test test_inject_gist_overlay_mode_skipped
+    run_test test_render_gist_instructions_substitutes_path
+    run_test test_status_read_gist_accepts_kapsis_status_volume
 
     log_info "=== Agent Type Inference ==="
     run_test test_agent_type_inference_from_image_name

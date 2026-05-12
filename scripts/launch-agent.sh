@@ -1799,6 +1799,11 @@ generate_env_vars() {
     ENV_VARS+=("-e" "KAPSIS_STATUS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_STATUS_BRANCH=${BRANCH:-}")
     ENV_VARS+=("-e" "KAPSIS_INJECT_GIST=${INJECT_GIST:-false}")
+    # Overlay mode: /workspace is read-only, so re-home the runtime gist file
+    # onto the always-writable /kapsis-status volume (issue #328).
+    if [[ "${SANDBOX_MODE}" == "overlay" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_GIST_FILE=/kapsis-status/gist.txt")
+    fi
     ENV_VARS+=("-e" "KAPSIS_GIST_LLM=${GIST_LLM:-false}")
     ENV_VARS+=("-e" "KAPSIS_GIST_LLM_INTERVAL=${GIST_LLM_INTERVAL:-60}")
     ENV_VARS+=("-e" "KAPSIS_INSTALL_PLUGINS=${INSTALL_PLUGINS:-false}")

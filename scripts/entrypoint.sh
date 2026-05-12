@@ -1190,6 +1190,14 @@ gemini-cli|Gemini CLI"
                 fi
                 ;;
         esac
+
+        # Overlay mode: workspace-side gist surfacing (CLAUDE.md / AGENTS.md
+        # appends) is skipped because /workspace is read-only. Surface the
+        # gist & progress instructions via the injected task spec instead
+        # so the agent still gets the guidance in-band (issue #328).
+        if [[ "${KAPSIS_SANDBOX_MODE:-}" == "overlay" ]]; then
+            inject_progress_instructions
+        fi
     elif [[ " $python_agents " == *" $agent_type "* ]]; then
         # Python agent - status.py library available
         log_info "Python agent - status.py library available for direct integration"
@@ -1286,7 +1294,17 @@ start_progress_monitor() {
     log_debug "Progress monitor started (PID: $PROGRESS_MONITOR_PID)"
 }
 
-# Inject progress reporting instructions into task spec
+# Inject progress reporting instructions into task spec.
+#
+# Worktree mode: writes to /workspace/.kapsis/task-spec-with-progress.md
+#                (workspace is writable).
+# Overlay  mode: writes to /kapsis-status/task-spec-with-progress.md
+#                (workspace is read-only; /kapsis-status is the writable
+#                status volume — see issue #328).
+#
+# When KAPSIS_INJECT_GIST=true, gist instructions are appended to the same
+# injected spec so the agent learns both how to report progress and how to
+# update its activity gist via $KAPSIS_GIST_FILE.
 inject_progress_instructions() {
     local task_spec="/task-spec.md"
     local instructions="$KAPSIS_HOME/lib/progress-instructions.md"
@@ -1301,28 +1319,49 @@ inject_progress_instructions() {
         return 0
     fi
 
-    # Skip progress injection in overlay mode — workspace is read-only (kapsis#204)
+    local kapsis_dir
     if [[ "${KAPSIS_SANDBOX_MODE:-}" == "overlay" ]]; then
-        log_info "Skipping progress injection (overlay mode — read-only workspace)"
-        return 0
-    fi
-
-    log_info "Injecting progress reporting instructions..."
-
-    local kapsis_dir="/workspace/.kapsis"
-    if ! mkdir -p "$kapsis_dir" 2>/dev/null; then
-        log_warn "Could not create /workspace/.kapsis — skipping progress injection"
-        return 0
+        kapsis_dir="/kapsis-status"
+        log_info "Injecting progress reporting instructions (overlay mode → $kapsis_dir)..."
+    else
+        kapsis_dir="/workspace/.kapsis"
+        log_info "Injecting progress reporting instructions..."
+        if ! mkdir -p "$kapsis_dir" 2>/dev/null; then
+            log_warn "Could not create $kapsis_dir — skipping progress injection"
+            return 0
+        fi
     fi
 
     # Append instructions to task spec (copy to writable location first)
     local injected_spec="$kapsis_dir/task-spec-with-progress.md"
-    {
+    if ! {
         cat "$task_spec"
         echo ""
         echo ""
         cat "$instructions"
-    } > "$injected_spec"
+    } > "$injected_spec" 2>/dev/null; then
+        log_warn "Could not write $injected_spec — skipping progress injection"
+        return 0
+    fi
+
+    # If gist tracking is enabled, render gist instructions with the live
+    # $KAPSIS_GIST_FILE path substituted and append onto the same spec. This is
+    # the in-band channel that tells the agent the gist path in overlay mode,
+    # since CLAUDE.md / AGENTS.md appends are skipped there.
+    if [[ "${KAPSIS_INJECT_GIST:-false}" == "true" ]]; then
+        local inject_script="$KAPSIS_HOME/lib/inject-status-hooks.sh"
+        if [[ -x "$inject_script" ]]; then
+            if rendered_gist=$("$inject_script" --render-gist-instructions 2>/dev/null); then
+                {
+                    echo ""
+                    echo "---"
+                    echo ""
+                    echo "$rendered_gist"
+                } >> "$injected_spec" 2>/dev/null \
+                    || log_warn "Could not append gist instructions to $injected_spec"
+            fi
+        fi
+    fi
 
     # Export path to injected spec
     export KAPSIS_INJECTED_TASK_SPEC="$injected_spec"
