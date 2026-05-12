@@ -766,6 +766,22 @@ parse_config() {
         # LLM gist upgrade layer (default: false — adds per-tool Haiku API call)
         GIST_LLM=$(yq -r '.agent.gist_llm // "false"' "$CONFIG_FILE")
         GIST_LLM_INTERVAL=$(yq -r '.agent.gist_llm_interval // "60"' "$CONFIG_FILE")
+        # Plugin hook injection (default: true for claude-cli, false otherwise).
+        # Kapsis bypasses Claude Code's native plugin loader; this flag tells the
+        # in-container inject-plugin-hooks.sh to merge plugin hooks into
+        # ~/.claude/settings.local.json so they actually fire.
+        case "$AGENT_CONFIG_TYPE" in
+            claude|claude-cli|claude-code)
+                INSTALL_PLUGINS=$(yq -r '.agent.install_plugins // "true"' "$CONFIG_FILE")
+                ;;
+            *)
+                INSTALL_PLUGINS=$(yq -r '.agent.install_plugins // "false"' "$CONFIG_FILE")
+                ;;
+        esac
+        # Optional whitelist: JSON-encoded array of plugin ids (e.g.
+        # ["foo@m","bar@m"]). Empty/unset = allow all host-enabled plugins.
+        # yq emits JSON for sequences via `-o=json` + `-I=0` (compact form).
+        PLUGIN_WHITELIST_JSON=$(yq -o=json -I=0 '.agent.plugin_whitelist // []' "$CONFIG_FILE" 2>/dev/null || echo '[]')
         RESOURCE_MEMORY=$(yq -r '.resources.memory // "8g"' "$CONFIG_FILE")
         RESOURCE_CPUS=$(yq -r '.resources.cpus // "4"' "$CONFIG_FILE")
         SANDBOX_UPPER_BASE=$(yq -r '.sandbox.upper_dir_base // "~/.ai-sandboxes"' "$CONFIG_FILE")
@@ -1793,6 +1809,8 @@ generate_env_vars() {
     ENV_VARS+=("-e" "KAPSIS_INJECT_GIST=${INJECT_GIST:-false}")
     ENV_VARS+=("-e" "KAPSIS_GIST_LLM=${GIST_LLM:-false}")
     ENV_VARS+=("-e" "KAPSIS_GIST_LLM_INTERVAL=${GIST_LLM_INTERVAL:-60}")
+    ENV_VARS+=("-e" "KAPSIS_INSTALL_PLUGINS=${INSTALL_PLUGINS:-false}")
+    ENV_VARS+=("-e" "KAPSIS_PLUGIN_WHITELIST=${PLUGIN_WHITELIST_JSON:-[]}")
 
     # Audit environment variables
     if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" ]]; then

@@ -1177,6 +1177,19 @@ gemini-cli|Gemini CLI"
         # Agent supports hooks - install them
         display_name="${hook_entry#*|}"
         install_agent_hooks "$agent_type" "$display_name"
+
+        # Plugin hook injection (Claude Code only, opt-in via KAPSIS_INSTALL_PLUGINS).
+        # Must run AFTER install_agent_hooks so Kapsis's status/gist hooks sit
+        # BEFORE plugin hooks in PostToolUse — the kapsis-status-hook reads
+        # /workspace/.kapsis/gist.txt to populate the status JSON, so plugin
+        # hooks that mutate gist.txt should run after status hook has read it.
+        case "$agent_type" in
+            claude|claude-cli|claude-code)
+                if [[ "${KAPSIS_INSTALL_PLUGINS:-false}" == "true" ]]; then
+                    install_plugin_hooks
+                fi
+                ;;
+        esac
     elif [[ " $python_agents " == *" $agent_type "* ]]; then
         # Python agent - status.py library available
         log_info "Python agent - status.py library available for direct integration"
@@ -1227,6 +1240,30 @@ install_agent_hooks() {
 # Note: Agent-specific wrapper functions (setup_claude_hooks, etc.) have been
 # removed in favor of the data-driven lookup in setup_status_tracking().
 # Add new agents by updating the hook_agents variable there.
+
+# Plugin hook installation (Claude Code only). Merges user-installed Claude
+# Code plugin hooks into the same ~/.claude/settings.local.json that
+# install_agent_hooks just wrote — so Kapsis (status/gist) hooks AND plugin
+# hooks (e.g. deeperdive-java-linter) both fire on agent tool calls.
+#
+# This is necessary because Kapsis bypasses Claude Code's native plugin loader.
+install_plugin_hooks() {
+    local inject_script="$KAPSIS_HOME/lib/inject-plugin-hooks.sh"
+
+    if [[ ! -f "$inject_script" ]]; then
+        log_debug "Plugin hook injection script not found — skipping"
+        return 0
+    fi
+
+    log_info "Installing Claude Code plugin hooks..."
+    # shellcheck source=lib/inject-plugin-hooks.sh
+    if source "$inject_script" && inject_plugin_hooks; then
+        return 0
+    else
+        log_warn "Plugin hook injection failed (non-fatal — agent will run without plugin hooks)"
+        return 1
+    fi
+}
 
 # Start background progress monitor for agents without hook support
 start_progress_monitor() {
