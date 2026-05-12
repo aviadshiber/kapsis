@@ -332,6 +332,108 @@ The progress display library (`scripts/lib/progress-display.sh`) reads status up
 Agent hooks → status.json → progress-display.sh → Terminal output
 ```
 
+## Structured Error Types and Recovery Actions (Issue #262)
+
+When an agent exits with a non-zero code, the `error_type` field in `status.json` provides a machine-readable signal that callers (slack-bot, CI pipelines, orchestration scripts) can use to make informed retry decisions instead of retrying blindly.
+
+### error_type Field
+
+Written by `post-container-git.sh` and `launch-agent.sh` into the status file upon completion:
+
+```json
+{
+  "phase": "complete",
+  "exit_code": 6,
+  "error_type": "commit_failure",
+  "commit_status": "failed",
+  "worktree_path": "/home/user/.kapsis/worktrees/myproject-abc123"
+}
+```
+
+### Error Type → Recommended Action
+
+| error_type | Recommended Action | Rationale |
+|---|---|---|
+| `agent_failure` | **Retry** | No work lost; agent can start fresh |
+| `push_failure` | **Retry push only** | Work is committed; only the push failed |
+| `mount_failure` | **Restart VM, then retry** | virtio-fs degradation; restart Podman VM first |
+| `agent_partial` | **Notify human, do NOT retry** | Partial work exists on branch; retry may duplicate |
+| `commit_failure` | **Notify human, do NOT retry** | Staged changes preserved in worktree for manual recovery |
+| `uncommitted_work` | **Notify human** | Changes exist but weren't staged; manual commit needed |
+| `hung_after_completion` (committed) | **Notify human, do NOT retry** | Work is on branch; just review and PR |
+| `hung_after_completion` (not committed) | **Retry** | Agent hung before committing; safe to restart |
+
+### Using kapsis-recovery-action
+
+The `kapsis-recovery-action` script encodes this mapping and is the recommended way for callers to determine what to do:
+
+```bash
+# Returns: 0 = retry/retry_push, 1 = notify_human, 2 = restart_and_retry, 3 = error
+kapsis-recovery-action <project> <agent-id>
+
+# Branch on exit code in a caller script:
+kapsis-recovery-action myproject 42
+case $? in
+    0) run_agent_again ;;
+    1) notify_slack "needs human review" ;;
+    2) restart_podman_vm && run_agent_again ;;
+esac
+
+# JSON output for richer downstream handling:
+result=$(kapsis-recovery-action --json myproject 42)
+action=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin)['action'])")
+```
+
+**JSON output fields:**
+
+```json
+{
+  "action": "notify_human",
+  "error_type": "commit_failure",
+  "description": "The agent produced changes but git commit failed. The staged worktree is preserved for manual recovery.",
+  "exit_code": 6,
+  "commit_status": "failed",
+  "branch": "feature/my-fix",
+  "worktree_path": "/home/user/.kapsis/worktrees/myproject-abc123",
+  "push_fallback_command": null,
+  "next_steps": [
+    "cd /home/user/.kapsis/worktrees/myproject-abc123",
+    "git status              # see what is staged",
+    "git diff --cached       # review staged changes",
+    "git commit -m 'fix: manual recovery commit'"
+  ]
+}
+```
+
+**Exit codes for caller branching:**
+
+| Exit Code | Meaning | Caller Action |
+|-----------|---------|---------------|
+| 0 | `retry` or `retry_push` | Safe to automate |
+| 1 | `notify_human` | Alert a human, do not retry |
+| 2 | `restart_and_retry` | Restart Podman VM (`podman machine stop && start`), then retry |
+| 3 | Error | Status file missing, unreadable, or agent still running |
+
+### Low-Level: Reading error_type Directly
+
+For callers that prefer to read `status.json` directly without the script:
+
+```bash
+status_file="$HOME/.kapsis/status/kapsis-${project}-${agent_id}.json"
+error_type=$(python3 -c "import json; d=json.load(open('$status_file')); print(d.get('error_type','unknown'))")
+
+case "$error_type" in
+    agent_failure)           retry_agent ;;
+    push_failure)            retry_push_only ;;
+    mount_failure)           restart_vm && retry_agent ;;
+    commit_failure|agent_partial|uncommitted_work) notify_human ;;
+    hung_after_completion)
+        commit_status=$(python3 -c "import json; d=json.load(open('$status_file')); print(d.get('commit_status',''))")
+        [[ "$commit_status" == "success" ]] && notify_human || retry_agent ;;
+    *)                       notify_human ;;
+esac
+```
+
 ## Files
 
 | File | Purpose |
@@ -348,3 +450,4 @@ Agent hooks → status.json → progress-display.sh → Terminal output
 | `scripts/hooks/agent-adapters/codex-adapter.sh` | Parse Codex CLI hook format |
 | `scripts/hooks/agent-adapters/gemini-adapter.sh` | Parse Gemini CLI hook format |
 | `configs/tool-phase-mapping.yaml` | Tool → phase mapping configuration |
+| `scripts/kapsis-recovery-action.sh` | Determine recovery action from `error_type` (Issue #262) |
