@@ -1,11 +1,11 @@
 # Kapsis Activity Gist
 
-Update `/workspace/.kapsis/gist.txt` with your current activity at the START of each significant work phase. This helps users monitor your progress in real-time.
+Update `@@KAPSIS_GIST_FILE@@` with your current activity at the START of each significant work phase. This helps users monitor your progress in real-time.
 
 ## How to Update
 
 ```bash
-echo "your current activity" > /workspace/.kapsis/gist.txt
+echo "your current activity" > @@KAPSIS_GIST_FILE@@
 ```
 
 ## When to Update
@@ -24,5 +24,5 @@ echo "your current activity" > /workspace/.kapsis/gist.txt
 ## Example
 
 ```bash
-echo "Analyzing authentication flow in UserService" > /workspace/.kapsis/gist.txt
+echo "Analyzing authentication flow in UserService" > @@KAPSIS_GIST_FILE@@
 ```
