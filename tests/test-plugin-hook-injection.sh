@@ -629,6 +629,99 @@ test_malformed_hooks_logs_warn() {
 }
 
 #===============================================================================
+# TEST: Pre-existing malformed settings.local.json is handled gracefully
+#===============================================================================
+
+test_malformed_settings_local_handled() {
+    log_test "Pre-existing malformed settings.local.json: plugin is skipped with WARN, not crash"
+    setup_test_home
+
+    local foo_path="$TEST_HOME/.claude/plugins/cache/m/foo/1.0.0"
+    make_plugin "foo@m" "$foo_path" \
+        '{"hooks":{"PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/run.sh"}]}]}}'
+    add_to_registry "foo@m" "$foo_path"
+    set_enabled "foo@m"
+
+    # Write truncated / corrupted JSON — simulates a crashed prior run
+    printf '{this is not valid JSON' > "$TEST_HOME/.claude/settings.local.json"
+
+    local stderr
+    stderr=$(run_inject_stderr)
+
+    # The jq merge will fail on the corrupted file; plugin must be skipped
+    assert_contains "$stderr" "WARN" \
+        "Must log WARN when merge fails on corrupted settings.local.json"
+    assert_contains "$stderr" "foo@m" \
+        "WARN must name the affected plugin"
+
+    # The corrupted file must not have been silently replaced with a different
+    # truncation — check it still starts with the original corrupt prefix
+    local first_char
+    first_char=$(head -c 1 "$TEST_HOME/.claude/settings.local.json")
+    assert_equals "{" "$first_char" \
+        "Corrupted settings.local.json must not be silently wiped"
+
+    cleanup_test_home
+}
+
+#===============================================================================
+# TEST: Symlink-rejection for settings.local.json, plugins_file, user_settings
+#===============================================================================
+
+test_symlink_settings_local_rejected() {
+    log_test "Symlinked settings.local.json is rejected (security: redirect-write defense)"
+    setup_test_home
+
+    local foo_path="$TEST_HOME/.claude/plugins/cache/m/foo/1.0.0"
+    make_plugin "foo@m" "$foo_path" \
+        '{"hooks":{"PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/run.sh"}]}]}}'
+    add_to_registry "foo@m" "$foo_path"
+    set_enabled "foo@m"
+
+    # Create a real target and then symlink settings.local.json to it
+    local real_target="$TEST_HOME/real-settings.json"
+    echo '{}' > "$real_target"
+    ln -s "$real_target" "$TEST_HOME/.claude/settings.local.json"
+
+    local stderr
+    stderr=$(run_inject_stderr)
+
+    assert_contains "$stderr" "symlink" \
+        "Must log symlink refusal message"
+    assert_contains "$stderr" "WARN" \
+        "Symlink refusal must be at WARN level"
+
+    cleanup_test_home
+}
+
+test_symlink_installed_plugins_rejected() {
+    log_test "Symlinked installed_plugins.json is rejected (security: attacker-content defense)"
+    setup_test_home
+
+    local foo_path="$TEST_HOME/.claude/plugins/cache/m/foo/1.0.0"
+    make_plugin "foo@m" "$foo_path" \
+        '{"hooks":{"PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/run.sh"}]}]}}'
+
+    # Create a real registry file and symlink installed_plugins.json to it
+    local real_registry="$TEST_HOME/real-registry.json"
+    echo '{"version":2,"plugins":{}}' > "$real_registry"
+    ln -s "$real_registry" "$TEST_HOME/.claude/plugins/installed_plugins.json"
+
+    set_enabled "foo@m"
+    seed_kapsis_settings_local
+
+    local stderr
+    stderr=$(run_inject_stderr)
+
+    assert_contains "$stderr" "symlink" \
+        "Must log symlink refusal for installed_plugins.json"
+    assert_contains "$stderr" "WARN" \
+        "Symlink refusal must be at WARN level"
+
+    cleanup_test_home
+}
+
+#===============================================================================
 # TEST: Intra-plugin duplicate commands are deduped in a single run
 #===============================================================================
 
@@ -691,9 +784,14 @@ main() {
     log_info "=== Robustness ==="
     run_test test_malformed_hooks_json
     run_test test_malformed_hooks_logs_warn
+    run_test test_malformed_settings_local_handled
     run_test test_missing_hooks_json
     run_test test_idempotency
     run_test test_gate_off_no_op
+
+    log_info "=== Symlink rejection (security) ==="
+    run_test test_symlink_settings_local_rejected
+    run_test test_symlink_installed_plugins_rejected
 
     print_summary
 }
