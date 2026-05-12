@@ -245,9 +245,20 @@ Each write overwrites the previous gist, so `kapsis-status` always shows the age
 ### Configuration
 
 ```bash
-# Default path (can be overridden)
+# Worktree mode default (writable /workspace)
 export KAPSIS_GIST_FILE=/workspace/.kapsis/gist.txt
+
+# Overlay mode default — /workspace is read-only, so the gist file lives on
+# the per-agent /kapsis-status volume (set automatically by launch-agent.sh)
+export KAPSIS_GIST_FILE=/kapsis-status/gist.txt
 ```
+
+In overlay mode, agents are told the active path via the injected task spec
+(rendered from `scripts/lib/gist-instructions.md` with `@@KAPSIS_GIST_FILE@@`
+substituted). `kapsis-status-hook.sh` reads whichever path
+`$KAPSIS_GIST_FILE` points to, and `status_read_gist_file()` in
+`scripts/lib/status.sh` accepts both `/workspace/.kapsis/` and
+`/kapsis-status/` (traversal still blocked by `realpath -m` canonicalization).
 
 ### Viewing Gists
 

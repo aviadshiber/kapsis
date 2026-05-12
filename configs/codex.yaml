@@ -3,7 +3,10 @@
 
 agent:
   # Codex CLI with full auto approval
-  command: "codex --approval-mode full-auto \"$(cat /task-spec.md)\""
+  # KAPSIS_INJECTED_TASK_SPEC is set by entrypoint.sh when status injection
+  # appends progress/gist guidance to a writable copy of the task spec. Falls
+  # back to the read-only /task-spec.md mount when no injection happened.
+  command: "codex --approval-mode full-auto \"$(cat \"${KAPSIS_INJECTED_TASK_SPEC:-/task-spec.md}\")\""
   workdir: /workspace
 
 filesystem:
