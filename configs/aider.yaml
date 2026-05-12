@@ -3,7 +3,10 @@
 
 agent:
   # Aider with message file input and auto-yes
-  command: "aider --yes-always --message-file /task-spec.md"
+  # KAPSIS_INJECTED_TASK_SPEC is set by entrypoint.sh when status injection
+  # appends progress/gist guidance to a writable copy of the task spec. Falls
+  # back to the read-only /task-spec.md mount when no injection happened.
+  command: "aider --yes-always --message-file \"${KAPSIS_INJECTED_TASK_SPEC:-/task-spec.md}\""
   workdir: /workspace
 
 filesystem:

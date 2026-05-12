@@ -460,7 +460,7 @@ status_set_heartbeat() {
 #   $1 - Path to gist file (default: $KAPSIS_GIST_FILE)
 # Security:
 #   - Path is canonicalized with realpath to prevent traversal attacks
-#   - Only reads files within /workspace/.kapsis/ directory
+#   - Only reads files within /workspace/.kapsis/ or /kapsis-status/ (overlay mode)
 # Rate Limiting:
 #   - Time debounce: Skip read if read within last N seconds (KAPSIS_GIST_DEBOUNCE, default: 5)
 #   - Mtime bypass: If file changed (different mtime), read immediately
@@ -473,8 +473,10 @@ status_read_gist_file() {
     canonical_path=$(realpath -m "$gist_file" 2>/dev/null) || return 0
 
     # Security: Only allow gist files within the workspace .kapsis directory
-    local allowed_prefix="/workspace/.kapsis/"
-    if [[ "$canonical_path" != "${allowed_prefix}"* ]]; then
+    # (worktree mode) or the dedicated status volume (overlay mode, where
+    # /workspace is read-only and gist files live on /kapsis-status).
+    if [[ "$canonical_path" != "/workspace/.kapsis/"* \
+       && "$canonical_path" != "/kapsis-status/"* ]]; then
         # Path escapes allowed directory - silently ignore for security
         return 0
     fi
