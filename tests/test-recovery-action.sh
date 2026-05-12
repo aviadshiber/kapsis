@@ -15,7 +15,8 @@ source "$SCRIPT_DIR/lib/test-framework.sh"
 
 RECOVERY_SCRIPT="$KAPSIS_ROOT/scripts/kapsis-recovery-action.sh"
 
-# Temporary directory for synthetic status files
+# Temporary directory for synthetic status files; cleaned up on EXIT so that
+# aborting under set -e doesn't leave tmpdir behind.
 STATUS_TMP_DIR=""
 
 setup_status_dir() {
@@ -26,18 +27,21 @@ cleanup_status_dir() {
     [[ -n "$STATUS_TMP_DIR" && -d "$STATUS_TMP_DIR" ]] && rm -rf "$STATUS_TMP_DIR"
 }
 
-# Write a synthetic status.json file for testing
-# Usage: write_status <filename> <json-content>
+trap cleanup_status_dir EXIT
+
+#===============================================================================
+# HELPERS
+#===============================================================================
+
+# Write a synthetic status.json for testing.
 write_status() {
     local filename="$1"
     local json="$2"
     echo "$json" > "${STATUS_TMP_DIR}/${filename}"
 }
 
-#===============================================================================
-# HELPER: build minimal complete-phase status JSON
-#===============================================================================
-
+# Build a minimal complete-phase status JSON.
+# Args: exit_code error_type commit_status push_fallback worktree_path branch
 make_status() {
     local exit_code="${1:-1}"
     local error_type="${2:-agent_failure}"
@@ -79,6 +83,61 @@ make_status() {
   "pr_url": null
 }
 EOF
+}
+
+# Assert that $1 is parseable JSON (uses python3; skips assertion if unavailable).
+assert_json_parseable() {
+    local output="$1"
+    local message="${2:-Output should be valid JSON}"
+    if command -v python3 &>/dev/null; then
+        local rc=0
+        echo "$output" | python3 -c "import json, sys; json.load(sys.stdin)" 2>/dev/null || rc=$?
+        assert_exit_code 0 "$rc" "$message"
+    fi
+}
+
+#===============================================================================
+# TESTS: script properties
+#===============================================================================
+
+test_script_is_executable() {
+    log_test "kapsis-recovery-action.sh is executable"
+    assert_true "[[ -x '$RECOVERY_SCRIPT' ]]" "Script should be executable"
+}
+
+test_help_flag_exits_0() {
+    log_test "--help flag exits 0 and shows usage"
+
+    local output rc=0
+    output=$("$RECOVERY_SCRIPT" --help 2>&1) || rc=$?
+
+    assert_exit_code 0 "$rc" "--help should exit 0"
+    assert_contains "$output" "Usage" "Should show usage"
+    assert_contains "$output" "--status-file" "Should document --status-file option"
+    assert_contains "$output" "--json" "Should document --json option"
+    assert_contains "$output" "positional" "Should document that --status-file ignores positional args"
+}
+
+test_unknown_flag_exits_3_not_0() {
+    log_test "Unknown flag exits 3 (not 0) so CLI typos don't look like 'retry'"
+
+    local rc=0
+    "$RECOVERY_SCRIPT" --jsno 2>/dev/null || rc=$?
+
+    assert_exit_code 3 "$rc" "Unknown option should exit 3, not 0"
+}
+
+test_extra_positional_arg_exits_3() {
+    log_test "Extra positional argument exits 3"
+
+    local status_file="${STATUS_TMP_DIR}/extra_arg.json"
+    make_status 0 "" "success" > "$status_file"
+
+    local rc=0
+    KAPSIS_STATUS_DIR="$STATUS_TMP_DIR" \
+        "$RECOVERY_SCRIPT" "proj" "agent" "extra" 2>/dev/null || rc=$?
+
+    assert_exit_code 3 "$rc" "Extra positional arg should exit 3"
 }
 
 #===============================================================================
@@ -132,12 +191,30 @@ test_missing_project_arg() {
     assert_exit_code 3 "$rc" "Should exit 3 with no arguments"
 }
 
+test_invalid_project_id_rejected() {
+    log_test "project containing path-traversal characters is rejected"
+
+    local rc=0
+    "$RECOVERY_SCRIPT" "../../etc/passwd" "agent" 2>/dev/null || rc=$?
+
+    assert_exit_code 3 "$rc" "Path traversal in project should exit 3"
+}
+
+test_invalid_agent_id_rejected() {
+    log_test "agent-id containing semicolon is rejected"
+
+    local rc=0
+    "$RECOVERY_SCRIPT" "myproject" "agent;evil" 2>/dev/null || rc=$?
+
+    assert_exit_code 3 "$rc" "Shell metachar in agent-id should exit 3"
+}
+
 #===============================================================================
 # TESTS: success case
 #===============================================================================
 
 test_successful_agent_exit_0() {
-    log_test "Successful agent (exit_code=0) returns exit 0, action 'none'"
+    log_test "Successful agent (exit_code=0) returns exit 0, mentions success"
 
     local status_file="${STATUS_TMP_DIR}/success.json"
     make_status 0 "" "success" > "$status_file"
@@ -150,7 +227,7 @@ test_successful_agent_exit_0() {
 }
 
 test_successful_agent_json_mode() {
-    log_test "Successful agent JSON output has action 'none'"
+    log_test "Successful agent JSON output has action 'none' and is valid JSON"
 
     local status_file="${STATUS_TMP_DIR}/success.json"
     make_status 0 "" "success" > "$status_file"
@@ -161,6 +238,7 @@ test_successful_agent_json_mode() {
     assert_exit_code 0 "$rc" "Should exit 0"
     assert_contains "$output" '"action"' "JSON should have action field"
     assert_contains "$output" '"none"' "Action should be none"
+    assert_json_parseable "$output" "Success JSON should be valid JSON"
 }
 
 #===============================================================================
@@ -181,7 +259,7 @@ test_agent_failure_action_retry() {
 }
 
 test_agent_failure_json_output() {
-    log_test "agent_failure JSON output contains correct fields"
+    log_test "agent_failure JSON output contains correct fields and is valid JSON"
 
     local status_file="${STATUS_TMP_DIR}/agent_failure.json"
     make_status 1 "agent_failure" > "$status_file"
@@ -193,6 +271,7 @@ test_agent_failure_json_output() {
     assert_contains "$output" '"action": "retry"' "JSON action should be retry"
     assert_contains "$output" '"error_type": "agent_failure"' "JSON should have error_type"
     assert_contains "$output" '"next_steps"' "JSON should have next_steps"
+    assert_json_parseable "$output" "agent_failure JSON should be valid JSON"
 }
 
 #===============================================================================
@@ -215,7 +294,7 @@ test_push_failure_action_retry_push() {
 }
 
 test_push_failure_json_includes_fallback() {
-    log_test "push_failure JSON output includes push_fallback_command"
+    log_test "push_failure JSON output includes push_fallback_command and is valid JSON"
 
     local fallback="cd /worktrees/myproject && git push -u origin feature/bugfix"
     local status_file="${STATUS_TMP_DIR}/push_failure.json"
@@ -227,6 +306,7 @@ test_push_failure_json_includes_fallback() {
     assert_exit_code 0 "$rc" "Should exit 0"
     assert_contains "$output" '"action": "retry_push"' "JSON action should be retry_push"
     assert_contains "$output" "push_fallback_command" "JSON should expose push_fallback_command"
+    assert_json_parseable "$output" "push_failure JSON should be valid JSON"
 }
 
 #===============================================================================
@@ -249,7 +329,7 @@ test_mount_failure_action_restart() {
 }
 
 test_mount_failure_json_action() {
-    log_test "mount_failure JSON has action restart_and_retry"
+    log_test "mount_failure JSON has action restart_and_retry and is valid JSON"
 
     local status_file="${STATUS_TMP_DIR}/mount_failure.json"
     make_status 4 "mount_failure" > "$status_file"
@@ -259,6 +339,7 @@ test_mount_failure_json_action() {
 
     assert_exit_code 2 "$rc" "Should exit 2"
     assert_contains "$output" '"action": "restart_and_retry"' "JSON action should be restart_and_retry"
+    assert_json_parseable "$output" "mount_failure JSON should be valid JSON"
 }
 
 #===============================================================================
@@ -281,10 +362,10 @@ test_commit_failure_action_notify() {
 }
 
 test_commit_failure_worktree_in_steps() {
-    log_test "commit_failure steps include the preserved worktree path"
+    log_test "commit_failure steps include the preserved worktree path (single-quoted)"
 
     local worktree="/worktrees/testproject-abc123"
-    local status_file="${STATUS_TMP_DIR}/commit_failure.json"
+    local status_file="${STATUS_TMP_DIR}/commit_failure2.json"
     make_status 6 "commit_failure" "failed" "" "$worktree" > "$status_file"
 
     local output rc=0
@@ -292,6 +373,20 @@ test_commit_failure_worktree_in_steps() {
 
     assert_exit_code 1 "$rc" "Should exit 1"
     assert_contains "$output" "$worktree" "Steps should include worktree path"
+}
+
+test_commit_failure_json() {
+    log_test "commit_failure JSON output is valid JSON with notify_human action"
+
+    local status_file="${STATUS_TMP_DIR}/commit_failure_json.json"
+    make_status 6 "commit_failure" "failed" "" "/worktrees/proj" > "$status_file"
+
+    local output rc=0
+    output=$("$RECOVERY_SCRIPT" --json --status-file "$status_file" 2>&1) || rc=$?
+
+    assert_exit_code 1 "$rc" "Should exit 1"
+    assert_contains "$output" '"action": "notify_human"' "JSON action should be notify_human"
+    assert_json_parseable "$output" "commit_failure JSON should be valid JSON"
 }
 
 #===============================================================================
@@ -310,6 +405,18 @@ test_agent_partial_action_notify() {
     assert_exit_code 1 "$rc" "agent_partial should exit 1"
     assert_contains "$output" "notify_human" "Should show notify_human"
     assert_contains "$output" "feature/my-fix" "Should include branch name in steps"
+}
+
+test_agent_partial_json() {
+    log_test "agent_partial JSON is valid JSON"
+
+    local status_file="${STATUS_TMP_DIR}/agent_partial_json.json"
+    make_status 1 "agent_partial" "success" "" "" "feature/my-fix" > "$status_file"
+
+    local output rc=0
+    output=$("$RECOVERY_SCRIPT" --json --status-file "$status_file" 2>&1) || rc=$?
+
+    assert_json_parseable "$output" "agent_partial JSON should be valid JSON"
 }
 
 #===============================================================================
@@ -331,7 +438,7 @@ test_uncommitted_work_action_notify() {
 }
 
 #===============================================================================
-# TESTS: hung_after_completion — depends on commit_status
+# TESTS: hung_after_completion — context-sensitive on commit_status
 #===============================================================================
 
 test_hung_after_completion_committed_notify_human() {
@@ -361,6 +468,18 @@ test_hung_after_completion_not_committed_retry() {
     assert_contains "$output" "retry" "Should show retry action"
 }
 
+test_hung_after_completion_json_parseable() {
+    log_test "hung_after_completion JSON output is valid JSON"
+
+    local status_file="${STATUS_TMP_DIR}/hung_json.json"
+    make_status 5 "hung_after_completion" "success" "" "" "main" > "$status_file"
+
+    local output rc=0
+    output=$("$RECOVERY_SCRIPT" --json --status-file "$status_file" 2>&1) || rc=$?
+
+    assert_json_parseable "$output" "hung_after_completion JSON should be valid JSON"
+}
+
 #===============================================================================
 # TESTS: unknown error_type → notify_human (exit 1)
 #===============================================================================
@@ -378,7 +497,7 @@ test_unknown_error_type_notify_human() {
 }
 
 #===============================================================================
-# TESTS: --json mode completeness
+# TESTS: JSON mode — completeness and validity across all types
 #===============================================================================
 
 test_json_has_required_fields() {
@@ -396,50 +515,93 @@ test_json_has_required_fields() {
     assert_contains "$output" '"exit_code"' "Should have exit_code field"
     assert_contains "$output" '"commit_status"' "Should have commit_status field"
     assert_contains "$output" '"next_steps"' "Should have next_steps field"
+    assert_json_parseable "$output" "JSON with all fields should be parseable"
 }
 
-test_json_valid_structure() {
-    log_test "JSON output is parseable (no syntax errors)"
+test_json_commit_status_null_when_absent() {
+    log_test "JSON commit_status is null (not empty string) when field is absent in source"
 
-    local status_file="${STATUS_TMP_DIR}/json_valid.json"
-    make_status 2 "push_failure" "success" \
-        "cd /worktrees/proj && git push -u origin fix/thing" > "$status_file"
+    # Status file with no commit_status field
+    local status_file="${STATUS_TMP_DIR}/no_commit_status.json"
+    cat << 'EOF' > "$status_file"
+{
+  "phase": "complete",
+  "exit_code": 1,
+  "error_type": "agent_failure",
+  "commit_status": null,
+  "push_fallback_command": null,
+  "worktree_path": null,
+  "branch": null
+}
+EOF
 
     local output rc=0
     output=$("$RECOVERY_SCRIPT" --json --status-file "$status_file" 2>&1) || rc=$?
 
-    # Validate JSON is parseable with python3 (available everywhere, no jq dep)
-    if command -v python3 &>/dev/null; then
-        local parse_rc=0
-        echo "$output" | python3 -c "import json, sys; json.load(sys.stdin)" 2>/dev/null || parse_rc=$?
-        assert_exit_code 0 "$parse_rc" "JSON output should be valid JSON"
-    else
-        # Minimal structural check without python3
-        assert_contains "$output" "{" "JSON should start with {"
-        assert_contains "$output" "}" "JSON should end with }"
-        assert_contains "$output" '"action"' "JSON should have action key"
-    fi
+    assert_contains "$output" '"commit_status": null' "commit_status should be null, not empty string"
+    assert_json_parseable "$output" "JSON with null commit_status should be parseable"
 }
 
-#===============================================================================
-# TESTS: script properties
-#===============================================================================
+test_json_exit_code_missing_produces_valid_json() {
+    log_test "JSON is valid even when source status.json has no exit_code field"
 
-test_script_is_executable() {
-    log_test "kapsis-recovery-action.sh is executable"
-    assert_true "[[ -x '$RECOVERY_SCRIPT' ]]" "Script should be executable"
+    local status_file="${STATUS_TMP_DIR}/no_exit_code.json"
+    cat << 'EOF' > "$status_file"
+{
+  "phase": "complete",
+  "error_type": "agent_failure",
+  "commit_status": null,
+  "push_fallback_command": null,
+  "worktree_path": null,
+  "branch": null
 }
-
-test_help_flag_exits_0() {
-    log_test "--help flag exits 0 and shows usage"
+EOF
 
     local output rc=0
-    output=$("$RECOVERY_SCRIPT" --help 2>&1) || rc=$?
+    output=$("$RECOVERY_SCRIPT" --json --status-file "$status_file" 2>&1) || rc=$?
 
-    assert_exit_code 0 "$rc" "--help should exit 0"
-    assert_contains "$output" "Usage" "Should show usage"
-    assert_contains "$output" "--status-file" "Should document --status-file option"
-    assert_contains "$output" "--json" "Should document --json option"
+    assert_json_parseable "$output" "Missing exit_code should still produce valid JSON"
+    # exit_code should be null or 0 (success path triggers for null exit_code)
+    assert_not_contains "$output" '"exit_code": ,' "Should not produce invalid JSON with empty exit_code"
+}
+
+test_json_special_chars_in_branch_are_escaped() {
+    log_test "Special characters in branch name are JSON-escaped"
+
+    local status_file="${STATUS_TMP_DIR}/special_branch.json"
+    cat << 'EOF' > "$status_file"
+{
+  "phase": "complete",
+  "exit_code": 1,
+  "error_type": "agent_partial",
+  "commit_status": "success",
+  "push_fallback_command": null,
+  "worktree_path": null,
+  "branch": "feature/tab\there"
+}
+EOF
+
+    local output rc=0
+    output=$("$RECOVERY_SCRIPT" --json --status-file "$status_file" 2>&1) || rc=$?
+
+    assert_json_parseable "$output" "Branch with special chars should produce valid JSON"
+}
+
+#===============================================================================
+# TESTS: --status-file mode
+#===============================================================================
+
+test_status_file_header_shows_basename() {
+    log_test "--status-file mode shows file basename in header (not empty)"
+
+    local status_file="${STATUS_TMP_DIR}/kapsis-myproj-99.json"
+    make_status 1 "agent_failure" > "$status_file"
+
+    local output rc=0
+    output=$("$RECOVERY_SCRIPT" --status-file "$status_file" 2>&1) || rc=$?
+
+    assert_contains "$output" "kapsis-myproj-99" "Header should show status file basename"
+    assert_not_contains "$output" "Recovery Action ===" "Header should not be empty identifier"
 }
 
 test_project_and_agentid_resolution() {
@@ -469,10 +631,14 @@ setup_status_dir
 
 run_test test_script_is_executable
 run_test test_help_flag_exits_0
+run_test test_unknown_flag_exits_3_not_0
+run_test test_extra_positional_arg_exits_3
 run_test test_missing_status_file
 run_test test_missing_status_file_json_mode
 run_test test_agent_still_running
 run_test test_missing_project_arg
+run_test test_invalid_project_id_rejected
+run_test test_invalid_agent_id_rejected
 run_test test_successful_agent_exit_0
 run_test test_successful_agent_json_mode
 run_test test_agent_failure_action_retry
@@ -483,15 +649,19 @@ run_test test_mount_failure_action_restart
 run_test test_mount_failure_json_action
 run_test test_commit_failure_action_notify
 run_test test_commit_failure_worktree_in_steps
+run_test test_commit_failure_json
 run_test test_agent_partial_action_notify
+run_test test_agent_partial_json
 run_test test_uncommitted_work_action_notify
 run_test test_hung_after_completion_committed_notify_human
 run_test test_hung_after_completion_not_committed_retry
+run_test test_hung_after_completion_json_parseable
 run_test test_unknown_error_type_notify_human
 run_test test_json_has_required_fields
-run_test test_json_valid_structure
+run_test test_json_commit_status_null_when_absent
+run_test test_json_exit_code_missing_produces_valid_json
+run_test test_json_special_chars_in_branch_are_escaped
+run_test test_status_file_header_shows_basename
 run_test test_project_and_agentid_resolution
-
-cleanup_status_dir
 
 print_summary

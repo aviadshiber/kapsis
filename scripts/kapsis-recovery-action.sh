@@ -12,7 +12,7 @@
 #     0  Action is 'retry' or 'retry_push' — safe to automate
 #     1  Action is 'notify_human'           — manual intervention required
 #     2  Action is 'restart_and_retry'      — restart Podman VM, then retry
-#     3  Error: status file not found or agent still running
+#     3  Error: status file not found, agent still running, or CLI usage error
 #
 # Usage:
 #   kapsis-recovery-action <project> <agent-id>
@@ -46,6 +46,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# json_escape_string (handles \r, \n, \t, backslash, quotes) and json_get_*
 source "$SCRIPT_DIR/lib/json-utils.sh"
 
 KAPSIS_STATUS_DIR="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}"
@@ -56,11 +57,18 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
+# Max bytes to read from a status file (1 MiB) — guards against huge files
+# ballooning memory during the multiple json_get_* regex passes.
+_MAX_STATUS_BYTES=1048576
+
 #===============================================================================
 # USAGE
+# $1 — exit code (default 0); pass 3 for error paths so CLI typos don't
+#      return 0 and silently satisfy callers that branch on "exit 0 = retry".
 #===============================================================================
 
 usage() {
+    local exit_code="${1:-0}"
     local cmd="${KAPSIS_CMD_NAME:-$(basename "$0")}"
     cat << EOF
 Usage: $cmd [--json] <project> <agent-id>
@@ -72,16 +80,17 @@ Options:
   -h, --help              Show this help message
   -j, --json              Output machine-readable JSON
   -f, --status-file PATH  Read status from a specific JSON file path
+                          When supplied, positional project/agent-id are ignored.
 
 Arguments:
-  project    Project name (used to locate status file)
-  agent-id   Agent ID (used to locate status file)
+  project    Project name (alphanumeric, dots, hyphens, underscores only)
+  agent-id   Agent ID  (alphanumeric, dots, hyphens, underscores only)
 
 Exit codes:
   0  Action is 'retry' or 'retry_push'  — caller can automate
   1  Action is 'notify_human'           — manual intervention required
   2  Action is 'restart_and_retry'      — restart Podman VM first, then retry
-  3  Error: status file not found, unreadable, or agent still running
+  3  Error: status file not found, unreadable, agent still running, or bad CLI args
 
 Examples:
   $cmd myproject 42                          # human-readable guidance
@@ -93,7 +102,23 @@ Examples:
     echo "Safe to retry automatically"
   fi
 EOF
-    exit 0
+    exit "$exit_code"
+}
+
+#===============================================================================
+# INPUT VALIDATION
+# project and agent_id are interpolated into file paths; validate them
+# strictly to prevent directory traversal / arbitrary file reads.
+#===============================================================================
+
+_validate_id() {
+    local name="$1"
+    local value="$2"
+    if [[ ! "$value" =~ ^[A-Za-z0-9._-]+$ ]]; then
+        echo "Error: $name must contain only alphanumeric characters, dots, hyphens, or underscores" >&2
+        echo "Got: '$value'" >&2
+        exit 3
+    fi
 }
 
 #===============================================================================
@@ -173,10 +198,14 @@ _describe_action() {
 #===============================================================================
 # NEXT-STEP GUIDANCE
 # Per-error-type concrete shell commands to guide recovery.
+#
+# Dynamic values (branch, worktree_path, push_fallback) that appear inside
+# suggested shell commands are single-quoted so that shell metacharacters in
+# those values do not execute when a user copies the suggestion verbatim.
+#
+# Caller must declare 'local -a next_steps=()' before calling this function.
 #===============================================================================
 
-# Populate the global next_steps array.
-# Caller must declare 'local -a next_steps=()' before calling.
 _build_next_steps() {
     local error_type="$1"
     local action="$2"
@@ -190,14 +219,14 @@ _build_next_steps() {
             ;;
         agent_partial)
             if [[ -n "$branch" && "$branch" != "null" ]]; then
-                next_steps+=("git log origin/${branch} --oneline  # review committed work")
+                next_steps+=("git log 'origin/${branch}' --oneline  # review committed work")
             fi
             next_steps+=("Decide whether to continue with a new agent run or handle manually")
             next_steps+=("Do NOT retry blindly — partial work is already on the branch")
             ;;
         commit_failure)
             if [[ -n "$worktree_path" && "$worktree_path" != "null" ]]; then
-                next_steps+=("cd ${worktree_path}")
+                next_steps+=("cd '${worktree_path}'")
                 next_steps+=("git status              # see what is staged")
                 next_steps+=("git diff --cached       # review staged changes")
                 next_steps+=("git commit -m 'fix: manual recovery commit'")
@@ -212,7 +241,7 @@ _build_next_steps() {
                 next_steps+=("${push_fallback}  # push fallback from status.json")
             else
                 if [[ -n "$worktree_path" && "$worktree_path" != "null" ]]; then
-                    next_steps+=("cd ${worktree_path}")
+                    next_steps+=("cd '${worktree_path}'")
                 fi
                 next_steps+=("git push -u origin <branch>  # work is committed; just push")
             fi
@@ -225,7 +254,7 @@ _build_next_steps() {
         hung_after_completion)
             if [[ "$action" == "notify_human" ]]; then
                 if [[ -n "$branch" && "$branch" != "null" ]]; then
-                    next_steps+=("git log origin/${branch} --oneline  # verify committed work")
+                    next_steps+=("git log 'origin/${branch}' --oneline  # verify committed work")
                 fi
                 next_steps+=("Review the committed changes and create a PR if satisfied")
                 next_steps+=("Do NOT retry — work was already committed before the hang")
@@ -235,7 +264,7 @@ _build_next_steps() {
             ;;
         uncommitted_work)
             if [[ -n "$worktree_path" && "$worktree_path" != "null" ]]; then
-                next_steps+=("cd ${worktree_path}")
+                next_steps+=("cd '${worktree_path}'")
                 next_steps+=("git status              # see what is uncommitted")
                 next_steps+=("git add -A && git commit -m 'fix: manual recovery commit'")
             else
@@ -252,20 +281,6 @@ _build_next_steps() {
 }
 
 #===============================================================================
-# JSON ESCAPE HELPER
-# Minimal inline escaping for JSON string values (no jq dependency).
-#===============================================================================
-
-_json_escape() {
-    local str="$1"
-    str="${str//\\/\\\\}"   # backslash first
-    str="${str//\"/\\\"}"   # double quotes
-    str="${str//$'\n'/\\n}" # newlines
-    str="${str//$'\t'/\\t}" # tabs
-    echo "$str"
-}
-
-#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -278,7 +293,7 @@ main() {
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -h|--help)
-                usage
+                usage 0
                 ;;
             -j|--json)
                 json_mode=true
@@ -293,8 +308,10 @@ main() {
                 shift 2
                 ;;
             -*)
-                echo "Unknown option: $1" >&2
-                usage
+                # Unknown option — exit 3, not 0, so CLI typos don't look like
+                # "retry" to callers that branch on exit code.
+                echo "Error: unknown option '$1'" >&2
+                usage 3
                 ;;
             *)
                 if [[ -z "$project" ]]; then
@@ -303,20 +320,23 @@ main() {
                     agent_id="$1"
                 else
                     echo "Error: unexpected argument '$1'" >&2
-                    usage
+                    usage 3
                 fi
                 shift
                 ;;
         esac
     done
 
-    # Resolve status file path
+    # Resolve status file path from positional args (only when --status-file not given)
     if [[ -z "$status_file" ]]; then
         if [[ -z "$project" || -z "$agent_id" ]]; then
             echo "Error: project and agent-id are required (or use --status-file)" >&2
             echo "Run with --help for usage." >&2
             exit 3
         fi
+        # Validate before interpolating into a file path (prevent path traversal)
+        _validate_id "project" "$project"
+        _validate_id "agent-id" "$agent_id"
         status_file="${KAPSIS_STATUS_DIR}/kapsis-${project}-${agent_id}.json"
     fi
 
@@ -324,7 +344,7 @@ main() {
     if [[ ! -f "$status_file" ]]; then
         if [[ "$json_mode" == "true" ]]; then
             local escaped_path
-            escaped_path=$(_json_escape "$status_file")
+            escaped_path=$(json_escape_string "$status_file")
             printf '{"error":"not_found","message":"Status file not found: %s"}\n' "$escaped_path"
         else
             echo "Error: Status file not found: $status_file" >&2
@@ -333,8 +353,10 @@ main() {
         return 3
     fi
 
+    # Cap read to 1 MiB — prevents multi-MB files from ballooning memory across
+    # the several json_get_* regex passes that follow.
     local content
-    content=$(<"$status_file")
+    content=$(head -c "$_MAX_STATUS_BYTES" "$status_file")
 
     # Parse all relevant fields from status.json
     local phase error_type exit_code commit_status push_fallback worktree_path branch
@@ -346,11 +368,17 @@ main() {
     worktree_path=$(json_get_string "$content" "worktree_path")
     branch=$(json_get_string "$content" "branch")
 
+    # Sanitise exit_code: json_get_number returns "" when the field is absent.
+    # An empty or non-numeric value in the JSON output produces invalid JSON.
+    if [[ ! "$exit_code" =~ ^-?[0-9]+$ && "$exit_code" != "null" ]]; then
+        exit_code="null"
+    fi
+
     # Only give recovery guidance for completed agents
     if [[ "$phase" != "complete" ]]; then
         if [[ "$json_mode" == "true" ]]; then
             local escaped_phase
-            escaped_phase=$(_json_escape "$phase")
+            escaped_phase=$(json_escape_string "$phase")
             printf '{"error":"still_running","phase":"%s","message":"Agent has not completed — no recovery action needed"}\n' \
                 "$escaped_phase"
         else
@@ -360,7 +388,7 @@ main() {
     fi
 
     # Success: no recovery needed
-    if [[ "$exit_code" == "0" || -z "$exit_code" || "$exit_code" == "null" ]]; then
+    if [[ "$exit_code" == "0" || "$exit_code" == "null" ]]; then
         if [[ "$json_mode" == "true" ]]; then
             echo '{"action":"none","description":"Agent completed successfully","exit_code":0,"next_steps":[]}'
         else
@@ -383,28 +411,35 @@ main() {
         local first=true
         for step in "${next_steps[@]}"; do
             [[ "$first" == "true" ]] && first=false || steps_json="${steps_json},"
-            steps_json="${steps_json}\"$(_json_escape "$step")\""
+            steps_json="${steps_json}\"$(json_escape_string "$step")\""
         done
 
+        # Nullable fields: emit JSON null when the parsed value is empty or
+        # the literal string "null" (which json_get_string returns for JSON null).
         local worktree_json="null"
         [[ -n "$worktree_path" && "$worktree_path" != "null" ]] && \
-            worktree_json="\"$(_json_escape "$worktree_path")\""
+            worktree_json="\"$(json_escape_string "$worktree_path")\""
 
         local push_fallback_json="null"
         [[ -n "$push_fallback" && "$push_fallback" != "null" ]] && \
-            push_fallback_json="\"$(_json_escape "$push_fallback")\""
+            push_fallback_json="\"$(json_escape_string "$push_fallback")\""
 
         local branch_json="null"
         [[ -n "$branch" && "$branch" != "null" ]] && \
-            branch_json="\"$(_json_escape "$branch")\""
+            branch_json="\"$(json_escape_string "$branch")\""
+
+        # commit_status: same nullable pattern — keep type consistent across all fields
+        local commit_status_json="null"
+        [[ -n "$commit_status" && "$commit_status" != "null" ]] && \
+            commit_status_json="\"$(json_escape_string "$commit_status")\""
 
         cat << EOF
 {
-  "action": "$(_json_escape "$action")",
-  "error_type": "$(_json_escape "$error_type")",
-  "description": "$(_json_escape "$description")",
+  "action": "$(json_escape_string "$action")",
+  "error_type": "$(json_escape_string "$error_type")",
+  "description": "$(json_escape_string "$description")",
   "exit_code": ${exit_code},
-  "commit_status": "$(_json_escape "$commit_status")",
+  "commit_status": ${commit_status_json},
   "branch": ${branch_json},
   "worktree_path": ${worktree_json},
   "push_fallback_command": ${push_fallback_json},
@@ -412,14 +447,17 @@ main() {
 }
 EOF
     else
-        # Human-readable output
+        # Human-readable output — use the basename of the status file as a
+        # fallback identifier when --status-file is used without project/agent-id.
         echo ""
         local label="${project:+${project}/${agent_id}}"
-        echo -e "${CYAN}=== Recovery Action${label:+: ${label}} ===${NC}"
+        if [[ -z "$label" ]]; then
+            label="$(basename "$status_file" .json)"
+        fi
+        echo -e "${CYAN}=== Recovery Action: ${label} ===${NC}"
         echo ""
 
-        local action_color="$YELLOW"
-        [[ "$action" == "retry" || "$action" == "retry_push" ]] && action_color="$GREEN"
+        local action_color="$GREEN"
         [[ "$action" == "restart_and_retry" ]] && action_color="$YELLOW"
         [[ "$action" == "notify_human" ]] && action_color="$RED"
 
