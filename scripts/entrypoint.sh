@@ -607,8 +607,35 @@ setup_staged_config_overlays() {
 
     log_info "Setting up CoW overlays for staged configs..."
 
-    # Create base directories for upper and work layers
-    mkdir -p "$upper_base" "$work_base" 2>/dev/null || true
+    # Issue #328: HOME must be writable for either the fuse-overlayfs mount
+    # or the atomic_copy fallback to succeed. If it isn't, every staged config
+    # fails identically with a cryptic "cp failed" warning. Detect it once
+    # up front and tell the operator what to look at.
+    #
+    # Review finding #3: downstream auth/credential paths need to know the
+    # configs were skipped so they can fail with a clear "auth will not work"
+    # message rather than a cryptic "key not found". Export a state flag and
+    # write a structured sentinel to /kapsis-status so kapsis-status.sh can
+    # surface it. Still return 0 — the entrypoint continues so the agent can
+    # report the auth-skipped state cleanly, but no caller mistakes the
+    # absence of staged configs for a successful install.
+    if [[ ! -w "$HOME" ]]; then
+        log_warn "KAPSIS-AUTH-WARNING: HOME ($HOME) is not writable — staged configs cannot be installed"
+        log_warn "Likely causes: read-only root filesystem (security profile=paranoid), missing chown on container HOME, or a broken bind-mount over HOME"
+        log_warn "Downstream agents that need credentials (.ssh, .claude, .config/...) WILL fail to authenticate"
+        export KAPSIS_STAGED_CONFIGS_SKIPPED=1
+        if [[ -d /kapsis-status ]] && [[ -w /kapsis-status ]]; then
+            printf 'HOME_NOT_WRITABLE\n' > /kapsis-status/staged-configs-skipped 2>/dev/null || true
+        fi
+        return 0
+    fi
+
+    # Issue #328: upper/work layers live on the container writable layer
+    # (not under HOME). Surface mkdir errors instead of swallowing them so a
+    # broken root layer fails loudly rather than cascading into every overlay.
+    if ! mkdir -p "$upper_base" "$work_base" 2>/dev/null; then
+        log_warn "Failed to create overlay state dirs ($upper_base, $work_base) — falling back to copy for every entry"
+    fi
 
     # Split comma-separated list
     IFS=',' read -ra configs <<< "$KAPSIS_STAGED_CONFIGS"
@@ -631,11 +658,22 @@ setup_staged_config_overlays() {
             # Directory: create overlay mount
             mkdir -p "$dst" 2>/dev/null || true
 
-            if fuse-overlayfs -o "lowerdir=${src},upperdir=${upper},workdir=${work}" "$dst" 2>/dev/null; then
+            # Issue #328: capture fuse-overlayfs stderr so failures are
+            # debuggable. Previously redirected to /dev/null, which forced
+            # users to bisect from a generic "Overlay failed" warning.
+            local _overlay_stderr _overlay_rc
+            _overlay_stderr=$(fuse-overlayfs -o "lowerdir=${src},upperdir=${upper},workdir=${work}" "$dst" 2>&1) && _overlay_rc=0 || _overlay_rc=$?
+
+            if [[ $_overlay_rc -eq 0 ]]; then
                 log_debug "CoW overlay: ${relative_path}"
             else
                 # Fallback: atomic copy with validation (fixes race condition #151)
-                log_warn "Overlay failed for ${relative_path}, falling back to atomic copy"
+                if [[ -n "$_overlay_stderr" ]]; then
+                    log_warn "Overlay failed for ${relative_path} (rc=${_overlay_rc}): ${_overlay_stderr}"
+                else
+                    log_warn "Overlay failed for ${relative_path} (rc=${_overlay_rc}, no stderr)"
+                fi
+                log_warn "Falling back to atomic copy for ${relative_path}"
                 atomic_copy_dir "$src" "$dst" || log_warn "Atomic copy validation failed for dir: ${relative_path}"
             fi
         else
