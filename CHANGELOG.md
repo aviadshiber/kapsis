@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.25.5] - 2026-05-11
+## [2.26.0] - 2026-05-12
 
-### Fixed
-- Restore set -e guards dropped during #318/#317 conflict resolution
+### Added
+- Inject Claude Code plugin hooks into settings.local.json (#326)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Restore set -e guards dropped during #318/#317 conflict resolution
+
 
 ### Fixed
 - Guard critical unguarded function calls (closes #261) (#317)
@@ -904,7 +908,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.25.5...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.26.0...HEAD
+[2.26.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.26.0
 [2.25.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.5
 [2.25.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.3
 [2.25.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.2
