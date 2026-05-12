@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.27.0] - 2026-05-12
+## [2.28.0] - 2026-05-12
 
 ### Added
-- Inject Claude Code plugin hooks into settings.local.json (#327)
+- Persist agent JSONL via shared host volume (Issue #265) (#322)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Added
+- Inject Claude Code plugin hooks into settings.local.json (#327)
+
 
 ### Changed
 - Bump the github-actions group with 2 updates (#324)
@@ -916,7 +920,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.27.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.0...HEAD
+[2.28.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.0
 [2.27.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.27.0
 [2.26.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.26.1
 [2.26.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.26.0
