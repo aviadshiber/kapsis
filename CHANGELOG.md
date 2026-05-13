@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.28.2] - 2026-05-13
+## [2.28.3] - 2026-05-13
 
 ### Fixed
-- Tolerate benign cp stderr from unstattable readdir entries (#328 root cause) (#334)
+- Broaden benign-stderr classifier + chmod restrictive dst (#335) (#336)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Tolerate benign cp stderr from unstattable readdir entries (#328 root cause) (#334)
+
 
 ### Fixed
 - Harden HOME-side CoW + atomic-copy fallback (#328 followup) (#332)
@@ -928,7 +932,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.2...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.3...HEAD
+[2.28.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.3
 [2.28.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.2
 [2.28.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.1
 [2.28.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.0
