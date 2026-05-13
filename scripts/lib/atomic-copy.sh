@@ -140,19 +140,42 @@ _atomic_run_mktemp() {
     return "$rc"
 }
 
+# GNU coreutils cp emits this exact format for ENOENT during recursive
+# copy: `cp: cannot stat 'PATH': No such file or directory`. atomic_copy_dir
+# always runs inside the Linux container (GNU cp), never against BSD cp on
+# a macOS host — atomic_copy_dir is invoked only from scripts/entrypoint.sh
+# inside the kapsis sandbox. BSD cp's `cp: PATH: cannot stat` form would
+# fail this match and be treated as a real failure (fail-safe).
+#
+# Caller pins LC_ALL=C around the cp invocation so locale translations
+# can't defeat the regex on non-English container images.
+# Guard against `readonly` failing on re-source (tests use _reset_atomic_copy_lib).
+if [[ -z "${_ATOMIC_CP_STAT_ENOENT_REGEX:-}" ]]; then
+    readonly _ATOMIC_CP_STAT_ENOENT_REGEX='^cp:[[:space:]]cannot[[:space:]]stat[[:space:]].+:[[:space:]]No[[:space:]]such[[:space:]]file[[:space:]]or[[:space:]]directory$'
+fi
+
 #-------------------------------------------------------------------------------
-# _atomic_cp_stat_only_failures <cp_stderr>
+# _atomic_cp_stderr_is_stat_enoent_only <cp_stderr>
 #
-# Returns 0 when every non-empty line of the captured cp stderr is a
-# benign "cp: cannot stat 'X': No such file or directory" entry —
-# meaning cp's non-zero exit is explained entirely by readdir/stat
-# mismatch on transient or unstattable entries (sockets, FIFOs, files
-# deleted mid-copy). Caller MUST still validate the payload via the
-# regular-file count comparison; this helper only certifies that the
-# stderr signal is non-fatal.
+# Returns 0 when the captured cp stderr contains at least one non-empty
+# line AND every non-empty line is a benign "cp: cannot stat 'X': No
+# such file or directory" entry — meaning cp's non-zero exit is
+# explained entirely by readdir/stat mismatch on unstattable entries
+# (sockets, FIFOs, files deleted mid-copy). The caller MUST still
+# validate the payload via the regular-file count comparison; this
+# helper only certifies that the stderr signal is non-fatal.
 #
-# Returns 1 if stderr is empty (no signal to whitelist) OR if any line
-# is unrecognized — caller must treat as a real failure.
+# Returns 1 if stderr is empty, contains only whitespace, OR has any
+# unrecognized line — caller must treat as a real failure.
+#
+# Limitation (issue #328 root-cause comment): _atomic_count_files uses
+# `find -type f`, which itself calls stat(). If a REGULAR file in the
+# source tree exhibits the same readdir-visible-but-stat-ENOENT
+# pathology (vs. just sockets), it would be excluded from BOTH source
+# and destination counts — and slip through silently. In the
+# motivating macOS+virtio-fs case the ENOENT pattern is restricted to
+# AF_UNIX socket inodes, so this is theoretical; documenting for
+# future hardening.
 #
 # Motivating case (issue #328): on macOS hosts, virtio-fs returns
 # AF_UNIX socket entries from readdir() but ENOENT from stat(). cp -rp
@@ -162,18 +185,54 @@ _atomic_run_mktemp() {
 # that has git fsmonitor (`.claude`), an ssh-agent socket (`.ssh`), or
 # any other live IPC in a staged dir.
 #-------------------------------------------------------------------------------
-_atomic_cp_stat_only_failures() {
+_atomic_cp_stderr_is_stat_enoent_only() {
     local stderr="$1"
     [[ -z "$stderr" ]] && return 1
+    local saw_line=0
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
-        # GNU cp stderr format: cp: cannot stat 'PATH': No such file or directory
-        if [[ "$line" =~ ^cp:[[:space:]]cannot[[:space:]]stat[[:space:]].+:[[:space:]]No[[:space:]]such[[:space:]]file[[:space:]]or[[:space:]]directory$ ]]; then
+        saw_line=1
+        if [[ "$line" =~ $_ATOMIC_CP_STAT_ENOENT_REGEX ]]; then
             continue
         fi
         return 1
     done <<< "$stderr"
-    return 0
+    # Reject whitespace-only / newline-only stderr (no signal to whitelist).
+    [[ $saw_line -eq 1 ]] && return 0
+    return 1
+}
+
+#-------------------------------------------------------------------------------
+# _atomic_cp_with_enoent_tolerance <site_label> <cp_args...>
+#
+# Wraps `cp $cp_args` to centralize the issue #328 stat-ENOENT
+# tolerance pattern across atomic_copy_dir's three cp call sites
+# (main path, scratch-fallback, last-resort direct cp).
+#
+# Behavior:
+#   1. Runs `LC_ALL=C cp "$@"` with stderr captured (LC_ALL=C pins the
+#      diagnostic format so locale translations cannot defeat the
+#      classifier).
+#   2. If cp exits non-zero AND every stderr line matches the benign
+#      stat-ENOENT signature, treat as success — caller's regular-file
+#      count comparison is the final guard.
+#   3. Sets _ATOMIC_CP_STDERR so the caller can include the raw stderr
+#      in a log_warn message on real failures.
+#
+# Returns: cp's exit code, possibly rewritten 1→0 by the tolerance
+# rule. <site_label> is included in the log_debug message so operators
+# can identify which patched path activated tolerance.
+#-------------------------------------------------------------------------------
+_atomic_cp_with_enoent_tolerance() {
+    local site="$1"; shift
+    local cp_err cp_rc
+    cp_err=$(LC_ALL=C cp "$@" 2>&1) && cp_rc=0 || cp_rc=$?
+    if [[ $cp_rc -ne 0 ]] && _atomic_cp_stderr_is_stat_enoent_only "$cp_err"; then
+        log_debug "atomic_copy_dir: cp non-zero in ${site} but stderr is stat-ENOENT only; deferring to count check"
+        cp_rc=0
+    fi
+    _ATOMIC_CP_STDERR="$cp_err"
+    return "$cp_rc"
 }
 
 #-------------------------------------------------------------------------------
@@ -314,18 +373,13 @@ atomic_copy_dir() {
             # Issue #328 (review finding #1): return reflects whether the
             # direct cp actually succeeded, so callers don't log a false
             # "validation failed" for data that's intact on disk.
-            local direct_err direct_rc
             mkdir -p "$dst" 2>/dev/null || true
-            direct_err=$(cp -rp "$src/." "$dst/" 2>&1) && direct_rc=0 || direct_rc=$?
+            _atomic_cp_with_enoent_tolerance "last-resort direct cp for $(basename "$dst")" \
+                -rp "$src/." "$dst/"
+            local direct_rc=$?
             find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
-            # Issue #328: tolerate benign cp stderr from virtio-fs (sockets/FIFOs
-            # readdir-visible but stat-invisible). See helper docstring.
-            if [[ $direct_rc -ne 0 ]] && _atomic_cp_stat_only_failures "$direct_err"; then
-                log_debug "atomic_copy_dir: last-resort direct cp non-zero for $(basename "$dst") but stderr is benign; deferring to count check"
-                direct_rc=0
-            fi
             if [[ $direct_rc -ne 0 ]]; then
-                log_warn "atomic_copy_dir: direct cp failed for $(basename "$dst"): ${direct_err:-no stderr}"
+                log_warn "atomic_copy_dir: direct cp failed for $(basename "$dst"): ${_ATOMIC_CP_STDERR:-no stderr}"
                 return 1
             fi
             # Validate file count matches; only then can we report success.
@@ -342,14 +396,11 @@ atomic_copy_dir() {
 
         log_debug "atomic_copy_dir: using cross-fs scratch ${tmp_dir} for $(basename "$dst")"
         # Issue #328: tolerate benign cp stderr from virtio-fs (sockets/FIFOs
-        # readdir-visible but stat-invisible). See helper docstring.
-        local cp_err cp_rc
-        cp_err=$(cp -rp "$src/." "$tmp_dir/" 2>&1) && cp_rc=0 || cp_rc=$?
-        if [[ $cp_rc -ne 0 ]] && _atomic_cp_stat_only_failures "$cp_err"; then
-            log_debug "atomic_copy_dir: scratch-stage cp non-zero for $(basename "$dst") but stderr is benign; deferring to count check"
-            cp_rc=0
-        fi
-        if [[ $cp_rc -eq 0 ]]; then
+        # readdir-visible but stat-invisible). See _atomic_cp_with_enoent_tolerance.
+        _atomic_cp_with_enoent_tolerance "scratch-stage cp src→tmp for $(basename "$dst")" \
+            -rp "$src/." "$tmp_dir/"
+        local scratch_cp_rc=$?
+        if [[ $scratch_cp_rc -eq 0 ]]; then
             find "$tmp_dir" -type d -exec chmod u+w {} + 2>/dev/null || true
 
             # Issue #328 (review finding #2): the stage cp into dst must not
@@ -371,6 +422,8 @@ atomic_copy_dir() {
                 fi
             fi
 
+            # tmp_dir → dst: scratch is local FS we just populated, no
+            # virtio-fs socket pathology — keep plain cp rc semantics.
             local stage_err
             stage_err=$(cp -rp "$tmp_dir/." "$dst/" 2>&1) || {
                 log_warn "atomic_copy_dir: stage cp into $dst failed: ${stage_err:-no stderr}"
@@ -380,8 +433,7 @@ atomic_copy_dir() {
             find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
             rm -rf "$tmp_dir" 2>/dev/null || true
 
-            # Compare tmp_dir (what we staged) vs dst — would be src vs dst
-            # but tmp_dir was already validated against src above via cp rc.
+            # Compare src vs dst regular-file counts as the final guard.
             local src_count dst_count
             src_count=$(_atomic_count_files "$src")
             dst_count=$(_atomic_count_files "$dst")
@@ -391,23 +443,17 @@ atomic_copy_dir() {
             log_warn "atomic_copy_dir: scratch-path file count mismatch (src=${src_count} dst=${dst_count}) for $(basename "$dst")"
             return 1
         fi
-        log_warn "atomic_copy_dir: scratch-stage cp failed for $(basename "$dst"): ${cp_err:-no stderr}"
+        log_warn "atomic_copy_dir: scratch-stage cp failed for $(basename "$dst"): ${_ATOMIC_CP_STDERR:-no stderr}"
         rm -rf "$tmp_dir" 2>/dev/null || true
         return 1
     fi
 
     # Copy contents to temp directory (preserve permissions).
-    # Issue #328 (root cause comment): cp may exit non-zero solely because
-    # virtio-fs returns AF_UNIX socket entries from readdir() but ENOENT
-    # from stat() (typical on macOS host → Linux guest). Every regular
-    # file IS still copied. Tolerate that exact signal and let the count
-    # validation below be the final arbiter.
-    local cp_err cp_rc
-    cp_err=$(cp -rp "$src/." "$tmp_dir/" 2>&1) && cp_rc=0 || cp_rc=$?
-    if [[ $cp_rc -ne 0 ]] && _atomic_cp_stat_only_failures "$cp_err"; then
-        log_debug "atomic_copy_dir: cp non-zero for $(basename "$dst") but stderr is benign (unstattable entries skipped); deferring to count check"
-        cp_rc=0
-    fi
+    # Issue #328: tolerate benign cp stderr from virtio-fs (sockets/FIFOs
+    # readdir-visible but stat-invisible). See _atomic_cp_with_enoent_tolerance.
+    _atomic_cp_with_enoent_tolerance "main path cp src→tmp for $(basename "$dst")" \
+        -rp "$src/." "$tmp_dir/"
+    local cp_rc=$?
 
     if [[ $cp_rc -eq 0 ]]; then
         find "$tmp_dir" -type d -exec chmod u+w {} + 2>/dev/null || true
@@ -428,7 +474,7 @@ atomic_copy_dir() {
         rm -rf "$tmp_dir" 2>/dev/null || true
     else
         rm -rf "$tmp_dir" 2>/dev/null || true
-        log_warn "atomic_copy_dir: cp failed for $(basename "$dst"): ${cp_err:-no stderr}"
+        log_warn "atomic_copy_dir: cp failed for $(basename "$dst"): ${_ATOMIC_CP_STDERR:-no stderr}"
     fi
 
     # Fallback: copy directly (better to have potentially incomplete files than none)
