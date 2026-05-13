@@ -1455,8 +1455,21 @@ generate_filesystem_includes() {
                     log_debug "Snapshot: ${expanded_path} -> ${mount_source}"
                 fi
 
-                # Mount to staging directory (read-only)
-                VOLUME_MOUNTS+=("-v" "${mount_source}:${staging_path}:ro")
+                # Mount to staging directory (read-only).
+                # Issue #328: on macOS, the host user's UID (typically 501) maps to
+                # UID 0 (root) inside the container's user namespace, while the
+                # container process runs as developer (UID 1000). Directories with
+                # mode 0700 (e.g., .ssh, .claude) owned by UID 0 are inaccessible
+                # to UID 1000 — both fuse-overlayfs and cp fail with EACCES.
+                # The :U flag creates an idmapped mount (kernel 5.12+, Podman 4.3+)
+                # that remaps file ownership to the container user so mode-0700 dirs
+                # appear owned by developer and become readable. :ro is preserved;
+                # the host filesystem is never modified.
+                local _staging_mount_opts="ro"
+                if is_macos; then
+                    _staging_mount_opts="ro,U"
+                fi
+                VOLUME_MOUNTS+=("-v" "${mount_source}:${staging_path}:${_staging_mount_opts}")
                 log_debug "Staged for copy: ${mount_source} -> ${staging_path}"
 
                 # Track for entrypoint to copy

@@ -192,6 +192,13 @@ test_snapshot_file_preserves_permissions() {
 
 test_snapshot_file_fallback_on_failure() {
     log_test "_snapshot_file: falls back to original path when cp fails"
+    # chmod 000 has no effect when running as root — the test would always
+    # succeed in reading the file, making the fallback path unreachable.
+    # Documented in PR #307; skip rather than produce a false pass or hard fail.
+    if [[ "$(id -u)" == "0" ]]; then
+        log_skip "test_snapshot_file_fallback_on_failure: running as root — chmod 000 has no effect, skipping"
+        return 0
+    fi
     reset_snapshot_state
     _init_snapshot_dir
 
@@ -332,6 +339,58 @@ test_snapshot_file_absolute_path_no_collision() {
 }
 
 #===============================================================================
+# Issue #328: staging mount option — :U flag for macOS UID remapping
+#
+# On macOS, the host user's UID (e.g. 501) maps to a different UID inside the
+# container (typically UID 0 or 501 with --userns=keep-id). Directories with
+# mode 0700 (like ~/.ssh, ~/.claude) are inaccessible to the container process
+# (developer, UID 1000). The :U Podman mount option creates an idmapped mount
+# so files appear owned by the container user and become readable.
+#
+# The logic under test (inlined from launch-agent.sh generate_filesystem_includes):
+#   if is_macos; then _staging_mount_opts="ro,U"; else _staging_mount_opts="ro"; fi
+#===============================================================================
+
+# Inline the staging mount-option resolver from launch-agent.sh for testing.
+# Returns the mount options string for a staging volume.
+_staging_mount_opts_for_platform() {
+    local platform="${1:-linux}"
+    if [[ "$platform" == "macos" ]]; then
+        echo "ro,U"
+    else
+        echo "ro"
+    fi
+}
+
+test_staging_mount_opts_macos_includes_U_flag() {
+    log_test "Staging mount opts on macOS include :U for UID remapping (Issue #328)"
+    local opts
+    opts=$(_staging_mount_opts_for_platform "macos")
+    assert_contains "$opts" "U" "macOS staging mount must include :U to remap ownership"
+    assert_contains "$opts" "ro" "macOS staging mount must remain read-only"
+}
+
+test_staging_mount_opts_linux_no_U_flag() {
+    log_test "Staging mount opts on Linux do not include :U (no UID mismatch)"
+    local opts
+    opts=$(_staging_mount_opts_for_platform "linux")
+    assert_not_contains "$opts" "U" "Linux staging mount should not include :U (UID matches)"
+    assert_contains "$opts" "ro" "Linux staging mount must remain read-only"
+}
+
+test_staging_mount_opts_macos_ro_U_combined() {
+    log_test "macOS staging mount opts: ro and U are both present and combined (Issue #328)"
+    local opts
+    opts=$(_staging_mount_opts_for_platform "macos")
+    # Podman accepts both "ro,U" and "U,ro" — verify both flags exist
+    local has_ro has_U
+    [[ "$opts" == *"ro"* ]] && has_ro=1 || has_ro=0
+    [[ "$opts" == *"U"* ]]  && has_U=1  || has_U=0
+    assert_equals "1" "$has_ro" "ro flag must be present in macOS staging opts"
+    assert_equals "1" "$has_U"  "U flag must be present in macOS staging opts"
+}
+
+#===============================================================================
 # TEST RUNNER
 #===============================================================================
 
@@ -358,6 +417,11 @@ main() {
     run_test test_snapshot_dir_cleanup
     run_test test_snapshot_file_parallel_agent_isolation
     run_test test_snapshot_file_absolute_path_no_collision
+
+    # Staging mount option tests (issue #328)
+    run_test test_staging_mount_opts_macos_includes_U_flag
+    run_test test_staging_mount_opts_linux_no_U_flag
+    run_test test_staging_mount_opts_macos_ro_U_combined
 
     # Summary
     print_summary

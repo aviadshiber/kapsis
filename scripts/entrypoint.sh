@@ -675,6 +675,15 @@ setup_staged_config_overlays() {
                 fi
                 log_warn "Falling back to atomic copy for ${relative_path}"
                 atomic_copy_dir "$src" "$dst" || log_warn "Atomic copy validation failed for dir: ${relative_path}"
+                # Issue #328: ensure every file in the staged dir is user-writable
+                # after any copy path (socket-file errors cause cp to exit 1 but
+                # still land all regular files with their original mode bits).
+                # Downstream writers (inject-lsp-config.sh, filter-agent-config.sh)
+                # need to modify files like settings.local.json; atomic_copy_dir
+                # preserves source perms via -p which can leave them mode 0444.
+                if [[ -d "$dst" ]]; then
+                    find "$dst" -type f -exec chmod u+rw {} + 2>/dev/null || true
+                fi
             fi
         else
             # File: atomic copy with validation (fixes race condition #151)

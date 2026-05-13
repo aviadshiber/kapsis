@@ -299,83 +299,116 @@ atomic_copy_dir() {
         fi
 
         log_debug "atomic_copy_dir: using cross-fs scratch ${tmp_dir} for $(basename "$dst")"
-        local cp_err
-        if cp_err=$(cp -rp "$src/." "$tmp_dir/" 2>&1); then
-            find "$tmp_dir" -type d -exec chmod u+w {} + 2>/dev/null || true
+        # Issue #328 (remaining): same socket-file tolerance as the primary path.
+        # Validate by regular-file count; sockets are excluded from the count.
+        local cp_err cp_rc=0
+        cp_err=$(cp -rp "$src/." "$tmp_dir/" 2>&1) || cp_rc=$?
+        find "$tmp_dir" -type d -exec chmod u+w {} + 2>/dev/null || true
+        find "$tmp_dir" -type f -exec chmod u+rw {} + 2>/dev/null || true
 
-            # Issue #328 (review finding #2): the stage cp into dst must not
-            # validate against a pre-populated dst — stale files would either
-            # mask a real success (count mismatch → false failure) or hide
-            # leftover state (matching count → false success). Clear dst
-            # contents first; preserve dst's own permissions/ownership.
-            if [[ -d "$dst" ]]; then
-                find "$dst" -mindepth 1 -delete 2>/dev/null || true
-            else
-                mkdir -p "$dst" 2>/dev/null || true
-                # Preserve source's dir mode for new dst (e.g. 0700 for .ssh)
-                if command -v get_file_mode &>/dev/null; then
-                    local _src_mode
-                    _src_mode=$(get_file_mode "$src" 2>/dev/null || echo "")
-                    if [[ -n "$_src_mode" ]]; then
-                        chmod "$_src_mode" "$dst" 2>/dev/null || true
-                    fi
-                fi
-            fi
+        local scratch_src_count scratch_tmp_count
+        scratch_src_count=$(_atomic_count_files "$src")
+        scratch_tmp_count=$(_atomic_count_files "$tmp_dir")
 
-            local stage_err
-            stage_err=$(cp -rp "$tmp_dir/." "$dst/" 2>&1) || {
-                log_warn "atomic_copy_dir: stage cp into $dst failed: ${stage_err:-no stderr}"
-                rm -rf "$tmp_dir" 2>/dev/null || true
-                return 1
-            }
-            find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
+        if [[ "$scratch_src_count" -ne "$scratch_tmp_count" ]]; then
+            log_warn "atomic_copy_dir: scratch-stage cp failed for $(basename "$dst"): ${cp_err:-no stderr}"
             rm -rf "$tmp_dir" 2>/dev/null || true
-
-            # Compare tmp_dir (what we staged) vs dst — would be src vs dst
-            # but tmp_dir was already validated against src above via cp rc.
-            local src_count dst_count
-            src_count=$(_atomic_count_files "$src")
-            dst_count=$(_atomic_count_files "$dst")
-            if [[ "$src_count" -eq "$dst_count" ]]; then
-                return 0
-            fi
-            log_warn "atomic_copy_dir: scratch-path file count mismatch (src=${src_count} dst=${dst_count}) for $(basename "$dst")"
             return 1
         fi
-        log_warn "atomic_copy_dir: scratch-stage cp failed for $(basename "$dst"): ${cp_err:-no stderr}"
+        [[ $cp_rc -ne 0 ]] && [[ -n "$cp_err" ]] && log_debug "atomic_copy_dir: scratch cp skipped special files (rc=${cp_rc}): ${cp_err}"
+
+        # Issue #328 (review finding #2): the stage cp into dst must not
+        # validate against a pre-populated dst — stale files would either
+        # mask a real success (count mismatch → false failure) or hide
+        # leftover state (matching count → false success). Clear dst
+        # contents first; preserve dst's own permissions/ownership.
+        if [[ -d "$dst" ]]; then
+            find "$dst" -mindepth 1 -delete 2>/dev/null || true
+        else
+            mkdir -p "$dst" 2>/dev/null || true
+            # Preserve source's dir mode for new dst (e.g. 0700 for .ssh)
+            if command -v get_file_mode &>/dev/null; then
+                local _src_mode
+                _src_mode=$(get_file_mode "$src" 2>/dev/null || echo "")
+                if [[ -n "$_src_mode" ]]; then
+                    chmod "$_src_mode" "$dst" 2>/dev/null || true
+                fi
+            fi
+        fi
+
+        local stage_err stage_rc=0
+        stage_err=$(cp -rp "$tmp_dir/." "$dst/" 2>&1) || stage_rc=$?
+        find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
+        find "$dst" -type f -exec chmod u+rw {} + 2>/dev/null || true
         rm -rf "$tmp_dir" 2>/dev/null || true
+
+        if [[ $stage_rc -ne 0 ]]; then
+            log_warn "atomic_copy_dir: stage cp into $dst failed: ${stage_err:-no stderr}"
+            return 1
+        fi
+
+        # Compare src vs dst — tmp_dir validated above, now verify dst
+        local src_count dst_count
+        src_count=$(_atomic_count_files "$src")
+        dst_count=$(_atomic_count_files "$dst")
+        if [[ "$src_count" -eq "$dst_count" ]]; then
+            return 0
+        fi
+        log_warn "atomic_copy_dir: scratch-path file count mismatch (src=${src_count} dst=${dst_count}) for $(basename "$dst")"
         return 1
     fi
 
-    # Copy contents to temp directory (preserve permissions)
-    local cp_err
-    if cp_err=$(cp -rp "$src/." "$tmp_dir/" 2>&1); then
-        find "$tmp_dir" -type d -exec chmod u+w {} + 2>/dev/null || true
+    # Copy contents to temp directory (preserve permissions).
+    # Issue #328 (remaining): cp returns non-zero when it encounters socket
+    # files (common in ~/.claude/ — Claude Code IPC sockets). cp does copy
+    # all regular files before/after the error, so we validate by regular-file
+    # count rather than cp's exit code. If counts match, all copyable content
+    # landed and we proceed with the atomic move.
+    local cp_err cp_rc=0
+    cp_err=$(cp -rp "$src/." "$tmp_dir/" 2>&1) || cp_rc=$?
+    find "$tmp_dir" -type d -exec chmod u+w {} + 2>/dev/null || true
+    find "$tmp_dir" -type f -exec chmod u+rw {} + 2>/dev/null || true
 
-        # Validate: compare file counts
-        local src_count tmp_count
-        src_count=$(_atomic_count_files "$src")
-        tmp_count=$(_atomic_count_files "$tmp_dir")
+    # Validate: compare regular-file counts
+    local src_count tmp_count
+    src_count=$(_atomic_count_files "$src")
+    tmp_count=$(_atomic_count_files "$tmp_dir")
 
-        if [[ "$src_count" -eq "$tmp_count" ]]; then
-            # Replace destination atomically
-            rm -rf "$dst"
-            mv "$tmp_dir" "$dst"
-            return 0
+    if [[ "$src_count" -eq "$tmp_count" ]]; then
+        if [[ $cp_rc -ne 0 ]] && [[ -n "$cp_err" ]]; then
+            log_debug "atomic_copy_dir: cp skipped special files for $(basename "$dst") (rc=${cp_rc}): ${cp_err}"
         fi
+        # Replace destination atomically
+        rm -rf "$dst"
+        mv "$tmp_dir" "$dst"
+        return 0
+    fi
 
-        log_warn "atomic_copy_dir: file count mismatch (src=${src_count} tmp=${tmp_count}) for $(basename "$dst")"
-        rm -rf "$tmp_dir" 2>/dev/null || true
-    else
-        rm -rf "$tmp_dir" 2>/dev/null || true
+    rm -rf "$tmp_dir" 2>/dev/null || true
+    if [[ $cp_rc -ne 0 ]]; then
         log_warn "atomic_copy_dir: cp failed for $(basename "$dst"): ${cp_err:-no stderr}"
+    else
+        log_warn "atomic_copy_dir: file count mismatch (src=${src_count} tmp=${tmp_count}) for $(basename "$dst")"
     fi
 
     # Fallback: copy directly (better to have potentially incomplete files than none)
     log_warn "atomic_copy_dir: using fallback copy for $(basename "$dst")"
-    local fallback_err
+    local fallback_rc=0 fallback_err
     mkdir -p "$dst" 2>/dev/null || true
-    fallback_err=$(cp -rp "$src/." "$dst/" 2>&1) || log_warn "atomic_copy_dir: fallback cp failed for $(basename "$dst"): ${fallback_err:-no stderr}"
+    fallback_err=$(cp -rp "$src/." "$dst/" 2>&1) || fallback_rc=$?
     find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
+    find "$dst" -type f -exec chmod u+rw {} + 2>/dev/null || true
+    if [[ $fallback_rc -ne 0 ]] && [[ -n "$fallback_err" ]]; then
+        log_warn "atomic_copy_dir: fallback cp failed for $(basename "$dst"): ${fallback_err}"
+    fi
+    # Validate fallback via file count — if cp only failed on special files, counts match
+    local fb_src fb_dst
+    fb_src=$(_atomic_count_files "$src")
+    fb_dst=$(_atomic_count_files "$dst")
+    if [[ "$fb_src" -eq "$fb_dst" ]]; then
+        [[ $fallback_rc -ne 0 ]] && log_debug "atomic_copy_dir: fallback cp skipped special files for $(basename "$dst")"
+        return 0
+    fi
+    log_warn "atomic_copy_dir: Atomic copy validation failed for $(basename "$dst") (src=${fb_src} dst=${fb_dst})"
     return 1
 }

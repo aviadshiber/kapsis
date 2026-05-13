@@ -842,6 +842,80 @@ test_atomic_copy_dir_mktemp_stderr_does_not_corrupt_path_on_success() {
 }
 
 #===============================================================================
+# Issue #328 (remaining): socket / special-file resilience
+#===============================================================================
+
+# atomic_copy_dir succeeds when source contains a FIFO / socket-like special
+# file that cp cannot copy.  cp returns 1 but all regular files land in dst;
+# the count-based validation should return success.
+test_atomic_copy_dir_special_file_tolerated() {
+    log_test "atomic_copy_dir: succeeds when src has a special file that cp skips (Issue #328)"
+
+    local src="$TEST_TEMP_DIR/special-src"
+    local dst="$TEST_TEMP_DIR/special-dst"
+    mkdir -p "$src"
+
+    echo "alpha" > "$src/alpha.txt"
+    echo "beta"  > "$src/beta.txt"
+    mkdir -p "$src/subdir"
+    echo "gamma" > "$src/subdir/gamma.txt"
+
+    # Create a FIFO (named pipe) — cp returns non-zero when it encounters one
+    # because it cannot create a FIFO in the destination filesystem.
+    if mkfifo "$src/test.fifo" 2>/dev/null; then
+        # Drain the FIFO in background so it doesn't block cp from moving on
+        (cat "$src/test.fifo" > /dev/null 2>&1 &)
+    else
+        log_test "  SKIP: mkfifo not available — skipping special-file test"
+        return 0
+    fi
+
+    local rc=0
+    atomic_copy_dir "$src" "$dst" 2>/dev/null || rc=$?
+
+    assert_equals "0" "$rc" "atomic_copy_dir should return 0 when only special files were skipped by cp"
+    assert_file_exists "$dst/alpha.txt" "alpha.txt should be copied despite cp returning 1 for FIFO"
+    assert_file_exists "$dst/beta.txt"  "beta.txt should be copied"
+    assert_file_exists "$dst/subdir/gamma.txt" "subdir/gamma.txt should be copied"
+
+    # Verify the FIFO itself was NOT copied (expected and correct)
+    assert_file_not_exists "$dst/test.fifo" "FIFO should not be in dst (cp cannot copy special files)"
+}
+
+# After atomic_copy_dir, all regular files in dst must be user-readable and
+# user-writable (chmod u+rw) so downstream writers (inject-lsp-config.sh etc.)
+# can modify them even when source had restrictive permissions.
+test_atomic_copy_dir_files_user_writable_after_copy() {
+    log_test "atomic_copy_dir: all regular files in dst are user-writable after copy (Issue #328)"
+
+    local src="$TEST_TEMP_DIR/perms-src"
+    local dst="$TEST_TEMP_DIR/perms-dst"
+    mkdir -p "$src/sub"
+
+    echo "data" > "$src/readonly.txt"
+    chmod 0444 "$src/readonly.txt"     # read-only for everyone
+    echo "data" > "$src/sub/locked.txt"
+    chmod 0400 "$src/sub/locked.txt"  # owner read-only
+
+    local rc=0
+    atomic_copy_dir "$src" "$dst" 2>/dev/null || rc=$?
+
+    assert_equals "0" "$rc" "atomic_copy_dir should succeed"
+    assert_file_exists "$dst/readonly.txt"     "readonly.txt should be copied"
+    assert_file_exists "$dst/sub/locked.txt"   "sub/locked.txt should be copied"
+
+    # Verify that the copied files are user-writable (chmod u+rw was applied)
+    [[ -w "$dst/readonly.txt" ]] || {
+        log_fail "dst/readonly.txt should be writable after copy (was chmod u+rw applied?)"
+        return 1
+    }
+    [[ -w "$dst/sub/locked.txt" ]] || {
+        log_fail "dst/sub/locked.txt should be writable after copy (was chmod u+rw applied?)"
+        return 1
+    }
+}
+
+#===============================================================================
 # TEST RUNNER
 #===============================================================================
 
@@ -898,6 +972,10 @@ main() {
     run_test test_atomic_copy_dir_scratch_resets_prepopulated_dst
     run_test test_atomic_copy_dir_last_resort_returns_success_when_cp_works
     run_test test_atomic_copy_dir_mktemp_stderr_does_not_corrupt_path_on_success
+
+    # Socket / special-file resilience (issue #328 remaining fix)
+    run_test test_atomic_copy_dir_special_file_tolerated
+    run_test test_atomic_copy_dir_files_user_writable_after_copy
 
     # Summary
     print_summary
