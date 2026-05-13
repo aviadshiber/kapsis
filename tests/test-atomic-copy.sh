@@ -1003,6 +1003,16 @@ test_atomic_cp_stderr_preserve_perms_eperm_is_benign() {
     return 0
 }
 
+test_atomic_cp_stderr_preserve_perms_enoent_is_benign() {
+    log_test "_atomic_cp_stderr_is_benign_only: 'preserving permissions ... No such file or directory' → benign (e2e-discovered: cp tries fchmod on a dst that was never created because src is a socket)"
+    local line=$'cp: preserving permissions for \'/tmp/probe/./fsmonitor--daemon.ipc\': No such file or directory'
+    if ! _atomic_cp_stderr_is_benign_only "$line"; then
+        echo "  FAIL: 'preserving permissions ... ENOENT' must be classified benign (GNU cp emits this when src is a non-copyable type)"
+        return 1
+    fi
+    return 0
+}
+
 test_atomic_cp_stderr_mixed_stat_and_preserve_perms_is_benign() {
     log_test "_atomic_cp_stderr_is_benign_only: ENOTSUPP stat + preserve-perms (kapsis#335 trace shape) → benign"
     local mixed=$'cp: cannot stat \'/x/a.ipc\': Operation not supported\ncp: preserving permissions for \'/y/.\': Permission denied'
@@ -1020,6 +1030,148 @@ test_atomic_cp_stderr_preserve_perms_for_file_path_is_benign() {
         echo "  FAIL: 'preserving permissions for FILE': benign regardless of dir/file form"
         return 1
     fi
+    return 0
+}
+
+# ----- Review feedback (PR #336): coverage gaps + side-effect signaling -----
+
+test_atomic_cp_stderr_preserve_perms_unrecognized_reason_is_not_benign() {
+    log_test "_atomic_cp_stderr_is_benign_only: 'preserving permissions ... Read-only file system' → not benign (PR #336 review HIGH)"
+    # An unrecognized errno suffix on a preserve-perms line is NOT in the
+    # narrow EACCES|EPERM whitelist; classifier must reject. A future
+    # regex widening (e.g. `.*` instead of the specific reason strings)
+    # would silently regress this — pinned here.
+    local line=$'cp: preserving permissions for \'/x/.\': Read-only file system'
+    if _atomic_cp_stderr_is_benign_only "$line"; then
+        echo "  FAIL: 'preserving permissions ... Read-only file system' must NOT be classified benign"
+        return 1
+    fi
+    return 0
+}
+
+test_atomic_cp_stderr_multiple_preserve_perms_lines_are_benign() {
+    log_test "_atomic_cp_stderr_is_benign_only: multiple 'preserving permissions' lines → benign (PR #336 review)"
+    local many=$'cp: preserving permissions for \'/x/a/.\': Permission denied\ncp: preserving permissions for \'/x/b/.\': Permission denied\ncp: preserving permissions for \'/x/c/.\': Operation not permitted'
+    if ! _atomic_cp_stderr_is_benign_only "$many"; then
+        echo "  FAIL: multiple preserve-perms lines must all classify as benign"
+        return 1
+    fi
+    return 0
+}
+
+test_atomic_cp_stderr_kind_signal_stat_only() {
+    log_test "_atomic_cp_stderr_is_benign_only: _ATOMIC_CP_BENIGN_KIND='stat-fail' when only stat lines present"
+    local line=$'cp: cannot stat \'/x/foo.ipc\': No such file or directory'
+    _atomic_cp_stderr_is_benign_only "$line" || {
+        echo "  FAIL: classifier should accept this line"
+        return 1
+    }
+    if [[ "${_ATOMIC_CP_BENIGN_KIND:-}" != "stat-fail" ]]; then
+        echo "  FAIL: expected _ATOMIC_CP_BENIGN_KIND=stat-fail, got '${_ATOMIC_CP_BENIGN_KIND:-}'"
+        return 1
+    fi
+    return 0
+}
+
+test_atomic_cp_stderr_kind_signal_preserve_perms_only() {
+    log_test "_atomic_cp_stderr_is_benign_only: _ATOMIC_CP_BENIGN_KIND='preserve-perms' when only preserve-perms lines present"
+    local line=$'cp: preserving permissions for \'/x/.\': Permission denied'
+    _atomic_cp_stderr_is_benign_only "$line" || {
+        echo "  FAIL: classifier should accept this line"
+        return 1
+    }
+    if [[ "${_ATOMIC_CP_BENIGN_KIND:-}" != "preserve-perms" ]]; then
+        echo "  FAIL: expected _ATOMIC_CP_BENIGN_KIND=preserve-perms, got '${_ATOMIC_CP_BENIGN_KIND:-}'"
+        return 1
+    fi
+    return 0
+}
+
+test_atomic_cp_stderr_kind_signal_mixed() {
+    log_test "_atomic_cp_stderr_is_benign_only: _ATOMIC_CP_BENIGN_KIND='mixed' when both line types present"
+    local mixed=$'cp: cannot stat \'/x/foo.ipc\': No such file or directory\ncp: preserving permissions for \'/x/.\': Permission denied'
+    _atomic_cp_stderr_is_benign_only "$mixed" || {
+        echo "  FAIL: classifier should accept mixed benign stderr"
+        return 1
+    }
+    if [[ "${_ATOMIC_CP_BENIGN_KIND:-}" != "mixed" ]]; then
+        echo "  FAIL: expected _ATOMIC_CP_BENIGN_KIND=mixed, got '${_ATOMIC_CP_BENIGN_KIND:-}'"
+        return 1
+    fi
+    return 0
+}
+
+test_atomic_cp_stderr_kind_cleared_on_rejection() {
+    log_test "_atomic_cp_stderr_is_benign_only: _ATOMIC_CP_BENIGN_KIND cleared when stderr is unrecognized"
+    # Pre-set kind to detect that the classifier resets it on entry,
+    # even when the stderr is ultimately rejected.
+    _ATOMIC_CP_BENIGN_KIND="stale-value"
+    local real_err=$'cp: cannot create directory \'/x\': Read-only file system'
+    if _atomic_cp_stderr_is_benign_only "$real_err"; then
+        echo "  FAIL: real error must NOT classify benign"
+        return 1
+    fi
+    if [[ -n "${_ATOMIC_CP_BENIGN_KIND:-}" ]]; then
+        echo "  FAIL: _ATOMIC_CP_BENIGN_KIND must be cleared on rejection, got '${_ATOMIC_CP_BENIGN_KIND}'"
+        return 1
+    fi
+    return 0
+}
+
+test_atomic_restore_modes_basic() {
+    log_test "_atomic_restore_modes: mirrors src mode bits onto dst (PR #336 review HIGH — private-key mode leak fix)"
+    local base="$TEST_TEMP_DIR/restore-modes-basic"
+    local src="$base/src"
+    local dst="$base/dst"
+
+    mkdir -p "$src/.ssh"
+    echo "private" > "$src/.ssh/id_rsa"
+    echo "public" > "$src/.ssh/id_rsa.pub"
+    chmod 0700 "$src/.ssh"
+    chmod 0600 "$src/.ssh/id_rsa"
+    chmod 0644 "$src/.ssh/id_rsa.pub"
+
+    # Simulate the "cp -p's fchmod failed" outcome: dst tree exists with
+    # the right files but mode bits are at cp defaults.
+    mkdir -p "$dst/.ssh"
+    cp "$src/.ssh/id_rsa" "$dst/.ssh/id_rsa"
+    cp "$src/.ssh/id_rsa.pub" "$dst/.ssh/id_rsa.pub"
+    chmod 0755 "$dst/.ssh"
+    chmod 0644 "$dst/.ssh/id_rsa"      # ← would be world-readable
+    chmod 0644 "$dst/.ssh/id_rsa.pub"
+
+    _atomic_restore_modes "$src" "$dst" || {
+        echo "  FAIL: _atomic_restore_modes returned non-zero"
+        return 1
+    }
+
+    # Cross-platform stat: GNU first, then BSD fallback.
+    _get_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%A' "$1" 2>/dev/null; }
+    local m_ssh m_priv m_pub
+    m_ssh=$(_get_mode "$dst/.ssh")
+    m_priv=$(_get_mode "$dst/.ssh/id_rsa")
+    m_pub=$(_get_mode "$dst/.ssh/id_rsa.pub")
+
+    [[ "$m_ssh"  == "700" ]] || { echo "  FAIL: .ssh dir mode should be 700, got $m_ssh"; return 1; }
+    [[ "$m_priv" == "600" ]] || { echo "  FAIL: id_rsa mode should be 600 (private), got $m_priv"; return 1; }
+    [[ "$m_pub"  == "644" ]] || { echo "  FAIL: id_rsa.pub mode should be 644, got $m_pub"; return 1; }
+    return 0
+}
+
+test_atomic_restore_modes_missing_dst_entry_is_tolerated() {
+    log_test "_atomic_restore_modes: tolerates dst entries missing from src (no crash, returns 0)"
+    local base="$TEST_TEMP_DIR/restore-modes-missing"
+    local src="$base/src"
+    local dst="$base/dst"
+    mkdir -p "$src" "$dst"
+    echo "only-in-src" > "$src/extra.txt"
+    chmod 0600 "$src/extra.txt"
+    # dst has NO matching entry — _atomic_restore_modes should skip
+    # cleanly without crashing.
+    _atomic_restore_modes "$src" "$dst" || {
+        echo "  FAIL: should return 0 when dst is missing src entries"
+        return 1
+    }
     return 0
 }
 
@@ -1300,6 +1452,168 @@ test_atomic_copy_dir_makes_restrictive_dst_writable() {
     assert_file_not_exists "$dst/stale.txt" "Stale dst content must be replaced, not merged"
 }
 
+test_atomic_copy_dir_chmod_recursive_on_nested_subdirs() {
+    log_test "atomic_copy_dir: defensive chmod is -R (PR #336 review: nested restrictive subdirs)"
+
+    local src="$TEST_TEMP_DIR/src/k335c_nested_src"
+    local dst="$TEST_TEMP_DIR/dst/k335c_nested_dst"
+
+    mkdir -p "$src"
+    echo "fresh-top" > "$src/top.txt"
+
+    # Pre-create dst with a nested restrictive subdir containing a stale
+    # file. Without -R on the defensive chmod, the chmod fixes the top
+    # level but the nested subdir remains 0500, the recursive rm-rf
+    # fails to unlink stale-nested.txt, and atomic_copy_dir errors out.
+    mkdir -p "$dst/subdir"
+    echo "stale-nested" > "$dst/subdir/stale-nested.txt"
+    chmod 0500 "$dst/subdir"
+    chmod 0500 "$dst"
+
+    atomic_copy_dir "$src" "$dst" 2>/dev/null
+    local rc=$?
+
+    chmod -R 0755 "$dst" 2>/dev/null || true
+
+    assert_equals "0" "$rc" "atomic_copy_dir must succeed when dst contains nested restrictive subdirs"
+    assert_file_exists "$dst/top.txt" "Fresh payload must land at the top level"
+    assert_file_not_exists "$dst/subdir/stale-nested.txt" "Nested stale content must be replaced (chmod -R was effective)"
+    [[ ! -d "$dst/subdir" ]] || {
+        echo "  FAIL: subdir from old dst tree should be gone after replacement"
+        return 1
+    }
+    return 0
+}
+
+test_atomic_copy_dir_skips_defensive_chmod_when_dst_already_writable() {
+    log_test "atomic_copy_dir: defensive chmod short-circuits when dst is already writable (PR #336 review MED: avoid 24k syscalls)"
+
+    local src="$TEST_TEMP_DIR/src/k335c_skip_src"
+    local dst="$TEST_TEMP_DIR/dst/k335c_skip_dst"
+
+    mkdir -p "$src"
+    echo "payload" > "$src/payload.txt"
+
+    # Pre-create dst with normal writable perms. Capture the mtime to
+    # detect whether chmod ran (chmod updates ctime; we use a simple
+    # observability proxy by counting chmod invocations via a wrapper).
+    mkdir -p "$dst"
+    echo "stale" > "$dst/stale.txt"
+    # shellcheck disable=SC2218  # chmod override is defined below; this call uses the real one
+    chmod 0755 "$dst"
+
+    # Wrap chmod to count invocations during atomic_copy_dir. We only
+    # care that chmod -R u+rwx on $dst itself is skipped — the inner
+    # `find -type d -exec chmod u+w` on the tmp_dir is unrelated.
+    local chmod_calls_file="$TEST_TEMP_DIR/chmod-calls-$$"
+    : > "$chmod_calls_file"
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    chmod() {
+        # Record the FIRST positional after the mode for inspection.
+        echo "$*" >> "$chmod_calls_file"
+        command chmod "$@"
+    }
+
+    atomic_copy_dir "$src" "$dst" 2>/dev/null
+    local rc=$?
+
+    _reset_atomic_copy_lib
+    unset -f chmod 2>/dev/null || true
+
+    assert_equals "0" "$rc" "atomic_copy_dir should succeed when dst is already writable"
+    assert_file_exists "$dst/payload.txt" "Fresh payload must land in dst"
+    # The defensive `chmod -R u+rwx "$dst"` invocation must NOT have run.
+    if grep -q "\-R u+rwx $dst\$" "$chmod_calls_file"; then
+        echo "  FAIL: defensive 'chmod -R u+rwx $dst' should be skipped when dst is already writable"
+        echo "  chmod calls recorded:"
+        cat "$chmod_calls_file"
+        return 1
+    fi
+    return 0
+}
+
+test_atomic_copy_dir_handles_symlink_dst_by_canonicalizing() {
+    log_test "atomic_copy_dir: defensive chmod canonicalizes symlink dst (PR #336 review HIGH: CWE-367 / macOS chmod-on-symlink)"
+
+    local src="$TEST_TEMP_DIR/src/k335c_link_src"
+    local real_dst="$TEST_TEMP_DIR/dst/k335c_link_real"
+    local link_dst="$TEST_TEMP_DIR/dst/k335c_link_via"
+
+    mkdir -p "$src"
+    echo "payload" > "$src/payload.txt"
+
+    mkdir -p "$real_dst"
+    echo "stale" > "$real_dst/stale.txt"
+    chmod 0500 "$real_dst"
+    ln -s "$real_dst" "$link_dst"
+
+    atomic_copy_dir "$src" "$link_dst" 2>/dev/null
+    local rc=$?
+
+    chmod -R 0755 "$real_dst" 2>/dev/null || true
+
+    # Whether dst was the symlink or the canonicalized target, the
+    # operation must succeed and the fresh payload must be visible
+    # through both paths.
+    assert_equals "0" "$rc" "atomic_copy_dir must succeed when dst is a symlink to a restrictive dir"
+    assert_file_exists "$link_dst/payload.txt" "Fresh payload must be visible through the symlink"
+    assert_file_not_exists "$link_dst/stale.txt" "Stale content under the real target must be replaced"
+}
+
+# ----- Integration: scratch-fallback path with preserve-perms mode restore -----
+
+test_atomic_copy_dir_restores_modes_after_preserve_perms_accepted() {
+    log_test "atomic_copy_dir: restores src mode bits when classifier accepts preserve-perms (PR #336 review HIGH: SSH key mode leak)"
+
+    local src="$TEST_TEMP_DIR/src/preserve_perms_modes_src"
+    local dst="$TEST_TEMP_DIR/dst/preserve_perms_modes_dst"
+
+    mkdir -p "$src/.ssh"
+    echo "private-key-bytes" > "$src/.ssh/id_rsa"
+    chmod 0700 "$src/.ssh"
+    chmod 0600 "$src/.ssh/id_rsa"
+
+    # Mock cp: real-copy the files but DROP the mode bits (simulate
+    # cp -p's fchmod failure) AND emit the benign preserve-perms
+    # stderr that the classifier accepts.
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    cp() {
+        local args=("$@")
+        local n=${#args[@]}
+        local last=${args[n-1]}
+        local has_rp=0
+        local a
+        for a in "$@"; do
+            [[ "$a" == "-rp" ]] && has_rp=1 && break
+        done
+        if [[ $has_rp -eq 1 ]]; then
+            # Replicate the data without -p (so modes drop to umask defaults)
+            command cp -r "$src/." "$last/" 2>/dev/null
+            # Force loose modes to simulate the fchmod failure outcome
+            find "$last" -type d -exec command chmod 0755 {} + 2>/dev/null || true
+            find "$last" -type f -exec command chmod 0644 {} + 2>/dev/null || true
+            echo "cp: preserving permissions for '$last/.': Permission denied" >&2
+            return 1
+        fi
+        command cp "$@"
+    }
+
+    atomic_copy_dir "$src" "$dst" 2>/dev/null
+    local rc=$?
+
+    _reset_atomic_copy_lib
+
+    _get_mode() { stat -c '%a' "$1" 2>/dev/null || stat -f '%A' "$1" 2>/dev/null; }
+    local m_ssh m_priv
+    m_ssh=$(_get_mode "$dst/.ssh")
+    m_priv=$(_get_mode "$dst/.ssh/id_rsa")
+
+    assert_equals "0" "$rc" "atomic_copy_dir must succeed with preserve-perms benign"
+    [[ "$m_ssh"  == "700" ]] || { echo "  FAIL: .ssh dir mode should be RESTORED to 700, got $m_ssh"; return 1; }
+    [[ "$m_priv" == "600" ]] || { echo "  FAIL: id_rsa mode should be RESTORED to 600 (private), got $m_priv — this is the kapsis#336 review's SSH-key-leak finding"; return 1; }
+    return 0
+}
+
 #===============================================================================
 # TEST RUNNER
 #===============================================================================
@@ -1372,6 +1686,7 @@ main() {
     run_test test_atomic_cp_stderr_stat_enotsupp_is_benign
     run_test test_atomic_cp_stderr_preserve_perms_eacces_is_benign
     run_test test_atomic_cp_stderr_preserve_perms_eperm_is_benign
+    run_test test_atomic_cp_stderr_preserve_perms_enoent_is_benign
     run_test test_atomic_cp_stderr_mixed_stat_and_preserve_perms_is_benign
     run_test test_atomic_cp_stderr_preserve_perms_for_file_path_is_benign
     # Integration tests for the three patched cp call sites:
@@ -1383,6 +1698,19 @@ main() {
     # Issue #335 end-to-end integration tests
     run_test test_atomic_copy_dir_main_path_tolerates_kapsis335_pattern
     run_test test_atomic_copy_dir_makes_restrictive_dst_writable
+    # PR #336 review feedback (HIGH + MEDIUM coverage gaps)
+    run_test test_atomic_cp_stderr_preserve_perms_unrecognized_reason_is_not_benign
+    run_test test_atomic_cp_stderr_multiple_preserve_perms_lines_are_benign
+    run_test test_atomic_cp_stderr_kind_signal_stat_only
+    run_test test_atomic_cp_stderr_kind_signal_preserve_perms_only
+    run_test test_atomic_cp_stderr_kind_signal_mixed
+    run_test test_atomic_cp_stderr_kind_cleared_on_rejection
+    run_test test_atomic_restore_modes_basic
+    run_test test_atomic_restore_modes_missing_dst_entry_is_tolerated
+    run_test test_atomic_copy_dir_chmod_recursive_on_nested_subdirs
+    run_test test_atomic_copy_dir_skips_defensive_chmod_when_dst_already_writable
+    run_test test_atomic_copy_dir_handles_symlink_dst_by_canonicalizing
+    run_test test_atomic_copy_dir_restores_modes_after_preserve_perms_accepted
 
     # Summary
     print_summary

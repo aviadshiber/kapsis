@@ -116,21 +116,24 @@ test_atomic_copy_dir_real_chmod_restrictive_dst_e2e() {
         source /opt/kapsis/lib/logging.sh
         source /opt/kapsis/lib/atomic-copy.sh
 
-        if atomic_copy_dir \$SRC \$DST 2>/dev/null; then
-            # Restore mode for cleanup
-            chmod 0755 \$DST 2>/dev/null || true
-            echo RC=\$?
-            test -f \$DST/payload.txt && echo HAS_PAYLOAD || echo MISSING_PAYLOAD
-            test ! -e \$DST/stale.txt && echo NO_STALE || echo HAS_STALE
-        else
-            chmod 0755 \$DST 2>/dev/null || true
-            echo FAILED_RC=\$?
-        fi
+        # Capture atomic_copy_dir's exit code directly — PR #336 review
+        # caught that capturing \$? after the cleanup-chmod || true
+        # always reported 0, masking the actual rc.
+        atomic_copy_dir \$SRC \$DST 2>/dev/null
+        ACD_RC=\$?
+        # Cleanup mode so test framework can remove dst regardless of
+        # whether atomic_copy_dir succeeded.
+        chmod 0755 \$DST 2>/dev/null || true
+
+        echo ACD_RC=\$ACD_RC
+        test -f \$DST/payload.txt && echo HAS_PAYLOAD || echo MISSING_PAYLOAD
+        test ! -e \$DST/stale.txt && echo NO_STALE || echo HAS_STALE
     " "${LIB_MOUNT_ARGS[@]}") || exit_code=$?
 
     cleanup_container_test
 
     assert_exit_code 0 "$exit_code" "Container command should exit 0"
+    assert_contains "$output" "ACD_RC=0" "atomic_copy_dir must return 0 (real chmod allowed rm-rf-and-replace)"
     assert_contains "$output" "HAS_PAYLOAD" "Fresh payload must land in dst after replacement"
     assert_contains "$output" "NO_STALE" "Stale dst content must be replaced, not merged"
 }
@@ -149,8 +152,13 @@ test_atomic_copy_dir_real_host_socket_e2e() {
         return 0
     fi
 
-    cleanup_fixture_dir
-    trap cleanup_fixture_dir RETURN
+    # $HOME writability guard (PR #336 review: constrained CI environments
+    # may have read-only HOME). We use $HOME specifically because podman
+    # machine on macOS only exposes $HOME (not /tmp) through virtio-fs.
+    if ! mkdir -p "$ATOMIC_COPY_INT_FIXTURE_DIR" 2>/dev/null; then
+        log_skip "Skipping: \$HOME not writable for fixture dir ($ATOMIC_COPY_INT_FIXTURE_DIR)"
+        return 0
+    fi
 
     local src_host="$ATOMIC_COPY_INT_FIXTURE_DIR/src"
     if ! build_host_fixture_with_socket "$src_host"; then
@@ -170,35 +178,66 @@ test_atomic_copy_dir_real_host_socket_e2e() {
         set -e
         SRC=/test-src
         DST=/tmp/dst
+        PROBE=/tmp/probe-isolated   # NEVER inside DST — PR #336 review
         mkdir -p \$DST
 
         source /opt/kapsis/lib/logging.sh
         source /opt/kapsis/lib/atomic-copy.sh
 
-        # Capture cp behavior for diagnostic surfacing in the test
-        # output (helpful if this test ever fails on a new kernel).
+        # Capture raw cp behavior in an isolated probe dir so any
+        # leftover doesn't contaminate atomic_copy_dir's count check.
         echo '--- raw cp -rp probe ---'
-        LC_ALL=C cp -rp \$SRC/. \$DST/probe-out/ 2>&1 || echo 'cp exited non-zero (expected on macOS+virtio-fs)'
-        rm -rf \$DST/probe-out 2>/dev/null || true
+        mkdir -p \$PROBE
+        PROBE_OUT=\$(LC_ALL=C cp -rp \$SRC/. \$PROBE/ 2>&1) && PROBE_RC=0 || PROBE_RC=\$?
+        rm -rf \$PROBE 2>/dev/null || true
+        echo \"PROBE_RC=\$PROBE_RC\"
+        # Always echo the captured stderr so it's visible in test diagnostics.
+        # Prefix every line with PROBE_STDERR_LINE: for grep-friendliness.
+        printf 'PROBE_STDERR_LEN=%s\\n' \"\${#PROBE_OUT}\"
+        printf 'PROBE_STDERR_LINE: %s\\n' \"\$PROBE_OUT\" | head -20
+        # Classifier-engagement marker: did real cp emit one of the
+        # benign patterns this PR teaches the classifier to accept?
+        # Reasons whitelist must mirror _ATOMIC_CP_PRESERVE_PERMS_REGEX
+        # (Permission denied | Operation not permitted | No such file or
+        # directory — the third was discovered empirically during this
+        # PR's own e2e test development; see the regex's docstring).
+        if echo \"\$PROBE_OUT\" | grep -qE 'cp: cannot stat .+: (No such file or directory|Operation not supported)'; then
+            echo 'CLASSIFIER_ENGAGED=1 (stat-fail)'
+        elif echo \"\$PROBE_OUT\" | grep -qE 'cp: preserving permissions .+: (Permission denied|Operation not permitted|No such file or directory)'; then
+            echo 'CLASSIFIER_ENGAGED=1 (preserve-perms)'
+        else
+            echo 'CLASSIFIER_ENGAGED=0'
+        fi
 
         echo '--- atomic_copy_dir under test ---'
-        if atomic_copy_dir \$SRC \$DST 2>&1; then
-            echo RC=0
-            test -f \$DST/a.txt && echo HAS_A || echo MISSING_A
-            test -f \$DST/b.txt && echo HAS_B || echo MISSING_B
-        else
-            echo FAILED_RC=\$?
-        fi
+        # Capture rc separately (PR #336 review: don't shadow via cleanup)
+        atomic_copy_dir \$SRC \$DST 2>&1
+        ACD_RC=\$?
+        echo \"ACD_RC=\$ACD_RC\"
+        test -f \$DST/a.txt && echo HAS_A || echo MISSING_A
+        test -f \$DST/b.txt && echo HAS_B || echo MISSING_B
     " "${LIB_MOUNT_ARGS[@]}" -v "$src_host:/test-src:ro") || exit_code=$?
 
     cleanup_container_test
     cleanup_fixture_dir
-    trap - RETURN
 
     assert_exit_code 0 "$exit_code" "Container command should exit 0"
-    assert_contains "$output" "RC=0" "atomic_copy_dir must return 0 despite real cp's socket handling"
+    assert_contains "$output" "ACD_RC=0" "atomic_copy_dir must return 0 despite real cp's socket handling"
     assert_contains "$output" "HAS_A" "Regular file a.txt must be staged"
     assert_contains "$output" "HAS_B" "Regular file b.txt must be staged"
+
+    # PR #336 review HIGH: pin the test to actually exercising the
+    # classifier code path on macOS hosts (where virtio-fs reproduces
+    # #335). On Linux hosts cp copies sockets cleanly, classifier is
+    # never engaged, and this test is a happy-path baseline — emit a
+    # log_skip so green isn't conflated with "the fix actually fired".
+    if [[ "$output" == *"CLASSIFIER_ENGAGED=1"* ]]; then
+        log_info "  classifier WAS engaged (virtio-fs / non-stattable socket); fix path exercised end-to-end"
+    elif [[ "$output" == *"CLASSIFIER_ENGAGED=0"* ]]; then
+        log_skip "  classifier was NOT engaged (real cp copied socket cleanly — likely Linux native bind-mount). Test passed via happy path; fix code path not exercised on this host."
+        # Surface the probe diagnostic so an operator can see what cp emitted.
+        printf '%s\n' "$output" | grep -E 'PROBE_RC=|PROBE_STDERR_LEN=|PROBE_STDERR_LINE:' | head -10 | sed 's/^/    /'
+    fi
 }
 
 #===============================================================================
