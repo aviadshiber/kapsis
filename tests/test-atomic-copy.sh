@@ -902,8 +902,8 @@ _install_benign_stat_cp_mock() {
 }
 
 test_atomic_cp_stderr_empty_is_not_benign() {
-    log_test "_atomic_cp_stderr_is_stat_enoent_only: empty stderr → not benign"
-    if _atomic_cp_stderr_is_stat_enoent_only ""; then
+    log_test "_atomic_cp_stderr_is_benign_only: empty stderr → not benign"
+    if _atomic_cp_stderr_is_benign_only ""; then
         echo "  FAIL: empty stderr should NOT be treated as benign (no signal to whitelist)"
         return 1
     fi
@@ -911,10 +911,10 @@ test_atomic_cp_stderr_empty_is_not_benign() {
 }
 
 test_atomic_cp_stderr_whitespace_only_is_not_benign() {
-    log_test "_atomic_cp_stderr_is_stat_enoent_only: newline-only stderr → not benign (review finding)"
+    log_test "_atomic_cp_stderr_is_benign_only: newline-only stderr → not benign (review finding)"
     # All-whitespace stderr previously bypassed the empty-string guard and
     # was classified benign — covered here so a regression reintroduces it.
-    if _atomic_cp_stderr_is_stat_enoent_only $'\n\n'; then
+    if _atomic_cp_stderr_is_benign_only $'\n\n'; then
         echo "  FAIL: stderr of '\\n\\n' must NOT be treated as benign"
         return 1
     fi
@@ -922,9 +922,9 @@ test_atomic_cp_stderr_whitespace_only_is_not_benign() {
 }
 
 test_atomic_cp_stderr_single_benign_line() {
-    log_test "_atomic_cp_stderr_is_stat_enoent_only: single 'cannot stat ENOENT' line → benign"
+    log_test "_atomic_cp_stderr_is_benign_only: single 'cannot stat ENOENT' line → benign"
     local line=$'cp: cannot stat \'/x/foo.ipc\': No such file or directory'
-    if ! _atomic_cp_stderr_is_stat_enoent_only "$line"; then
+    if ! _atomic_cp_stderr_is_benign_only "$line"; then
         echo "  FAIL: single benign line should be classified benign"
         return 1
     fi
@@ -932,9 +932,9 @@ test_atomic_cp_stderr_single_benign_line() {
 }
 
 test_atomic_cp_stderr_multiple_benign_lines() {
-    log_test "_atomic_cp_stderr_is_stat_enoent_only: multiple benign lines (with blank in middle) → benign"
+    log_test "_atomic_cp_stderr_is_benign_only: multiple benign lines (with blank in middle) → benign"
     local many=$'cp: cannot stat \'/x/a.ipc\': No such file or directory\n\ncp: cannot stat \'/x/b.ipc\': No such file or directory'
-    if ! _atomic_cp_stderr_is_stat_enoent_only "$many"; then
+    if ! _atomic_cp_stderr_is_benign_only "$many"; then
         echo "  FAIL: multiple benign lines should be classified benign"
         return 1
     fi
@@ -942,9 +942,9 @@ test_atomic_cp_stderr_multiple_benign_lines() {
 }
 
 test_atomic_cp_stderr_mixed_benign_and_real_is_not_benign() {
-    log_test "_atomic_cp_stderr_is_stat_enoent_only: benign + Permission denied → not benign"
+    log_test "_atomic_cp_stderr_is_benign_only: benign + Permission denied → not benign"
     local mixed=$'cp: cannot stat \'/x/a.ipc\': No such file or directory\ncp: cannot create regular file \'/x/y\': Permission denied'
-    if _atomic_cp_stderr_is_stat_enoent_only "$mixed"; then
+    if _atomic_cp_stderr_is_benign_only "$mixed"; then
         echo "  FAIL: mixed benign+real stderr must NOT be benign"
         return 1
     fi
@@ -952,9 +952,9 @@ test_atomic_cp_stderr_mixed_benign_and_real_is_not_benign() {
 }
 
 test_atomic_cp_stderr_unrelated_failure_is_not_benign() {
-    log_test "_atomic_cp_stderr_is_stat_enoent_only: unrelated cp error → not benign"
+    log_test "_atomic_cp_stderr_is_benign_only: unrelated cp error → not benign"
     local real_err=$'cp: cannot create directory \'/x\': Read-only file system'
-    if _atomic_cp_stderr_is_stat_enoent_only "$real_err"; then
+    if _atomic_cp_stderr_is_benign_only "$real_err"; then
         echo "  FAIL: unrelated cp error must NOT be benign"
         return 1
     fi
@@ -962,10 +962,62 @@ test_atomic_cp_stderr_unrelated_failure_is_not_benign() {
 }
 
 test_atomic_cp_stderr_different_enoent_verb_is_not_benign() {
-    log_test "_atomic_cp_stderr_is_stat_enoent_only: 'cannot open ENOENT' → not benign (only 'cannot stat' qualifies)"
+    log_test "_atomic_cp_stderr_is_benign_only: 'cannot open ENOENT' → not benign (only 'cannot stat' qualifies)"
     local enoent_other=$'cp: cannot open \'/x/a\': No such file or directory'
-    if _atomic_cp_stderr_is_stat_enoent_only "$enoent_other"; then
+    if _atomic_cp_stderr_is_benign_only "$enoent_other"; then
         echo "  FAIL: only 'cannot stat ... ENOENT' should be benign, not 'cannot open ... ENOENT'"
+        return 1
+    fi
+    return 0
+}
+
+# ----- Issue #335 follow-up: ENOTSUPP + preserving-permissions classifier -----
+
+test_atomic_cp_stderr_stat_enotsupp_is_benign() {
+    log_test "_atomic_cp_stderr_is_benign_only: 'cannot stat ENOTSUPP' → benign (Issue #335 A)"
+    local line=$'cp: cannot stat \'/kapsis-staging/.claude/./.git/fsmonitor--daemon.ipc\': Operation not supported'
+    if ! _atomic_cp_stderr_is_benign_only "$line"; then
+        echo "  FAIL: 'cannot stat ... Operation not supported' must be classified benign"
+        return 1
+    fi
+    return 0
+}
+
+test_atomic_cp_stderr_preserve_perms_eacces_is_benign() {
+    log_test "_atomic_cp_stderr_is_benign_only: 'preserving permissions ... Permission denied' → benign (Issue #335 B, EACCES)"
+    local line=$'cp: preserving permissions for \'/home/developer/.atomic-copy-dir-1Ac6gY/.\': Permission denied'
+    if ! _atomic_cp_stderr_is_benign_only "$line"; then
+        echo "  FAIL: 'preserving permissions ... Permission denied' must be classified benign"
+        return 1
+    fi
+    return 0
+}
+
+test_atomic_cp_stderr_preserve_perms_eperm_is_benign() {
+    log_test "_atomic_cp_stderr_is_benign_only: 'preserving permissions ... Operation not permitted' → benign (Issue #335 B, EPERM)"
+    local line=$'cp: preserving permissions for \'/x/.\': Operation not permitted'
+    if ! _atomic_cp_stderr_is_benign_only "$line"; then
+        echo "  FAIL: 'preserving permissions ... Operation not permitted' must be classified benign"
+        return 1
+    fi
+    return 0
+}
+
+test_atomic_cp_stderr_mixed_stat_and_preserve_perms_is_benign() {
+    log_test "_atomic_cp_stderr_is_benign_only: ENOTSUPP stat + preserve-perms (kapsis#335 trace shape) → benign"
+    local mixed=$'cp: cannot stat \'/x/a.ipc\': Operation not supported\ncp: preserving permissions for \'/y/.\': Permission denied'
+    if ! _atomic_cp_stderr_is_benign_only "$mixed"; then
+        echo "  FAIL: mixed ENOTSUPP + preserve-perms (the actual kapsis#335 trace) must be classified benign"
+        return 1
+    fi
+    return 0
+}
+
+test_atomic_cp_stderr_preserve_perms_for_file_path_is_benign() {
+    log_test "_atomic_cp_stderr_is_benign_only: 'preserving permissions' for file path (not dir-with-slash) → benign"
+    local line=$'cp: preserving permissions for \'/x/file.txt\': Permission denied'
+    if ! _atomic_cp_stderr_is_benign_only "$line"; then
+        echo "  FAIL: 'preserving permissions for FILE': benign regardless of dir/file form"
         return 1
     fi
     return 0
@@ -1172,6 +1224,82 @@ test_atomic_copy_dir_last_resort_tolerates_benign_stat_errors() {
     assert_file_exists "$dst/b.txt" "b.txt should land via last-resort direct cp"
 }
 
+# ----- Integration: kapsis#335 end-to-end (ENOTSUPP + preserving-perms) -----
+
+test_atomic_copy_dir_main_path_tolerates_kapsis335_pattern() {
+    log_test "atomic_copy_dir: main path tolerates ENOTSUPP + preserving-permissions in same cp stderr (Issue #335 end-to-end)"
+
+    local src="$TEST_TEMP_DIR/src/k335_src"
+    local dst="$TEST_TEMP_DIR/dst/k335_dst"
+
+    mkdir -p "$src"
+    echo "alpha" > "$src/a.txt"
+    echo "beta" > "$src/b.txt"
+
+    # Reproduce the exact kapsis#335 stderr shape: one ENOTSUPP "cannot
+    # stat" line for a fake socket AND a "preserving permissions" line
+    # for the tmp dir cp could not chmod-back. Real files ARE copied;
+    # cp returns 1. atomic_copy_dir must classify both lines as benign,
+    # pass the count check (sockets aren't counted), and succeed.
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    cp() {
+        local args=("$@")
+        local n=${#args[@]}
+        local last=${args[n-1]}
+        local has_rp=0
+        local a
+        for a in "$@"; do
+            [[ "$a" == "-rp" ]] && has_rp=1 && break
+        done
+        if [[ $has_rp -eq 1 ]]; then
+            command cp "$@"
+            echo "cp: cannot stat '$last/.fake-socket.ipc': Operation not supported" >&2
+            echo "cp: preserving permissions for '$last/.': Permission denied" >&2
+            return 1
+        fi
+        command cp "$@"
+    }
+
+    atomic_copy_dir "$src" "$dst" 2>/dev/null
+    local rc=$?
+
+    _reset_atomic_copy_lib
+
+    assert_equals "0" "$rc" "ENOTSUPP + preserving-perms must be tolerated when counts match"
+    assert_file_exists "$dst/a.txt" "a.txt must be present after kapsis#335-shape cp"
+    assert_file_exists "$dst/b.txt" "b.txt must be present after kapsis#335-shape cp"
+}
+
+test_atomic_copy_dir_makes_restrictive_dst_writable() {
+    log_test "atomic_copy_dir: defensive chmod allows replacement of pre-created restrictive-mode dst (Issue #335 C)"
+
+    local src="$TEST_TEMP_DIR/src/k335c_src"
+    local dst="$TEST_TEMP_DIR/dst/k335c_dst"
+
+    mkdir -p "$src"
+    echo "new-payload" > "$src/payload.txt"
+
+    # Simulate entrypoint's pre-creation of dst: existing dir with a
+    # stale file and mode 0500 (read+exec but NO write for owner).
+    # Without the defensive chmod, the subsequent rm-rf would fail to
+    # unlink stale.txt and the replacement step would error out. With
+    # the chmod, rm-rf succeeds and atomic_copy_dir replaces dst
+    # cleanly.
+    mkdir -p "$dst"
+    echo "stale" > "$dst/stale.txt"
+    chmod 0500 "$dst"
+
+    atomic_copy_dir "$src" "$dst" 2>/dev/null
+    local rc=$?
+
+    # Restore mode so cleanup can succeed regardless of test outcome.
+    chmod 0755 "$dst" 2>/dev/null || true
+
+    assert_equals "0" "$rc" "atomic_copy_dir must succeed by chmod-ing restrictive dst before rm-rf"
+    assert_file_exists "$dst/payload.txt" "Fresh payload must land in dst after replacement"
+    assert_file_not_exists "$dst/stale.txt" "Stale dst content must be replaced, not merged"
+}
+
 #===============================================================================
 # TEST RUNNER
 #===============================================================================
@@ -1240,12 +1368,21 @@ main() {
     run_test test_atomic_cp_stderr_mixed_benign_and_real_is_not_benign
     run_test test_atomic_cp_stderr_unrelated_failure_is_not_benign
     run_test test_atomic_cp_stderr_different_enoent_verb_is_not_benign
+    # Issue #335 follow-up: ENOTSUPP + preserving-permissions classifier
+    run_test test_atomic_cp_stderr_stat_enotsupp_is_benign
+    run_test test_atomic_cp_stderr_preserve_perms_eacces_is_benign
+    run_test test_atomic_cp_stderr_preserve_perms_eperm_is_benign
+    run_test test_atomic_cp_stderr_mixed_stat_and_preserve_perms_is_benign
+    run_test test_atomic_cp_stderr_preserve_perms_for_file_path_is_benign
     # Integration tests for the three patched cp call sites:
     run_test test_atomic_copy_dir_main_path_tolerates_benign_stat_errors
     run_test test_atomic_copy_dir_main_path_rejects_mixed_real_error
     run_test test_atomic_copy_dir_main_path_rejects_benign_with_count_mismatch
     run_test test_atomic_copy_dir_scratch_path_tolerates_benign_stat_errors
     run_test test_atomic_copy_dir_last_resort_tolerates_benign_stat_errors
+    # Issue #335 end-to-end integration tests
+    run_test test_atomic_copy_dir_main_path_tolerates_kapsis335_pattern
+    run_test test_atomic_copy_dir_makes_restrictive_dst_writable
 
     # Summary
     print_summary

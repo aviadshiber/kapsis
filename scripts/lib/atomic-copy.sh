@@ -140,59 +140,85 @@ _atomic_run_mktemp() {
     return "$rc"
 }
 
-# GNU coreutils cp emits this exact format for ENOENT during recursive
-# copy: `cp: cannot stat 'PATH': No such file or directory`. atomic_copy_dir
-# always runs inside the Linux container (GNU cp), never against BSD cp on
-# a macOS host — atomic_copy_dir is invoked only from scripts/entrypoint.sh
-# inside the kapsis sandbox. BSD cp's `cp: PATH: cannot stat` form would
-# fail this match and be treated as a real failure (fail-safe).
+# GNU coreutils cp emits these benign-but-non-zero patterns when staging
+# host config dirs through virtio-fs on macOS. atomic_copy_dir always runs
+# inside the Linux container (GNU cp), never against BSD cp on a macOS
+# host — atomic_copy_dir is invoked only from scripts/entrypoint.sh inside
+# the kapsis sandbox. BSD cp's different formats would fail these matches
+# and be treated as real failures (fail-safe).
 #
 # Caller pins LC_ALL=C around the cp invocation so locale translations
-# can't defeat the regex on non-English container images.
+# can't defeat the regexes on non-English container images.
 # Guard against `readonly` failing on re-source (tests use _reset_atomic_copy_lib).
-if [[ -z "${_ATOMIC_CP_STAT_ENOENT_REGEX:-}" ]]; then
-    readonly _ATOMIC_CP_STAT_ENOENT_REGEX='^cp:[[:space:]]cannot[[:space:]]stat[[:space:]].+:[[:space:]]No[[:space:]]such[[:space:]]file[[:space:]]or[[:space:]]directory$'
+#
+# (1) cp's "cannot stat" form. Two errno mappings observed in the wild:
+#     - ENOENT  ("No such file or directory") — bind-mounted AF_UNIX sockets
+#       on virtio-fs read paths (issue #328).
+#     - ENOTSUPP ("Operation not supported") — same socket class on the
+#       /kapsis-staging bind-mount; different kernel/cp combo (issue #335).
+if [[ -z "${_ATOMIC_CP_STAT_FAIL_REGEX:-}" ]]; then
+    readonly _ATOMIC_CP_STAT_FAIL_REGEX='^cp:[[:space:]]+cannot[[:space:]]+stat[[:space:]]+.+:[[:space:]]+(No[[:space:]]+such[[:space:]]+file[[:space:]]+or[[:space:]]+directory|Operation[[:space:]]+not[[:space:]]+supported)$'
+fi
+
+# (2) cp's post-copy fchmod warning. GNU cp tries to restore source mode
+# bits on the destination AFTER the data copy; this fails (with non-zero
+# exit) when src/dst differ in uid or when dst lives on a filesystem
+# that rejects chmod. The data IS copied; the count check is the final
+# guard.
+if [[ -z "${_ATOMIC_CP_PRESERVE_PERMS_REGEX:-}" ]]; then
+    readonly _ATOMIC_CP_PRESERVE_PERMS_REGEX='^cp:[[:space:]]+preserving[[:space:]]+permissions[[:space:]]+for[[:space:]]+.+:[[:space:]]+(Permission[[:space:]]+denied|Operation[[:space:]]+not[[:space:]]+permitted)$'
 fi
 
 #-------------------------------------------------------------------------------
-# _atomic_cp_stderr_is_stat_enoent_only <cp_stderr>
+# _atomic_cp_stderr_is_benign_only <cp_stderr>
 #
 # Returns 0 when the captured cp stderr contains at least one non-empty
-# line AND every non-empty line is a benign "cp: cannot stat 'X': No
-# such file or directory" entry — meaning cp's non-zero exit is
-# explained entirely by readdir/stat mismatch on unstattable entries
-# (sockets, FIFOs, files deleted mid-copy). The caller MUST still
-# validate the payload via the regular-file count comparison; this
-# helper only certifies that the stderr signal is non-fatal.
+# line AND every non-empty line matches one of the known-benign patterns:
+#
+#   (1) `cp: cannot stat 'X': (No such file or directory|Operation not
+#       supported)` — readdir/stat mismatch on unstattable entries
+#       (sockets, FIFOs, files deleted mid-copy). Issues #328 and #335.
+#   (2) `cp: preserving permissions for 'X': (Permission denied|Operation
+#       not permitted)` — cp's post-copy fchmod step; the data IS copied
+#       but cp couldn't restore source mode bits. Issue #335.
 #
 # Returns 1 if stderr is empty, contains only whitespace, OR has any
 # unrecognized line — caller must treat as a real failure.
 #
+# The caller MUST still validate the payload via the regular-file count
+# comparison; this helper only certifies that the stderr signal alone
+# is non-fatal.
+#
 # Limitation (issue #328 root-cause comment): _atomic_count_files uses
 # `find -type f`, which itself calls stat(). If a REGULAR file in the
-# source tree exhibits the same readdir-visible-but-stat-ENOENT
+# source tree exhibits the same readdir-visible-but-stat-ENOENT/ENOTSUPP
 # pathology (vs. just sockets), it would be excluded from BOTH source
-# and destination counts — and slip through silently. In the
-# motivating macOS+virtio-fs case the ENOENT pattern is restricted to
-# AF_UNIX socket inodes, so this is theoretical; documenting for
-# future hardening.
+# and destination counts — and slip through silently. In the motivating
+# macOS+virtio-fs case the unstattable pattern is restricted to AF_UNIX
+# socket inodes, so this is theoretical; documenting for future
+# hardening.
 #
-# Motivating case (issue #328): on macOS hosts, virtio-fs returns
-# AF_UNIX socket entries from readdir() but ENOENT from stat(). cp -rp
-# emits one "cannot stat" line per socket and exits 1, but every
-# regular file IS copied byte-for-byte. Refusing to recognize this
-# pattern makes overlay-mode staged-config copy unusable on every host
-# that has git fsmonitor (`.claude`), an ssh-agent socket (`.ssh`), or
-# any other live IPC in a staged dir.
+# Motivating case (issues #328 + #335): on macOS hosts, virtio-fs
+# returns AF_UNIX socket entries from readdir() but errors from stat().
+# Different kernel/cp combos return different errnos for the same
+# situation (ENOENT vs ENOTSUPP). cp also emits a benign "preserving
+# permissions" warning when it can't restore source mode bits on the
+# destination (different uid, or fs rejects chmod). Without tolerating
+# these patterns, overlay-mode staged-config copy is unusable on every
+# host that has git fsmonitor (`.claude`), an ssh-agent socket (`.ssh`),
+# or any other live IPC in a staged dir.
 #-------------------------------------------------------------------------------
-_atomic_cp_stderr_is_stat_enoent_only() {
+_atomic_cp_stderr_is_benign_only() {
     local stderr="$1"
     [[ -z "$stderr" ]] && return 1
     local saw_line=0
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         saw_line=1
-        if [[ "$line" =~ $_ATOMIC_CP_STAT_ENOENT_REGEX ]]; then
+        if [[ "$line" =~ $_ATOMIC_CP_STAT_FAIL_REGEX ]]; then
+            continue
+        fi
+        if [[ "$line" =~ $_ATOMIC_CP_PRESERVE_PERMS_REGEX ]]; then
             continue
         fi
         return 1
@@ -227,7 +253,7 @@ _atomic_cp_with_enoent_tolerance() {
     local site="$1"; shift
     local cp_err cp_rc
     cp_err=$(LC_ALL=C cp "$@" 2>&1) && cp_rc=0 || cp_rc=$?
-    if [[ $cp_rc -ne 0 ]] && _atomic_cp_stderr_is_stat_enoent_only "$cp_err"; then
+    if [[ $cp_rc -ne 0 ]] && _atomic_cp_stderr_is_benign_only "$cp_err"; then
         log_debug "atomic_copy_dir: cp non-zero in ${site} but stderr is stat-ENOENT only; deferring to count check"
         cp_rc=0
     fi
@@ -334,6 +360,23 @@ atomic_copy_dir() {
     if [[ ! -d "$src" ]]; then
         log_warn "atomic_copy_dir: source not found: $src"
         return 1
+    fi
+
+    # Issue #335-C: dst may already exist with restrictive perms — either
+    # because the caller pre-created it (e.g. entrypoint's
+    # setup_staged_config_overlays does mkdir -p "$dst") under a
+    # restrictive umask, or because the Containerfile's mkdir/COPY
+    # commands ran as root while the runtime uid is different. The
+    # subsequent rm-rf-then-mv replacement strategy needs to be able to
+    # unlink dst's existing contents.
+    #
+    # Best-effort chmod tree to grant USER rwx so we can remove our
+    # own files. Silently fails for entries we don't own (|| true), in
+    # which case the subsequent rm-rf surfaces the real EACCES error
+    # for the operator. Adds only u+rwx (not g, not o, not setuid
+    # bits), so no security regression for dst trees under HOME.
+    if [[ -d "$dst" ]]; then
+        chmod -R u+rwx "$dst" 2>/dev/null || true
     fi
 
     # Create temp directory alongside destination (same filesystem for atomic mv).
