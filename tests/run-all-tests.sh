@@ -54,7 +54,7 @@ get_tests_for_category() {
             echo "test-cleanup-sandbox.sh test-volume-cleanup.sh"
             ;;
         integration)
-            echo "test-parallel-agents.sh test-full-workflow.sh"
+            echo "test-parallel-agents.sh test-full-workflow.sh test-atomic-copy-integration.sh"
             ;;
         libs)
             echo "test-compat.sh test-logging.sh test-json-utils.sh test-git-remote-utils.sh test-progress-display.sh test-atomic-copy.sh test-snapshot-staging.sh test-podman-health.sh test-status-sync.sh"

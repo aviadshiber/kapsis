@@ -140,66 +140,127 @@ _atomic_run_mktemp() {
     return "$rc"
 }
 
-# GNU coreutils cp emits this exact format for ENOENT during recursive
-# copy: `cp: cannot stat 'PATH': No such file or directory`. atomic_copy_dir
-# always runs inside the Linux container (GNU cp), never against BSD cp on
-# a macOS host — atomic_copy_dir is invoked only from scripts/entrypoint.sh
-# inside the kapsis sandbox. BSD cp's `cp: PATH: cannot stat` form would
-# fail this match and be treated as a real failure (fail-safe).
+# GNU coreutils cp emits these benign-but-non-zero patterns when staging
+# host config dirs through virtio-fs on macOS. atomic_copy_dir always runs
+# inside the Linux container (GNU cp), never against BSD cp on a macOS
+# host — atomic_copy_dir is invoked only from scripts/entrypoint.sh inside
+# the kapsis sandbox. BSD cp's different formats would fail these matches
+# and be treated as real failures (fail-safe).
 #
 # Caller pins LC_ALL=C around the cp invocation so locale translations
-# can't defeat the regex on non-English container images.
+# can't defeat the regexes on non-English container images.
 # Guard against `readonly` failing on re-source (tests use _reset_atomic_copy_lib).
-if [[ -z "${_ATOMIC_CP_STAT_ENOENT_REGEX:-}" ]]; then
-    readonly _ATOMIC_CP_STAT_ENOENT_REGEX='^cp:[[:space:]]cannot[[:space:]]stat[[:space:]].+:[[:space:]]No[[:space:]]such[[:space:]]file[[:space:]]or[[:space:]]directory$'
+#
+# (1) cp's "cannot stat" form. Two errno mappings observed in the wild:
+#     - ENOENT  ("No such file or directory") — bind-mounted AF_UNIX sockets
+#       on virtio-fs read paths (issue #328).
+#     - ENOTSUPP ("Operation not supported") — same socket class on the
+#       /kapsis-staging bind-mount; different kernel/cp combo (issue #335).
+if [[ -z "${_ATOMIC_CP_STAT_FAIL_REGEX:-}" ]]; then
+    # Single-space separators match GNU cp's actual output exactly. Using
+    # `[[:space:]]+` would silently accept double-spaced or tab-separated
+    # variants the engine never produces, widening the whitelist with no
+    # real coverage benefit.
+    readonly _ATOMIC_CP_STAT_FAIL_REGEX='^cp:[[:space:]]cannot[[:space:]]stat[[:space:]].+:[[:space:]](No[[:space:]]such[[:space:]]file[[:space:]]or[[:space:]]directory|Operation[[:space:]]not[[:space:]]supported)$'
+fi
+
+# (2) cp's post-copy fchmod warning. GNU cp tries to restore source mode
+# bits on the destination AFTER the data copy; this fails (with non-zero
+# exit) for three observed reasons, all benign:
+#  - EACCES ("Permission denied"): fchmod denied due to uid mismatch
+#  - EPERM ("Operation not permitted"): fs rejects chmod (some virtio-fs)
+#  - ENOENT ("No such file or directory"): destination file never got
+#    created (typically because the source is a socket/FIFO that cp
+#    can't replicate via virtio-fs), so the post-copy fchmod has
+#    nothing to chmod. Empirically observed on macOS+podman bind-mount
+#    of a dir containing AF_UNIX sockets — cp tries the fchmod even
+#    after declining to create the dst, and emits this.
+#
+# In all three cases, regular-file data IS copied — but the dst modes
+# are whatever cp's create-time defaults produced (typically umask-
+# filtered 0644 / 0755). When the classifier accepts this pattern,
+# callers MUST re-apply src modes via _atomic_restore_modes; otherwise
+# private-key files at source mode 0600 can leak to looser dst modes
+# (#336 security review).
+if [[ -z "${_ATOMIC_CP_PRESERVE_PERMS_REGEX:-}" ]]; then
+    readonly _ATOMIC_CP_PRESERVE_PERMS_REGEX='^cp:[[:space:]]preserving[[:space:]]permissions[[:space:]]for[[:space:]].+:[[:space:]](Permission[[:space:]]denied|Operation[[:space:]]not[[:space:]]permitted|No[[:space:]]such[[:space:]]file[[:space:]]or[[:space:]]directory)$'
 fi
 
 #-------------------------------------------------------------------------------
-# _atomic_cp_stderr_is_stat_enoent_only <cp_stderr>
+# _atomic_cp_stderr_is_benign_only <cp_stderr>
 #
 # Returns 0 when the captured cp stderr contains at least one non-empty
-# line AND every non-empty line is a benign "cp: cannot stat 'X': No
-# such file or directory" entry — meaning cp's non-zero exit is
-# explained entirely by readdir/stat mismatch on unstattable entries
-# (sockets, FIFOs, files deleted mid-copy). The caller MUST still
-# validate the payload via the regular-file count comparison; this
-# helper only certifies that the stderr signal is non-fatal.
+# line AND every non-empty line matches one of the known-benign patterns:
+#
+#   (1) `cp: cannot stat 'X': (No such file or directory|Operation not
+#       supported)` — readdir/stat mismatch on unstattable entries
+#       (sockets, FIFOs, files deleted mid-copy). Issues #328 and #335.
+#   (2) `cp: preserving permissions for 'X': (Permission denied|Operation
+#       not permitted)` — cp's post-copy fchmod step; the data IS copied
+#       but cp couldn't restore source mode bits. Issue #335.
 #
 # Returns 1 if stderr is empty, contains only whitespace, OR has any
 # unrecognized line — caller must treat as a real failure.
 #
+# The caller MUST still validate the payload via the regular-file count
+# comparison; this helper only certifies that the stderr signal alone
+# is non-fatal.
+#
 # Limitation (issue #328 root-cause comment): _atomic_count_files uses
 # `find -type f`, which itself calls stat(). If a REGULAR file in the
-# source tree exhibits the same readdir-visible-but-stat-ENOENT
+# source tree exhibits the same readdir-visible-but-stat-ENOENT/ENOTSUPP
 # pathology (vs. just sockets), it would be excluded from BOTH source
-# and destination counts — and slip through silently. In the
-# motivating macOS+virtio-fs case the ENOENT pattern is restricted to
-# AF_UNIX socket inodes, so this is theoretical; documenting for
-# future hardening.
+# and destination counts — and slip through silently. In the motivating
+# macOS+virtio-fs case the unstattable pattern is restricted to AF_UNIX
+# socket inodes, so this is theoretical; documenting for future
+# hardening.
 #
-# Motivating case (issue #328): on macOS hosts, virtio-fs returns
-# AF_UNIX socket entries from readdir() but ENOENT from stat(). cp -rp
-# emits one "cannot stat" line per socket and exits 1, but every
-# regular file IS copied byte-for-byte. Refusing to recognize this
-# pattern makes overlay-mode staged-config copy unusable on every host
-# that has git fsmonitor (`.claude`), an ssh-agent socket (`.ssh`), or
-# any other live IPC in a staged dir.
+# Motivating case (issues #328 + #335): on macOS hosts, virtio-fs
+# returns AF_UNIX socket entries from readdir() but errors from stat().
+# Different kernel/cp combos return different errnos for the same
+# situation (ENOENT vs ENOTSUPP). cp also emits a benign "preserving
+# permissions" warning when it can't restore source mode bits on the
+# destination (different uid, or fs rejects chmod). Without tolerating
+# these patterns, overlay-mode staged-config copy is unusable on every
+# host that has git fsmonitor (`.claude`), an ssh-agent socket (`.ssh`),
+# or any other live IPC in a staged dir.
+#
+# Side effect: sets _ATOMIC_CP_BENIGN_KIND to one of {"", "stat-fail",
+# "preserve-perms", "mixed"} on return. Empty on rejection or no signal;
+# otherwise indicates which class(es) of benign lines were seen so the
+# caller can run a mode-restoration post-pass when "preserve-perms" /
+# "mixed" was the reason cp's non-zero was accepted (#336 review HIGH:
+# without this, .ssh/id_rsa source mode 0600 can drift to dst 0644).
 #-------------------------------------------------------------------------------
-_atomic_cp_stderr_is_stat_enoent_only() {
+_atomic_cp_stderr_is_benign_only() {
     local stderr="$1"
+    _ATOMIC_CP_BENIGN_KIND=""
     [[ -z "$stderr" ]] && return 1
     local saw_line=0
+    local saw_stat=0 saw_preserve=0
     while IFS= read -r line; do
         [[ -z "$line" ]] && continue
         saw_line=1
-        if [[ "$line" =~ $_ATOMIC_CP_STAT_ENOENT_REGEX ]]; then
+        if [[ "$line" =~ $_ATOMIC_CP_STAT_FAIL_REGEX ]]; then
+            saw_stat=1
+            continue
+        fi
+        if [[ "$line" =~ $_ATOMIC_CP_PRESERVE_PERMS_REGEX ]]; then
+            saw_preserve=1
             continue
         fi
         return 1
     done <<< "$stderr"
     # Reject whitespace-only / newline-only stderr (no signal to whitelist).
-    [[ $saw_line -eq 1 ]] && return 0
-    return 1
+    [[ $saw_line -eq 1 ]] || return 1
+    if [[ $saw_stat -eq 1 ]] && [[ $saw_preserve -eq 1 ]]; then
+        _ATOMIC_CP_BENIGN_KIND="mixed"
+    elif [[ $saw_preserve -eq 1 ]]; then
+        _ATOMIC_CP_BENIGN_KIND="preserve-perms"
+    elif [[ $saw_stat -eq 1 ]]; then
+        _ATOMIC_CP_BENIGN_KIND="stat-fail"
+    fi
+    return 0
 }
 
 #-------------------------------------------------------------------------------
@@ -213,11 +274,14 @@ _atomic_cp_stderr_is_stat_enoent_only() {
 #   1. Runs `LC_ALL=C cp "$@"` with stderr captured (LC_ALL=C pins the
 #      diagnostic format so locale translations cannot defeat the
 #      classifier).
-#   2. If cp exits non-zero AND every stderr line matches the benign
-#      stat-ENOENT signature, treat as success — caller's regular-file
-#      count comparison is the final guard.
+#   2. If cp exits non-zero AND every stderr line matches one of the
+#      benign signatures (stat-fail or preserve-perms), treat as success
+#      — caller's regular-file count comparison is the final guard.
 #   3. Sets _ATOMIC_CP_STDERR so the caller can include the raw stderr
 #      in a log_warn message on real failures.
+#   4. Sets _ATOMIC_CP_BENIGN_KIND (via classifier) so the caller can
+#      detect when a preserve-perms benign-acceptance happened and
+#      run _atomic_restore_modes to re-apply src mode bits on dst.
 #
 # Returns: cp's exit code, possibly rewritten 1→0 by the tolerance
 # rule. <site_label> is included in the log_debug message so operators
@@ -227,12 +291,55 @@ _atomic_cp_with_enoent_tolerance() {
     local site="$1"; shift
     local cp_err cp_rc
     cp_err=$(LC_ALL=C cp "$@" 2>&1) && cp_rc=0 || cp_rc=$?
-    if [[ $cp_rc -ne 0 ]] && _atomic_cp_stderr_is_stat_enoent_only "$cp_err"; then
-        log_debug "atomic_copy_dir: cp non-zero in ${site} but stderr is stat-ENOENT only; deferring to count check"
+    if [[ $cp_rc -ne 0 ]] && _atomic_cp_stderr_is_benign_only "$cp_err"; then
+        log_debug "atomic_copy_dir: cp non-zero in ${site} but stderr is benign-only (kind=${_ATOMIC_CP_BENIGN_KIND}); deferring to count check"
         cp_rc=0
     fi
     _ATOMIC_CP_STDERR="$cp_err"
     return "$cp_rc"
+}
+
+#-------------------------------------------------------------------------------
+# _atomic_restore_modes <src> <dst>
+#
+# Walks every regular file, directory, and symlink in <src> and applies
+# its mode bits to the corresponding entry in <dst>. Best-effort:
+# missing dst entries and chmod failures are silently ignored.
+#
+# Defends against the issue #335-B case where cp -p's post-copy
+# fchmod step failed (and the classifier accepted it) — without this
+# restoration, dst would retain cp's create-time default modes
+# (umask-filtered), leaking private-key files (src 0600) to looser
+# dst perms (0644). Called by atomic_copy_dir after a count check
+# passes but only when _ATOMIC_CP_BENIGN_KIND indicates preserve-perms
+# was involved.
+#-------------------------------------------------------------------------------
+# Cross-platform stat mode helper. GNU (Linux container, production
+# code path) uses `stat -c '%a'`; BSD (macOS host, where unit tests
+# run) uses `stat -f '%A'`. Echoes octal mode (e.g. "700"). Empty on
+# unsupported platforms.
+_atomic_stat_mode() {
+    local p="$1"
+    stat -c '%a' "$p" 2>/dev/null || stat -f '%A' "$p" 2>/dev/null
+}
+
+_atomic_restore_modes() {
+    local src="$1" dst="$2"
+    [[ -z "$src" ]] || [[ -z "$dst" ]] && return 1
+    [[ ! -d "$src" ]] && return 1
+    [[ ! -d "$dst" ]] && return 1
+    while IFS= read -r src_path; do
+        local rel="${src_path#"$src"/}"
+        [[ -z "$rel" ]] && continue
+        [[ "$rel" == "$src_path" ]] && continue  # prefix didn't strip — skip
+        local dst_path="$dst/$rel"
+        [[ ! -e "$dst_path" ]] && [[ ! -L "$dst_path" ]] && continue
+        local mode
+        mode=$(_atomic_stat_mode "$src_path") || continue
+        [[ -z "$mode" ]] && continue
+        chmod "$mode" "$dst_path" 2>/dev/null || true
+    done < <(find "$src" -mindepth 1 \( -type f -o -type d -o -type l \) 2>/dev/null)
+    return 0
 }
 
 #-------------------------------------------------------------------------------
@@ -336,6 +443,42 @@ atomic_copy_dir() {
         return 1
     fi
 
+    # Issue #335-C: dst may already exist with restrictive perms — either
+    # because the caller pre-created it (e.g. entrypoint's
+    # setup_staged_config_overlays does mkdir -p "$dst") under a
+    # restrictive umask, or because the Containerfile's mkdir/COPY
+    # commands ran as root while the runtime uid is different. The
+    # subsequent rm-rf-then-mv replacement strategy needs to be able to
+    # unlink dst's existing contents.
+    #
+    # Defenses applied here (review feedback on PR #336):
+    #   * Short-circuit when dst is already user-writable — avoids
+    #     ~24k stat+chmod syscalls on a 12k-file `.claude` cold-cache.
+    #   * Refuse to chmod through a SYMLINK at dst (would silently no-op
+    #     on macOS and could touch the symlink target on Linux — CWE-367).
+    #     Canonicalize via realpath; if dst is a symlink-to-dir we operate
+    #     on the real dir so the chmod is actually effective.
+    #   * chmod -R u+rwx (USER rwx only, doesn't touch setuid/g/o).
+    #     Silently fails for entries we don't own (|| true); the
+    #     subsequent rm-rf surfaces the real EACCES error.
+    #   * log_debug both the attempt and the chmod's exit so an operator
+    #     debugging a deep permission failure can see whether the
+    #     defensive chmod actually got applied.
+    if [[ -d "$dst" ]] && [[ ! -w "$dst" ]]; then
+        local _dst_real="$dst"
+        if [[ -L "$dst" ]]; then
+            _dst_real=$(realpath "$dst" 2>/dev/null || readlink -f "$dst" 2>/dev/null || echo "$dst")
+            log_debug "atomic_copy_dir: dst $(basename "$dst") is a symlink → $_dst_real; applying defensive chmod to the real path"
+        else
+            log_debug "atomic_copy_dir: dst $(basename "$dst") not writable; applying defensive chmod -R u+rwx"
+        fi
+        local _chmod_rc=0
+        chmod -R u+rwx "$_dst_real" 2>/dev/null || _chmod_rc=$?
+        if [[ $_chmod_rc -ne 0 ]]; then
+            log_debug "atomic_copy_dir: defensive chmod returned $_chmod_rc (some entries not owned by current uid?); proceeding — subsequent rm-rf will surface real errors"
+        fi
+    fi
+
     # Create temp directory alongside destination (same filesystem for atomic mv).
     # Issue #328: capture mktemp stderr without conflating it with stdout
     # (the path on success) so warnings emitted on success don't poison
@@ -387,6 +530,15 @@ atomic_copy_dir() {
             _src_n=$(_atomic_count_files "$src")
             _dst_n=$(_atomic_count_files "$dst")
             if [[ "$_src_n" -eq "$_dst_n" ]]; then
+                # Issue #335-B (review HIGH): if the classifier accepted a
+                # preserve-perms failure, dst's mode bits are at cp's
+                # umask-filtered defaults instead of src's. Restore from
+                # src so private-key files keep their 0600.
+                if [[ "${_ATOMIC_CP_BENIGN_KIND:-}" == "preserve-perms" ]] \
+                   || [[ "${_ATOMIC_CP_BENIGN_KIND:-}" == "mixed" ]]; then
+                    log_debug "atomic_copy_dir: restoring src modes on $(basename "$dst") after preserve-perms-only cp"
+                    _atomic_restore_modes "$src" "$dst" || true
+                fi
                 log_debug "atomic_copy_dir: last-resort direct cp succeeded for $(basename "$dst")"
                 return 0
             fi
@@ -438,6 +590,15 @@ atomic_copy_dir() {
             src_count=$(_atomic_count_files "$src")
             dst_count=$(_atomic_count_files "$dst")
             if [[ "$src_count" -eq "$dst_count" ]]; then
+                # Issue #335-B (review HIGH): if the src→scratch cp had a
+                # preserve-perms failure, modes in tmp_dir (and thus dst)
+                # are at cp's defaults. Restore from src to defend
+                # private-key file modes.
+                if [[ "${_ATOMIC_CP_BENIGN_KIND:-}" == "preserve-perms" ]] \
+                   || [[ "${_ATOMIC_CP_BENIGN_KIND:-}" == "mixed" ]]; then
+                    log_debug "atomic_copy_dir: restoring src modes on $(basename "$dst") after preserve-perms-only scratch cp"
+                    _atomic_restore_modes "$src" "$dst" || true
+                fi
                 return 0
             fi
             log_warn "atomic_copy_dir: scratch-path file count mismatch (src=${src_count} dst=${dst_count}) for $(basename "$dst")"
@@ -464,6 +625,15 @@ atomic_copy_dir() {
         tmp_count=$(_atomic_count_files "$tmp_dir")
 
         if [[ "$src_count" -eq "$tmp_count" ]]; then
+            # Issue #335-B (review HIGH): if the classifier accepted a
+            # preserve-perms failure during the src→tmp cp, tmp_dir's
+            # modes are at cp's umask-filtered defaults. Restore from src
+            # BEFORE the atomic mv so private-key files keep their 0600.
+            if [[ "${_ATOMIC_CP_BENIGN_KIND:-}" == "preserve-perms" ]] \
+               || [[ "${_ATOMIC_CP_BENIGN_KIND:-}" == "mixed" ]]; then
+                log_debug "atomic_copy_dir: restoring src modes on tmp_dir after preserve-perms-only main-path cp"
+                _atomic_restore_modes "$src" "$tmp_dir" || true
+            fi
             # Replace destination atomically
             rm -rf "$dst"
             mv "$tmp_dir" "$dst"
