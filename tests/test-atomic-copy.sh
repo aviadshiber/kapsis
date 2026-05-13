@@ -842,6 +842,184 @@ test_atomic_copy_dir_mktemp_stderr_does_not_corrupt_path_on_success() {
 }
 
 #===============================================================================
+# Issue #328 root-cause follow-up: tolerate benign cp stderr from
+# virtio-fs (sockets/FIFOs readdir-visible but stat-invisible).
+#===============================================================================
+
+test_atomic_cp_stat_only_failures_helper() {
+    log_test "_atomic_cp_stat_only_failures: classifies cp stderr correctly"
+
+    # Empty stderr → no signal to whitelist → returns 1 (caller must treat
+    # as real failure rather than silently succeeding on missing signal).
+    _atomic_cp_stat_only_failures "" && {
+        echo "  FAIL: empty stderr should NOT be treated as benign"
+        return 1
+    }
+
+    # Single benign line → 0.
+    local one_line
+    one_line=$'cp: cannot stat \'/x/foo.ipc\': No such file or directory'
+    if ! _atomic_cp_stat_only_failures "$one_line"; then
+        echo "  FAIL: single 'cannot stat ENOENT' line should be benign"
+        return 1
+    fi
+
+    # Multiple benign lines (blank line in middle should be tolerated) → 0.
+    local many_benign
+    many_benign=$'cp: cannot stat \'/x/a.ipc\': No such file or directory\n\ncp: cannot stat \'/x/b.ipc\': No such file or directory'
+    if ! _atomic_cp_stat_only_failures "$many_benign"; then
+        echo "  FAIL: multiple 'cannot stat ENOENT' lines should be benign"
+        return 1
+    fi
+
+    # Benign + real error mixed → 1.
+    local mixed
+    mixed=$'cp: cannot stat \'/x/a.ipc\': No such file or directory\ncp: cannot create regular file \'/x/y\': Permission denied'
+    if _atomic_cp_stat_only_failures "$mixed"; then
+        echo "  FAIL: mixed stderr (benign + real error) should NOT be benign"
+        return 1
+    fi
+
+    # Unrelated cp failure (no "cannot stat" lines at all) → 1.
+    local real_err
+    real_err=$'cp: cannot create directory \'/x\': Read-only file system'
+    if _atomic_cp_stat_only_failures "$real_err"; then
+        echo "  FAIL: real cp error should NOT be classified benign"
+        return 1
+    fi
+
+    # Different ENOENT subject (e.g. cannot open) → 1.
+    local enoent_other
+    enoent_other=$'cp: cannot open \'/x/a\': No such file or directory'
+    if _atomic_cp_stat_only_failures "$enoent_other"; then
+        echo "  FAIL: only 'cannot stat ... ENOENT' should be benign, not 'cannot open'"
+        return 1
+    fi
+
+    return 0
+}
+
+test_atomic_copy_dir_tolerates_benign_stat_errors() {
+    log_test "atomic_copy_dir: main path treats cp ENOENT-on-readdir-entries as benign when count matches (Issue #328)"
+
+    local src="$TEST_TEMP_DIR/src/benign_stat_src"
+    local dst="$TEST_TEMP_DIR/dst/benign_stat_dst"
+
+    mkdir -p "$src"
+    echo "alpha" > "$src/a.txt"
+    echo "beta" > "$src/b.txt"
+
+    # Simulate the virtio-fs-on-macOS pattern: cp emits "cannot stat"
+    # errors for entries we pretend are AF_UNIX sockets (readdir
+    # returned them, stat ENOENT), but actually copies every regular
+    # file. Then cp exits 1.
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    cp() {
+        local args=("$@")
+        local n=${#args[@]}
+        local last=${args[n-1]}
+        # Recursive-copy invocation: relay the real cp for the content,
+        # then emit fake "cannot stat" lines + exit 1.
+        if [[ "${args[0]}" == "-rp" ]]; then
+            command cp "$@"
+            echo "cp: cannot stat '$last/.fake-socket-a.ipc': No such file or directory" >&2
+            echo "cp: cannot stat '$last/.fake-socket-b.ipc': No such file or directory" >&2
+            return 1
+        fi
+        command cp "$@"
+    }
+
+    atomic_copy_dir "$src" "$dst" 2>/dev/null
+    local rc=$?
+
+    _reset_atomic_copy_lib
+
+    assert_equals "0" "$rc" "Should succeed: cp's non-zero is benign and counts match"
+    assert_file_exists "$dst/a.txt" "Regular files must be present in dst"
+    assert_file_exists "$dst/b.txt" "Regular files must be present in dst"
+}
+
+test_atomic_copy_dir_real_cp_errors_still_fail() {
+    log_test "atomic_copy_dir: real cp errors are NOT swallowed by benign-stat tolerance (Issue #328)"
+
+    local src="$TEST_TEMP_DIR/src/real_err_src"
+    local dst="$TEST_TEMP_DIR/dst/real_err_dst"
+
+    mkdir -p "$src"
+    echo "x" > "$src/file.txt"
+
+    # cp emits one "cannot stat ENOENT" (benign) plus one
+    # "Permission denied" (real). Helper must reject the mix.
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    cp() {
+        local args=("$@")
+        local n=${#args[@]}
+        local last=${args[n-1]}
+        if [[ "${args[0]}" == "-rp" ]]; then
+            command cp "$@"
+            echo "cp: cannot stat '$last/.benign.ipc': No such file or directory" >&2
+            echo "cp: cannot create regular file '$last/blocked': Permission denied" >&2
+            return 1
+        fi
+        command cp "$@"
+    }
+
+    atomic_copy_dir "$src" "$dst" 2>/dev/null
+    local rc=$?
+
+    _reset_atomic_copy_lib
+
+    # Real failure → either count check catches the missing file OR the
+    # benign-filter rejects the mixed stderr. Either way: rc==1.
+    [[ "$rc" -ne 0 ]] || {
+        echo "  FAIL: rc should be non-zero when cp emits real (non-benign) errors"
+        return 1
+    }
+    return 0
+}
+
+test_atomic_copy_dir_benign_errors_with_count_mismatch_fails() {
+    log_test "atomic_copy_dir: benign cp errors are still rejected when regular-file count differs (Issue #328)"
+
+    local src="$TEST_TEMP_DIR/src/count_mismatch_src"
+    local dst="$TEST_TEMP_DIR/dst/count_mismatch_dst"
+
+    mkdir -p "$src"
+    echo "a" > "$src/a.txt"
+    echo "b" > "$src/b.txt"
+    echo "c" > "$src/c.txt"
+
+    # cp emits only benign stderr but ALSO actually drops a regular file
+    # — count check must catch this (helper says "benign", count says
+    # "no — data missing"). Net: rc=1.
+    # shellcheck disable=SC2317  # invoked indirectly via shell override
+    cp() {
+        local args=("$@")
+        local n=${#args[@]}
+        local last=${args[n-1]}
+        if [[ "${args[0]}" == "-rp" ]]; then
+            # Copy only 2 of the 3 files, then emit benign stderr + exit 1.
+            command cp -p "$src/a.txt" "${last}/a.txt"
+            command cp -p "$src/b.txt" "${last}/b.txt"
+            echo "cp: cannot stat '$last/.fake.ipc': No such file or directory" >&2
+            return 1
+        fi
+        command cp "$@"
+    }
+
+    atomic_copy_dir "$src" "$dst" 2>/dev/null
+    local rc=$?
+
+    _reset_atomic_copy_lib
+
+    [[ "$rc" -ne 0 ]] || {
+        echo "  FAIL: rc should be non-zero when count check fails even if cp stderr was benign"
+        return 1
+    }
+    return 0
+}
+
+#===============================================================================
 # TEST RUNNER
 #===============================================================================
 
@@ -898,6 +1076,13 @@ main() {
     run_test test_atomic_copy_dir_scratch_resets_prepopulated_dst
     run_test test_atomic_copy_dir_last_resort_returns_success_when_cp_works
     run_test test_atomic_copy_dir_mktemp_stderr_does_not_corrupt_path_on_success
+
+    # Issue #328 root-cause follow-up: tolerate benign cp stderr from
+    # virtio-fs (sockets/FIFOs readdir-visible but stat-invisible).
+    run_test test_atomic_cp_stat_only_failures_helper
+    run_test test_atomic_copy_dir_tolerates_benign_stat_errors
+    run_test test_atomic_copy_dir_real_cp_errors_still_fail
+    run_test test_atomic_copy_dir_benign_errors_with_count_mismatch_fails
 
     # Summary
     print_summary
