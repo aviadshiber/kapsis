@@ -1743,9 +1743,27 @@ probe_mount_readiness() {
         return 1
     fi
 
-    # Write probe: the real failure mode is that bash cannot open files for
-    # output redirect. Verify that the agent will be able to create files
-    # under the workspace before we exec into it.
+    # Issue #341: in overlay mode the workspace is read-only by design — the
+    # agent's writes go to the host-side upperdir (via :O,upperdir=,workdir=),
+    # to $HOME for staged-config CoW overlays (.claude, .ssh, …), and to
+    # /kapsis-status for task progress. The agent never writes to /workspace
+    # directly. A write probe here would always fail with EROFS regardless of
+    # mount health, masking the stat probe above and producing false-positive
+    # mount failures (exit 4) for every overlay-mode launch on macOS where
+    # podman 5.x mounts ":O,upperdir=,workdir=" as ro under --userns=keep-id.
+    # The mid-run liveness-monitor follows the same mode-aware pattern — see
+    # scripts/lib/liveness-monitor.sh::_mount_check_probe (uses stat + ls -A
+    # for both modes, only adds a git sentinel check in worktree mode).
+    # Mirrors the existing overlay short-circuit in
+    # scripts/lib/inject-status-hooks.sh:325.
+    if [[ "${KAPSIS_SANDBOX_MODE:-}" == "overlay" ]]; then
+        log_debug "Pre-agent mount readiness probe: stat passed; skipping write probe in overlay mode (read-only by design)"
+        return 0
+    fi
+
+    # Write probe (worktree mode): the real failure mode is that bash cannot
+    # open files for output redirect. Verify that the agent will be able to
+    # create files under the workspace before we exec into it.
     # Use mktemp for an unpredictable filename; fall back to PID-suffix on
     # systems where mktemp is unavailable inside the container (extremely rare).
     local probe_file
