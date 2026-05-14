@@ -542,17 +542,14 @@ test_snapshot_dir_filtered_preserves_modes() {
     assert_dir_exists "$result" "Snapshot dir should exist"
     assert_file_exists "$result/id_rsa" "Regular file should be in snapshot"
 
-    local src_dir_mode dst_dir_mode src_file_mode dst_file_mode
-    src_dir_mode=$(stat -c '%a' "$src" 2>/dev/null || stat -f '%A' "$src" 2>/dev/null)
-    dst_dir_mode=$(stat -c '%a' "$result" 2>/dev/null || stat -f '%A' "$result" 2>/dev/null)
+    # Directory mode preservation is best-effort: SNAPSHOT_DIR is created via
+    # mkdir -p (umask-filtered), so the OUTER dir mode is not expected to
+    # match. Only verify file modes here.
+    local src_file_mode dst_file_mode
     src_file_mode=$(stat -c '%a' "$src/id_rsa" 2>/dev/null || stat -f '%A' "$src/id_rsa" 2>/dev/null)
     dst_file_mode=$(stat -c '%a' "$result/id_rsa" 2>/dev/null || stat -f '%A' "$result/id_rsa" 2>/dev/null)
 
     assert_equals "$src_file_mode" "$dst_file_mode" "File mode (e.g. 0600) must be preserved"
-    # Directory mode preservation is best-effort: SNAPSHOT_DIR is created via
-    # mkdir -p (umask-filtered), so the OUTER dir mode is not expected to
-    # match. Only verify file modes here.
-    [[ -n "$src_dir_mode" ]] && log_pass "Source dir mode captured: ${src_dir_mode}"
 }
 
 test_snapshot_dir_filtered_dry_run_passthrough() {
