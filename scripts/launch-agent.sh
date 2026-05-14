@@ -1456,6 +1456,13 @@ _snapshot_dir_filtered() {
     fi
 
     local snapshot_path="${SNAPSHOT_DIR}/${relative_name}"
+
+    # Pre-clean to avoid stale-entry merge on re-runs / agent resume.
+    # cp -Rp src/. dst/ merges files into an existing dst, so entries
+    # deleted from the host between launches would persist in the
+    # snapshot and be visible to the new container.
+    rm -rf "$snapshot_path" 2>/dev/null || true
+
     if ! mkdir -p "$snapshot_path" 2>/dev/null; then
         log_warn "Snapshot dir mkdir failed for ${snapshot_path}, falling back to live mount"
         echo "$host_path"
@@ -1468,13 +1475,31 @@ _snapshot_dir_filtered() {
     cp -Rp "${host_path}/." "${snapshot_path}/" 2>/dev/null || true
     find "$snapshot_path" \( -type s -o -type p -o -type c -o -type b \) -delete 2>/dev/null || true
 
-    # Only treat the snapshot as a fallback miss if the source had
-    # content but the snapshot is empty (cp produced nothing).
-    if [[ -z "$(ls -A "$snapshot_path" 2>/dev/null)" ]] && [[ -n "$(ls -A "$host_path" 2>/dev/null)" ]]; then
-        log_warn "Snapshot of ${host_path} is empty, falling back to live mount"
+    # Harden the snapshot subtree AFTER cp -Rp (which would otherwise
+    # propagate the source dir's mode onto snapshot_path and undo any
+    # earlier chmod). Inner file modes are preserved by `-p` (so
+    # id_rsa stays 0600), but the ancestor SNAPSHOT_DIR is created by
+    # the caller with the default umask (typically 0755). chmod 0700
+    # here keeps the credential contents enumerable only by the
+    # current user even if the parent is loose.
+    chmod 0700 "$snapshot_path" 2>/dev/null || true
+
+    # Validate completeness via regular-file count parity. This subsumes
+    # an "is the snapshot empty?" check and catches:
+    #   - cp entirely failed (src=N, dst=0)
+    #   - cp partial failure / mid-copy ENOSPC (src=N, dst=K, K<N)
+    #   - source contained only sockets (src=0, dst=0 — match, no fallback;
+    #     an empty snapshot is still a valid socket-free :U source)
+    # Mirrors atomic-copy.sh's count-based guard (issues #328, #335).
+    local _src_count _dst_count
+    _src_count=$(find "$host_path" -type f 2>/dev/null | wc -l | tr -d ' \n')
+    _dst_count=$(find "$snapshot_path" -type f 2>/dev/null | wc -l | tr -d ' \n')
+    if [[ "$_src_count" != "$_dst_count" ]]; then
+        log_warn "Snapshot file count mismatch for ${host_path} (src=${_src_count} dst=${_dst_count}), falling back to live mount"
         echo "$host_path"
         return 1
     fi
+
     echo "$snapshot_path"
 }
 
@@ -1525,12 +1550,22 @@ generate_filesystem_includes() {
                 # those entry types, aborting container-prepare. Other
                 # directories keep the live mount + fuse-overlayfs CoW path.
                 local mount_source="$expanded_path"
+                local _dir_snapshot_fallback=0
                 if [[ -f "$expanded_path" ]]; then
                     mount_source=$(_snapshot_file "$expanded_path" "$relative_path")
                     log_debug "Snapshot (file): ${expanded_path} -> ${mount_source}"
                 elif [[ -d "$expanded_path" ]] && is_macos && _path_has_unstattable_entries "$expanded_path"; then
-                    mount_source=$(_snapshot_dir_filtered "$expanded_path" "$relative_path")
-                    log_debug "Snapshot (dir, socket-free): ${expanded_path} -> ${mount_source}"
+                    if mount_source=$(_snapshot_dir_filtered "$expanded_path" "$relative_path"); then
+                        log_debug "Snapshot (dir, socket-free): ${expanded_path} -> ${mount_source}"
+                    else
+                        # Fallback returned live host_path; mounting it with :U
+                        # would re-trip the chown-walk on virtio-fs ENOENT (the
+                        # bug this code prevents). Drop :U for THIS entry; the
+                        # in-container atomic-copy classifier (#336) handles
+                        # the remaining cp-stage socket failures.
+                        _dir_snapshot_fallback=1
+                        log_warn "Directory snapshot for ${expanded_path} fell back to live mount; :U dropped on this entry to avoid #338 chown-walk"
+                    fi
                 fi
 
                 # Mount to staging directory (read-only).
@@ -1546,9 +1581,10 @@ generate_filesystem_includes() {
                 # Issue #338: :U makes podman chown-walk the source via lstat(),
                 # which trips on virtio-fs ENOENT for AF_UNIX sockets. The
                 # directory-snapshot above produces a socket-free source for
-                # affected dirs so :U traversal succeeds.
+                # affected dirs so :U traversal succeeds. If the snapshot
+                # itself fell back to the live path, drop :U for that entry.
                 local _staging_mount_opts="ro"
-                if is_macos; then
+                if is_macos && [[ "$_dir_snapshot_fallback" -eq 0 ]]; then
                     _staging_mount_opts="ro,U"
                 fi
                 VOLUME_MOUNTS+=("-v" "${mount_source}:${staging_path}:${_staging_mount_opts}")
