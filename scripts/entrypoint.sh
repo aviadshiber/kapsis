@@ -1684,9 +1684,11 @@ validate_workspace_mount() {
 # the agent command. On macOS virtio-fs can degrade during that window too.
 #
 # This probe runs immediately before exec and uses `timeout` so a hung virtio-
-# fs transport cannot freeze the container. A write probe is required (not
-# just stat) because the failure mode in #276 is that bash's `>` redirect open
-# fails even when stat succeeds on the parent dir.
+# fs transport cannot freeze the container. In worktree mode a write probe is
+# required (not just stat) because the failure mode in #276 is that bash's `>`
+# redirect open fails even when stat succeeds on the parent dir. In overlay
+# mode the workspace is read-only by design (Issue #341) so only the stat
+# probe runs — see the overlay short-circuit in the function body below.
 #
 # On failure, emits the same KAPSIS_MOUNT_FAILURE: sentinel to stderr that the
 # liveness monitor uses (scripts/lib/liveness-monitor.sh:613), so the existing
