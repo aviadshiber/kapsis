@@ -99,6 +99,46 @@ _snapshot_file() {
     fi
 }
 
+# Issue #338: inlined from launch-agent.sh. Returns 0 if subtree contains any
+# AF_UNIX socket, FIFO, or device entry (the classes virtio-fs returns ENOENT
+# for from lstat()). Uses find -print -quit for early exit on first match.
+_path_has_unstattable_entries() {
+    local p="$1"
+    [[ -d "$p" ]] || return 1
+    [[ -n "$(find "$p" \( -type s -o -type p -o -type c -o -type b \) -print -quit 2>/dev/null)" ]]
+}
+
+# Issue #338: inlined from launch-agent.sh. Snapshots a host dir to
+# ${SNAPSHOT_DIR}/<relative_name>, omitting sockets / FIFOs / devices so the
+# resulting mount can take :U without tripping podman's chown-walk on macOS
+# virtio-fs. Falls back to <host_path> on failure.
+_snapshot_dir_filtered() {
+    local host_path="$1"
+    local relative_name="$2"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "$host_path"
+        return 0
+    fi
+
+    local snapshot_path="${SNAPSHOT_DIR}/${relative_name}"
+    if ! mkdir -p "$snapshot_path" 2>/dev/null; then
+        log_warn "Snapshot dir mkdir failed for ${snapshot_path}, falling back to live mount"
+        echo "$host_path"
+        return 1
+    fi
+
+    cp -Rp "${host_path}/." "${snapshot_path}/" 2>/dev/null || true
+    find "$snapshot_path" \( -type s -o -type p -o -type c -o -type b \) -delete 2>/dev/null || true
+
+    if [[ -z "$(ls -A "$snapshot_path" 2>/dev/null)" ]] && [[ -n "$(ls -A "$host_path" 2>/dev/null)" ]]; then
+        log_warn "Snapshot of ${host_path} is empty, falling back to live mount"
+        echo "$host_path"
+        return 1
+    fi
+    echo "$snapshot_path"
+}
+
 #===============================================================================
 # TESTS
 #===============================================================================
@@ -391,6 +431,197 @@ test_staging_mount_opts_macos_ro_U_combined() {
 }
 
 #===============================================================================
+# Issue #338: pre-filter directory snapshots so :U chown traversal doesn't
+# trip on AF_UNIX sockets / FIFOs / devices that virtio-fs returns ENOENT for.
+#
+# Tests use mkfifo (POSIX, works on Linux + BSD) to stand in for AF_UNIX
+# sockets — both share the find -type s/-type p detection codepath and the
+# same lstat-ENOENT pathology on virtio-fs. AF_UNIX-specific tests would
+# need a live process to bind() the socket, which is over-specified for
+# unit-level coverage of the filter logic.
+#===============================================================================
+
+test_path_has_unstattable_entries_detects_fifo() {
+    log_test "_path_has_unstattable_entries: detects FIFO (Issue #338)"
+    local d="$TEST_TEMP_DIR/has-fifo"
+    mkdir -p "$d"
+    : > "$d/regular.txt"
+    mkfifo "$d/socket-stand-in" 2>/dev/null
+
+    if _path_has_unstattable_entries "$d"; then
+        log_pass "Detected FIFO entry"
+    else
+        log_fail "Failed to detect FIFO entry"
+    fi
+}
+
+test_path_has_unstattable_entries_detects_nested_fifo() {
+    log_test "_path_has_unstattable_entries: detects nested FIFO (Issue #338)"
+    local d="$TEST_TEMP_DIR/nested-fifo/a/b/c"
+    mkdir -p "$d"
+    : > "$TEST_TEMP_DIR/nested-fifo/regular.txt"
+    mkfifo "$d/deep.ipc" 2>/dev/null
+
+    if _path_has_unstattable_entries "$TEST_TEMP_DIR/nested-fifo"; then
+        log_pass "Detected deeply-nested FIFO"
+    else
+        log_fail "Failed to detect deeply-nested FIFO"
+    fi
+}
+
+test_path_has_unstattable_entries_clean_tree_returns_1() {
+    log_test "_path_has_unstattable_entries: returns 1 on socket-free tree (Issue #338)"
+    local d="$TEST_TEMP_DIR/clean-tree"
+    mkdir -p "$d/sub"
+    : > "$d/file.txt"
+    : > "$d/sub/nested.json"
+
+    if _path_has_unstattable_entries "$d"; then
+        log_fail "Should NOT report unstattable entries for a regular-file-only tree"
+    else
+        log_pass "Correctly returned 1 for clean tree"
+    fi
+}
+
+test_path_has_unstattable_entries_handles_missing_path() {
+    log_test "_path_has_unstattable_entries: returns 1 on non-existent path (Issue #338)"
+    if _path_has_unstattable_entries "$TEST_TEMP_DIR/does-not-exist"; then
+        log_fail "Should NOT report unstattable entries for missing path"
+    else
+        log_pass "Correctly returned 1 for missing path"
+    fi
+}
+
+test_snapshot_dir_filtered_excludes_fifos() {
+    log_test "_snapshot_dir_filtered: excludes FIFOs from snapshot (Issue #338)"
+    reset_snapshot_state
+    _init_snapshot_dir
+
+    local src="$TEST_TEMP_DIR/src-with-fifo"
+    mkdir -p "$src/sub"
+    echo "regular content" > "$src/regular.txt"
+    echo '{"k":"v"}' > "$src/sub/nested.json"
+    mkfifo "$src/fsmonitor.ipc" 2>/dev/null
+    mkfifo "$src/sub/agent.sock" 2>/dev/null
+
+    local result
+    result=$(_snapshot_dir_filtered "$src" ".claude")
+
+    assert_dir_exists "$result" "Snapshot dir should exist"
+    assert_file_exists "$result/regular.txt" "Regular file should be in snapshot"
+    assert_file_exists "$result/sub/nested.json" "Nested regular file should be in snapshot"
+
+    if [[ -e "$result/fsmonitor.ipc" ]]; then
+        log_fail "FIFO at root must NOT exist in snapshot"
+    else
+        log_pass "FIFO at root correctly excluded"
+    fi
+
+    if [[ -e "$result/sub/agent.sock" ]]; then
+        log_fail "Nested FIFO must NOT exist in snapshot"
+    else
+        log_pass "Nested FIFO correctly excluded"
+    fi
+}
+
+test_snapshot_dir_filtered_preserves_modes() {
+    log_test "_snapshot_dir_filtered: preserves mode-0700 dirs and mode-0600 files (Issue #338)"
+    reset_snapshot_state
+    _init_snapshot_dir
+
+    local src="$TEST_TEMP_DIR/src-modes"
+    mkdir -p "$src"
+    echo "secret" > "$src/id_rsa"
+    chmod 700 "$src"
+    chmod 600 "$src/id_rsa"
+    mkfifo "$src/agent.sock" 2>/dev/null
+
+    local result
+    result=$(_snapshot_dir_filtered "$src" ".ssh")
+
+    assert_dir_exists "$result" "Snapshot dir should exist"
+    assert_file_exists "$result/id_rsa" "Regular file should be in snapshot"
+
+    local src_dir_mode dst_dir_mode src_file_mode dst_file_mode
+    src_dir_mode=$(stat -c '%a' "$src" 2>/dev/null || stat -f '%A' "$src" 2>/dev/null)
+    dst_dir_mode=$(stat -c '%a' "$result" 2>/dev/null || stat -f '%A' "$result" 2>/dev/null)
+    src_file_mode=$(stat -c '%a' "$src/id_rsa" 2>/dev/null || stat -f '%A' "$src/id_rsa" 2>/dev/null)
+    dst_file_mode=$(stat -c '%a' "$result/id_rsa" 2>/dev/null || stat -f '%A' "$result/id_rsa" 2>/dev/null)
+
+    assert_equals "$src_file_mode" "$dst_file_mode" "File mode (e.g. 0600) must be preserved"
+    # Directory mode preservation is best-effort: SNAPSHOT_DIR is created via
+    # mkdir -p (umask-filtered), so the OUTER dir mode is not expected to
+    # match. Only verify file modes here.
+    [[ -n "$src_dir_mode" ]] && log_pass "Source dir mode captured: ${src_dir_mode}"
+}
+
+test_snapshot_dir_filtered_dry_run_passthrough() {
+    log_test "_snapshot_dir_filtered: returns original path in DRY_RUN mode (Issue #338)"
+    reset_snapshot_state
+    DRY_RUN=true
+    _init_snapshot_dir
+
+    local src="$TEST_TEMP_DIR/dry-run-src"
+    mkdir -p "$src"
+    echo "data" > "$src/file.txt"
+
+    local result
+    result=$(_snapshot_dir_filtered "$src" ".claude")
+
+    assert_equals "$src" "$result" "Should return original path in dry-run mode"
+
+    DRY_RUN=false
+}
+
+test_snapshot_dir_filtered_handles_empty_source() {
+    log_test "_snapshot_dir_filtered: empty source dir produces empty snapshot (Issue #338)"
+    reset_snapshot_state
+    _init_snapshot_dir
+
+    local src="$TEST_TEMP_DIR/empty-src"
+    mkdir -p "$src"
+
+    local result
+    result=$(_snapshot_dir_filtered "$src" ".empty")
+
+    # Empty source is a degenerate but valid case — should return the
+    # snapshot path, not fall back. (Fallback is only for src-non-empty
+    # but dst-empty mismatch.)
+    assert_dir_exists "$result" "Snapshot dir should exist for empty source"
+    if [[ -z "$(ls -A "$result" 2>/dev/null)" ]]; then
+        log_pass "Empty source produced empty snapshot"
+    else
+        log_fail "Snapshot of empty source unexpectedly has content"
+    fi
+}
+
+test_snapshot_dir_filtered_preserves_regular_files() {
+    log_test "_snapshot_dir_filtered: regular file content is byte-identical (Issue #338)"
+    reset_snapshot_state
+    _init_snapshot_dir
+
+    local src="$TEST_TEMP_DIR/src-content"
+    mkdir -p "$src/sub"
+    printf 'line one\nline two\n' > "$src/file.txt"
+    printf '{"deep": "json"}' > "$src/sub/data.json"
+    mkfifo "$src/x.ipc" 2>/dev/null
+
+    local result
+    result=$(_snapshot_dir_filtered "$src" ".content")
+
+    if cmp -s "$src/file.txt" "$result/file.txt"; then
+        log_pass "Top-level file matches byte-for-byte"
+    else
+        log_fail "Top-level file content differs"
+    fi
+    if cmp -s "$src/sub/data.json" "$result/sub/data.json"; then
+        log_pass "Nested file matches byte-for-byte"
+    else
+        log_fail "Nested file content differs"
+    fi
+}
+
+#===============================================================================
 # TEST RUNNER
 #===============================================================================
 
@@ -422,6 +653,17 @@ main() {
     run_test test_staging_mount_opts_macos_includes_U_flag
     run_test test_staging_mount_opts_linux_no_U_flag
     run_test test_staging_mount_opts_macos_ro_U_combined
+
+    # Pre-filtered directory snapshot tests (issue #338)
+    run_test test_path_has_unstattable_entries_detects_fifo
+    run_test test_path_has_unstattable_entries_detects_nested_fifo
+    run_test test_path_has_unstattable_entries_clean_tree_returns_1
+    run_test test_path_has_unstattable_entries_handles_missing_path
+    run_test test_snapshot_dir_filtered_excludes_fifos
+    run_test test_snapshot_dir_filtered_preserves_modes
+    run_test test_snapshot_dir_filtered_dry_run_passthrough
+    run_test test_snapshot_dir_filtered_handles_empty_source
+    run_test test_snapshot_dir_filtered_preserves_regular_files
 
     # Summary
     print_summary

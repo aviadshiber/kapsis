@@ -1408,6 +1408,76 @@ _snapshot_file() {
     fi
 }
 
+#-------------------------------------------------------------------------------
+# _path_has_unstattable_entries <host_path>
+#
+# Returns 0 if the subtree under <host_path> contains any AF_UNIX socket,
+# FIFO, or device entry — the entry classes that virtio-fs on macOS
+# returns from readdir() but errors on stat()/lstat() (issue #338).
+# Used by generate_filesystem_includes() to decide whether a directory
+# source needs pre-filter snapshotting before applying the :U mount
+# flag (which makes podman chown-walk the source via lstat).
+#
+# Uses `find ... -print -quit` so it returns after the first match —
+# fast even on large trees like ~/.claude/projects.
+#-------------------------------------------------------------------------------
+_path_has_unstattable_entries() {
+    local p="$1"
+    [[ -d "$p" ]] || return 1
+    [[ -n "$(find "$p" \( -type s -o -type p -o -type c -o -type b \) -print -quit 2>/dev/null)" ]]
+}
+
+#-------------------------------------------------------------------------------
+# _snapshot_dir_filtered <host_path> <relative_name>
+#
+# Snapshots a host directory tree to ${SNAPSHOT_DIR}/<relative_name>,
+# omitting AF_UNIX sockets / FIFOs / devices. Returns the snapshot path
+# on success, falls back to <host_path> (live mount) on failure with a
+# log_warn.
+#
+# Issue #338: when the resulting mount is given the :U flag, podman
+# walks the source via lstat() to chown it. AF_UNIX sockets visible
+# from readdir() on macOS virtio-fs return ENOENT from lstat(),
+# aborting the container-prepare phase before entrypoint runs. By
+# producing a socket-free snapshot here, the :U traversal succeeds.
+#
+# Mode bits are preserved via `cp -Rp` (BSD + GNU compatible). Sockets
+# / FIFOs / devices are pruned post-cp to defend against platform
+# variance in how cp handles them. The in-container atomic-copy
+# classifier (scripts/lib/atomic-copy.sh) remains as defense in depth.
+#-------------------------------------------------------------------------------
+_snapshot_dir_filtered() {
+    local host_path="$1"
+    local relative_name="$2"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "$host_path"
+        return 0
+    fi
+
+    local snapshot_path="${SNAPSHOT_DIR}/${relative_name}"
+    if ! mkdir -p "$snapshot_path" 2>/dev/null; then
+        log_warn "Snapshot dir mkdir failed for ${snapshot_path}, falling back to live mount"
+        echo "$host_path"
+        return 1
+    fi
+
+    # cp -Rp may warn and exit non-zero on socket entries but still
+    # copies all regular files / dirs / symlinks. Suppress the noise
+    # and post-prune to handle any platform variance.
+    cp -Rp "${host_path}/." "${snapshot_path}/" 2>/dev/null || true
+    find "$snapshot_path" \( -type s -o -type p -o -type c -o -type b \) -delete 2>/dev/null || true
+
+    # Only treat the snapshot as a fallback miss if the source had
+    # content but the snapshot is empty (cp produced nothing).
+    if [[ -z "$(ls -A "$snapshot_path" 2>/dev/null)" ]] && [[ -n "$(ls -A "$host_path" 2>/dev/null)" ]]; then
+        log_warn "Snapshot of ${host_path} is empty, falling back to live mount"
+        echo "$host_path"
+        return 1
+    fi
+    echo "$snapshot_path"
+}
+
 generate_filesystem_includes() {
     local staging_dir="/kapsis-staging"
     STAGED_CONFIGS=""
@@ -1447,12 +1517,20 @@ generate_filesystem_includes() {
                 relative_path="${expanded_path#"$HOME"/}"
                 staging_path="${staging_dir}/${relative_path}"
 
-                # Snapshot regular files to prevent torn reads (issue #164)
-                # Directories are left as-is — they use fuse-overlayfs CoW inside the container
+                # Snapshot regular files to prevent torn reads (issue #164).
+                # Issue #338: on macOS, also snapshot directories that contain
+                # AF_UNIX sockets / FIFOs / devices, since podman's :U flag
+                # (added below for the #328 fix) chowns the source recursively
+                # via lstat() — and virtio-fs returns ENOENT from lstat() on
+                # those entry types, aborting container-prepare. Other
+                # directories keep the live mount + fuse-overlayfs CoW path.
                 local mount_source="$expanded_path"
                 if [[ -f "$expanded_path" ]]; then
                     mount_source=$(_snapshot_file "$expanded_path" "$relative_path")
-                    log_debug "Snapshot: ${expanded_path} -> ${mount_source}"
+                    log_debug "Snapshot (file): ${expanded_path} -> ${mount_source}"
+                elif [[ -d "$expanded_path" ]] && is_macos && _path_has_unstattable_entries "$expanded_path"; then
+                    mount_source=$(_snapshot_dir_filtered "$expanded_path" "$relative_path")
+                    log_debug "Snapshot (dir, socket-free): ${expanded_path} -> ${mount_source}"
                 fi
 
                 # Mount to staging directory (read-only).
@@ -1465,6 +1543,10 @@ generate_filesystem_includes() {
                 # that remaps file ownership to the container user so mode-0700 dirs
                 # appear owned by developer and become readable. :ro is preserved;
                 # the host filesystem is never modified.
+                # Issue #338: :U makes podman chown-walk the source via lstat(),
+                # which trips on virtio-fs ENOENT for AF_UNIX sockets. The
+                # directory-snapshot above produces a socket-free source for
+                # affected dirs so :U traversal succeeds.
                 local _staging_mount_opts="ro"
                 if is_macos; then
                     _staging_mount_opts="ro,U"
