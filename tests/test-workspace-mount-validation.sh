@@ -446,8 +446,9 @@ test_probe_mount_readiness_overlay_skips_write_probe() {
     local saved_mode="${KAPSIS_SANDBOX_MODE:-}"
     export KAPSIS_SANDBOX_MODE="overlay"
 
+    local stderr_output
     local exit_code=0
-    probe_mount_readiness "$test_dir/workspace" 2>/dev/null || exit_code=$?
+    stderr_output=$(probe_mount_readiness "$test_dir/workspace" 2>&1 >/dev/null) || exit_code=$?
 
     chmod 0755 "$test_dir/workspace"
     if [[ -n "$saved_mode" ]]; then
@@ -458,6 +459,12 @@ test_probe_mount_readiness_overlay_skips_write_probe() {
 
     assert_equals "0" "$exit_code" \
         "Overlay-mode read-only workspace should pass probe (stat OK, write probe skipped)"
+    # Issue #341 user-facing fix: the original bug was the spurious sentinel
+    # appearing on every overlay-mode launch. Lock that in — a future change
+    # that re-emits the sentinel while still returning 0 would re-introduce
+    # the false-positive mount_failure on the host side.
+    assert_not_contains "$stderr_output" "KAPSIS_MOUNT_FAILURE[probe_mount_readiness]:" \
+        "Overlay-mode probe must NOT emit the false-positive sentinel"
 }
 
 test_probe_mount_readiness_overlay_still_detects_missing_workspace() {
