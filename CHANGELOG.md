@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.28.4] - 2026-05-14
+## [2.28.5] - 2026-05-14
 
 ### Fixed
-- Add :U mount flag + post-staging chmod for macOS UID mismatch (#328) (#333)
+- Pre-filter directory snapshots on macOS to keep :U safe (#338) (#339)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Add :U mount flag + post-staging chmod for macOS UID mismatch (#328) (#333)
+
 
 ### Fixed
 - Broaden benign-stderr classifier + chmod restrictive dst (#335) (#336)
@@ -936,7 +940,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.4...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.5...HEAD
+[2.28.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.5
 [2.28.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.4
 [2.28.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.3
 [2.28.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.2
