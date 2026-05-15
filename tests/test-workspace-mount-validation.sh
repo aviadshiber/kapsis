@@ -60,6 +60,23 @@ cleanup_test_dirs() {
     _TEST_DIRS=()
 }
 
+# _with_sandbox_mode <mode> <cmd...>: run <cmd> with KAPSIS_SANDBOX_MODE=<mode>,
+# restoring the original value on return. Eliminates repetitive save/export/restore
+# boilerplate in probe_mount_readiness tests.
+_with_sandbox_mode() {
+    local _mode="$1"; shift
+    local _prior="${KAPSIS_SANDBOX_MODE:-}"
+    export KAPSIS_SANDBOX_MODE="$_mode"
+    local _rc=0
+    "$@" || _rc=$?
+    if [[ -n "$_prior" ]]; then
+        export KAPSIS_SANDBOX_MODE="$_prior"
+    else
+        unset KAPSIS_SANDBOX_MODE
+    fi
+    return "$_rc"
+}
+
 #===============================================================================
 # TEST: Workspace does not exist
 #===============================================================================
@@ -368,21 +385,21 @@ EOF
 #===============================================================================
 
 test_probe_mount_readiness_healthy() {
-    log_test "probe_mount_readiness returns 0 when workspace is writable"
+    log_test "probe_mount_readiness returns 0 when workspace is writable (worktree mode)"
     local test_dir
     test_dir=$(make_test_dir)
     mkdir -p "$test_dir/workspace"
 
     local exit_code=0
-    probe_mount_readiness "$test_dir/workspace" 2>/dev/null || exit_code=$?
+    _with_sandbox_mode "worktree" probe_mount_readiness "$test_dir/workspace" 2>/dev/null || exit_code=$?
     assert_equals "0" "$exit_code" "Writable workspace should pass probe"
 }
 
 test_probe_mount_readiness_missing() {
-    log_test "probe_mount_readiness returns 1 + sentinel when workspace missing"
+    log_test "probe_mount_readiness returns 1 + sentinel when workspace missing (worktree mode)"
     local stderr_output
     local exit_code=0
-    stderr_output=$(probe_mount_readiness "/nonexistent/workspace-$$" 2>&1 >/dev/null) || exit_code=$?
+    stderr_output=$(_with_sandbox_mode "worktree" probe_mount_readiness "/nonexistent/workspace-$$" 2>&1 >/dev/null) || exit_code=$?
     assert_equals "1" "$exit_code" "Missing workspace should fail probe"
     # Sentinel must use the tagged form introduced after the PR #280 review.
     assert_contains "$stderr_output" "KAPSIS_MOUNT_FAILURE[probe_mount_readiness]:" \
@@ -403,22 +420,10 @@ test_probe_mount_readiness_readonly() {
     mkdir -p "$test_dir/workspace"
     chmod 0555 "$test_dir/workspace"
 
-    # Issue #341: write probe is worktree-mode behavior; make the test's
-    # assumption explicit so it doesn't silently change semantics if the
-    # default mode flips.
-    local saved_mode="${KAPSIS_SANDBOX_MODE:-}"
-    export KAPSIS_SANDBOX_MODE="worktree"
-
-    local stderr_output
-    local exit_code=0
-    stderr_output=$(probe_mount_readiness "$test_dir/workspace" 2>&1 >/dev/null) || exit_code=$?
+    local stderr_output exit_code=0
+    stderr_output=$(_with_sandbox_mode "worktree" probe_mount_readiness "$test_dir/workspace" 2>&1 >/dev/null) || exit_code=$?
     # Restore write so cleanup can rm -rf.
     chmod 0755 "$test_dir/workspace"
-    if [[ -n "$saved_mode" ]]; then
-        export KAPSIS_SANDBOX_MODE="$saved_mode"
-    else
-        unset KAPSIS_SANDBOX_MODE
-    fi
     assert_equals "1" "$exit_code" "Read-only workspace should fail probe in worktree mode"
     assert_contains "$stderr_output" "KAPSIS_MOUNT_FAILURE[probe_mount_readiness]:" \
         "Should emit tagged KAPSIS_MOUNT_FAILURE sentinel when write probe fails"
@@ -443,20 +448,9 @@ test_probe_mount_readiness_overlay_skips_write_probe() {
     mkdir -p "$test_dir/workspace"
     chmod 0555 "$test_dir/workspace"
 
-    local saved_mode="${KAPSIS_SANDBOX_MODE:-}"
-    export KAPSIS_SANDBOX_MODE="overlay"
-
-    local stderr_output
-    local exit_code=0
-    stderr_output=$(probe_mount_readiness "$test_dir/workspace" 2>&1 >/dev/null) || exit_code=$?
-
+    local stderr_output exit_code=0
+    stderr_output=$(_with_sandbox_mode "overlay" probe_mount_readiness "$test_dir/workspace" 2>&1 >/dev/null) || exit_code=$?
     chmod 0755 "$test_dir/workspace"
-    if [[ -n "$saved_mode" ]]; then
-        export KAPSIS_SANDBOX_MODE="$saved_mode"
-    else
-        unset KAPSIS_SANDBOX_MODE
-    fi
-
     assert_equals "0" "$exit_code" \
         "Overlay-mode read-only workspace should pass probe (stat OK, write probe skipped)"
     # Issue #341 user-facing fix: the original bug was the spurious sentinel
@@ -469,19 +463,8 @@ test_probe_mount_readiness_overlay_skips_write_probe() {
 
 test_probe_mount_readiness_overlay_still_detects_missing_workspace() {
     log_test "probe_mount_readiness in overlay mode still fails when workspace is missing (Issue #341)"
-    local saved_mode="${KAPSIS_SANDBOX_MODE:-}"
-    export KAPSIS_SANDBOX_MODE="overlay"
-
-    local stderr_output
-    local exit_code=0
-    stderr_output=$(probe_mount_readiness "/nonexistent/workspace-overlay-$$" 2>&1 >/dev/null) || exit_code=$?
-
-    if [[ -n "$saved_mode" ]]; then
-        export KAPSIS_SANDBOX_MODE="$saved_mode"
-    else
-        unset KAPSIS_SANDBOX_MODE
-    fi
-
+    local stderr_output exit_code=0
+    stderr_output=$(_with_sandbox_mode "overlay" probe_mount_readiness "/nonexistent/workspace-overlay-$$" 2>&1 >/dev/null) || exit_code=$?
     assert_equals "1" "$exit_code" \
         "Overlay-mode missing workspace should fail (stat probe still fires)"
     assert_contains "$stderr_output" "KAPSIS_MOUNT_FAILURE[probe_mount_readiness]:" \

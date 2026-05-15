@@ -1686,9 +1686,13 @@ validate_workspace_mount() {
 # This probe runs immediately before exec and uses `timeout` so a hung virtio-
 # fs transport cannot freeze the container. In worktree mode a write probe is
 # required (not just stat) because the failure mode in #276 is that bash's `>`
-# redirect open fails even when stat succeeds on the parent dir. In overlay
-# mode the workspace is read-only by design (Issue #341) so only the stat
-# probe runs — see the overlay short-circuit in the function body below.
+# redirect open fails even when stat succeeds on the parent dir; /workspace is
+# read-write so the probe has signal. In overlay mode the workspace is
+# intentionally read-only (Issue #341): agent writes target $HOME and
+# /kapsis-status instead, so a write probe on /workspace always returns EROFS
+# regardless of mount health — only the stat probe runs. If KAPSIS_SANDBOX_MODE
+# is unset or empty the write probe runs (worktree behavior), which is the safe
+# default for callers that do not export the variable.
 #
 # On failure, emits the same KAPSIS_MOUNT_FAILURE: sentinel to stderr that the
 # liveness monitor uses (scripts/lib/liveness-monitor.sh:613), so the existing
@@ -1757,8 +1761,16 @@ probe_mount_readiness() {
     # scripts/lib/liveness-monitor.sh::_mount_check_probe (uses stat + ls -A
     # for both modes, only adds a git sentinel check in worktree mode).
     # Mirrors the existing overlay short-circuit in
-    # scripts/lib/inject-status-hooks.sh:325.
-    if [[ "${KAPSIS_SANDBOX_MODE:-}" == "overlay" ]]; then
+    # scripts/lib/inject-status-hooks.sh::inject_gist_instructions.
+    #
+    # Normalise the mode string: lowercase and strip whitespace so "Overlay",
+    # " overlay", and future overlay-family names match. Unset/empty is treated
+    # as worktree (write probe runs) — safe default for callers that do not
+    # export KAPSIS_SANDBOX_MODE.
+    local _probe_mode="${KAPSIS_SANDBOX_MODE:-}"
+    _probe_mode="${_probe_mode,,}"                    # bash lowercase
+    _probe_mode="${_probe_mode//[[:space:]]/}"        # strip whitespace
+    if [[ "$_probe_mode" == "overlay" ]]; then
         log_debug "Pre-agent mount readiness probe: stat passed; skipping write probe in overlay mode (read-only by design)"
         return 0
     fi
