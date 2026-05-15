@@ -56,6 +56,40 @@ _vfs_timeout_cmd() {
 }
 
 #-------------------------------------------------------------------------------
+# _probe_container_responsive <container_id> [probe_secs]
+#
+# Returns 0 if `podman exec <id> /bin/true` completes within probe_secs, 1
+# otherwise (including: container is wedged in D-state on a degraded virtio-fs
+# mount, container has exited under us, podman is broken, or no timeout binary
+# is available).
+#
+# Fails CLOSED when no `timeout` / `gtimeout` binary is on PATH — without
+# bounded exec, probing a wedged container would hang the caller forever, so
+# treating it as unresponsive is the safe choice. macOS hosts are already
+# instructed to install coreutils (see compat.sh recovery messages).
+#
+# Args:
+#   $1 - container id (hex from `podman ps --format '{{.ID}}'`)
+#   $2 - probe timeout in seconds (default: KAPSIS_VFS_EXEC_PROBE_TIMEOUT or 2)
+#
+# Env:
+#   KAPSIS_VFS_PROBE_PODMAN       - override the podman binary path
+#   KAPSIS_VFS_EXEC_PROBE_TIMEOUT - per-call default timeout (seconds)
+#-------------------------------------------------------------------------------
+_probe_container_responsive() {
+    local id="$1"
+    local probe_secs="${2:-${KAPSIS_VFS_EXEC_PROBE_TIMEOUT:-${KAPSIS_DEFAULT_VFS_EXEC_PROBE_TIMEOUT:-2}}}"
+    local podman_bin="${KAPSIS_VFS_PROBE_PODMAN:-podman}"
+    local timeout_cmd
+    timeout_cmd="$(_vfs_timeout_cmd)"
+    if [[ -z "$timeout_cmd" ]]; then
+        log_debug "_probe_container_responsive: no timeout binary on PATH — treating $id as unresponsive (fail-closed)"
+        return 1
+    fi
+    "$timeout_cmd" "$probe_secs" "$podman_bin" exec "$id" /bin/true &>/dev/null
+}
+
+#-------------------------------------------------------------------------------
 # probe_virtio_fs_health [probe_timeout] [probe_image]
 #
 # Verifies that the virtio-fs bind-mount transport is functional on macOS.
@@ -218,13 +252,20 @@ probe_virtio_fs_health() {
 #-------------------------------------------------------------------------------
 # count_running_kapsis_containers
 #
-# Counts currently-running containers launched by kapsis. Identifies them by
-# the `kapsis.managed=true` label set in launch-agent.sh, not by name prefix —
-# this prevents user-created containers that happen to be named `kapsis-*`
-# (test harnesses, personal projects) from falsely blocking auto-heal.
+# Counts currently-running AND responsive containers launched by kapsis.
+# Identifies them by the `kapsis.managed=true` label set in launch-agent.sh,
+# not by name prefix — this prevents user-created containers that happen to
+# be named `kapsis-*` (test harnesses, personal projects) from falsely
+# blocking auto-heal.
+#
+# Wedged zombie containers — those whose PID-1 is stuck in D-state on a
+# degraded virtio-fs mount (Issue #348) — are excluded from the count via
+# `_probe_container_responsive`. The agent inside them is already dead and
+# only a Podman VM restart can reap them, so they must not block auto-heal.
 #
 # Env (for tests):
-#   KAPSIS_VFS_PROBE_PODMAN - override the podman binary path
+#   KAPSIS_VFS_PROBE_PODMAN       - override the podman binary path
+#   KAPSIS_VFS_EXEC_PROBE_TIMEOUT - per-container exec probe timeout (seconds)
 #
 # Prints the integer count on stdout. Prints "0" on any error.
 #-------------------------------------------------------------------------------
@@ -236,12 +277,17 @@ count_running_kapsis_containers() {
         echo "0"
         return 0
     fi
-    # printf '%s\n' adds exactly one trailing newline; wc -l therefore counts
-    # all lines correctly. (Command substitution already stripped the trailing
-    # newline from podman output, so '%s' would undercount the last line.)
-    local count
-    count="$(printf '%s\n' "$ids" | wc -l | tr -d ' ')"
-    echo "${count:-0}"
+    local count=0
+    local id
+    while IFS= read -r id; do
+        [[ -z "$id" ]] && continue
+        if _probe_container_responsive "$id"; then
+            ((count++)) || true
+        else
+            log_warn "Excluding wedged container $id from running count (unresponsive to exec — Issue #348)"
+        fi
+    done <<< "$ids"
+    echo "$count"
 }
 
 #-------------------------------------------------------------------------------
@@ -276,13 +322,58 @@ _podman_machine_restart() {
 }
 
 #-------------------------------------------------------------------------------
+# _sweep_wedged_kapsis_containers
+#
+# Best-effort sweep of wedged kapsis-managed containers (Issue #348). For each
+# kapsis-labelled container that fails the responsiveness probe, try a
+# bounded `podman rm -f`. If that hangs (the common case for a truly wedged
+# container — its PID-1 is in D-state and even SIGKILL can't reap it), the
+# timeout fires and we move on; the subsequent VM restart + `_kill_vfkit_zombie`
+# will reap it at the hypervisor layer.
+#
+# Skips the `rm -f` step entirely when no timeout binary is available, to
+# avoid hanging the auto-heal path.
+#
+# Always returns 0. Failures are intentionally swallowed: this is a
+# best-effort cleanup, not a precondition for restart.
+#-------------------------------------------------------------------------------
+_sweep_wedged_kapsis_containers() {
+    local podman_bin="${KAPSIS_VFS_PROBE_PODMAN:-podman}"
+    local ids
+    ids="$("$podman_bin" ps --filter 'label=kapsis.managed=true' --format '{{.ID}}' 2>/dev/null || true)"
+    [[ -z "$ids" ]] && return 0
+
+    local timeout_cmd
+    timeout_cmd="$(_vfs_timeout_cmd)"
+
+    local id
+    while IFS= read -r id; do
+        [[ -z "$id" ]] && continue
+        if _probe_container_responsive "$id"; then
+            continue
+        fi
+        if [[ -z "$timeout_cmd" ]]; then
+            log_debug "_sweep_wedged_kapsis_containers: no timeout binary — skipping rm -f for wedged $id (VM restart will reap)"
+            continue
+        fi
+        log_warn "Wedged container $id detected — attempting podman rm -f (best-effort, may hang)"
+        "$timeout_cmd" 5 "$podman_bin" rm -f "$id" &>/dev/null || true
+    done <<< "$ids"
+    return 0
+}
+
+#-------------------------------------------------------------------------------
 # maybe_autoheal_podman_vm [probe_timeout] [max_retries] [retry_delay]
 #
 # Probes virtio-fs health. On failure, decides whether to auto-restart the
 # Podman VM:
-#   - If other kapsis containers are running:     REFUSES to restart; returns 1
-#                                                 with a user-facing error so
-#                                                 running work is not killed.
+#   - Sweeps wedged kapsis containers first (Issue #348) so a zombie PID-1
+#     in D-state on a degraded virtio-fs mount cannot indefinitely block
+#     auto-heal.
+#   - If other RESPONSIVE kapsis containers are running: REFUSES to restart;
+#                                                 returns 1 with a user-facing
+#                                                 error so running work is not
+#                                                 killed.
 #   - If KAPSIS_VFS_AUTOHEAL_ENABLED=false:       REFUSES to restart; returns 1.
 #   - Otherwise:                                  restarts the VM and retries
 #                                                 the probe up to max_retries
@@ -319,6 +410,12 @@ maybe_autoheal_podman_vm() {
         log_error "  Run manually: podman machine stop && podman machine start"
         return 1
     fi
+
+    # Issue #348: sweep wedged zombie containers before counting. Their PID-1
+    # is stuck in D-state on the degraded mount and `podman stop` / `rm -f`
+    # both hang; without this sweep they'd be counted as "running" and block
+    # the VM restart that's the only thing that can actually reap them.
+    _sweep_wedged_kapsis_containers
 
     local running
     running="$(count_running_kapsis_containers)"

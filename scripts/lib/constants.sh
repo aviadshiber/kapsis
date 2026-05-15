@@ -331,6 +331,11 @@ readonly KAPSIS_DEFAULT_VFS_RECOVERY_RETRIES=2
 # Delay (seconds) between retries after auto-heal
 readonly KAPSIS_DEFAULT_VFS_RECOVERY_DELAY=3
 
+# Timeout (seconds) for the `podman exec <id> /bin/true` responsiveness probe
+# used by count_running_kapsis_containers to exclude wedged zombie containers
+# (Issue #348).
+readonly KAPSIS_DEFAULT_VFS_EXEC_PROBE_TIMEOUT=2
+
 #===============================================================================
 # STATUS VOLUME (Issue #276)
 #
