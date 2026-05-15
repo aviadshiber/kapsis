@@ -491,10 +491,20 @@ RUN userdel -r ubuntu 2>/dev/null || true && \
     groupadd -g ${GROUP_ID} ${USERNAME} && \
     useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ${USERNAME}
 
-# Create directories with correct ownership
+# Create directories with correct ownership.
+#
+# Issue #340: pre-create /home/${USERNAME}/.claude as developer-owned so the
+# conversations bind-mount (added in #322 at /home/developer/.claude/conversations)
+# doesn't cause podman to auto-create the parent .claude dir as root mode 1755
+# on macOS hosts with --userns=keep-id. The auto-created root-owned .claude
+# subsequently breaks atomic_copy_dir's rm-rf-and-mv replacement step in
+# setup_staged_config_overlays. Pre-creating the dir means podman finds it
+# already there and processes the conversations sub-mount without altering
+# parent ownership/mode.
 RUN mkdir -p /home/${USERNAME}/.m2/repository \
              /home/${USERNAME}/.gradle \
              /home/${USERNAME}/.m2/.gradle-enterprise \
+             /home/${USERNAME}/.claude \
              /home/${USERNAME}/go \
              /workspace && \
     chown -R ${USERNAME}:${USERNAME} /home/${USERNAME} /workspace

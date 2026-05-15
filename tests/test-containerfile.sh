@@ -363,6 +363,138 @@ test_container_lib_transitive_deps_present() {
 }
 
 #===============================================================================
+# TEST CASES: /home/developer/.claude pre-creation (Issue #340)
+#
+# The conversations bind-mount from #322 (host
+# $HOME/.kapsis/conversations/<id> → container /home/developer/.claude/
+# conversations) causes podman to auto-mkdir /home/developer/.claude as root
+# mode 1755 on macOS hosts with --userns=keep-id when the parent dir does not
+# already exist in the image. The root-owned .claude then breaks
+# atomic_copy_dir's rm-rf-and-mv replacement step in
+# setup_staged_config_overlays. Fix: pre-create /home/developer/.claude in
+# the Containerfile as developer-owned so podman finds it already present.
+#===============================================================================
+
+test_home_claude_dir_pre_created() {
+    log_test "Containerfile pre-creates /home/developer/.claude (Issue #340)"
+
+    assert_file_exists "$CONTAINERFILE" "Containerfile should exist"
+
+    local content
+    content=$(cat "$CONTAINERFILE")
+
+    # The Issue #340 fix lives in the same RUN that pre-creates .m2 / .gradle /
+    # go / /workspace. Look for the .claude path being mkdir'd somewhere in
+    # the file; relying on a specific RUN block would be brittle.
+    # shellcheck disable=SC2016  # single quotes intentional — match literal ${USERNAME} in Containerfile
+    assert_contains "$content" '/home/${USERNAME}/.claude' \
+        "Containerfile should pre-create /home/\${USERNAME}/.claude (Issue #340)"
+}
+
+test_home_claude_dir_chowned_to_developer() {
+    log_test "Containerfile chowns /home/developer (including .claude) to developer (Issue #340)"
+
+    local content
+    content=$(cat "$CONTAINERFILE")
+
+    # The chown -R /home/${USERNAME} after the mkdir covers all subdirs.
+    # Match the chown line that's recursive over /home/${USERNAME} so the
+    # pre-created .claude dir picks up developer ownership.
+    if ! echo "$content" | grep -Eq 'chown -R[[:space:]]+\$\{USERNAME\}:\$\{USERNAME\}[[:space:]]+/home/\$\{USERNAME\}'; then
+        log_fail "Containerfile should run 'chown -R \${USERNAME}:\${USERNAME} /home/\${USERNAME}' after pre-creating .claude"
+        return 1
+    fi
+
+    log_info "chown -R covers /home/\${USERNAME} (including pre-created .claude)"
+}
+
+# Container integration: verify the actual image behavior matches the static
+# assertion above. This is the regression test that would have caught #340 if
+# it had existed when #322 landed.
+test_home_claude_dir_developer_owned_in_built_image() {
+    log_test "/home/developer/.claude is developer-owned in built image (Issue #340)"
+
+    local image="${KAPSIS_TEST_IMAGE:-localhost/kapsis-sandbox:latest}"
+
+    if ! podman image exists "$image" 2>/dev/null; then
+        log_skip "$image not built — skipping in-container ownership check"
+        return 0
+    fi
+
+    local owner mode
+    owner=$(podman run --rm --entrypoint /bin/bash "$image" -c \
+        'stat -c "%U:%G" /home/developer/.claude' 2>/dev/null) || {
+        log_fail "Could not stat /home/developer/.claude in $image"
+        return 1
+    }
+    mode=$(podman run --rm --entrypoint /bin/bash "$image" -c \
+        'stat -c "%a" /home/developer/.claude' 2>/dev/null) || {
+        log_fail "Could not get mode of /home/developer/.claude in $image"
+        return 1
+    }
+
+    assert_equals "developer:developer" "$owner" \
+        "/home/developer/.claude should be developer-owned (got '$owner')"
+
+    # Anything in 7XX (0700, 0755, 0775, 0777) is acceptable as long as the
+    # developer user can read+write+execute. Reject 1755 (sticky bit, the
+    # podman-auto-create signature) and modes lacking developer write.
+    case "$mode" in
+        7*)
+            log_info "/home/developer/.claude mode=$mode owner=$owner (Issue #340 fix verified in image)"
+            ;;
+        *)
+            log_fail "/home/developer/.claude mode=$mode (expected 7XX — developer must have rwx). Mode 1755 indicates podman auto-created the dir, meaning the #340 fix is missing or didn't take effect."
+            return 1
+            ;;
+    esac
+}
+
+# End-to-end probe: with a synthetic conversations bind-mount overlaying the
+# pre-created .claude, the parent directory must remain developer-owned and
+# writable. This is the closest pure-bash equivalent of the real bug.
+test_conversations_mount_does_not_clobber_claude_ownership() {
+    log_test "conversations bind-mount preserves /home/developer/.claude ownership (Issue #340)"
+
+    local image="${KAPSIS_TEST_IMAGE:-localhost/kapsis-sandbox:latest}"
+
+    if ! podman image exists "$image" 2>/dev/null; then
+        log_skip "$image not built — skipping bind-mount regression check"
+        return 0
+    fi
+
+    local conv_host
+    conv_host=$(mktemp -d)
+    # shellcheck disable=SC2064
+    trap "rm -rf '$conv_host'" RETURN
+
+    local result
+    result=$(podman run --rm \
+        --userns=keep-id \
+        -v "${conv_host}:/home/developer/.claude/conversations" \
+        --entrypoint /bin/bash "$image" -c '
+owner=$(stat -c "%U:%G" /home/developer/.claude 2>/dev/null)
+mode=$(stat -c "%a" /home/developer/.claude 2>/dev/null)
+writable=$([[ -w /home/developer/.claude ]] && echo yes || echo no)
+echo "owner=$owner mode=$mode writable=$writable"
+' 2>&1) || {
+        log_fail "Failed to run probe container: $result"
+        return 1
+    }
+
+    # The whole point of #340: post-mount, .claude must still be developer-
+    # owned, NOT root mode 1755, AND writable by the developer user.
+    if echo "$result" | grep -q "owner=developer:developer" \
+       && echo "$result" | grep -q "writable=yes" \
+       && ! echo "$result" | grep -q "mode=1755"; then
+        log_info "Conversations bind-mount preserves .claude ownership ($result)"
+    else
+        log_fail "conversations bind-mount altered .claude ownership/mode — Issue #340 regressed: $result"
+        return 1
+    fi
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -384,17 +516,25 @@ main() {
     run_test test_entrypoint_libs_copied_to_container
     run_test test_container_lib_transitive_deps_present
 
+    # /home/developer/.claude pre-creation (Issue #340)
+    run_test test_home_claude_dir_pre_created
+    run_test test_home_claude_dir_chowned_to_developer
+
     # Container integration tests (requires Podman)
     if skip_if_no_container 2>/dev/null; then
         run_test test_sdkman_config_in_built_image
         run_test test_sdkman_no_network_warning
         run_test test_java_available_in_image
         run_test test_maven_available_in_image
+        run_test test_home_claude_dir_developer_owned_in_built_image
+        run_test test_conversations_mount_does_not_clobber_claude_ownership
     else
         skip_test test_sdkman_config_in_built_image "No container runtime"
         skip_test test_sdkman_no_network_warning "No container runtime"
         skip_test test_java_available_in_image "No container runtime"
         skip_test test_maven_available_in_image "No container runtime"
+        skip_test test_home_claude_dir_developer_owned_in_built_image "No container runtime"
+        skip_test test_conversations_mount_does_not_clobber_claude_ownership "No container runtime"
     fi
 
     # Summary
