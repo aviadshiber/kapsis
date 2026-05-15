@@ -6,14 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.28.6] - 2026-05-14
+## [2.28.7] - 2026-05-15
 
 ### Fixed
-- Skip write probe in overlay mode — workspace is read-only by design (#341) (#342)
+- Skip write probe in overlay mode — read-only by design (#341) (#345)
+- Pre-create /home/developer/.claude as developer-owned (#340) (#346)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Skip write probe in overlay mode — workspace is read-only by design (#341) (#342)
+
 
 ### Fixed
 - Pre-filter directory snapshots on macOS to keep :U safe (#338) (#339)
@@ -944,7 +949,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.6...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.7...HEAD
+[2.28.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.7
 [2.28.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.6
 [2.28.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.5
 [2.28.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.4
