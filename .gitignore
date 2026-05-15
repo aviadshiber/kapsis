@@ -37,3 +37,6 @@ tests/output/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Built binaries
+bin/
