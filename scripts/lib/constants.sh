@@ -376,3 +376,40 @@ readonly KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS=7
 
 # Prevent macOS from sleeping while an agent is running
 readonly KAPSIS_DEFAULT_PREVENT_SLEEP=true
+
+#===============================================================================
+# STAGED WORKFLOWS (Issue #85)
+#
+# Multi-stage agent pipeline that prevents the "Lethal Trifecta":
+#   no stage may simultaneously hold sensitive data + untrusted content +
+#   external network access.
+#
+# Override paths via environment variables.
+#===============================================================================
+
+# Exit code when a blocking approval gate times out
+readonly KAPSIS_EXIT_APPROVAL_TIMEOUT=7
+
+# Base directory for inter-stage handoff artifacts
+# Each workflow gets a sub-directory: ${KAPSIS_HANDOFFS_DIR}/<workflow-id>/
+readonly KAPSIS_DEFAULT_HANDOFFS_DIR="${HOME}/.kapsis/handoffs"
+
+# Sentinel file extension written by blocking approval gates
+# Operator deletes the sentinel to proceed; presence means "pending"
+readonly KAPSIS_STAGE_APPROVAL_SENTINEL_EXT=".approval-pending"
+
+# Rejection marker written alongside the sentinel to signal explicit rejection
+readonly KAPSIS_STAGE_REJECTION_MARKER_EXT=".rejected"
+
+# Default timeout (seconds) for a blocking approval gate (0 = infinite)
+readonly KAPSIS_DEFAULT_STAGE_APPROVAL_TIMEOUT=3600
+
+# Approved file extensions for stage handoff directories (colon-separated).
+# Files with any other extension are removed by sanitize_handoff_dir() before
+# the next stage sees them.  Executables and scripts are deliberately excluded.
+readonly KAPSIS_STAGE_HANDOFF_ALLOWED_EXTS="md:txt:json:yaml:yml:xml:csv:toml:rst:log:diff:patch"
+
+# Container-side parent path for staged handoff directories.
+# The orchestrator passes KAPSIS_HANDOFF_PATH (absolute) as an env var;
+# stage task templates can reference it with ${KAPSIS_HANDOFF_PATH}.
+readonly KAPSIS_STAGE_HANDOFF_CONTAINER_BASE="/home/developer/.kapsis/handoffs"
