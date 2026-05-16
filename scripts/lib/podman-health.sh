@@ -322,22 +322,37 @@ _podman_machine_restart() {
 }
 
 #-------------------------------------------------------------------------------
-# _sweep_wedged_kapsis_containers
+# _sweep_and_emit_responsive_ids
 #
-# Best-effort sweep of wedged kapsis-managed containers (Issue #348). For each
-# kapsis-labelled container that fails the responsiveness probe, try a
-# bounded `podman rm -f`. If that hangs (the common case for a truly wedged
-# container — its PID-1 is in D-state and even SIGKILL can't reap it), the
-# timeout fires and we move on; the subsequent VM restart + `_kill_vfkit_zombie`
-# will reap it at the hypervisor layer.
+# Single-pass combined sweep + responsiveness inventory of kapsis-managed
+# containers (Issue #348). For each container returned by `podman ps`:
 #
-# Skips the `rm -f` step entirely when no timeout binary is available, to
-# avoid hanging the auto-heal path.
+#   - Probe via `_probe_container_responsive`. On success (rc=0) the ID is
+#     emitted to stdout, one per line.
+#   - On timeout (rc=124 — the genuine wedged case), best-effort
+#     `timeout N podman rm -f <id>` is attempted; if it hangs (the realistic
+#     case for a truly D-state PID-1) the timeout fires and the subsequent
+#     VM restart + `_kill_vfkit_zombie` reaps the container at the
+#     hypervisor layer.
+#   - On any other non-zero rc (the container raced and exited between `ps`
+#     and `exec`, or `podman exec` itself errored), the ID is silently
+#     dropped at debug level — neither emitted nor `rm -f`'d.
 #
-# Always returns 0. Failures are intentionally swallowed: this is a
-# best-effort cleanup, not a precondition for restart.
+# Skips the `rm -f` step entirely when no timeout binary is available so the
+# auto-heal path cannot hang on a wedged container.
+#
+# Returns 0 always. Failures are intentionally swallowed.
+#
+# Caller pattern (maybe_autoheal_podman_vm):
+#     ids="$(_sweep_and_emit_responsive_ids)"
+#     count=0; [[ -n "$ids" ]] && count="$(printf '%s\n' "$ids" | wc -l | tr -d ' ')"
+#
+# Replaces an earlier two-call sequence (sweep + count) that did `podman ps`
+# twice and probed every container twice — costly on a degraded VM where
+# every probe hits the bounded timeout, and racy because the two `ps` calls
+# saw independent snapshots (PR #349 review).
 #-------------------------------------------------------------------------------
-_sweep_wedged_kapsis_containers() {
+_sweep_and_emit_responsive_ids() {
     local podman_bin="${KAPSIS_VFS_PROBE_PODMAN:-podman}"
     local ids
     ids="$("$podman_bin" ps --filter 'label=kapsis.managed=true' --format '{{.ID}}' 2>/dev/null || true)"
@@ -345,19 +360,31 @@ _sweep_wedged_kapsis_containers() {
 
     local timeout_cmd
     timeout_cmd="$(_vfs_timeout_cmd)"
+    local rm_timeout="${KAPSIS_VFS_RM_FORCE_TIMEOUT:-${KAPSIS_DEFAULT_VFS_RM_FORCE_TIMEOUT:-5}}"
 
-    local id
+    local id probe_rc
     while IFS= read -r id; do
         [[ -z "$id" ]] && continue
-        if _probe_container_responsive "$id"; then
+        probe_rc=0
+        _probe_container_responsive "$id" || probe_rc=$?
+        if [[ "$probe_rc" -eq 0 ]]; then
+            printf '%s\n' "$id"
+            continue
+        fi
+        # rc=124 is the `timeout` exit code for a hung command — the genuine
+        # D-state wedged case. Any other non-zero is most likely a benign
+        # race (container exited between `ps` and `exec`) and is not worth
+        # the noise of a warn-level log or the cost of an `rm -f`.
+        if [[ "$probe_rc" -ne 124 ]]; then
+            log_debug "Container $id excluded from running count (exec rc=$probe_rc — likely exited under us, not wedged)"
             continue
         fi
         if [[ -z "$timeout_cmd" ]]; then
-            log_debug "_sweep_wedged_kapsis_containers: no timeout binary — skipping rm -f for wedged $id (VM restart will reap)"
+            log_warn "Wedged container $id detected — no timeout binary, skipping rm -f (VM restart will reap)"
             continue
         fi
         log_warn "Wedged container $id detected — attempting podman rm -f (best-effort, may hang)"
-        "$timeout_cmd" 5 "$podman_bin" rm -f "$id" &>/dev/null || true
+        "$timeout_cmd" "$rm_timeout" "$podman_bin" rm -f "$id" &>/dev/null || true
     done <<< "$ids"
     return 0
 }
@@ -411,14 +438,18 @@ maybe_autoheal_podman_vm() {
         return 1
     fi
 
-    # Issue #348: sweep wedged zombie containers before counting. Their PID-1
-    # is stuck in D-state on the degraded mount and `podman stop` / `rm -f`
-    # both hang; without this sweep they'd be counted as "running" and block
-    # the VM restart that's the only thing that can actually reap them.
-    _sweep_wedged_kapsis_containers
-
-    local running
-    running="$(count_running_kapsis_containers)"
+    # Issue #348: in one pass, sweep wedged zombie containers (best-effort
+    # `rm -f`) AND collect the set of responsive containers. Their PID-1 is
+    # stuck in D-state on the degraded mount and `podman stop` / `rm -f`
+    # both hang; without this filtering they'd be counted as "running" and
+    # block the VM restart that's the only thing that can actually reap them.
+    # Single-pass to avoid double `podman ps` + double per-container probing
+    # cost on a degraded VM (PR #349 review).
+    local responsive_ids running=0
+    responsive_ids="$(_sweep_and_emit_responsive_ids)"
+    if [[ -n "$responsive_ids" ]]; then
+        running="$(printf '%s\n' "$responsive_ids" | wc -l | tr -d ' ')"
+    fi
     if [[ "$running" -gt 0 ]]; then
         log_error "Virtio-fs appears degraded but $running other kapsis container(s) are running"
         log_error "  Restarting the Podman VM now would kill their work."

@@ -263,6 +263,8 @@ test_count_excludes_all_when_no_timeout_binary() {
     local out
     out=$(bash -c "
         $(_load_lib_with_macos)
+        # Belt-and-braces: clear any cached timeout-cmd from compat.sh sourcing.
+        unset _KAPSIS_TIMEOUT_CMD
         # Stub the timeout resolver to simulate no timeout/gtimeout on PATH.
         _vfs_timeout_cmd() { printf ''; return 0; }
         KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' count_running_kapsis_containers
@@ -439,7 +441,9 @@ test_autoheal_disabled_refuses_restart() {
 #   image exists  -> 0
 #   run (probe)   -> fail (42) on first call, succeed (0) on subsequent calls
 #   ps            -> emit the IDs passed in $KAPSIS_TEST_PS_IDS env
-#   exec ID       -> wedged ID (matches "wedge*") -> 1; everything else -> 0
+#   exec ID       -> wedged ID (matches "wedge*") -> $KAPSIS_TEST_WEDGE_EXIT
+#                    (default 124 — matches real `timeout` exit on a hung
+#                    child); everything else -> 0
 #   rm -f ID      -> exit code from $KAPSIS_TEST_RM_EXIT (default 0)
 #   machine ...   -> record + exit 0
 _make_sweep_fake_podman() {
@@ -470,7 +474,7 @@ case "\${1:-}" in
         ;;
     exec)
         # \$2 is the container id
-        if [[ "\${2:-}" == wedge* ]]; then exit 1; fi
+        if [[ "\${2:-}" == wedge* ]]; then exit "\${KAPSIS_TEST_WEDGE_EXIT:-124}"; fi
         exit 0
         ;;
     rm)
@@ -581,6 +585,35 @@ test_autoheal_still_refuses_when_responsive_containers_running() {
     assert_equals "1" "$rc" "Must still refuse when other responsive agents are live"
     assert_not_contains "$calls" "machine stop" "Must NOT restart VM with responsive agents running"
     assert_not_contains "$calls" "rm -f" "Must NOT rm -f responsive containers"
+}
+
+test_autoheal_skips_rm_for_raced_exit_containers() {
+    log_test "maybe_autoheal_podman_vm skips rm -f when probe rc != 124 (raced exit, not wedged — PR #349 review)"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    _make_sweep_fake_podman "$tmpdir/podman" "$tmpdir/state" "$tmpdir/calls.log"
+
+    # Probe returns 125 (the conventional "podman exec failed to start" rc for
+    # a container that exited under us) — NOT 124. This is the race case, not
+    # a wedged D-state. Auto-heal should proceed (the container isn't really
+    # running) but it should NOT try to `rm -f` a vanished container.
+    local rc=0
+    bash -c "
+        $(_load_lib_with_macos)
+        KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' \
+        KAPSIS_TEST_PS_IDS='wedge1' \
+        KAPSIS_TEST_WEDGE_EXIT=125 \
+        KAPSIS_VFS_EXEC_PROBE_TIMEOUT=1 \
+        KAPSIS_VFS_RECOVERY_DELAY=1 \
+        maybe_autoheal_podman_vm 1 2 1
+    " &>/dev/null || rc=$?
+
+    local calls
+    calls=$(cat "$tmpdir/calls.log" 2>/dev/null || echo "")
+    rm -rf "$tmpdir"
+    assert_equals "0" "$rc" "Heal must proceed (raced-exit container doesn't block restart)"
+    assert_contains "$calls" "machine stop" "VM restart must still proceed"
+    assert_not_contains "$calls" "rm -f" "Must NOT rm -f a container that already exited (probe rc != 124)"
 }
 
 #===============================================================================
@@ -822,6 +855,7 @@ main() {
     run_test test_autoheal_sweep_attempts_rm_for_wedged
     run_test test_autoheal_sweep_tolerates_rm_failure
     run_test test_autoheal_still_refuses_when_responsive_containers_running
+    run_test test_autoheal_skips_rm_for_raced_exit_containers
 
     log_info "=== Review-gap tests (Issue #276 second round) ==="
     run_test test_autoheal_retry_exhaustion_returns_1

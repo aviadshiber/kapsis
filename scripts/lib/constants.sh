@@ -336,6 +336,12 @@ readonly KAPSIS_DEFAULT_VFS_RECOVERY_DELAY=3
 # (Issue #348).
 readonly KAPSIS_DEFAULT_VFS_EXEC_PROBE_TIMEOUT=2
 
+# Timeout (seconds) for the best-effort `podman rm -f` invoked by the wedged-
+# container sweep in maybe_autoheal_podman_vm (Issue #348). On a truly wedged
+# container this will almost always hit the timeout — that's expected; the
+# subsequent VM restart + _kill_vfkit_zombie reaps it at the hypervisor layer.
+readonly KAPSIS_DEFAULT_VFS_RM_FORCE_TIMEOUT=5
+
 #===============================================================================
 # STATUS VOLUME (Issue #276)
 #
