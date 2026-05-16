@@ -31,7 +31,6 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-KAPSIS_ROOT="$(dirname "$SCRIPT_DIR")"
 
 source "$SCRIPT_DIR/lib/logging.sh"
 log_init "staged-launch"
@@ -174,13 +173,12 @@ parse_args() {
 # config with the stage-specific overrides.  The resulting YAML is written to
 # output_file and is passed directly to launch-agent.sh --config.
 #
-# Args: base_config stage_idx workflow_id prev_handoff_dir output_file
+# Args: base_config stage_idx prev_handoff_dir output_file
 generate_stage_config() {
     local base_config="$1"
     local stage_idx="$2"
-    local workflow_id="$3"
-    local prev_handoff_dir="$4"
-    local output_file="$5"
+    local prev_handoff_dir="$3"
+    local output_file="$4"
 
     local stage_prefix=".workflow.stages[$stage_idx]"
 
@@ -195,7 +193,8 @@ generate_stage_config() {
 
     # Override task / agent command for this stage
     if [[ -n "$stage_task" ]]; then
-        local cmd="claude --dangerously-skip-permissions -p \"$(printf '%s' "$stage_task" | sed 's/"/\\"/g')\""
+        local cmd
+        cmd="claude --dangerously-skip-permissions -p \"$(printf '%s' "$stage_task" | sed 's/"/\\"/g')\""
         yq -i ".agent.command = \"$cmd\"" "$output_file"
     fi
 
@@ -291,7 +290,7 @@ run_staged_workflow() {
         if [[ "$DRY_RUN" == "true" ]]; then
             log_info "[DRY-RUN] Would generate config: $stage_config_file"
         else
-            generate_stage_config "$CONFIG_FILE" "$stage_idx" "$wf_id" \
+            generate_stage_config "$CONFIG_FILE" "$stage_idx" \
                 "$prev_handoff_dir" "$stage_config_file"
 
             # Security contract enforcement
