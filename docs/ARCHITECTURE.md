@@ -502,3 +502,41 @@ tail -f ~/.kapsis/logs/kapsis-launch-agent.log
 4. **Git push failing**
    - Check SSH keys mounted correctly
    - Verify git remote configured
+
+5. **macOS: Zombie VM — all `podman` commands hang**
+
+   **Symptom:** Every `podman` invocation (including `podman machine list`) hangs
+   indefinitely after a host sleep/wake cycle or a forced-quit of the Podman
+   desktop app. The machine reports "running" but the vfkit hypervisor process
+   has become a zombie (stopped but not reaped).
+
+   **Automated recovery (Issue #273):** Kapsis detects this at agent launch via
+   `_recover_podman_ssh_tunnel` in `scripts/lib/compat.sh`. When the SSH tunnel
+   probe (`podman info`) times out:
+
+   1. `podman machine stop` is attempted (30 s timeout).
+   2. If stop also times out, `_kill_vfkit_zombie` sends `SIGKILL` to the vfkit
+      hypervisor process scoped to the machine name, then cleans up stale
+      `.pid`/`.sock`/`.lock` files from the XDG state directory.
+   3. `podman machine start` brings up a fresh VM.
+   4. The SSH tunnel probe is retried with backoff.
+
+   **`KAPSIS_PODMAN_MACHINE`:** Set this env var to target a non-default machine
+   name in both automated recovery and manual steps:
+
+   ```bash
+   export KAPSIS_PODMAN_MACHINE=my-other-machine
+   ```
+
+   **Manual recovery when auto-recovery fails:**
+   ```bash
+   pkill -9 -f "vfkit.*podman-machine-default"
+   sleep 3
+   podman machine start
+   ```
+
+   > **Note:** During the stop+start cycle the entire Podman VM is restarted,
+   > which terminates all containers running inside it. Do not trigger recovery
+   > while other agents are active — Kapsis refuses to auto-heal when it detects
+   > running containers for this reason. New launches are delayed until the VM
+   > is back up.
