@@ -60,6 +60,7 @@ inject_claude_hooks() {
     # Create base file if missing
     if [[ ! -f "$settings_local" ]]; then
         echo '{}' > "$settings_local"
+        chmod 600 "$settings_local"
         log_debug "Created empty settings.json"
     fi
 

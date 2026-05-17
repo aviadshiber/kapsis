@@ -4,7 +4,7 @@ Claude Code's `--print` / headless mode does **not** load plugins from settings 
 
 ## What gets loaded
 
-For each user-installed Claude Code plugin that passes both filters below, Kapsis merges that plugin's `hooks/hooks.json` into `~/.claude/settings.local.json` **inside the container**, with `${CLAUDE_PLUGIN_ROOT}` substituted to the plugin's container-side installPath. This places plugin hooks next to Kapsis's own status/gist hooks in the same merged hook chain.
+For each user-installed Claude Code plugin that passes both filters below, Kapsis merges that plugin's `hooks/hooks.json` into `~/.claude/settings.json` **inside the container**, with `${CLAUDE_PLUGIN_ROOT}` substituted to the plugin's container-side installPath. This places plugin hooks next to Kapsis's own status/gist hooks in the same merged hook chain.
 
 The two filters:
 
@@ -62,7 +62,7 @@ Plugin hook commands typically look like:
 }
 ```
 
-Claude Code's own plugin loader would expand `${CLAUDE_PLUGIN_ROOT}` per-hook at execution time. Since Kapsis bypasses that loader, **`inject-plugin-hooks.sh` substitutes the placeholder at merge time** with the plugin's already-rewritten installPath (see `rewrite-plugin-paths.sh`). What lands in `settings.local.json` is a fully concrete command string — no env var dependency, no late binding.
+Claude Code's own plugin loader would expand `${CLAUDE_PLUGIN_ROOT}` per-hook at execution time. Since Kapsis bypasses that loader, **`inject-plugin-hooks.sh` substitutes the placeholder at merge time** with the plugin's already-rewritten installPath (see `rewrite-plugin-paths.sh`). What lands in `settings.json` is a fully concrete command string — no env var dependency, no late binding.
 
 **Only `${CLAUDE_PLUGIN_ROOT}` is substituted by Kapsis.** Other `${...}` references (e.g. `${HOME}`, `${CLAUDE_PROJECT_DIR}`, `$PATH`) are left intact for the shell to expand at hook execution time. If you author a plugin that needs an env var beyond `${CLAUDE_PLUGIN_ROOT}`, ensure it's exported into the agent's environment via the Kapsis YAML config or the user's `~/.claude/settings.json` `env` block — the substitution layer here only handles the one canonical plugin-root token.
 
@@ -73,14 +73,14 @@ Multiple `${CLAUDE_PLUGIN_ROOT}` occurrences in a single command are all replace
 Inside the container, the boot sequence is:
 
 1. `rewrite-plugin-paths.sh` — rewrite host paths in `installed_plugins.json` → container paths.
-2. `inject-status-hooks.sh::inject_claude_hooks` — write Kapsis status/gist/stop hooks into `~/.claude/settings.local.json`.
+2. `inject-status-hooks.sh::inject_claude_hooks` — write Kapsis status/gist/stop hooks into `~/.claude/settings.json`.
 3. `inject-plugin-hooks.sh::inject_plugin_hooks` — append filtered plugin hooks into the same file.
 
 Kapsis hooks therefore precede plugin hooks within each event's array. This matters for `PostToolUse`: `kapsis-status-hook.sh` reads `/workspace/.kapsis/gist.txt` to populate the status JSON, and `kapsis-gist-hook.sh` writes that file. Plugin hooks that mutate gist.txt would race the status hook otherwise.
 
 ## Idempotency
 
-`inject-plugin-hooks.sh` dedupes by command string. Running the injection twice on the same `settings.local.json` produces byte-identical output. This makes it safe to call from `setup_status_tracking` on every container start, even when re-entering a recovered worktree.
+`inject-plugin-hooks.sh` dedupes by command string. Running the injection twice on the same `settings.json` produces byte-identical output. This makes it safe to call from `setup_status_tracking` on every container start, even when re-entering a recovered worktree.
 
 ## Failure modes
 
@@ -89,7 +89,7 @@ Kapsis hooks therefore precede plugin hooks within each event's array. This matt
 - **Whitelist entry references an uninstalled plugin** — silently skipped (no error).
 - **`jq` not installed in image** — logged at WARN, injection aborts gracefully (the agent still runs, just without plugin hooks).
 - **`KAPSIS_PLUGIN_WHITELIST` is not a valid JSON array of strings** — **fails closed**. No plugin hooks are injected. The bad value is NOT logged (avoids leaking misconfigured secrets); only its length appears in the WARN. This is a deliberate departure from "fail open" — a corrupted whitelist is treated as "operator intent unknown, refuse everything" rather than "operator wanted no filter, allow all."
-- **`installed_plugins.json` / `settings.json` / `settings.local.json` is a symlink** — refused. Symlinks could redirect writes or fool the merge into reading attacker-chosen content.
+- **`installed_plugins.json` / `settings.json` / `settings.json` is a symlink** — refused. Symlinks could redirect writes or fool the merge into reading attacker-chosen content.
 - **A plugin's `installPath` resolves outside `$HOME/.claude/plugins/`** — refused (logged at WARN, naming the plugin). Resolution uses `realpath -m` so `..` traversal can't bypass the prefix check. This closes the gap where the plugin id passes the whitelist but the bytes loaded come from an attacker-controlled location.
 
 ## Security model
@@ -100,7 +100,7 @@ The whitelist gates plugin **ids**. The containment check above gates plugin **b
 |---|---|
 | Operator forgot to lock down plugin set in unattended container | `plugin_whitelist` YAML knob |
 | Compromised agent rewrites `installed_plugins.json` to use a whitelisted id with attacker-chosen `installPath` | `installPath` prefix-check under `$HOME/.claude/plugins/` after `realpath -m` |
-| Compromised agent symlinks `settings.local.json` to overwrite a host file | Symlink check before merge |
+| Compromised agent symlinks `settings.json` to overwrite a host file | Symlink check before merge |
 | Whitelist value corrupted in transit or by partial config write | Fail-closed (no plugins injected) |
 | Plugin id substring collision (e.g., `"a@b"` matching whitelist `["alpha@beta"]`) | Exact-match via `any(. == .key)` (not jq's `inside()`, which does substring matching on strings) |
 
@@ -128,7 +128,7 @@ agent:
     - "deeperdive-java-linter@deeperdive"
 ```
 
-After container start, `~/.claude/settings.local.json::hooks.PostToolUse` will contain (in order):
+After container start, `~/.claude/settings.json::hooks.PostToolUse` will contain (in order):
 
 1. Kapsis gist hook (matcher `*`) — if `inject_gist: true`
 2. Kapsis status hook (matcher `*`)

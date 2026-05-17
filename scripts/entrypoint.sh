@@ -679,7 +679,7 @@ setup_staged_config_overlays() {
                 # after any copy path (socket-file errors cause cp to exit 1 but
                 # still land all regular files with their original mode bits).
                 # Downstream writers (inject-lsp-config.sh, filter-agent-config.sh)
-                # need to modify files like settings.local.json; atomic_copy_dir
+                # need to modify files like settings.json; atomic_copy_dir
                 # preserves source perms via -p which can leave them mode 0444.
                 if [[ -d "$dst" ]]; then
                     find "$dst" -type f -exec chmod u+rw {} + 2>/dev/null || true
@@ -1261,7 +1261,7 @@ gemini-cli|Gemini CLI"
 #
 # Installs Kapsis status tracking hooks for supported agents.
 # Uses inject-status-hooks.sh which handles:
-#   - Claude Code: JSON merge into ~/.claude/settings.local.json
+#   - Claude Code: JSON merge into ~/.claude/settings.json
 #   - Codex CLI: YAML merge into ~/.codex/config.yaml
 #   - Gemini CLI: Shell scripts in ~/.gemini/hooks/
 #
@@ -1297,7 +1297,7 @@ install_agent_hooks() {
 # Add new agents by updating the hook_agents variable there.
 
 # Plugin hook installation (Claude Code only). Merges user-installed Claude
-# Code plugin hooks into the same ~/.claude/settings.local.json that
+# Code plugin hooks into the same ~/.claude/settings.json that
 # install_agent_hooks just wrote — so Kapsis (status/gist) hooks AND plugin
 # hooks (e.g. deeperdive-java-linter) both fire on agent tool calls.
 #
@@ -1829,7 +1829,7 @@ main() {
     setup_staged_config_overlays
 
     # Whitelist Claude agent config (hooks and MCP servers) based on YAML config
-    # Must happen after CoW (files writable) and before hook injection (settings.local.json)
+    # Must happen after CoW (files writable) and before hook injection (settings.json)
     local filter_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/filter-agent-config.sh"
     if [[ -f "$filter_lib" ]]; then
         source "$filter_lib"
@@ -1846,7 +1846,7 @@ main() {
 
     # Inject LSP server configuration based on YAML config
     # Must happen after CoW (files writable) and after filtering (clean slate)
-    # but before hook injection (both write to settings.local.json)
+    # but before hook injection (both write to settings.json)
     local lsp_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/inject-lsp-config.sh"
     if [[ -f "$lsp_lib" ]]; then
         source "$lsp_lib"

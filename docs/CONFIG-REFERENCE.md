@@ -168,7 +168,7 @@ agent:
 
   # Inject Claude Code plugin hooks from the host into the container.
   # When true, Kapsis merges hooks from each host-enabled (and whitelisted) plugin's
-  # hooks/hooks.json into ~/.claude/settings.local.json at container startup.
+  # hooks/hooks.json into ~/.claude/settings.json at container startup.
   # Only applies to claude-cli / claude / claude-code agent types.
   # Default: false (opt-in)
   install_plugins: false
@@ -711,7 +711,7 @@ git:
   # Placeholders: {version}, {agent_id}, {branch}, {worktree}
   #
   # For Claude Code (agent.type claude-cli/claude/claude-code), these templates
-  # are injected into ~/.claude/settings.local.json as Claude's native
+  # are injected into ~/.claude/settings.json as Claude's native
   # `attribution.commit` and `attribution.pr` — Claude writes them itself on
   # each commit/PR it creates. For other agents (codex, gemini, aider), Kapsis
   # appends the commit template to its host-side commits directly.
@@ -816,7 +816,7 @@ claude:
 # requires native agent support.
 #
 # Agent support:
-#   Claude Code  - Native: lspServers injected into settings.local.json
+#   Claude Code  - Native: lspServers injected into settings.json
 #   Codex CLI    - Not yet: warning logged; LSP binary usable as CLI command
 #   Gemini CLI   - Not yet: warning logged; LSP binary usable as CLI command
 #   Aider        - Not yet: warning logged; LSP binary usable as CLI command

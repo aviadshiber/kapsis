@@ -95,7 +95,7 @@ _plugins_cache_prefix() {
 }
 
 # Inject hooks from all host-enabled (and whitelisted) plugins into
-# ~/.claude/settings.local.json.
+# ~/.claude/settings.json.
 inject_plugin_hooks() {
     # Gate: opt-in
     if [[ "${KAPSIS_INSTALL_PLUGINS:-false}" != "true" ]]; then
@@ -106,7 +106,6 @@ inject_plugin_hooks() {
     local settings_dir="${HOME}/.claude"
     local settings_local="${settings_dir}/settings.json"
     local plugins_file="${settings_dir}/plugins/installed_plugins.json"
-    local user_settings="${settings_dir}/settings.json"
 
     # jq is mandatory
     if ! command -v jq &>/dev/null; then
@@ -137,6 +136,7 @@ inject_plugin_hooks() {
     mkdir -p "$settings_dir"
     if [[ ! -f "$settings_local" ]]; then
         echo '{}' > "$settings_local"
+        chmod 600 "$settings_local"
         log_debug "Created empty settings.json (inject-status-hooks.sh should have run first)"
     fi
 
@@ -151,8 +151,8 @@ inject_plugin_hooks() {
 
     # Read host enabledPlugins (default empty object if file missing or key absent)
     local enabled_plugins_json='{}'
-    if [[ -f "$user_settings" ]]; then
-        enabled_plugins_json=$(jq -c '.enabledPlugins // {}' "$user_settings" 2>/dev/null || echo '{}')
+    if [[ -f "$settings_local" ]]; then
+        enabled_plugins_json=$(jq -c '.enabledPlugins // {}' "$settings_local" 2>/dev/null || echo '{}')
     fi
 
     # Trusted prefix every installPath must live under (defense vs. attacker
@@ -266,12 +266,12 @@ inject_plugin_hooks() {
         #   (Only this token is substituted; other ${...} refs like $HOME are
         #   left intact for the shell to expand at hook execution time.)
         # - For each individual hook command, if it already exists anywhere
-        #   under that event in settings.local.json OR earlier in this same
+        #   under that event in settings.json OR earlier in this same
         #   merge pass, drop it. This catches both cross-plugin and
         #   intra-plugin (same command in two of a plugin's own groups)
         #   duplicates in a single run.
         # - If the substituted plugin_group still has at least one hook left,
-        #   append the group (preserving its matcher) to settings.local.json.
+        #   append the group (preserving its matcher) to settings.json.
         # Emits {settings: <merged>, plugin_hook_count: N} so the caller gets
         # both values without a follow-up jq fork.
         local tmp_file plugin_hook_count
