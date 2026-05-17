@@ -3,8 +3,18 @@ import { errorResponse, json } from "./http";
 import { extractBearer, verifyToken } from "./auth";
 import type { DashboardConfig } from "./config";
 import { log } from "./logger";
+import { uiBundle } from "./ui-bundle";
 
-const PUBLIC_PATHS = new Set(["/healthz", "/api/v1/version"]);
+const PUBLIC_API_PATHS = new Set(["/healthz", "/api/v1/version"]);
+
+function requiresAuth(pathname: string): boolean {
+  if (PUBLIC_API_PATHS.has(pathname)) return false;
+  // Static SPA assets are public; only API and SSE channels carry data.
+  // Browsers strip URL fragments before sending requests, so the SPA shell
+  // must be loadable without a bearer — it reads the token from `#token=…`
+  // on the client and forwards it in subsequent fetches.
+  return pathname.startsWith("/api/") || pathname.startsWith("/sse/");
+}
 
 export function startServer(config: DashboardConfig, deps: Omit<Deps, "config">): ReturnType<typeof Bun.serve> {
   const router = buildRouter({ ...deps, config });
@@ -19,8 +29,7 @@ export function startServer(config: DashboardConfig, deps: Omit<Deps, "config">)
       // CORS preflight: no cross-origin allowed by default.
       if (req.method === "OPTIONS") return new Response(null, { status: 204 });
 
-      // Public paths bypass auth.
-      if (!PUBLIC_PATHS.has(url.pathname)) {
+      if (requiresAuth(url.pathname)) {
         if (!config.token || !verifyToken(config.token, extractBearer(req))) {
           return errorResponse(401, "unauthorized");
         }
@@ -50,17 +59,29 @@ export function startServer(config: DashboardConfig, deps: Omit<Deps, "config">)
 }
 
 async function serveAsset(distDir: string | null, pathname: string): Promise<Response | null> {
-  if (!distDir) return null;
-  const rel = pathname === "/" ? "/index.html" : pathname;
-  const safe = rel.replace(/^\/+/, "").replace(/\.\.+/g, "");
-  const file = Bun.file(`${distDir}/${safe}`);
-  if (await file.exists()) {
-    return new Response(file, { headers: { "cache-control": "no-store" } });
+  // 1. Embedded bundle (compiled binary path).
+  const embeddedPath = uiBundle[pathname] ?? uiBundle["/"];
+  if (uiBundle[pathname]) {
+    return new Response(Bun.file(uiBundle[pathname]!), { headers: { "cache-control": "no-store" } });
   }
-  // SPA fallback
-  const index = Bun.file(`${distDir}/index.html`);
-  if (await index.exists()) {
-    return new Response(index, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+
+  // 2. --ui-dist override (dev path).
+  if (distDir) {
+    const rel = pathname === "/" ? "/index.html" : pathname;
+    const safe = rel.replace(/^\/+/, "").replace(/\.\.+/g, "");
+    const file = Bun.file(`${distDir}/${safe}`);
+    if (await file.exists()) {
+      return new Response(file, { headers: { "cache-control": "no-store" } });
+    }
+    const index = Bun.file(`${distDir}/index.html`);
+    if (await index.exists()) {
+      return new Response(index, { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
+    }
+  }
+
+  // 3. SPA fallback to embedded index.html for client-side routes.
+  if (embeddedPath && pathname !== "/") {
+    return new Response(Bun.file(embeddedPath), { headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } });
   }
   return null;
 }
