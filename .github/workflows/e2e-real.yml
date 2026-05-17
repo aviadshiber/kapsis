@@ -1,0 +1,79 @@
+name: E2E Real Tests (Claude Code + Live API)
+
+# Runs three real end-to-end tests that start an actual Claude Code process and
+# verify that hooks injected into ~/.claude/settings.json are dispatched by
+# Claude Code during a live session. Guards against silent regressions where
+# hooks land in the wrong file and Claude Code never fires them.
+#
+# Gate: only runs when ANTHROPIC_API_KEY is configured in repository secrets.
+# To enable: Settings → Secrets → Actions → New secret: ANTHROPIC_API_KEY
+# Each run costs ~$0.003 (3 Haiku API calls).
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - 'scripts/lib/inject-status-hooks.sh'
+      - 'scripts/lib/inject-lsp-config.sh'
+      - 'scripts/lib/inject-plugin-hooks.sh'
+      - 'scripts/hooks/**'
+      - 'tests/test-e2e-claude-hooks-real.sh'
+      - '.github/workflows/e2e-real.yml'
+  pull_request:
+    branches: [main, master]
+    paths:
+      - 'scripts/lib/inject-status-hooks.sh'
+      - 'scripts/lib/inject-lsp-config.sh'
+      - 'scripts/lib/inject-plugin-hooks.sh'
+      - 'scripts/hooks/**'
+      - 'tests/test-e2e-claude-hooks-real.sh'
+      - '.github/workflows/e2e-real.yml'
+  # Allow manual trigger for debugging
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  real-e2e:
+    name: Real E2E — Claude Code hook dispatch (live API)
+    runs-on: ubuntu-latest
+    # Skip entirely when secret is absent (e.g. fork PRs, repos without the secret)
+    if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q jq
+
+      - name: Install Claude Code CLI
+        # Pinned to a known-good minor version; bump here when upgrading.
+        # Node.js 20.x is pre-installed on ubuntu-latest runners.
+        run: npm install -g @anthropic-ai/claude-code@latest
+
+      - name: Configure git (required by Claude Code)
+        run: |
+          git config --global user.email "ci@kapsis.test"
+          git config --global user.name "Kapsis CI"
+          git config --global commit.gpgsign false
+
+      - name: Run real E2E tests
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Tell Claude Code it's running in a non-interactive environment
+          CI: "true"
+        run: |
+          chmod +x ./tests/test-e2e-claude-hooks-real.sh
+          chmod +x ./tests/lib/*.sh 2>/dev/null || true
+          chmod +x ./scripts/lib/*.sh
+          chmod +x ./scripts/hooks/*.sh
+          chmod +x ./scripts/hooks/agent-adapters/*.sh 2>/dev/null || true
+          bash ./tests/test-e2e-claude-hooks-real.sh
