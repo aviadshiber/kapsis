@@ -163,6 +163,314 @@ test_resolve_falls_back_to_autodetect_for_low_uid_when_unset() {
 }
 
 #===============================================================================
+# Input validation tests (flag-injection guard)
+#===============================================================================
+
+test_validator_accepts_known_good_values() {
+    log_test "_is_valid_userns_value accepts keep-id, keep-id:uid=N,gid=N, auto, host"
+    _setup
+    _is_valid_userns_value "keep-id"                     || { _log_failure "rejected keep-id"; return 1; }
+    _is_valid_userns_value "keep-id:uid=1000,gid=1000"   || { _log_failure "rejected keep-id:uid=1000,gid=1000"; return 1; }
+    _is_valid_userns_value "keep-id:uid=99999,gid=99999" || { _log_failure "rejected uid=99999"; return 1; }
+    _is_valid_userns_value "auto"                        || { _log_failure "rejected auto"; return 1; }
+    _is_valid_userns_value "host"                        || { _log_failure "rejected host"; return 1; }
+    _teardown
+}
+
+test_validator_rejects_flag_injection() {
+    log_test "_is_valid_userns_value rejects newline-injected flag payloads"
+    _setup
+    local injection=$'keep-id\n--privileged\n--cap-add=ALL'
+    if _is_valid_userns_value "$injection"; then
+        _log_failure "validator accepted flag-injection payload — would split via mapfile into raw podman flags"
+        _teardown
+        return 1
+    fi
+    _teardown
+}
+
+test_validator_rejects_uid_zero() {
+    log_test "_is_valid_userns_value rejects keep-id:uid=0 (privilege uplift surface)"
+    _setup
+    if _is_valid_userns_value "keep-id:uid=0,gid=0"; then
+        _log_failure "validator accepted uid=0 — would map container root to host UID"
+        _teardown
+        return 1
+    fi
+    if _is_valid_userns_value "keep-id:uid=999,gid=999"; then
+        _log_failure "validator accepted uid=999 (< 1000 threshold)"
+        _teardown
+        return 1
+    fi
+    _teardown
+}
+
+test_validator_rejects_pathological_uids() {
+    log_test "_is_valid_userns_value rejects 10-digit UIDs (almost certainly typos)"
+    _setup
+    if _is_valid_userns_value "keep-id:uid=9999999999,gid=9999999999"; then
+        _log_failure "validator accepted 10-digit UID"
+        _teardown
+        return 1
+    fi
+    _teardown
+}
+
+test_validator_rejects_arbitrary_strings() {
+    log_test "_is_valid_userns_value rejects misspellings and arbitrary values"
+    _setup
+    for bad in "keep_id" "keepid" "private" "" "keep-id:" "keep-id:uid=" "keep-id:uid=1000,gid=" "anything else"; do
+        if _is_valid_userns_value "$bad"; then
+            _log_failure "validator accepted invalid value: '$bad'"
+            _teardown
+            return 1
+        fi
+    done
+    _teardown
+}
+
+test_resolve_rejects_invalid_env_and_falls_through() {
+    log_test "_resolve_userns ignores invalid KAPSIS_USERNS and falls through to YAML/default"
+    STUB_HOST_UID=501
+    _setup
+    export KAPSIS_USERNS=$'keep-id\n--privileged'  # would be flag injection
+    export SECURITY_USERNS="auto"
+    local result
+    result=$(_resolve_userns 2>/dev/null)
+    assert_equals "auto" "$result" "invalid env should be ignored, yaml wins next"
+    _teardown
+}
+
+test_resolve_rejects_invalid_yaml_and_falls_through() {
+    log_test "_resolve_userns ignores invalid SECURITY_USERNS and falls through to autodetect"
+    STUB_HOST_UID=1882662165
+    _setup
+    export SECURITY_USERNS="garbage_value"
+    local result
+    result=$(_resolve_userns 2>/dev/null)
+    assert_equals "keep-id:uid=1000,gid=1000" "$result" \
+        "invalid yaml should be ignored, autodetect runs for high UID"
+    _teardown
+}
+
+#===============================================================================
+# Threshold tunability + safe fallback tests
+#===============================================================================
+
+test_threshold_overridable_via_env() {
+    log_test "KAPSIS_USERNS_THRESHOLD env var controls the autodetect boundary"
+    STUB_HOST_UID=2000
+    _setup
+    # Re-bind the threshold after _setup sourced security.sh with default 60000.
+    KAPSIS_USERNS_THRESHOLD=1000
+    local result
+    result=$(_detect_userns_default)
+    assert_equals "keep-id:uid=1000,gid=1000" "$result" \
+        "with threshold=1000, UID 2000 should pick explicit form"
+    _teardown
+}
+
+test_id_failure_falls_back_to_safe_path() {
+    log_test "_detect_userns_default picks explicit form when id command fails"
+    _setup
+    # Re-stub id to fail entirely (simulates LDAP/AD/NSS timeout on a domain host).
+    id() { return 1; }
+    export -f id
+    local result
+    result=$(_detect_userns_default)
+    assert_equals "keep-id:uid=1000,gid=1000" "$result" \
+        "on id failure, default must pick the safe explicit form — NOT plain keep-id, which would reproduce #361"
+    _teardown
+}
+
+#===============================================================================
+# YAML → SECURITY_USERNS plumbing (launch-agent.sh:973-985)
+#===============================================================================
+# The actual parsing happens inside launch-agent.sh's parse_config() which is
+# 3000+ lines of monolithic bash with no test entry point. Rather than
+# refactor, we exercise the same yq command and export-guard logic in
+# isolation against fixture YAML files. If launch-agent.sh's command ever
+# diverges, this test won't catch it — but the contract being tested is
+# `yq -r '.security.userns // ""' fixture` returning the value we expect.
+
+test_yaml_parse_extracts_userns_value() {
+    log_test "yq extracts security.userns from YAML verbatim"
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+    local fixture
+    fixture=$(mktemp -t kapsis-userns-yaml-XXXXXX)
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+security:
+  userns: keep-id:uid=1000,gid=1000
+EOF
+    local cfg_val
+    cfg_val=$(yq -r '.security.userns // ""' "$fixture" 2>/dev/null)
+    assert_equals "keep-id:uid=1000,gid=1000" "$cfg_val" \
+        "yq should extract the userns string verbatim from YAML"
+    rm -f "$fixture"
+}
+
+test_yaml_parse_missing_field_returns_empty_string() {
+    log_test "yq returns empty string when security.userns is absent (// fallback)"
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+    local fixture
+    fixture=$(mktemp -t kapsis-userns-yaml-XXXXXX)
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+EOF
+    local cfg_val
+    cfg_val=$(yq -r '.security.userns // ""' "$fixture" 2>/dev/null)
+    assert_equals "" "$cfg_val" \
+        "Missing field should fall back to empty string"
+    rm -f "$fixture"
+}
+
+test_yaml_parse_explicit_null_returns_empty_string() {
+    log_test "yq returns empty string when security.userns is literal null"
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed"
+        return 0
+    fi
+    local fixture
+    fixture=$(mktemp -t kapsis-userns-yaml-XXXXXX)
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+security:
+  userns: null
+EOF
+    local cfg_val
+    cfg_val=$(yq -r '.security.userns // ""' "$fixture" 2>/dev/null)
+    assert_equals "" "$cfg_val" \
+        "Explicit YAML null should be coalesced to empty, never reach SECURITY_USERNS"
+    rm -f "$fixture"
+}
+
+test_yaml_parse_export_guard_respects_kapsis_userns_env() {
+    log_test "YAML→SECURITY_USERNS export is gated on KAPSIS_USERNS being unset"
+    # Mirrors the launch-agent.sh:975 guard:
+    #   [[ -n "$cfg_val" ]] && [[ -z "${KAPSIS_USERNS:-}" ]] && export SECURITY_USERNS=...
+    local cfg_val="keep-id:uid=1000,gid=1000"
+    local actual=""
+
+    # Case A: KAPSIS_USERNS unset → guard fires, export happens
+    unset KAPSIS_USERNS
+    [[ -n "$cfg_val" ]] && [[ -z "${KAPSIS_USERNS:-}" ]] && actual="$cfg_val"
+    assert_equals "keep-id:uid=1000,gid=1000" "$actual" \
+        "With KAPSIS_USERNS unset, YAML value should populate SECURITY_USERNS"
+
+    # Case B: KAPSIS_USERNS set → guard blocks, SECURITY_USERNS untouched
+    actual=""
+    KAPSIS_USERNS="host"
+    [[ -n "$cfg_val" ]] && [[ -z "${KAPSIS_USERNS:-}" ]] && actual="$cfg_val"
+    assert_equals "" "$actual" \
+        "With KAPSIS_USERNS set, YAML value must NOT clobber it (env wins)"
+    unset KAPSIS_USERNS
+}
+
+#===============================================================================
+# check_userns_compat tests (preflight-check.sh)
+#===============================================================================
+# Re-exercises the preflight warn branches against fixture environments.
+
+_setup_preflight() {
+    # Source the preflight check file in a way that doesn't run main().
+    # The file exposes check_userns_compat; we stub preflight_warn /
+    # preflight_ok / log_section to capture invocations instead of logging.
+    STUB_HOST_UID="${STUB_HOST_UID:-1000}"
+    id() { case "${1:-}" in -u) echo "$STUB_HOST_UID" ;; esac; }
+    export -f id
+    PREFLIGHT_WARNS=""
+    PREFLIGHT_OKS=""
+    preflight_warn() { PREFLIGHT_WARNS+="$* | "; }
+    preflight_ok()   { PREFLIGHT_OKS+="$* | "; }
+    # shellcheck source=scripts/preflight-check.sh
+    source "$KAPSIS_ROOT/scripts/preflight-check.sh"
+    # Re-stub the funcs after source (the source may redefine them).
+    preflight_warn() { PREFLIGHT_WARNS+="$* | "; }
+    preflight_ok()   { PREFLIGHT_OKS+="$* | "; }
+}
+
+_teardown_preflight() {
+    unset -f id preflight_warn preflight_ok 2>/dev/null || true
+    unset STUB_HOST_UID PREFLIGHT_WARNS PREFLIGHT_OKS KAPSIS_USERNS KAPSIS_USERNS_THRESHOLD
+}
+
+test_preflight_warns_on_pinned_keepid_for_high_uid() {
+    log_test "check_userns_compat warns when YAML pins keep-id and host UID > threshold"
+    STUB_HOST_UID=1882662165
+    _setup_preflight
+    local fixture
+    fixture=$(mktemp -t kapsis-preflight-XXXXXX)
+    cat > "$fixture" <<'EOF'
+security:
+  userns: keep-id
+EOF
+    check_userns_compat "$fixture"
+    if [[ "$PREFLIGHT_WARNS" != *"'keep-id' pinned"* ]]; then
+        _log_failure "expected pinned-keep-id warning, got: $PREFLIGHT_WARNS"
+        rm -f "$fixture"; _teardown_preflight
+        return 1
+    fi
+    rm -f "$fixture"
+    _teardown_preflight
+}
+
+test_preflight_warns_on_kapsis_userns_env_keepid() {
+    log_test "check_userns_compat also warns when KAPSIS_USERNS=keep-id env is set"
+    STUB_HOST_UID=1882662165
+    _setup_preflight
+    KAPSIS_USERNS="keep-id"
+    check_userns_compat ""
+    if [[ "$PREFLIGHT_WARNS" != *"KAPSIS_USERNS env"* ]]; then
+        _log_failure "expected env-pin warning, got: $PREFLIGHT_WARNS"
+        _teardown_preflight
+        return 1
+    fi
+    _teardown_preflight
+}
+
+test_preflight_warns_on_host_userns_mode() {
+    log_test "check_userns_compat warns when resolved userns is 'host'"
+    STUB_HOST_UID=501
+    _setup_preflight
+    KAPSIS_USERNS="host"
+    check_userns_compat ""
+    if [[ "$PREFLIGHT_WARNS" != *"disables user namespace isolation"* ]]; then
+        _log_failure "expected host-mode warning, got: $PREFLIGHT_WARNS"
+        _teardown_preflight
+        return 1
+    fi
+    _teardown_preflight
+}
+
+test_preflight_silent_on_default_low_uid() {
+    log_test "check_userns_compat is silent (OK) for low UID + no overrides"
+    STUB_HOST_UID=501
+    _setup_preflight
+    check_userns_compat ""
+    if [[ -n "$PREFLIGHT_WARNS" ]]; then
+        _log_failure "expected no warnings, got: $PREFLIGHT_WARNS"
+        _teardown_preflight
+        return 1
+    fi
+    if [[ "$PREFLIGHT_OKS" != *"autodetected"* ]]; then
+        _log_failure "expected OK with 'autodetected', got: $PREFLIGHT_OKS"
+        _teardown_preflight
+        return 1
+    fi
+    _teardown_preflight
+}
+
+#===============================================================================
 # Regression guard
 #===============================================================================
 # Full generate_process_isolation_args integration is not covered here: it
@@ -186,5 +494,22 @@ run_test test_resolve_env_var_wins_over_yaml_and_default
 run_test test_resolve_yaml_wins_over_default
 run_test test_resolve_falls_back_to_autodetect_when_unset
 run_test test_resolve_falls_back_to_autodetect_for_low_uid_when_unset
+run_test test_validator_accepts_known_good_values
+run_test test_validator_rejects_flag_injection
+run_test test_validator_rejects_uid_zero
+run_test test_validator_rejects_pathological_uids
+run_test test_validator_rejects_arbitrary_strings
+run_test test_resolve_rejects_invalid_env_and_falls_through
+run_test test_resolve_rejects_invalid_yaml_and_falls_through
+run_test test_threshold_overridable_via_env
+run_test test_id_failure_falls_back_to_safe_path
+run_test test_yaml_parse_extracts_userns_value
+run_test test_yaml_parse_missing_field_returns_empty_string
+run_test test_yaml_parse_explicit_null_returns_empty_string
+run_test test_yaml_parse_export_guard_respects_kapsis_userns_env
+run_test test_preflight_warns_on_pinned_keepid_for_high_uid
+run_test test_preflight_warns_on_kapsis_userns_env_keepid
+run_test test_preflight_warns_on_host_userns_mode
+run_test test_preflight_silent_on_default_low_uid
 
 print_summary

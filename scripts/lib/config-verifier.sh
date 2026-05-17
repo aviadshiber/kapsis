@@ -364,18 +364,23 @@ validate_launch_config() {
     if [[ -n "$userns" && "$userns" != "null" ]]; then
         # Accepted forms:
         #   keep-id                              — plain keep-id (works for low host UIDs)
-        #   keep-id:uid=<N>,gid=<N>              — explicit form (required for hosts with domain UIDs)
+        #   keep-id:uid=<N>,gid=<N>              — explicit form (required for hosts with
+        #                                          domain UIDs); N restricted to [1000, 99999]
+        #                                          to forbid `uid=0` (root mapping is an
+        #                                          unnecessary privilege uplift) and pathological
+        #                                          10-digit values that are almost certainly typos.
         #   auto                                 — podman auto-allocate (caveat: subuid pool exhaustion)
         #   host                                 — no userns isolation (does NOT mean "run as root" —
         #                                          USER directive still applies; host means the
         #                                          process namespace is shared with the host)
+        # Kept in sync with _is_valid_userns_value in scripts/lib/security.sh.
         if [[ "$userns" == "keep-id" \
-           || "$userns" =~ ^keep-id:uid=[0-9]+,gid=[0-9]+$ \
+           || "$userns" =~ ^keep-id:uid=[1-9][0-9]{3,4},gid=[1-9][0-9]{3,4}$ \
            || "$userns" == "auto" \
            || "$userns" == "host" ]]; then
             log_pass "Valid security.userns: $userns"
         else
-            log_error "Invalid security.userns: $userns (expected: keep-id, keep-id:uid=N,gid=N, auto, or host)"
+            log_error "Invalid security.userns: $userns (expected: keep-id, keep-id:uid=N,gid=N where N∈[1000,99999], auto, or host)"
         fi
     fi
 

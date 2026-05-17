@@ -970,10 +970,18 @@ parse_config() {
 
         # User namespace mode (#361 — domain-UID workaround). Empty falls
         # through to security.sh's autodetect (`keep-id` for low host UIDs,
-        # `keep-id:uid=1000,gid=1000` for high). Set via KAPSIS_USERNS env
-        # to override per-invocation.
+        # `keep-id:uid=1000,gid=1000` for high). Set KAPSIS_USERNS env to
+        # override per-invocation.
+        #
+        # The override guard checks KAPSIS_USERNS (not SECURITY_USERNS) on
+        # purpose — KAPSIS_USERNS is the user-facing override documented in
+        # the README, matching how every other security setting in this
+        # block guards on a KAPSIS_* var. SECURITY_USERNS is an internal
+        # plumbing variable owned by this parse path; users who export it
+        # directly are bypassing the documented contract and we don't
+        # honour it as an override.
         cfg_val=$(yq -r '.security.userns // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
-        [[ -n "$cfg_val" ]] && [[ -z "${SECURITY_USERNS:-}" ]] && export SECURITY_USERNS="$cfg_val"
+        [[ -n "$cfg_val" ]] && [[ -z "${KAPSIS_USERNS:-}" ]] && export SECURITY_USERNS="$cfg_val"
     else
         log_error "yq is required but not installed."
         log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
