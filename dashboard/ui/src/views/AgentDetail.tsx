@@ -150,8 +150,8 @@ function LogsTab({ agentId }: { agentId: string }) {
         lines = lines.concat(c.lines).slice(-2000);
         off = c.nextOffset;
         setChunk({ ...c, lines });
-      } else if (chunk === null) {
-        setChunk(c);
+      } else {
+        setChunk((prev) => prev ?? c);
       }
     };
     poll();
