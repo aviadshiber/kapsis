@@ -281,6 +281,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
+    timeout-minutes: 15
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -299,6 +300,7 @@ jobs:
           git config --global commit.gpgsign false
 
       - name: Run integration tests against mock API
+        timeout-minutes: 10
         run: |
           chmod +x ./tests/test-integration-claude-hooks.sh
           chmod +x ./tests/lib/*.sh 2>/dev/null || true
