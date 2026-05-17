@@ -37,7 +37,7 @@ CLAUDE CODE     CODEX CLI    GEMINI CLI    AIDER/OTHER    PYTHON AGENT
 
 | Agent | Hook System | Hook Types | Config Location |
 |-------|-------------|------------|-----------------|
-| Claude Code | Yes | PreToolUse, PostToolUse, Stop | ~/.claude/settings.local.json |
+| Claude Code | Yes | PreToolUse, PostToolUse, Stop | ~/.claude/settings.json |
 | Codex CLI | Yes | exec.pre, exec.post, item.* | ~/.codex/config.yaml |
 | Gemini CLI | Yes | tool_call, completion | ~/.gemini/hooks/ |
 | Aider | No (fallback) | N/A | Instruction injection + monitor |
@@ -56,8 +56,8 @@ Container Startup (entrypoint.sh)
         │
         └─→ inject-status-hooks.sh (merges Kapsis hooks)
             │
-            ├─→ Claude Code: ~/.claude/settings.local.json
-            │   (Claude merges settings.local.json with settings.json)
+            ├─→ Claude Code: ~/.claude/settings.json
+            │   (User scope — the only file Claude Code loads at ~/.claude/)
             │
             ├─→ Codex CLI: ~/.codex/config.yaml
             │   (Adds exec.post, item.create, completion hooks)
@@ -75,7 +75,7 @@ Container Startup (entrypoint.sh)
 
 ### Per-Agent Injection Methods
 
-**Claude Code** - Uses `settings.local.json` which Claude automatically merges with `settings.json`:
+**Claude Code** - Uses `settings.json` at user scope (`~/.claude/`). Claude Code watches this file directly; `settings.local.json` is only loaded at project scope (`/workspace/.claude/`):
 
 ```json
 {
