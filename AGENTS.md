@@ -14,6 +14,10 @@
 - `tests/` is the shell-based test suite; the shared framework is `tests/lib/test-framework.sh`.
 - `docs/` holds extended documentation; `configs/specs/` holds task spec templates used by agents.
 - `assets/` stores static artifacts (e.g., logos); `maven/isolated-settings.xml` configures isolated Maven behavior in containers.
+- `dashboard/` is the local web dashboard (Bun + TypeScript server + Vite/React UI, compiled to a single binary). See **Dashboard Sync Rule** below.
+
+## Dashboard Sync Rule
+**Any user-facing feature change (CLI flags, status schema, audit events, error/exit codes, config options, container resources) MUST update `dashboard/` in the same PR** so the dashboard reflects the change. The status schema mirror is `dashboard/server/src/types.ts` (`AgentStatus`); CI enforces sync via `.github/workflows/dashboard-sync.yml`. Details in `CLAUDE.md`.
 
 ## Build, Test, and Development Commands
 - `./scripts/build-image.sh` builds the base Podman image used by Kapsis.

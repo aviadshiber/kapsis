@@ -126,6 +126,12 @@ exec %{_libexecdir}/kapsis/scripts/quick-start.sh "$@"
 EOF
 chmod 755 %{buildroot}%{_bindir}/kapsis-quick
 
+# Install the dashboard binary. The CI pipeline (dashboard-build.yml) writes
+# the per-platform compiled binary to dashboard/bin/kapsis-dashboard before
+# this spec runs. If the binary is absent, the install fails fast so the
+# release artifact is never shipped without the dashboard.
+install -m 755 dashboard/bin/kapsis-dashboard %{buildroot}%{_bindir}/kapsis-dashboard
+
 %files
 %license LICENSE
 %doc README.md CHANGELOG.md
@@ -135,6 +141,7 @@ chmod 755 %{buildroot}%{_bindir}/kapsis-quick
 %{_bindir}/kapsis-status
 %{_bindir}/kapsis-setup
 %{_bindir}/kapsis-quick
+%{_bindir}/kapsis-dashboard
 %{_libexecdir}/%{name}/
 %{_datadir}/%{name}/
 
