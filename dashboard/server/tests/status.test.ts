@@ -67,9 +67,9 @@ describe("StatusStore", () => {
     const seen: string[] = [];
     store.onChange((s) => { if (s) seen.push(s.agent_id); });
     await writeFile(join(dir, "kapsis-demo-new001.json"), fixture({ agent_id: "new001" }));
-    // fs.watch on macOS can take a few hundred ms to deliver the first event;
-    // debounce adds 50ms on top. Generous deadline to keep the test reliable.
-    for (let i = 0; i < 30 && !seen.includes("new001"); i++) await Bun.sleep(50);
+    // fs.watch on macOS can take several seconds to deliver the first event
+    // under test load. Generous deadline to keep the test reliable.
+    for (let i = 0; i < 80 && !seen.includes("new001"); i++) await Bun.sleep(50);
     expect(seen).toContain("new001");
   });
 });

@@ -23,7 +23,7 @@ describe("isValidAgentId", () => {
     "has;semi",
     "has|pipe",
     "has`backtick",
-    "x".repeat(33), // too long
+    "x".repeat(65), // too long (cap is 64)
     "with$dollar",
   ])("rejects %p", (id) => {
     expect(isValidAgentId(id)).toBe(false);

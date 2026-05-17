@@ -27,9 +27,9 @@ describe("auth", () => {
     expect(extractBearer(req)).toBe("abc123");
   });
 
-  it("extracts token from query", () => {
+  it("does NOT extract a bearer from ?token= (those go through the ephemeral path)", () => {
     const req = new Request("http://x/?token=qq");
-    expect(extractBearer(req)).toBe("qq");
+    expect(extractBearer(req)).toBeNull();
   });
 
   it("returns null when neither is present", () => {

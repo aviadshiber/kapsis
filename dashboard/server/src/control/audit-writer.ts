@@ -78,12 +78,23 @@ export class DashboardAuditWriter {
         this.prevHash = prevHash;
         this.seq = expectSeq;
         this.initialized = true;
-        // Record the break as an event (using appendOne directly to avoid
-        // recursing through init). Best-effort: if this write also fails the
-        // counter increments and future records will surface the issue.
-        await this.appendOne("dashboard", "chain-break-detected", `at:${brokenAt ?? "unknown"}`, {
-          note: "audit chain validation failed during init; subsequent entries continue from last verified hash",
-        }).catch((e) => log.error("failed to record chain-break event", { err: String(e) }));
+        // Only emit the sentinel if the most recent record on disk wasn't
+        // already a chain-break-detected — otherwise every restart would
+        // append a duplicate, unbounded. We walk the parsed text we already
+        // have (re-reading is cheap and the file is small).
+        const tail = text.split("\n").filter(Boolean).slice(-1)[0];
+        let alreadyMarked = false;
+        if (tail) {
+          try {
+            const last = JSON.parse(tail) as DashboardAuditEvent;
+            alreadyMarked = last.action === "chain-break-detected";
+          } catch { /* ignore */ }
+        }
+        if (!alreadyMarked) {
+          await this.appendOne("dashboard", "chain-break-detected", `at:${brokenAt ?? "unknown"}`, {
+            note: "audit chain validation failed during init; subsequent entries continue from last verified hash",
+          }).catch((e) => log.error("failed to record chain-break event", { err: String(e) }));
+        }
       } else {
         this.prevHash = prevHash;
         this.seq = expectSeq;

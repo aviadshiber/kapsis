@@ -16,7 +16,10 @@ export interface KillResult {
   containerMissing?: boolean;
 }
 
-const AGENT_ID_RE = /^[a-zA-Z0-9-]{3,32}$/;
+// Keep this in sync with src/validators.ts AGENT_ID_PATTERN. We don't import
+// from validators to keep this module dependency-free (it's also used from
+// tests that don't want to pull in http.ts via the validators import chain).
+const AGENT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{2,63}$/;
 const CONTAINER_MISSING_RE = /no (?:such )?container/i;
 
 export function isContainerMissingStderr(stderr: string): boolean {
