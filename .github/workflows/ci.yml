@@ -311,11 +311,15 @@ jobs:
   e2e-tests:
     name: E2E Tests (live API)
     runs-on: ubuntu-latest
-    # Only run after unit-tests AND integration-tests both pass.
-    # Gated on CLAUDE_CODE_OAUTH_TOKEN — skipped on forks and repos without the secret.
+    # SECURITY: never run on pull_request events — the checked-out code could be
+    # modified to exfiltrate CLAUDE_CODE_OAUTH_TOKEN. Only post-merge pushes to
+    # main and scheduled runs execute with the real secret.
     # Failing e2e does NOT block the ci-success gate (optional check).
     needs: [unit-tests, integration-tests]
-    if: ${{ success() && secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+    if: >-
+      github.event_name != 'pull_request' &&
+      success() &&
+      secrets.CLAUDE_CODE_OAUTH_TOKEN != ''
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
