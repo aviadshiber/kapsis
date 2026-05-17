@@ -8,8 +8,8 @@
 # dispatches them during a live agent session.
 #
 # Prerequisites:
-#   ANTHROPIC_API_KEY  — must be set (add to GitHub Secrets for CI)
-#   claude CLI         — must be installed (npm install -g @anthropic-ai/claude-code)
+#   CLAUDE_CODE_OAUTH_TOKEN — must be set (add to GitHub Secrets for CI)
+#   claude CLI              — must be installed (npm install -g @anthropic-ai/claude-code)
 #
 # Skips gracefully when prerequisites are absent.
 #
@@ -30,7 +30,7 @@ HOOKS_SRC="$KAPSIS_ROOT/scripts/hooks"
 
 _prerequisites_met=true
 
-if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
     _prerequisites_met=false
 fi
 
@@ -40,8 +40,8 @@ fi
 
 if [[ "$_prerequisites_met" == "false" ]]; then
     print_test_header "E2E: Claude Code real hook dispatch (live API)"
-    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
-        log_skip "ANTHROPIC_API_KEY not set — skipping real Claude Code e2e tests"
+    if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
+        log_skip "CLAUDE_CODE_OAUTH_TOKEN not set — skipping real Claude Code e2e tests"
     else
         log_skip "claude CLI not installed — skipping (npm install -g @anthropic-ai/claude-code)"
     fi
@@ -123,6 +123,7 @@ test_real_posttooluse_gist_hook_fires() {
         KAPSIS_STATUS_AGENT_ID="$agent_id" \
         KAPSIS_INJECT_GIST="true" \
         KAPSIS_GIST_FILE="$gist_file" \
+        CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN}" \
         claude --print \
                --model claude-haiku-4-5-20251001 \
                --max-turns 3 \

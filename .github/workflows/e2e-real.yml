@@ -5,8 +5,9 @@ name: E2E Real Tests (Claude Code + Live API)
 # Claude Code during a live session. Guards against silent regressions where
 # hooks land in the wrong file and Claude Code never fires them.
 #
-# Gate: only runs when ANTHROPIC_API_KEY is configured in repository secrets.
-# To enable: Settings → Secrets → Actions → New secret: ANTHROPIC_API_KEY
+# Gate: only runs when CLAUDE_CODE_OAUTH_TOKEN is configured in repository secrets.
+# To enable: Settings → Secrets → Actions → New secret: CLAUDE_CODE_OAUTH_TOKEN
+# Get the token from: claude.ai/settings → API Keys (or run `claude` interactively and copy ~/.claude/.credentials.json::oauthToken)
 # Each run costs ~$0.003 (3 Haiku API calls).
 
 on:
@@ -43,7 +44,7 @@ jobs:
     name: Real E2E — Claude Code hook dispatch (live API)
     runs-on: ubuntu-latest
     # Skip entirely when secret is absent (e.g. fork PRs, repos without the secret)
-    if: ${{ secrets.ANTHROPIC_API_KEY != '' }}
+    if: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
 
     steps:
       - name: Checkout code
@@ -67,7 +68,7 @@ jobs:
 
       - name: Run real E2E tests
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Tell Claude Code it's running in a non-interactive environment
           CI: "true"
         run: |
