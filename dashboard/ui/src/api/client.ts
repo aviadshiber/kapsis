@@ -22,6 +22,10 @@ function readToken(): string {
 
 const token = readToken();
 
+export function hasToken(): boolean {
+  return token.length > 0;
+}
+
 export class ApiError extends Error {
   constructor(public status: number, message: string, public body?: unknown) {
     super(message);

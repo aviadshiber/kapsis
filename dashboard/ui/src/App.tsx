@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, ApiError } from "./api/client";
+import { api, ApiError, hasToken } from "./api/client";
 import { AgentList } from "./views/AgentList";
 import { AgentDetail } from "./views/AgentDetail";
 import { DiskUsage } from "./views/DiskUsage";
@@ -20,19 +20,22 @@ function parseRoute(): Route {
   return { tab: "agents", agentId: null };
 }
 
+const TOKEN_HINT = "Bearer token missing or invalid. Append #token=… to the URL (from the server stdout).";
+
 export function App() {
   const [route, setRoute] = useState<Route>(parseRoute);
   const [version, setVersion] = useState<{ version: string; readOnly: boolean } | null>(null);
-  const [authError, setAuthError] = useState<string | null>(null);
+  const [authError, setAuthError] = useState<string | null>(hasToken() ? null : TOKEN_HINT);
 
   useEffect(() => {
-    api.version().then(setVersion).catch((e: unknown) => {
-      if (e instanceof ApiError && e.status === 401) {
-        setAuthError("Bearer token missing or invalid. Append #token=… to the URL (from the server stdout).");
-      } else {
-        setAuthError(String(e));
-      }
-    });
+    api.version().then(setVersion).catch(() => { /* version is public; ignore */ });
+    if (hasToken()) {
+      api.agents().catch((e: unknown) => {
+        if (e instanceof ApiError && e.status === 401) {
+          setAuthError(TOKEN_HINT);
+        }
+      });
+    }
     const onHash = () => setRoute(parseRoute());
     window.addEventListener("hashchange", onHash);
     return () => window.removeEventListener("hashchange", onHash);
