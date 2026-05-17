@@ -39,7 +39,7 @@ cleanup_test_home() {
 test_lsp_injection_creates_settings_local() {
     setup_test_home
 
-    # No settings.local.json exists yet
+    # No settings.json exists yet
     export HOME="$TEST_HOME"
     export KAPSIS_AGENT_TYPE="claude-cli"
     export KAPSIS_LSP_SERVERS_JSON='{"java-lsp":{"command":"java-functional-lsp","languages":{"java":[".java"]}}}'
@@ -47,10 +47,10 @@ test_lsp_injection_creates_settings_local() {
     source "$LIB_DIR/inject-lsp-config.sh"
     inject_lsp_config
 
-    assert_file_exists "$TEST_HOME/.claude/settings.local.json" "settings.local.json should be created"
+    assert_file_exists "$TEST_HOME/.claude/settings.json" "settings.json should be created"
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$result" "lspServers" "Should contain lspServers key"
     assert_contains "$result" "java-functional-lsp" "Should contain the server command"
     assert_contains "$result" "extensionToLanguage" "Should have extensionToLanguage mapping"
@@ -62,8 +62,8 @@ test_lsp_injection_creates_settings_local() {
 test_lsp_injection_merges_with_existing() {
     setup_test_home
 
-    # Pre-existing settings.local.json with hooks (from inject-status-hooks.sh)
-    cat > "$TEST_HOME/.claude/settings.local.json" << 'EOF'
+    # Pre-existing settings.json with hooks (from inject-status-hooks.sh)
+    cat > "$TEST_HOME/.claude/settings.json" << 'EOF'
 {
   "hooks": {
     "PostToolUse": [
@@ -81,7 +81,7 @@ EOF
     inject_lsp_config
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$result" "hooks" "Existing hooks should be preserved"
     assert_contains "$result" "kapsis-status-hook" "Existing hook command should be preserved"
     assert_contains "$result" "lspServers" "lspServers should be added"
@@ -106,7 +106,7 @@ test_lsp_languages_to_extension_mapping() {
     inject_lsp_config
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
 
     # Verify inversion: languages.typescript: [".ts", ".tsx"] → extensionToLanguage: {".ts": "typescript", ".tsx": "typescript"}
     local ext_map
@@ -142,7 +142,7 @@ test_lsp_optional_fields_omitted() {
     inject_lsp_config
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
 
     # Optional fields should NOT be present when not specified
     local server_json
@@ -170,7 +170,7 @@ test_lsp_env_and_init_options() {
     inject_lsp_config
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
 
     # env should be passed through
     local env_val
@@ -205,7 +205,7 @@ test_lsp_multiple_servers() {
     inject_lsp_config
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
 
     # Both servers should be present
     local server_count
@@ -234,8 +234,8 @@ test_lsp_skipped_for_non_claude() {
 
     assert_equals "0" "$exit_code" "Should return 0 for non-Claude agents"
 
-    # settings.local.json should NOT be created
-    assert_file_not_exists "$TEST_HOME/.claude/settings.local.json" "Should not create settings.local.json for non-Claude agents"
+    # settings.json should NOT be created
+    assert_file_not_exists "$TEST_HOME/.claude/settings.json" "Should not create settings.json for non-Claude agents"
 
     cleanup_test_home
 }
@@ -253,8 +253,8 @@ test_lsp_skipped_when_empty() {
 
     assert_equals "0" "$exit_code" "Should return 0 when no LSP servers"
 
-    # settings.local.json should NOT be created (nothing to inject)
-    assert_file_not_exists "$TEST_HOME/.claude/settings.local.json" "Should not create settings.local.json when empty"
+    # settings.json should NOT be created (nothing to inject)
+    assert_file_not_exists "$TEST_HOME/.claude/settings.json" "Should not create settings.json when empty"
 
     cleanup_test_home
 }
@@ -271,7 +271,7 @@ test_lsp_runs_for_claude_variants() {
         inject_lsp_config
 
         local result
-        result=$(cat "$TEST_HOME/.claude/settings.local.json")
+        result=$(cat "$TEST_HOME/.claude/settings.json")
         assert_contains "$result" "test-lsp" "[$agent_type] LSP server should be injected"
 
         cleanup_test_home
@@ -294,7 +294,7 @@ test_lsp_idempotent() {
     # Run injection twice
     inject_lsp_config
     local first_result
-    first_result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    first_result=$(cat "$TEST_HOME/.claude/settings.json")
 
     # Reset source guard to re-source
     unset _KAPSIS_INJECT_LSP_CONFIG_LOADED
@@ -302,7 +302,7 @@ test_lsp_idempotent() {
     inject_lsp_config
 
     local second_result
-    second_result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    second_result=$(cat "$TEST_HOME/.claude/settings.json")
 
     assert_equals "$first_result" "$second_result" "Running injection twice should produce identical output"
 
