@@ -316,10 +316,7 @@ jobs:
     # main and scheduled runs execute with the real secret.
     # Failing e2e does NOT block the ci-success gate (optional check).
     needs: [unit-tests, integration-tests]
-    if: >-
-      github.event_name != 'pull_request' &&
-      success() &&
-      secrets.CLAUDE_CODE_OAUTH_TOKEN != ''
+    if: github.event_name != 'pull_request' && success() && secrets.CLAUDE_CODE_OAUTH_TOKEN != ''
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
