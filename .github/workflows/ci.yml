@@ -311,50 +311,108 @@ jobs:
   e2e-tests:
     name: E2E Tests (live API)
     runs-on: ubuntu-latest
-    # SECURITY: never run on pull_request events — the checked-out code could be
-    # modified to exfiltrate CLAUDE_CODE_OAUTH_TOKEN. Only post-merge pushes to
-    # main and scheduled runs execute with the real secret.
+    # SECURITY layers (defence in depth — each one independently blocks a class
+    # of attack):
+    #
+    #   1. Trigger gate. Never run on pull_request events; only post-merge
+    #      pushes to main/master and scheduled runs ever see the secret.
+    #
+    #   2. Environment gate (`environment: e2e-live-api`). Configured in
+    #      repo settings → Environments. Store CLAUDE_CODE_OAUTH_TOKEN there
+    #      (NOT as a repo secret) and pin "Deployment branches" to main/master
+    #      only. A future workflow-file edit that drops the trigger gate still
+    #      cannot reach the secret without matching the environment's branch
+    #      policy. See: https://docs.github.com/actions/deployment/targeting-different-environments/using-environments-for-deployment
+    #
+    #   3. GITHUB_TOKEN scope. `permissions: {}` denies all GitHub API scopes;
+    #      this job has no need to read/write the repo via the implicit token.
+    #
+    #   4. Egress firewall (step-security/harden-runner). eBPF-level block on
+    #      all outbound DNS/network except the listed endpoints. Stops a
+    #      compromised npm dependency from POSTing the OAuth token off-box.
+    #
+    #   5. checkout with persist-credentials: false. Prevents writing
+    #      GITHUB_TOKEN into .git/config where a later step could read it.
+    #
+    #   6. Pinned dependency version (npm @anthropic-ai/claude-code@2.1.143
+    #      instead of @latest). A malicious version published to npm cannot
+    #      auto-flow into the job without an explicit bump in this file.
+    #
+    #   7. Token-presence gate (`steps.oauth.outputs.has_token`). Skips
+    #      cleanly when the env secret isn't configured (e.g. on a fork or
+    #      a fresh setup). See PR #358 for why this lives in a step, not in
+    #      the job-level if:.
+    #
     # Failing e2e does NOT block the ci-success gate (optional check).
+    #
+    # TODO(maintainer): migrate from a static CLAUDE_CODE_OAUTH_TOKEN to
+    # Anthropic Workload Identity Federation with GitHub OIDC. That removes
+    # the static-secret class entirely — federation rule on Anthropic Console
+    # pinned to `repo:aviadshiber/kapsis:ref:refs/heads/main` issues a
+    # 1-hour OAT at run-time. Doc:
+    # https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions
     needs: [unit-tests, integration-tests]
-    # NOTE: the `secrets` context is NOT allowed in job-level `if:` — referencing
-    # it there causes GitHub to reject the workflow file at parse time (no jobs
-    # run, `gh api .../jobs` returns `{"jobs": []}`). The token-present check
-    # has to live in a dedicated step (env CAN reference secrets), and every
-    # other step in this job gates on its output.
-    if: github.event_name != 'pull_request' && success()
+    if: github.event_name != 'pull_request'
+    environment: e2e-live-api
+    permissions: {}
     steps:
+      - name: Harden runner — block egress except API endpoints
+        uses: step-security/harden-runner@ab7a9404c0f3da075243ca237b5fac12c98deaa5  # v2.19.3
+        with:
+          egress-policy: block
+          # If any allowed domain is wrong, switch egress-policy to `audit` to
+          # surface the actual outbound calls in the job log, then narrow.
+          allowed-endpoints: >
+            api.anthropic.com:443
+            api.github.com:443
+            github.com:443
+            objects.githubusercontent.com:443
+            codeload.github.com:443
+            registry.npmjs.org:443
+            archive.ubuntu.com:80
+            security.ubuntu.com:80
+            azure.archive.ubuntu.com:80
+
       - name: Check OAuth token availability
         id: oauth
+        # The `secrets` context is NOT allowed in job-level `if:` (the workflow
+        # file is rejected at parse time). The token-presence check therefore
+        # lives in this step — `env:` CAN reference secrets — and every later
+        # step gates on `steps.oauth.outputs.has_token`. See PR #358.
         env:
           HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
         run: |
           if [[ "$HAS_TOKEN" == "true" ]]; then
-            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
           else
-            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
             echo "::notice::CLAUDE_CODE_OAUTH_TOKEN not configured — E2E tests skipped"
           fi
 
       - name: Checkout code
-        if: steps.oauth.outputs.available == 'true'
+        if: steps.oauth.outputs.has_token == 'true'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
 
       - name: Install dependencies
-        if: steps.oauth.outputs.available == 'true'
+        if: steps.oauth.outputs.has_token == 'true'
         run: |
           sudo apt-get update -q
           sudo apt-get install -y -q jq
-          npm install -g @anthropic-ai/claude-code@latest
+          # Pinned version (not @latest) — auto-flow of a malicious release
+          # blocked. Bump deliberately when upgrading; bumps go through PR review.
+          npm install -g @anthropic-ai/claude-code@2.1.143
 
       - name: Configure git (required by Claude Code)
-        if: steps.oauth.outputs.available == 'true'
+        if: steps.oauth.outputs.has_token == 'true'
         run: |
           git config --global user.email "ci@kapsis.test"
           git config --global user.name "Kapsis CI"
           git config --global commit.gpgsign false
 
       - name: Run E2E tests against live API
-        if: steps.oauth.outputs.available == 'true'
+        if: steps.oauth.outputs.has_token == 'true'
         env:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CI: "true"
