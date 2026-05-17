@@ -2,16 +2,27 @@ import { useState } from "react";
 import { api } from "../api/client";
 import { ConfirmModal } from "../components/ConfirmModal";
 
+/**
+ * The targets exposed here map 1:1 to flags actually supported by
+ * scripts/kapsis-cleanup.sh. The "stale-state" target runs the script bare,
+ * which invokes its default-bundle block (worktrees + sandboxes + status +
+ * sanitized-git + audit + conversations). Per-category selective cleanup of
+ * those five sub-categories is not exposed by the underlying script, so the
+ * dashboard groups them under one card.
+ */
 const TARGETS = [
-  { id: "status", label: "Status files", help: "Removes completed status JSON older than 24h" },
-  { id: "worktrees", label: "Worktrees", help: "Removes git worktrees from completed agents" },
-  { id: "sandboxes", label: "Sandboxes", help: "Removes overlay sandbox directories" },
-  { id: "sanitized-git", label: "Sanitized git", help: "Removes filtered git mirror copies" },
-  { id: "volumes", label: "Podman volumes", help: "Removes per-agent named volumes" },
-  { id: "images", label: "Podman images", help: "Removes unused kapsis-* images" },
-  { id: "audit", label: "Audit logs", help: "Removes audit JSONL older than TTL" },
-  { id: "conversations", label: "Conversations", help: "Removes conversation dirs older than TTL" },
-  { id: "logs", label: "Logs", help: "Removes rotated launcher logs" },
+  {
+    id: "stale-state",
+    label: "Stale state",
+    help: "Cleans worktrees, sandboxes, completed status files, sanitized-git mirrors, expired audit JSONL, and old conversation dirs in one pass (script default bundle).",
+  },
+  { id: "worktrees", label: "Worktrees only", help: "Removes git worktrees from completed agents (kapsis-cleanup --worktrees)." },
+  { id: "volumes", label: "Podman volumes", help: "Removes per-agent named volumes. Forces dependency re-download." },
+  { id: "images", label: "Podman images", help: "Removes unused kapsis-* container images." },
+  { id: "containers", label: "Podman containers", help: "Removes exited or wedged kapsis-* containers." },
+  { id: "logs", label: "Launcher logs", help: "Removes rotated ~/.kapsis/logs/*.log files." },
+  { id: "ssh-cache", label: "SSH cache", help: "Removes cached SSH known_hosts entries used by the launcher." },
+  { id: "branches", label: "Stale branches", help: "Prunes local branches that no longer have a remote." },
 ];
 
 interface Props {
@@ -21,6 +32,7 @@ interface Props {
 interface PreviewState {
   target: string;
   stdout: string;
+  argv: string[];
 }
 
 export function Maintenance({ readOnly }: Props) {
@@ -33,7 +45,9 @@ export function Maintenance({ readOnly }: Props) {
     setRunning(target);
     try {
       const r = await api.cleanup([target], true);
-      setPreview({ target, stdout: r.stdout || "(no items would be removed)" });
+      const argv = (r as unknown as { argv?: string[] }).argv ?? [];
+      const out = r.stdout || (r.ok ? "(no items would be removed)" : `(script exited ${r.exitCode})\n${r.stderr}`);
+      setPreview({ target, stdout: out, argv });
     } finally {
       setRunning(null);
     }
@@ -55,6 +69,10 @@ export function Maintenance({ readOnly }: Props) {
     <div>
       <h2 style={{ marginTop: 0 }}>Maintenance</h2>
       {readOnly && <div className="banner">Dashboard is read-only — cleanup is disabled.</div>}
+      <p style={{ color: "var(--fg-muted)", marginTop: 0 }}>
+        Each card wraps a specific flag of <code>scripts/kapsis-cleanup.sh</code>. Preview runs the script with
+        <code> --dry-run</code>; Execute runs it for real.
+      </p>
       <div className="cards">
         {TARGETS.map((t) => (
           <div className="card" key={t.id}>
@@ -70,6 +88,11 @@ export function Maintenance({ readOnly }: Props) {
       {preview && (
         <section style={{ marginTop: 24 }}>
           <h3>Preview: {preview.target}</h3>
+          {preview.argv.length > 0 && (
+            <div style={{ color: "var(--fg-muted)", fontSize: 12, marginBottom: 4 }}>
+              argv: <code>{preview.argv.join(" ")}</code>
+            </div>
+          )}
           <pre>{preview.stdout}</pre>
         </section>
       )}

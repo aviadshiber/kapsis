@@ -150,6 +150,8 @@ export interface KillResultWire {
 export interface CleanupResultWire {
   ok: boolean;
   dryRun: boolean;
+  targets: string[];
+  argv: string[];
   stdout: string;
   stderr: string;
   exitCode: number;
