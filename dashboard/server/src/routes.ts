@@ -103,8 +103,13 @@ export function buildRouter(deps: Deps): Router {
     const body = await safeJson(req);
     const signal = body.signal === "KILL" ? "KILL" : "TERM";
     const result = await killAgent(id, { signal });
-    await dashAudit.record("dashboard", "kill", `agent:${id}`, { signal, exitCode: result.exitCode, stderr: result.stderr.slice(0, 500) });
-    sse.publish("agents", { event: "agent-killed", data: { id, signal, ok: result.ok } });
+    await dashAudit.record("dashboard", "kill", `agent:${id}`, {
+      signal,
+      exitCode: result.exitCode,
+      containerMissing: result.containerMissing ?? false,
+      stderr: result.stderr.slice(0, 500),
+    });
+    sse.publish("agents", { event: "agent-killed", data: { id, signal, ok: result.ok, containerMissing: result.containerMissing ?? false } });
     return json(result, result.ok ? 200 : 502);
   });
 

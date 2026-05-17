@@ -26,6 +26,7 @@ export function AgentDetail({ agentId, readOnly, onBack }: Props) {
   const [tab, setTab] = useState<Tab>("overview");
   const [showKill, setShowKill] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -42,6 +43,12 @@ export function AgentDetail({ agentId, readOnly, onBack }: Props) {
 
   return (
     <div>
+      {notice && (
+        <div className="banner" style={{ marginBottom: 12, display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ flex: 1 }}>{notice}</span>
+          <button onClick={() => setNotice(null)}>Dismiss</button>
+        </div>
+      )}
       <header style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 16 }}>
         <button onClick={onBack}>← Back</button>
         <h2 style={{ margin: 0 }}><code>{status.project}</code> / <code>{status.agent_id}</code></h2>
@@ -76,8 +83,11 @@ export function AgentDetail({ agentId, readOnly, onBack }: Props) {
           confirmLabel="Kill"
           onCancel={() => setShowKill(false)}
           onConfirm={async () => {
-            await api.kill(agentId, "TERM");
+            const r = await api.kill(agentId, "TERM");
             setShowKill(false);
+            if (r.containerMissing) {
+              setNotice(`Container kapsis-${agentId} was already gone — kill was a no-op. The status file may be stale; nothing to terminate.`);
+            }
             const d = await api.agent(agentId);
             setData(d);
           }}
@@ -125,12 +135,17 @@ function OverviewTab({ status, health }: { status: AgentStatus; health: AgentHea
           <pre style={{ marginTop: 8 }}>{status.push_fallback_command}</pre>
         </div>
       )}
-      {status.error && (
-        <div className="card" style={{ gridColumn: "1 / -1", borderColor: "var(--red)" }}>
-          <h3 style={{ color: "var(--red)" }}>Error · {status.error_type ?? "unknown"}</h3>
-          <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{status.error}</div>
-        </div>
-      )}
+      {status.error && (() => {
+        const killed = status.error_type === "killed";
+        const color = killed ? "var(--fg-muted)" : "var(--red)";
+        const heading = killed ? `Terminated · ${status.error_type}` : `Error · ${status.error_type ?? "unknown"}`;
+        return (
+          <div className="card" style={{ gridColumn: "1 / -1", borderColor: color }}>
+            <h3 style={{ color }}>{heading}</h3>
+            <div style={{ marginTop: 8, whiteSpace: "pre-wrap" }}>{status.error}</div>
+          </div>
+        );
+      })()}
     </div>
   );
 }

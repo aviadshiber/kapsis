@@ -71,7 +71,7 @@ export const api = {
   ),
   disk: () => request<{ entries: import("../types").DiskUsageEntry[] }>("GET", "/api/v1/disk/usage"),
   kill: (id: string, signal: "TERM" | "KILL" = "TERM") =>
-    request<{ ok: boolean; signal: string; stdout: string; stderr: string; exitCode: number }>(
+    request<{ ok: boolean; signal: string; stdout: string; stderr: string; exitCode: number; containerMissing?: boolean }>(
       "POST", `/api/v1/agents/${encodeURIComponent(id)}/kill`, { signal },
     ),
   cleanup: (targets: string[], dryRun: boolean) =>
