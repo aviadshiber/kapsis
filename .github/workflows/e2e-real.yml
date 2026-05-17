@@ -18,7 +18,7 @@ on:
       - 'scripts/lib/inject-lsp-config.sh'
       - 'scripts/lib/inject-plugin-hooks.sh'
       - 'scripts/hooks/**'
-      - 'tests/test-e2e-claude-hooks-real.sh'
+      - 'tests/test-e2e-claude-hooks.sh'
       - '.github/workflows/e2e-real.yml'
   pull_request:
     branches: [main, master]
@@ -27,7 +27,7 @@ on:
       - 'scripts/lib/inject-lsp-config.sh'
       - 'scripts/lib/inject-plugin-hooks.sh'
       - 'scripts/hooks/**'
-      - 'tests/test-e2e-claude-hooks-real.sh'
+      - 'tests/test-e2e-claude-hooks.sh'
       - '.github/workflows/e2e-real.yml'
   # Allow manual trigger for debugging
   workflow_dispatch:
@@ -72,9 +72,9 @@ jobs:
           # Tell Claude Code it's running in a non-interactive environment
           CI: "true"
         run: |
-          chmod +x ./tests/test-e2e-claude-hooks-real.sh
+          chmod +x ./tests/test-e2e-claude-hooks.sh
           chmod +x ./tests/lib/*.sh 2>/dev/null || true
           chmod +x ./scripts/lib/*.sh
           chmod +x ./scripts/hooks/*.sh
           chmod +x ./scripts/hooks/agent-adapters/*.sh 2>/dev/null || true
-          bash ./tests/test-e2e-claude-hooks-real.sh
+          bash ./tests/test-e2e-claude-hooks.sh

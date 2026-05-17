@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #===============================================================================
-# End-to-end test: gist hook fires when invoked via settings.json (#351)
+# Integration test: gist hook fires when invoked via settings.json (#351)
 #
 # Regression guard for issue #351: inject-status-hooks.sh was writing hooks to
 # ~/.claude/settings.local.json, which Claude Code ignores at user scope. At
@@ -12,7 +12,10 @@
 #   3. Dispatching the gist hook (as Claude Code would on PostToolUse) writes
 #      gist.txt — the behavior that was silently broken before the fix
 #
-# Run: ./tests/test-e2e-gist-hook.sh
+# Note: hooks are invoked directly (not via Claude Code). For tests that run
+# a real Claude Code process see test-e2e-claude-hooks.sh.
+#
+# Run: ./tests/test-integration-gist-hook.sh
 #===============================================================================
 
 set -euo pipefail
@@ -232,7 +235,7 @@ test_e2e_no_settings_local_json_created_gist_disabled() {
 #===============================================================================
 
 run_tests() {
-    print_test_header "E2E: Gist hook fires via settings.json (#351 regression guard)"
+    print_test_header "Integration: Gist hook fires via settings.json (#351 regression guard)"
 
     run_test test_e2e_hooks_written_to_settings_json_not_local
     run_test test_e2e_hook_commands_are_executable

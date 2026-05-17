@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 #===============================================================================
-# Real E2E test: Claude Code reads settings.json and dispatches Kapsis hooks
+# E2E test: Claude Code reads settings.json and dispatches Kapsis hooks
 #
-# Unlike the simulated e2e tests (test-e2e-gist-hook.sh, test-e2e-all-hooks.sh)
-# which manually invoke hook scripts, this test starts a real Claude Code process
-# and verifies that Claude Code itself reads the hooks from settings.json and
-# dispatches them during a live agent session.
+# Unlike the integration tests (test-integration-gist-hook.sh,
+# test-integration-all-hooks.sh) which invoke hook scripts directly, this test
+# starts a real Claude Code process and verifies that Claude Code itself reads
+# hooks from settings.json and dispatches them during a live agent session.
 #
 # Prerequisites:
 #   CLAUDE_CODE_OAUTH_TOKEN — must be set (add to GitHub Secrets for CI)
@@ -13,7 +13,7 @@
 #
 # Skips gracefully when prerequisites are absent.
 #
-# Run: ./tests/test-e2e-claude-hooks-real.sh
+# Run: ./tests/test-e2e-claude-hooks.sh
 #===============================================================================
 
 set -euo pipefail
@@ -39,7 +39,7 @@ if ! command -v claude &>/dev/null; then
 fi
 
 if [[ "$_prerequisites_met" == "false" ]]; then
-    print_test_header "E2E: Claude Code real hook dispatch (live API)"
+    print_test_header "E2E: Claude Code hook dispatch (live API)"
     if [[ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]]; then
         log_skip "CLAUDE_CODE_OAUTH_TOKEN not set — skipping real Claude Code e2e tests"
     else
@@ -237,7 +237,7 @@ test_real_posttooluse_receives_tool_event_json() {
 #===============================================================================
 
 run_tests() {
-    print_test_header "E2E: Claude Code real hook dispatch (live API)"
+    print_test_header "E2E: Claude Code hook dispatch (live API)"
 
     run_test test_real_posttooluse_gist_hook_fires
     run_test test_real_stop_hook_fires

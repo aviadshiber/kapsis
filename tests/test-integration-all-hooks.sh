@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #===============================================================================
-# End-to-end tests: all injectable hooks fire correctly via settings.json
+# Integration tests: all injectable hooks fire correctly via settings.json
 #
 # Covers every hook and settings injection path that Kapsis writes into
 # ~/.claude/settings.json inside a container:
@@ -19,9 +19,12 @@
 #      does when loading its settings file)
 #   3. Executes or inspects it to verify end-to-end correctness
 #
+# Note: hooks are invoked directly (not via Claude Code). For tests that run
+# a real Claude Code process see test-e2e-claude-hooks.sh.
+#
 # All tests are quick / no-container — suitable for QUICK_TESTS and CI.
 #
-# Run: ./tests/test-e2e-all-hooks.sh
+# Run: ./tests/test-integration-all-hooks.sh
 #===============================================================================
 
 set -euo pipefail
@@ -449,7 +452,7 @@ JSONEOF
 #===============================================================================
 
 run_tests() {
-    print_test_header "E2E: All hooks fire correctly via settings.json"
+    print_test_header "Integration: All hooks fire correctly via settings.json"
 
     log_info "=== Stop hook ==="
     run_test test_e2e_stop_hook_dispatch_exits_zero
