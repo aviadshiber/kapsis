@@ -427,6 +427,32 @@ tail -f ~/.kapsis/logs/kapsis-launch-agent.log
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for the full logging configuration and test framework documentation.
 
+### Corporate / Domain-Joined Hosts (AD / LDAP)
+
+On macOS hosts where the user is an Active Directory or LDAP domain account, `id -u` typically returns a 10-digit UID (>1 billion). The default `--userns=keep-id` resolver in podman intermittently produces a degenerate user namespace mapping that doesn't include the container's `developer` user (UID 1000), causing launches to fail with exit 126:
+
+```
+Error: preparing container <hash> for attach: container uses ID mappings
+(...), but doesn't map UID 1000
+```
+
+Kapsis autodetects this case and uses `--userns=keep-id:uid=1000,gid=1000` when the host UID exceeds 60000 (the POSIX `UID_MAX` convention). No action is required for most users.
+
+To override:
+
+```yaml
+# In your agent config (e.g. configs/claude.yaml):
+security:
+  userns: keep-id:uid=1000,gid=1000   # force the explicit form
+  # userns: keep-id                   # force plain keep-id (don't use on domain hosts)
+  # userns: auto                      # podman auto-allocate (caveat: subuid pool limit)
+  # userns: host                      # no userns isolation (debug only)
+```
+
+Or set the `KAPSIS_USERNS` environment variable for a session-local override (highest precedence).
+
+See [kapsis#361](https://github.com/aviadshiber/kapsis/issues/361) for the underlying podman/userns interaction.
+
 ## Documentation
 
 | Document | Description |

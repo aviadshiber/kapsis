@@ -967,6 +967,13 @@ parse_config() {
 
         cfg_val=$(yq -r '.security.process.no_new_privileges // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
         [[ "$cfg_val" == "false" ]] && [[ -z "${KAPSIS_NO_NEW_PRIVILEGES:-}" ]] && export KAPSIS_NO_NEW_PRIVILEGES="false"
+
+        # User namespace mode (#361 — domain-UID workaround). Empty falls
+        # through to security.sh's autodetect (`keep-id` for low host UIDs,
+        # `keep-id:uid=1000,gid=1000` for high). Set via KAPSIS_USERNS env
+        # to override per-invocation.
+        cfg_val=$(yq -r '.security.userns // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ -n "$cfg_val" ]] && [[ -z "${SECURITY_USERNS:-}" ]] && export SECURITY_USERNS="$cfg_val"
     else
         log_error "yq is required but not installed."
         log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
@@ -2670,7 +2677,7 @@ main() {
     if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]] && [[ "$DRY_RUN" != "true" ]]; then
         log_timer_start "preflight"
         source "$SCRIPT_DIR/preflight-check.sh"
-        if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"; then
+        if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID" "$CONFIG_FILE"; then
             status_complete 1 "Pre-flight check failed"
             _STATUS_COMPLETE_SHOWN=true
             exit 1

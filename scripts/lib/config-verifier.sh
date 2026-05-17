@@ -358,6 +358,27 @@ validate_launch_config() {
         fi
     fi
 
+    # Validate security.userns if present (#361 — domain-UID workaround)
+    local userns
+    userns=$(yq -r '.security.userns // ""' "$config_file" 2>/dev/null)
+    if [[ -n "$userns" && "$userns" != "null" ]]; then
+        # Accepted forms:
+        #   keep-id                              — plain keep-id (works for low host UIDs)
+        #   keep-id:uid=<N>,gid=<N>              — explicit form (required for hosts with domain UIDs)
+        #   auto                                 — podman auto-allocate (caveat: subuid pool exhaustion)
+        #   host                                 — no userns isolation (does NOT mean "run as root" —
+        #                                          USER directive still applies; host means the
+        #                                          process namespace is shared with the host)
+        if [[ "$userns" == "keep-id" \
+           || "$userns" =~ ^keep-id:uid=[0-9]+,gid=[0-9]+$ \
+           || "$userns" == "auto" \
+           || "$userns" == "host" ]]; then
+            log_pass "Valid security.userns: $userns"
+        else
+            log_error "Invalid security.userns: $userns (expected: keep-id, keep-id:uid=N,gid=N, auto, or host)"
+        fi
+    fi
+
     # Validate lsp_servers if present
     validate_lsp_config "$config_file"
 
