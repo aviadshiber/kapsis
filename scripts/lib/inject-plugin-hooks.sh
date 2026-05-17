@@ -5,7 +5,7 @@
 # Kapsis bypasses Claude Code's native plugin loader (which only runs in
 # interactive mode). To make plugins like deeperdive-java-linter actually fire
 # inside a Kapsis container, this script enumerates host-enabled plugins and
-# merges their hooks/hooks.json into ~/.claude/settings.local.json — alongside
+# merges their hooks/hooks.json into ~/.claude/settings.json — alongside
 # Kapsis's own status/gist hooks injected by inject-status-hooks.sh.
 #
 # Filters (both must pass):
@@ -26,7 +26,7 @@
 #
 # Requires (must run AFTER):
 #   - rewrite-plugin-paths.sh (installed_plugins.json paths must be container-correct)
-#   - inject-status-hooks.sh   (settings.local.json must already exist with Kapsis hooks)
+#   - inject-status-hooks.sh   (settings.json must already exist with Kapsis hooks)
 #
 # Environment:
 #   KAPSIS_INSTALL_PLUGINS   - "true" to activate (gate; falsy = no-op)
@@ -104,7 +104,7 @@ inject_plugin_hooks() {
     fi
 
     local settings_dir="${HOME}/.claude"
-    local settings_local="${settings_dir}/settings.local.json"
+    local settings_local="${settings_dir}/settings.json"
     local plugins_file="${settings_dir}/plugins/installed_plugins.json"
     local user_settings="${settings_dir}/settings.json"
 
@@ -125,19 +125,19 @@ inject_plugin_hooks() {
     # agent's $HOME, and a symlinked installed_plugins.json could feed us
     # attacker-chosen content from an unexpected location.
     local f
-    for f in "$settings_local" "$plugins_file" "$user_settings"; do
+    for f in "$settings_local" "$plugins_file"; do
         if [[ -L "$f" ]]; then
             log_warn "Refusing to inject plugin hooks: $f is a symlink"
             return 1
         fi
     done
 
-    # settings.local.json should already exist (inject-status-hooks.sh ran first),
+    # settings.json should already exist (inject-status-hooks.sh ran first),
     # but be defensive — create empty if missing.
     mkdir -p "$settings_dir"
     if [[ ! -f "$settings_local" ]]; then
         echo '{}' > "$settings_local"
-        log_debug "Created empty settings.local.json (inject-status-hooks.sh should have run first)"
+        log_debug "Created empty settings.json (inject-status-hooks.sh should have run first)"
     fi
 
     # Normalize whitelist. _parse_whitelist exits 2 on corrupted input — propagate

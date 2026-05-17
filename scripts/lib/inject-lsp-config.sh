@@ -3,7 +3,7 @@
 # inject-lsp-config.sh - Inject LSP server configuration into agent settings
 #
 # Transforms Kapsis YAML lsp_servers config into agent-specific LSP configuration.
-# Currently supports Claude Code (native lspServers in settings.local.json).
+# Currently supports Claude Code (native lspServers in settings.json).
 # Other agents log a warning with guidance.
 #
 # This runs INSIDE the container after CoW overlay setup (files are writable)
@@ -35,7 +35,7 @@ fi
 #===============================================================================
 # Claude Code LSP Injection
 #
-# Injects lspServers into ~/.claude/settings.local.json (same file used for
+# Injects lspServers into ~/.claude/settings.json (same file used for
 # status hook injection). Uses jq merge to preserve existing content.
 #
 # Kapsis YAML format:
@@ -49,7 +49,7 @@ fi
 #       initialization_options: {key: value}
 #       settings: {key: value}
 #
-# Claude Code format (settings.local.json):
+# Claude Code format (settings.json):
 #   {
 #     "lspServers": {
 #       "server-name": {
@@ -67,7 +67,7 @@ fi
 inject_claude_lsp_servers() {
     local lsp_json="${KAPSIS_LSP_SERVERS_JSON:-}"
     local settings_dir="${HOME}/.claude"
-    local settings_local="${settings_dir}/settings.local.json"
+    local settings_local="${settings_dir}/settings.json"
 
     if [[ -z "$lsp_json" || "$lsp_json" == "{}" ]]; then
         log_debug "No LSP servers configured"
@@ -80,7 +80,7 @@ inject_claude_lsp_servers() {
     # Create base file if missing
     if [[ ! -f "$settings_local" ]]; then
         echo '{}' > "$settings_local"
-        log_debug "Created empty settings.local.json"
+        log_debug "Created empty settings.json"
     fi
 
     # Check if jq is available
@@ -125,7 +125,7 @@ inject_claude_lsp_servers() {
         # Log which servers were injected
         local server_names
         server_names=$(echo "$lsp_json" | jq -r 'keys | join(", ")' 2>/dev/null || echo "unknown")
-        log_success "LSP servers injected into settings.local.json: $server_names"
+        log_success "LSP servers injected into settings.json: $server_names"
         return 0
     else
         rm -f "$tmp_file"

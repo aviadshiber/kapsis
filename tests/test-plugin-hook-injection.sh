@@ -3,7 +3,7 @@
 # Tests for Plugin Hook Injection (scripts/lib/inject-plugin-hooks.sh)
 #
 # Verifies that user-installed Claude Code plugin hooks are merged into
-# ~/.claude/settings.local.json alongside Kapsis's own status/gist hooks,
+# ~/.claude/settings.json alongside Kapsis's own status/gist hooks,
 # with proper filtering by enabledPlugins and the optional whitelist.
 #
 # Run: ./tests/test-plugin-hook-injection.sh
@@ -72,12 +72,20 @@ set_enabled() {
     printf '{"enabledPlugins":%s}\n' "$map" > "$settings"
 }
 
-# Pre-seed settings.local.json with the Kapsis status hook (simulates running
-# AFTER inject-status-hooks.sh).
+# Pre-seed settings.json with the Kapsis status hook (simulates running
+# AFTER inject-status-hooks.sh). Merges into any existing content (e.g.
+# enabledPlugins written by set_enabled) rather than replacing the file,
+# matching the real jq-merge behaviour of inject-status-hooks.sh.
 seed_kapsis_settings_local() {
-    cat > "$TEST_HOME/.claude/settings.local.json" <<'JSON'
-{"hooks":{"PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/opt/kapsis/hooks/kapsis-status-hook.sh","timeout":5}]}]}}
-JSON
+    local settings="$TEST_HOME/.claude/settings.json"
+    local kapsis_hooks='{"hooks":{"PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"/opt/kapsis/hooks/kapsis-status-hook.sh","timeout":5}]}]}}'
+    if [[ -f "$settings" ]]; then
+        local tmp
+        tmp=$(mktemp)
+        jq --argjson kh "$kapsis_hooks" '. * $kh' "$settings" > "$tmp" && mv "$tmp" "$settings"
+    else
+        printf '%s\n' "$kapsis_hooks" > "$settings"
+    fi
 }
 
 # Run the function under test in a subshell. The source guard
@@ -104,7 +112,7 @@ run_inject_stderr() {
 
 count_commands() {
     jq '[.hooks // {} | to_entries[] | .value[] | .hooks | length] | add // 0' \
-        "$TEST_HOME/.claude/settings.local.json"
+        "$TEST_HOME/.claude/settings.json"
 }
 
 #===============================================================================
@@ -125,7 +133,7 @@ test_single_plugin_no_whitelist() {
     run_inject
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$result" "$foo_path/hooks/lint.py" "Concrete path should be substituted into command"
     assert_not_contains "$result" 'CLAUDE_PLUGIN_ROOT' "Placeholder should be fully substituted"
     assert_contains "$result" "kapsis-status-hook.sh" "Kapsis hook should be preserved"
@@ -152,7 +160,7 @@ test_disabled_plugin_not_merged() {
     run_inject
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
     assert_not_contains "$result" "$bar_path" "Disabled plugin's path should not appear"
     # Kapsis hook still present
     assert_contains "$result" "kapsis-status-hook.sh" "Kapsis hook preserved"
@@ -182,7 +190,7 @@ test_whitelist_filters() {
     KAPSIS_PLUGIN_WHITELIST='["a@m"]' run_inject
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$result" "$a_path/a.sh" "Whitelisted plugin a should be merged"
     assert_not_contains "$result" "$b_path/b.sh" "Non-whitelisted plugin b should be skipped"
 
@@ -211,7 +219,7 @@ test_empty_whitelist_allows_all() {
     KAPSIS_PLUGIN_WHITELIST='[]' run_inject
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$result" "$a_path/a.sh" "Plugin a should be merged"
     assert_contains "$result" "$b_path/b.sh" "Plugin b should be merged"
 
@@ -238,7 +246,7 @@ test_whitelist_missing_plugin_no_error() {
         "Whitelist with one missing plugin should not error"
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$result" "$a_path/a.sh" "Plugin a (in whitelist + installed) should still merge"
 
     cleanup_test_home
@@ -266,7 +274,7 @@ test_malformed_hooks_json() {
     run_inject
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$result" "$good_path/good.sh" "Good plugin should still merge"
     assert_not_contains "$result" "$bad_path" "Bad plugin should not appear"
 
@@ -274,11 +282,11 @@ test_malformed_hooks_json() {
 }
 
 #===============================================================================
-# TEST: Idempotency — second run produces identical settings.local.json
+# TEST: Idempotency — second run produces identical settings.json
 #===============================================================================
 
 test_idempotency() {
-    log_test "Running injection twice produces identical settings.local.json"
+    log_test "Running injection twice produces identical settings.json"
     setup_test_home
 
     local foo_path="$TEST_HOME/.claude/plugins/cache/m/foo/1.0.0"
@@ -290,30 +298,30 @@ test_idempotency() {
 
     run_inject
     local first_run
-    first_run=$(cat "$TEST_HOME/.claude/settings.local.json")
+    first_run=$(cat "$TEST_HOME/.claude/settings.json")
     local count_after_first
     count_after_first=$(count_commands)
 
     run_inject
     local second_run
-    second_run=$(cat "$TEST_HOME/.claude/settings.local.json")
+    second_run=$(cat "$TEST_HOME/.claude/settings.json")
     local count_after_second
     count_after_second=$(count_commands)
 
     assert_equals "$count_after_first" "$count_after_second" \
         "Command count should be identical after running injection twice"
     assert_equals "$first_run" "$second_run" \
-        "settings.local.json byte-identical after re-run"
+        "settings.json byte-identical after re-run"
 
     cleanup_test_home
 }
 
 #===============================================================================
-# TEST: KAPSIS_INSTALL_PLUGINS=false → settings.local.json untouched
+# TEST: KAPSIS_INSTALL_PLUGINS=false → settings.json untouched
 #===============================================================================
 
 test_gate_off_no_op() {
-    log_test "Gate off (KAPSIS_INSTALL_PLUGINS=false): settings.local.json untouched"
+    log_test "Gate off (KAPSIS_INSTALL_PLUGINS=false): settings.json untouched"
     setup_test_home
 
     local foo_path="$TEST_HOME/.claude/plugins/cache/m/foo/1.0.0"
@@ -324,14 +332,14 @@ test_gate_off_no_op() {
     seed_kapsis_settings_local
 
     local before
-    before=$(cat "$TEST_HOME/.claude/settings.local.json")
+    before=$(cat "$TEST_HOME/.claude/settings.json")
 
     KAPSIS_INSTALL_PLUGINS=false run_inject
 
     local after
-    after=$(cat "$TEST_HOME/.claude/settings.local.json")
+    after=$(cat "$TEST_HOME/.claude/settings.json")
 
-    assert_equals "$before" "$after" "settings.local.json should be byte-identical when gate is off"
+    assert_equals "$before" "$after" "settings.json should be byte-identical when gate is off"
     assert_not_contains "$after" "$foo_path" "Plugin should NOT be merged when gate is off"
 
     cleanup_test_home
@@ -353,13 +361,13 @@ test_missing_hooks_json() {
     seed_kapsis_settings_local
 
     local before
-    before=$(cat "$TEST_HOME/.claude/settings.local.json")
+    before=$(cat "$TEST_HOME/.claude/settings.json")
     run_inject
     local after
-    after=$(cat "$TEST_HOME/.claude/settings.local.json")
+    after=$(cat "$TEST_HOME/.claude/settings.json")
 
     assert_equals "$before" "$after" \
-        "Plugin without hooks.json shouldn't change settings.local.json"
+        "Plugin without hooks.json shouldn't change settings.json"
 
     cleanup_test_home
 }
@@ -389,7 +397,7 @@ test_whitelist_exact_match_not_substring() {
     KAPSIS_PLUGIN_WHITELIST='["alpha@beta"]' run_inject
 
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$result" "$long_path/long.sh" "Whitelisted plugin must merge"
     assert_not_contains "$result" "$short_path/short.sh" \
         "Substring-only plugin id must NOT merge (regression for substring bypass)"
@@ -416,7 +424,7 @@ test_installpath_containment() {
     local stderr
     stderr=$(run_inject_stderr)
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
 
     assert_not_contains "$result" "$evil_path" \
         "Plugin outside trusted cache prefix must NOT be merged"
@@ -448,7 +456,7 @@ test_installpath_traversal_blocked() {
 
     run_inject
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
     assert_not_contains "$result" "/escaped/plugin" \
         "Traversed installPath must NOT bypass the trusted prefix check"
 
@@ -471,13 +479,13 @@ test_whitelist_corruption_fails_closed() {
     seed_kapsis_settings_local
 
     local before
-    before=$(cat "$TEST_HOME/.claude/settings.local.json")
+    before=$(cat "$TEST_HOME/.claude/settings.json")
 
     # Not a JSON array — should be treated as a hard error, not "allow all".
     KAPSIS_PLUGIN_WHITELIST='"not-an-array"' run_inject || true
 
     local after
-    after=$(cat "$TEST_HOME/.claude/settings.local.json")
+    after=$(cat "$TEST_HOME/.claude/settings.json")
     assert_equals "$before" "$after" \
         "Corrupted whitelist must NOT cause plugin hooks to be injected (fail closed)"
 
@@ -500,12 +508,12 @@ test_whitelist_non_string_entries_fail_closed() {
     seed_kapsis_settings_local
 
     local before
-    before=$(cat "$TEST_HOME/.claude/settings.local.json")
+    before=$(cat "$TEST_HOME/.claude/settings.json")
 
     KAPSIS_PLUGIN_WHITELIST='[42,"foo@m"]' run_inject || true
 
     local after
-    after=$(cat "$TEST_HOME/.claude/settings.local.json")
+    after=$(cat "$TEST_HOME/.claude/settings.json")
     assert_equals "$before" "$after" \
         "Whitelist with non-string entry must NOT inject any plugin (fail closed)"
 
@@ -530,7 +538,7 @@ test_multiple_plugin_root_occurrences() {
     run_inject
     local merged_cmd
     merged_cmd=$(jq -r '.hooks.PostToolUse[] | .hooks[]? | .command | select(contains("run.sh"))' \
-                 "$TEST_HOME/.claude/settings.local.json")
+                 "$TEST_HOME/.claude/settings.json")
 
     assert_contains "$merged_cmd" "$foo_path/run.sh" "First \${CLAUDE_PLUGIN_ROOT} substituted"
     assert_contains "$merged_cmd" "$foo_path/lib/x.so" "Second \${CLAUDE_PLUGIN_ROOT} also substituted"
@@ -541,11 +549,11 @@ test_multiple_plugin_root_occurrences() {
 }
 
 #===============================================================================
-# TEST: settings.local.json absent at start — created by injection
+# TEST: settings.json absent at start — created by injection
 #===============================================================================
 
 test_settings_local_absent_at_start() {
-    log_test "settings.local.json absent at start is created during injection"
+    log_test "settings.json with only enabledPlugins (no hooks) gets plugin hook added by injection"
     setup_test_home
 
     local foo_path="$TEST_HOME/.claude/plugins/cache/m/foo/1.0.0"
@@ -553,15 +561,18 @@ test_settings_local_absent_at_start() {
         '{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/x.sh"}]}]}}'
     add_to_registry "foo@m" "$foo_path"
     set_enabled "foo@m"
-    # NOTE: deliberately NOT calling seed_kapsis_settings_local — file absent
-    assert_file_not_exists "$TEST_HOME/.claude/settings.local.json" "Precondition: settings.local.json absent"
+    # NOTE: deliberately NOT calling seed_kapsis_settings_local — hooks key absent
+    # settings.json exists (set_enabled wrote enabledPlugins) but has no hooks yet
+    local before
+    before=$(cat "$TEST_HOME/.claude/settings.json")
+    assert_not_contains "$before" "hooks" "Precondition: no hooks key in settings.json before injection"
 
     run_inject
 
-    assert_file_exists "$TEST_HOME/.claude/settings.local.json" "settings.local.json created"
+    assert_file_exists "$TEST_HOME/.claude/settings.json" "settings.json still present"
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
-    assert_contains "$result" "$foo_path/x.sh" "Plugin hook merged into new settings.local.json"
+    result=$(cat "$TEST_HOME/.claude/settings.json")
+    assert_contains "$result" "$foo_path/x.sh" "Plugin hook merged into settings.json"
 
     cleanup_test_home
 }
@@ -589,12 +600,12 @@ test_multi_plugin_merge() {
 
     # kapsis-status-hook must be FIRST in PostToolUse (ordering invariant)
     local first_cmd
-    first_cmd=$(jq -r '.hooks.PostToolUse[0].hooks[0].command' "$TEST_HOME/.claude/settings.local.json")
+    first_cmd=$(jq -r '.hooks.PostToolUse[0].hooks[0].command' "$TEST_HOME/.claude/settings.json")
     assert_contains "$first_cmd" "kapsis-status-hook.sh" "kapsis-status-hook must remain at index 0 in PostToolUse"
 
     # All 5 plugin commands present
     local result
-    result=$(cat "$TEST_HOME/.claude/settings.local.json")
+    result=$(cat "$TEST_HOME/.claude/settings.json")
     for p in p1 p2 p3 p4 p5; do
         assert_contains "$result" "/$p.sh" "Plugin $p@m's command present"
     done
@@ -629,47 +640,45 @@ test_malformed_hooks_logs_warn() {
 }
 
 #===============================================================================
-# TEST: Pre-existing malformed settings.local.json is handled gracefully
+# TEST: Pre-existing malformed settings.json is handled gracefully
 #===============================================================================
 
 test_malformed_settings_local_handled() {
-    log_test "Pre-existing malformed settings.local.json: plugin is skipped with WARN, not crash"
+    log_test "Pre-existing malformed settings.json: inject returns 0 (no crash), corrupted file untouched"
     setup_test_home
 
     local foo_path="$TEST_HOME/.claude/plugins/cache/m/foo/1.0.0"
     make_plugin "foo@m" "$foo_path" \
         '{"hooks":{"PostToolUse":[{"matcher":"*","hooks":[{"type":"command","command":"${CLAUDE_PLUGIN_ROOT}/run.sh"}]}]}}'
     add_to_registry "foo@m" "$foo_path"
-    set_enabled "foo@m"
 
-    # Write truncated / corrupted JSON — simulates a crashed prior run
-    printf '{this is not valid JSON' > "$TEST_HOME/.claude/settings.local.json"
+    # With a unified settings.json, corrupt content prevents both the
+    # enabledPlugins read AND the hook merge. inject-plugin-hooks.sh treats
+    # jq failures as graceful fallbacks (|| echo '{}') so it sees no enabled
+    # plugins and exits 0 with an info log — no crash, no data loss.
+    printf '{this is not valid JSON' > "$TEST_HOME/.claude/settings.json"
 
-    local stderr
-    stderr=$(run_inject_stderr)
+    local exit_code=0
+    run_inject || exit_code=$?
 
-    # The jq merge will fail on the corrupted file; plugin must be skipped
-    assert_contains "$stderr" "WARN" \
-        "Must log WARN when merge fails on corrupted settings.local.json"
-    assert_contains "$stderr" "foo@m" \
-        "WARN must name the affected plugin"
+    # Must not crash
+    assert_equals "0" "$exit_code" "inject_plugin_hooks must exit 0 on corrupted settings.json"
 
-    # The corrupted file must not have been silently replaced with a different
-    # truncation — check it still starts with the original corrupt prefix
+    # The corrupted file must not have been silently replaced
     local first_char
-    first_char=$(head -c 1 "$TEST_HOME/.claude/settings.local.json")
+    first_char=$(head -c 1 "$TEST_HOME/.claude/settings.json")
     assert_equals "{" "$first_char" \
-        "Corrupted settings.local.json must not be silently wiped"
+        "Corrupted settings.json must not be silently wiped"
 
     cleanup_test_home
 }
 
 #===============================================================================
-# TEST: Symlink-rejection for settings.local.json, plugins_file, user_settings
+# TEST: Symlink-rejection for settings.json, plugins_file, user_settings
 #===============================================================================
 
 test_symlink_settings_local_rejected() {
-    log_test "Symlinked settings.local.json is rejected (security: redirect-write defense)"
+    log_test "Symlinked settings.json is rejected (security: redirect-write defense)"
     setup_test_home
 
     local foo_path="$TEST_HOME/.claude/plugins/cache/m/foo/1.0.0"
@@ -678,10 +687,13 @@ test_symlink_settings_local_rejected() {
     add_to_registry "foo@m" "$foo_path"
     set_enabled "foo@m"
 
-    # Create a real target and then symlink settings.local.json to it
+    # Replace the regular settings.json (written by set_enabled) with a symlink
+    # pointing to a copy of the same content, preserving enabledPlugins so the
+    # code path reaches the symlink check (which happens before enabledPlugins read).
     local real_target="$TEST_HOME/real-settings.json"
-    echo '{}' > "$real_target"
-    ln -s "$real_target" "$TEST_HOME/.claude/settings.local.json"
+    cp "$TEST_HOME/.claude/settings.json" "$real_target"
+    rm "$TEST_HOME/.claude/settings.json"
+    ln -s "$real_target" "$TEST_HOME/.claude/settings.json"
 
     local stderr
     stderr=$(run_inject_stderr)
@@ -745,7 +757,7 @@ test_intra_plugin_dedup() {
     run_inject
     local occurrences
     occurrences=$(jq '[.hooks.PostToolUse[] | .hooks[]? | .command | select(contains("lint.sh"))] | length' \
-                  "$TEST_HOME/.claude/settings.local.json")
+                  "$TEST_HOME/.claude/settings.json")
     assert_equals "1" "$occurrences" \
         "lint.sh command must appear exactly once even though plugin lists it in two groups"
 

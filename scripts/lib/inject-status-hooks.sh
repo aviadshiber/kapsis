@@ -6,7 +6,7 @@
 # the host configuration.
 #
 # Supported agents:
-#   - Claude Code: ~/.claude/settings.local.json (JSON, merged by Claude)
+#   - Claude Code: ~/.claude/settings.json (JSON, merged by Claude)
 #   - Codex CLI: ~/.codex/config.yaml (YAML, merged hooks section)
 #   - Gemini CLI: ~/.gemini/hooks/*.sh (Shell scripts in hooks directory)
 #
@@ -52,7 +52,7 @@ STOP_HOOK="${KAPSIS_HOOK_DIR}/kapsis-stop-hook.sh"
 
 inject_claude_hooks() {
     local settings_dir="${HOME}/.claude"
-    local settings_local="${settings_dir}/settings.local.json"
+    local settings_local="${settings_dir}/settings.json"
 
     # Ensure directory exists
     mkdir -p "$settings_dir"
@@ -60,7 +60,7 @@ inject_claude_hooks() {
     # Create base file if missing
     if [[ ! -f "$settings_local" ]]; then
         echo '{}' > "$settings_local"
-        log_debug "Created empty settings.local.json"
+        log_debug "Created empty settings.json"
     fi
 
     # Check if jq is available
