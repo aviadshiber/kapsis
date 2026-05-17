@@ -1,10 +1,11 @@
-import { stat, readdir } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { KapsisPaths } from "../config";
 import type { DiskUsageEntry } from "../types";
 import { log } from "../logger";
 
 const TIMEOUT_MS = 10_000;
+const CACHE_TTL_MS = 30_000;
 
 async function dirSize(path: string): Promise<{ bytes: number; items: number }> {
   let bytes = 0;
@@ -21,10 +22,15 @@ async function dirSize(path: string): Promise<{ bytes: number; items: number }> 
     try { entries = await readdir(cur); } catch { continue; }
     for (const name of entries) {
       const child = join(cur, name);
+      // Use lstat (not stat) so we don't follow symlinks. A hostile container
+      // could plant a symlink inside a podman volume mountpoint that points
+      // back to $HOME or /, which would otherwise blow our scan budget and
+      // expose unrelated file metadata.
       let st;
-      try { st = await stat(child); } catch { continue; }
+      try { st = await lstat(child); } catch { continue; }
+      if (st.isSymbolicLink()) continue;
       if (st.isDirectory()) stack.push(child);
-      else {
+      else if (st.isFile()) {
         bytes += st.size;
         items++;
       }
@@ -41,15 +47,17 @@ async function podmanVolumes(): Promise<DiskUsageEntry> {
     });
     const out = await new Response(proc.stdout).text();
     await proc.exited;
-    let bytes = 0;
-    let items = 0;
+    const mounts: string[] = [];
     for (const line of out.split("\n")) {
       const [, mp] = line.split("\t");
-      if (!mp) continue;
-      const { bytes: b, items: n } = await dirSize(mp);
-      bytes += b;
-      items += n;
+      if (mp) mounts.push(mp);
     }
+    // Parallel walk — was serial before, doubled wall-clock for users with
+    // many per-agent volumes.
+    const sizes = await Promise.all(mounts.map((mp) => dirSize(mp)));
+    let bytes = 0;
+    let items = 0;
+    for (const s of sizes) { bytes += s.bytes; items += s.items; }
     return { category: "podman-volumes", bytes, items };
   } catch (e) {
     log.warn("podman volume scan failed", { err: String(e) });
@@ -80,7 +88,7 @@ async function podmanImages(): Promise<DiskUsageEntry> {
   }
 }
 
-function parsePodmanSize(s: string): number {
+export function parsePodmanSize(s: string): number {
   // podman emits sizes like "1.2GB", "512MB", "12.3kB"
   const m = s.match(/^([\d.]+)\s*([kKmMgGtT]?)B?$/);
   if (!m) return 0;
@@ -91,9 +99,25 @@ function parsePodmanSize(s: string): number {
 }
 
 export class DiskUsageStore {
+  private cache: { value: DiskUsageEntry[]; at: number } | null = null;
+  private inFlight: Promise<DiskUsageEntry[]> | null = null;
+
   constructor(private paths: KapsisPaths) {}
 
+  invalidate(): void {
+    this.cache = null;
+  }
+
   async snapshot(): Promise<DiskUsageEntry[]> {
+    if (this.cache && Date.now() - this.cache.at < CACHE_TTL_MS) {
+      return this.cache.value;
+    }
+    if (this.inFlight) return this.inFlight;
+    this.inFlight = this.computeSnapshot().finally(() => { this.inFlight = null; });
+    return this.inFlight;
+  }
+
+  private async computeSnapshot(): Promise<DiskUsageEntry[]> {
     const dirs: Array<[string, string]> = [
       ["status", this.paths.status],
       ["audit", this.paths.audit],
@@ -108,6 +132,8 @@ export class DiskUsageStore {
       return { category: cat, bytes, items };
     }));
     const [volumes, images] = await Promise.all([podmanVolumes(), podmanImages()]);
-    return [...results, volumes, images];
+    const snapshot = [...results, volumes, images];
+    this.cache = { value: snapshot, at: Date.now() };
+    return snapshot;
   }
 }

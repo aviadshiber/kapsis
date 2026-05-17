@@ -11,6 +11,7 @@ export interface LogChunk {
 }
 
 const MAX_CHUNK = 1024 * 1024; // 1 MiB per request
+const NEWLINE = 0x0a;
 
 export class LogStore {
   constructor(private logDir: string) {}
@@ -37,11 +38,27 @@ export class LogStore {
     try {
       const buf = Buffer.alloc(want);
       const { bytesRead } = await fd.read(buf, 0, want, offset);
-      const text = buf.subarray(0, bytesRead).toString("utf8");
-      const splitAt = text.lastIndexOf("\n");
-      const useable = splitAt >= 0 ? text.slice(0, splitAt) : "";
-      const remainder = splitAt >= 0 ? text.length - splitAt - 1 : text.length;
-      const consumed = bytesRead - Buffer.byteLength(remainder ? text.slice(text.length - remainder) : "", "utf8");
+      // Find the last newline in the raw bytes — *not* in a decoded string.
+      // Decoding first would replace any split multi-byte UTF-8 sequence at
+      // the end with U+FFFD (3 bytes), which would make Buffer.byteLength of
+      // the remainder report more bytes than were actually consumed and
+      // permanently stall the offset on the truncated character. Working in
+      // bytes avoids that whole class of bugs.
+      const splitAtByte = buf.subarray(0, bytesRead).lastIndexOf(NEWLINE);
+      if (splitAtByte < 0) {
+        // No newline in this read window — wait for more input rather than
+        // advance, so we don't mid-decode a partial line.
+        return {
+          agentId,
+          bytesRead: 0,
+          nextOffset: offset,
+          size: st.size,
+          lines: [],
+          truncated: want < st.size - offset,
+        };
+      }
+      const useable = buf.subarray(0, splitAtByte).toString("utf8");
+      const consumed = splitAtByte + 1; // include the newline byte
       const lines = useable ? useable.split("\n") : [];
       return {
         agentId,

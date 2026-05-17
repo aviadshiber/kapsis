@@ -20,7 +20,27 @@ function containerName(agentId: string): string {
   return `kapsis-${agentId}`;
 }
 
+const INSPECT_TTL_MS = 3_000;
+const STATS_TTL_MS = 3_000;
+
+const inspectCache = new Map<string, { value: ContainerInfo; at: number }>();
+const statsCache = new Map<string, { value: ContainerStats; at: number }>();
+
+/** Invalidate cached entries for a single agent — call after a kill. */
+export function invalidateContainerCache(agentId: string): void {
+  inspectCache.delete(agentId);
+  statsCache.delete(agentId);
+}
+
+export function clearContainerCache(): void {
+  inspectCache.clear();
+  statsCache.clear();
+}
+
 export async function inspectContainer(agentId: string): Promise<ContainerInfo> {
+  const cached = inspectCache.get(agentId);
+  if (cached && Date.now() - cached.at < INSPECT_TTL_MS) return cached.value;
+
   const name = containerName(agentId);
   try {
     const proc = Bun.spawn(["podman", "inspect", "--format=json", name], {
@@ -30,7 +50,9 @@ export async function inspectContainer(agentId: string): Promise<ContainerInfo> 
     const out = await new Response(proc.stdout).text();
     const code = await proc.exited;
     if (code !== 0) {
-      return { name, exists: false, state: null, startedAt: null, image: null, pid: null, exitCode: null };
+      const v: ContainerInfo = { name, exists: false, state: null, startedAt: null, image: null, pid: null, exitCode: null };
+      inspectCache.set(agentId, { value: v, at: Date.now() });
+      return v;
     }
     const arr = JSON.parse(out) as Array<{
       State?: { Status?: string; StartedAt?: string; Pid?: number; ExitCode?: number };
@@ -38,7 +60,7 @@ export async function inspectContainer(agentId: string): Promise<ContainerInfo> 
       Image?: string;
     }>;
     const c = arr[0];
-    return {
+    const v: ContainerInfo = {
       name,
       exists: true,
       state: c?.State?.Status ?? null,
@@ -47,13 +69,20 @@ export async function inspectContainer(agentId: string): Promise<ContainerInfo> 
       pid: c?.State?.Pid ?? null,
       exitCode: c?.State?.ExitCode ?? null,
     };
+    inspectCache.set(agentId, { value: v, at: Date.now() });
+    return v;
   } catch (e) {
     log.debug("podman inspect failed", { agentId, err: String(e) });
-    return { name, exists: false, state: null, startedAt: null, image: null, pid: null, exitCode: null };
+    const v: ContainerInfo = { name, exists: false, state: null, startedAt: null, image: null, pid: null, exitCode: null };
+    inspectCache.set(agentId, { value: v, at: Date.now() });
+    return v;
   }
 }
 
 export async function containerStats(agentId: string): Promise<ContainerStats> {
+  const cached = statsCache.get(agentId);
+  if (cached && Date.now() - cached.at < STATS_TTL_MS) return cached.value;
+
   const name = containerName(agentId);
   try {
     const proc = Bun.spawn(
@@ -62,7 +91,11 @@ export async function containerStats(agentId: string): Promise<ContainerStats> {
     );
     const out = await new Response(proc.stdout).text();
     const code = await proc.exited;
-    if (code !== 0) return { cpuPercent: null, memBytes: null, memLimitBytes: null };
+    if (code !== 0) {
+      const v: ContainerStats = { cpuPercent: null, memBytes: null, memLimitBytes: null };
+      statsCache.set(agentId, { value: v, at: Date.now() });
+      return v;
+    }
     const arr = JSON.parse(out) as Array<{
       cpu_percent?: string | number;
       mem_usage_bytes?: number;
@@ -74,12 +107,16 @@ export async function containerStats(agentId: string): Promise<ContainerStats> {
     const c = arr[0];
     const cpuRaw = c?.cpu_percent ?? c?.CPU;
     const cpu = typeof cpuRaw === "number" ? cpuRaw : parseFloat(String(cpuRaw ?? "").replace("%", "")) || null;
-    return {
+    const v: ContainerStats = {
       cpuPercent: Number.isFinite(cpu) ? (cpu as number) : null,
       memBytes: c?.mem_usage_bytes ?? c?.MemUsage ?? null,
       memLimitBytes: c?.mem_limit_bytes ?? c?.MemLimit ?? null,
     };
+    statsCache.set(agentId, { value: v, at: Date.now() });
+    return v;
   } catch {
-    return { cpuPercent: null, memBytes: null, memLimitBytes: null };
+    const v: ContainerStats = { cpuPercent: null, memBytes: null, memLimitBytes: null };
+    statsCache.set(agentId, { value: v, at: Date.now() });
+    return v;
   }
 }

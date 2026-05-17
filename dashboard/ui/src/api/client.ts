@@ -1,9 +1,22 @@
 /**
  * Typed API client for kapsis-dashboard.
  *
- * Token is read once from the URL fragment (`#token=…`) on first load. The
- * fragment is preferred because it never reaches server logs or proxies.
+ * Auth model:
+ * - The long-lived bearer token is read once from the URL fragment
+ *   (#token=…), stashed in sessionStorage, and stripped from the visible URL
+ *   on first load. The fragment is preferred because the browser never sends
+ *   it in any network request — so it can't leak via referer / proxy / logs.
+ * - All /api/* requests carry the bearer in the Authorization header.
+ * - SSE endpoints can't accept custom headers (EventSource limitation), so
+ *   we mint a short-lived (~60s) one-shot ephemeral token via
+ *   POST /api/v1/sse-token and pass it as ?t=<ephemeral>. The long-lived
+ *   bearer never appears in any URL.
  */
+import type {
+  AgentStatus, AgentHealth, ContainerInfo, ContainerStats,
+  LogChunk, AuditEvent, AuditChainStatus, ConversationEntry, DiskUsageEntry,
+  KillResultWire, CleanupResultWire,
+} from "../types";
 
 function readToken(): string {
   if (typeof window === "undefined") return "";
@@ -14,7 +27,6 @@ function readToken(): string {
   const t = params.get("token") ?? "";
   if (t) {
     sessionStorage.setItem("kd_token", t);
-    // Strip the token from the visible URL.
     history.replaceState(null, "", window.location.pathname + window.location.search);
   }
   return t;
@@ -52,34 +64,36 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const api = {
   version: () => request<{ version: string; readOnly: boolean }>("GET", "/api/v1/version"),
-  agents: () => request<{ agents: import("../types").AgentStatus[] }>("GET", "/api/v1/agents"),
+  agents: () => request<{ agents: AgentStatus[] }>("GET", "/api/v1/agents"),
   agent: (id: string) => request<{
-    status: import("../types").AgentStatus;
-    health: import("../types").AgentHealth;
-    container: import("../types").ContainerInfo;
-    stats: import("../types").ContainerStats | null;
+    status: AgentStatus;
+    health: AgentHealth;
+    container: ContainerInfo | null;
+    stats: ContainerStats | null;
   }>("GET", `/api/v1/agents/${encodeURIComponent(id)}`),
-  logs: (id: string, since = 0) => request<import("../types").LogChunk>(
+  logs: (id: string, since = 0) => request<LogChunk>(
     "GET", `/api/v1/agents/${encodeURIComponent(id)}/logs?since=${since}`,
   ),
   audit: (id: string) => request<{
-    events: import("../types").AuditEvent[];
-    files: Array<{ file: string; chain: import("../types").AuditChainStatus }>;
+    events: AuditEvent[];
+    files: Array<{ file: string; chain: AuditChainStatus }>;
   }>("GET", `/api/v1/agents/${encodeURIComponent(id)}/audit`),
-  conversation: (id: string) => request<import("../types").ConversationEntry>(
+  conversation: (id: string) => request<ConversationEntry>(
     "GET", `/api/v1/agents/${encodeURIComponent(id)}/conversation`,
   ),
-  disk: () => request<{ entries: import("../types").DiskUsageEntry[] }>("GET", "/api/v1/disk/usage"),
+  disk: () => request<{ entries: DiskUsageEntry[] }>("GET", "/api/v1/disk/usage"),
   kill: (id: string, signal: "TERM" | "KILL" = "TERM") =>
-    request<{ ok: boolean; signal: string; stdout: string; stderr: string; exitCode: number; containerMissing?: boolean }>(
-      "POST", `/api/v1/agents/${encodeURIComponent(id)}/kill`, { signal },
-    ),
+    request<KillResultWire>("POST", `/api/v1/agents/${encodeURIComponent(id)}/kill`, { signal }),
   cleanup: (targets: string[], dryRun: boolean) =>
-    request<{ ok: boolean; dryRun: boolean; stdout: string; stderr: string; exitCode: number }>(
-      "POST", "/api/v1/maintenance/cleanup", { targets, dryRun },
-    ),
+    request<CleanupResultWire>("POST", "/api/v1/maintenance/cleanup", { targets, dryRun }),
+  mintSseToken: () => request<{ token: string; ttlMs: number }>("POST", "/api/v1/sse-token"),
 };
 
-export function sse(path: string): EventSource {
-  return new EventSource(`${path}?token=${encodeURIComponent(token)}`);
+/**
+ * Open an EventSource for an SSE endpoint, fetching a fresh ephemeral
+ * token first so the long-lived bearer never appears in the URL.
+ */
+export async function sseEphemeral(path: string): Promise<EventSource> {
+  const { token: ephemeral } = await api.mintSseToken();
+  return new EventSource(`${path}?t=${encodeURIComponent(ephemeral)}`);
 }

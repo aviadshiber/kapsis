@@ -26,15 +26,30 @@ it from the visible URL after first load.
 
 | Property | Default |
 |---|---|
-| Bind address | `127.0.0.1` only |
-| Auth | random bearer token printed at startup (`--token` to override) |
+| Bind address | `127.0.0.1` only (override requires `--allow-non-localhost`, which prints a loud warning) |
+| Auth | random bearer token, **hidden** in stdout by default — only the URL with `#token=…` fragment is printed |
+| SSE auth | one-shot ephemeral token minted via `POST /api/v1/sse-token` (the bearer-gated mint endpoint); the long-lived bearer never appears in any URL |
 | Read-only mode | off (`--read-only` to disable destructive endpoints) |
 | Destructive actions | require a typed challenge (agent id for kill, the word `cleanup` for cleanup) |
-| Dashboard actions | recorded to `~/.kapsis/audit/dashboard.jsonl` (always on, hash-chained) |
+| Dashboard actions | recorded to `~/.kapsis/audit/dashboard.jsonl` (always on, hash-chained, chain verified on startup) |
+| Security headers | `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` + `Referrer-Policy: no-referrer` + `X-Content-Type-Options: nosniff` on every response |
 
 The dashboard refuses cross-origin requests and does not set CORS headers. There is no
-session cookie — every request carries the bearer in the `Authorization` header (or as
-a `?token=` query parameter for `EventSource`, which can't set headers).
+session cookie — every `/api/*` request carries the bearer in the `Authorization`
+header. SSE connections (`/sse/*`) use an ephemeral one-shot token in `?t=…` because
+the EventSource API cannot send custom headers; the long-lived bearer is never put
+into a URL.
+
+**Token visibility:** the bearer is masked in stdout (`Xa1b2…cdef`) unless you pass
+`--show-token` or set `KAPSIS_DASHBOARD_SHOW_TOKEN=true`. The full URL — including the
+`#token=…` fragment — is still printed so you can paste it into a browser; browsers
+never transmit URL fragments in network requests.
+
+**Audit on startup:** when the dashboard restarts and finds an existing
+`~/.kapsis/audit/dashboard.jsonl`, it verifies the entire hash chain before extending
+it. If the chain is broken (tampering / partial write / disk corruption) the writer
+records a `chain-break-detected` event so a viewer can see exactly where the audit gap
+began.
 
 ## Audit consumption
 
@@ -59,17 +74,20 @@ hash = sha256(prev_hash + seq + timestamp + actor + action + target + detail_jso
 | Flag | Default | Notes |
 |---|---|---|
 | `--port` | `7777` | HTTP port |
-| `--host` | `127.0.0.1` | Bind address (don't change unless you've thought about it) |
+| `--host` | `127.0.0.1` | Bind address. Non-loopback requires `--allow-non-localhost`. |
+| `--allow-non-localhost` | off | Required (and warns loudly) when `--host` is not 127.0.0.1 / localhost / ::1. Exposes destructive endpoints to the network behind only the bearer token. Prefer SSH port forwarding. |
 | `--kapsis-home` | `$KAPSIS_HOME` or `~/.kapsis` | Root of Kapsis state |
 | `--read-only` | off | Disable destructive endpoints |
 | `--open` | off | Open the URL in the default browser at startup |
 | `--token` | random | Use a fixed bearer token |
+| `--show-token` | off | Print the bearer token to stdout (also `KAPSIS_DASHBOARD_SHOW_TOKEN=true`) |
 | `--ui-dist` | embedded | Serve a Vite-built UI bundle from a path (dev override) |
 | `--cleanup-script` | auto | Path to `scripts/kapsis-cleanup.sh` |
 
 Environment:
 - `KAPSIS_DASHBOARD_LOG_LEVEL=debug` for verbose logs.
 - `KAPSIS_HOME` overrides the state root.
+- `KAPSIS_DASHBOARD_SHOW_TOKEN=true` equivalent to `--show-token`.
 
 ## Agent health visualization
 

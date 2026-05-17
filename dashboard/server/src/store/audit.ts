@@ -48,13 +48,26 @@ export class AuditStore {
 
   /** Parse all events for a given agent across all session/rotated files. */
   async query(q: AuditQuery): Promise<AuditEvent[]> {
+    const { events } = await this.queryWithFileTexts(q);
+    return events;
+  }
+
+  /**
+   * Like `query`, but also returns the per-file text buffer so the caller
+   * can pass it to `verifyFile(file, preloadedText)` without re-reading.
+   * The audit endpoint runs both query + verifyFile on each file, which
+   * doubles peak memory; this method lets them share the read.
+   */
+  async queryWithFileTexts(q: AuditQuery): Promise<{ events: AuditEvent[]; texts: Map<string, string> }> {
     const files = await this.listFiles(q.agentId);
     files.sort();
     const all: AuditEvent[] = [];
+    const texts = new Map<string, string>();
     const limit = q.limit ?? 5000;
     for (const f of files) {
       try {
         const text = await readFile(f, "utf8");
+        texts.set(f, text);
         for (const line of text.split("\n")) {
           if (!line) continue;
           let ev: AuditEvent;
@@ -69,7 +82,7 @@ export class AuditStore {
       }
       if (all.length >= limit) break;
     }
-    return all;
+    return { events: all, texts };
   }
 
   /**
@@ -80,12 +93,16 @@ export class AuditStore {
    * `detail_raw` is the raw JSON substring extracted between `"detail":` and
    * `,"prev_hash"` — matching the bash sed extraction.
    */
-  async verifyFile(file: string): Promise<AuditChainStatus> {
+  async verifyFile(file: string, preloadedText?: string): Promise<AuditChainStatus> {
     let text: string;
-    try {
-      text = await readFile(file, "utf8");
-    } catch (e) {
-      return { valid: false, lastSeq: -1, lastHash: GENESIS, brokenAt: null, reason: `cannot read: ${String(e)}` };
+    if (preloadedText !== undefined) {
+      text = preloadedText;
+    } else {
+      try {
+        text = await readFile(file, "utf8");
+      } catch (e) {
+        return { valid: false, lastSeq: -1, lastHash: GENESIS, brokenAt: null, reason: `cannot read: ${String(e)}` };
+      }
     }
     let prevHash = GENESIS;
     let lastSeq = -1;

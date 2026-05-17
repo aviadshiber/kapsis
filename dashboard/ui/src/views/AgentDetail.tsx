@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
-import { api, sse } from "../api/client";
+import { useEffect, useRef, useState } from "react";
+import { api, sseEphemeral } from "../api/client";
 import type { AgentHealth, AgentStatus, AuditChainStatus, AuditEvent, ContainerInfo, ContainerStats, ConversationEntry, LogChunk } from "../types";
 import { StatusPill } from "../components/StatusPill";
 import { ProgressBar } from "../components/ProgressBar";
@@ -17,7 +17,7 @@ interface Props {
 interface Detail {
   status: AgentStatus;
   health: AgentHealth;
-  container: ContainerInfo;
+  container: ContainerInfo | null;
   stats: ContainerStats | null;
 }
 
@@ -27,13 +27,39 @@ export function AgentDetail({ agentId, readOnly, onBack }: Props) {
   const [showKill, setShowKill] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const streamRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     let alive = true;
-    const load = () => api.agent(agentId).then((d) => { if (alive) setData(d); }).catch((e) => setErr(String(e)));
+    const load = () => api.agent(agentId)
+      .then((d) => { if (alive) setData(d); })
+      .catch((e) => { if (alive) setErr(String(e)); });
     load();
-    const id = setInterval(load, 4000);
-    return () => { alive = false; clearInterval(id); };
+
+    // Subscribe to SSE for this agent only. We previously polled every 4s
+    // unconditionally — that forked podman on every tick. Now we only
+    // refetch when the status file for this agent actually changes.
+    void (async () => {
+      try {
+        const stream = await sseEphemeral("/sse/agents");
+        if (!alive) { stream.close(); return; }
+        streamRef.current = stream;
+        stream.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data) as { status?: AgentStatus };
+            if (msg.status?.agent_id === agentId) load();
+          } catch { /* heartbeat */ }
+        };
+      } catch (e) {
+        console.warn("SSE disabled, falling back to slow poll:", e);
+        // Best-effort fallback: a slow (15s) poll so the page is not totally
+        // static if SSE setup fails. Far below the old 4s cadence.
+        const id = setInterval(load, 15_000);
+        return () => clearInterval(id);
+      }
+    })();
+
+    return () => { alive = false; streamRef.current?.close(); };
   }, [agentId]);
 
   if (err) return <div className="banner">{err}</div>;
@@ -69,7 +95,7 @@ export function AgentDetail({ agentId, readOnly, onBack }: Props) {
       </div>
 
       {tab === "overview" && <OverviewTab status={status} health={health} />}
-      {tab === "logs" && <LogsTab agentId={agentId} />}
+      {tab === "logs" && <LogsTab agentId={agentId} phase={status.phase} />}
       {tab === "audit" && <AuditTab agentId={agentId} />}
       {tab === "conversation" && <ConversationTab agentId={agentId} />}
       {tab === "container" && <ContainerTab container={container} stats={stats} />}
@@ -150,9 +176,13 @@ function OverviewTab({ status, health }: { status: AgentStatus; health: AgentHea
   );
 }
 
-function LogsTab({ agentId }: { agentId: string }) {
+function LogsTab({ agentId, phase }: { agentId: string; phase: string }) {
   const [chunk, setChunk] = useState<LogChunk | null>(null);
   const [follow, setFollow] = useState(true);
+
+  // Completed agents never grow their log, so poll-every-1.5s wastes work.
+  // Use 1.5s when the agent is live, 30s when it's done.
+  const pollIntervalMs = phase === "complete" ? 30_000 : 1500;
 
   useEffect(() => {
     let alive = true;
@@ -170,9 +200,9 @@ function LogsTab({ agentId }: { agentId: string }) {
       }
     };
     poll();
-    const id = setInterval(() => { if (follow) void poll(); }, 1500);
+    const id = setInterval(() => { if (follow) void poll(); }, pollIntervalMs);
     return () => { alive = false; clearInterval(id); };
-  }, [agentId, follow]);
+  }, [agentId, follow, pollIntervalMs]);
 
   return (
     <div>
@@ -262,7 +292,10 @@ function ConversationTab({ agentId }: { agentId: string }) {
   );
 }
 
-function ContainerTab({ container, stats }: { container: ContainerInfo; stats: ContainerStats | null }) {
+function ContainerTab({ container, stats }: { container: ContainerInfo | null; stats: ContainerStats | null }) {
+  if (!container) {
+    return <div className="banner">Container inspect skipped — agent is complete, so the container is not expected to be running.</div>;
+  }
   if (!container.exists) {
     return <div className="banner">No container <code>{container.name}</code> found (likely already exited and cleaned up).</div>;
   }

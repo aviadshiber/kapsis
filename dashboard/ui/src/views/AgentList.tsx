@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { api, sse } from "../api/client";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { api, sseEphemeral } from "../api/client";
 import type { AgentStatus } from "../types";
 import { StatusPill } from "../components/StatusPill";
 import { ProgressBar } from "../components/ProgressBar";
@@ -25,29 +25,62 @@ function duration(s: AgentStatus): string {
   return `${(sec / 3600).toFixed(1)}h`;
 }
 
+interface RowProps {
+  status: AgentStatus;
+  onSelect: (id: string) => void;
+}
+
+// Memoized so unrelated SSE updates (other rows changing) don't re-render
+// every cell in a 200-row table.
+const AgentRow = memo(function AgentRow({ status: a, onSelect }: RowProps) {
+  const healthState = a.phase !== "complete" ? "unknown" : (a.exit_code ?? 0) === 0 ? "healthy" : "failed";
+  return (
+    <tr onClick={() => onSelect(a.agent_id)}>
+      <td><HealthDot state={healthState} /></td>
+      <td><strong>{a.project}</strong></td>
+      <td><code>{a.agent_id}</code></td>
+      <td><StatusPill status={a} /></td>
+      <td style={{ width: 140 }}><ProgressBar value={a.progress} /></td>
+      <td style={{ color: "var(--fg-muted)" }}>{new Date(a.started_at).toLocaleString()}</td>
+      <td>{duration(a)}</td>
+      <td style={{ color: "var(--fg-muted)" }}>{a.branch ?? "—"}</td>
+    </tr>
+  );
+});
+
 export function AgentList({ onSelect }: Props) {
   const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
+  const streamRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     let alive = true;
     api.agents().then(({ agents }) => { if (alive) setAgents(agents); });
-    const stream = sse("/sse/agents");
-    stream.onmessage = (ev) => {
+    void (async () => {
       try {
-        const msg = JSON.parse(ev.data) as { status?: AgentStatus };
-        if (!msg.status) return;
-        setAgents((prev) => {
-          const i = prev.findIndex((a) => a.agent_id === msg.status!.agent_id && a.project === msg.status!.project);
-          if (i === -1) return [msg.status!, ...prev];
-          const copy = prev.slice();
-          copy[i] = msg.status!;
-          return copy;
-        });
-      } catch { /* heartbeat */ }
-    };
-    return () => { alive = false; stream.close(); };
+        const stream = await sseEphemeral("/sse/agents");
+        if (!alive) { stream.close(); return; }
+        streamRef.current = stream;
+        stream.onmessage = (ev) => {
+          try {
+            const msg = JSON.parse(ev.data) as { status?: AgentStatus };
+            if (!msg.status) return;
+            setAgents((prev) => {
+              const i = prev.findIndex((a) => a.agent_id === msg.status!.agent_id && a.project === msg.status!.project);
+              if (i === -1) return [msg.status!, ...prev];
+              const copy = prev.slice();
+              copy[i] = msg.status!;
+              return copy;
+            });
+          } catch { /* heartbeat */ }
+        };
+      } catch (e) {
+        // Token mint failed or SSE unavailable — fall back to no live updates.
+        console.warn("SSE disabled:", e);
+      }
+    })();
+    return () => { alive = false; streamRef.current?.close(); };
   }, []);
 
   const filtered = useMemo(() => {
@@ -87,16 +120,7 @@ export function AgentList({ onSelect }: Props) {
         </thead>
         <tbody>
           {filtered.map((a) => (
-            <tr key={`${a.project}-${a.agent_id}`} onClick={() => onSelect(a.agent_id)}>
-              <td><HealthDot state={a.phase !== "complete" ? "unknown" : (a.exit_code ?? 0) === 0 ? "healthy" : "failed"} /></td>
-              <td><strong>{a.project}</strong></td>
-              <td><code>{a.agent_id}</code></td>
-              <td><StatusPill status={a} /></td>
-              <td style={{ width: 140 }}><ProgressBar value={a.progress} /></td>
-              <td style={{ color: "var(--fg-muted)" }}>{new Date(a.started_at).toLocaleString()}</td>
-              <td>{duration(a)}</td>
-              <td style={{ color: "var(--fg-muted)" }}>{a.branch ?? "—"}</td>
-            </tr>
+            <AgentRow key={`${a.project}-${a.agent_id}`} status={a} onSelect={onSelect} />
           ))}
           {filtered.length === 0 && (
             <tr><td colSpan={8} style={{ textAlign: "center", color: "var(--fg-muted)", padding: 32 }}>No agents match.</td></tr>

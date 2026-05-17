@@ -2,7 +2,7 @@
   "name": "kapsis-dashboard",
   "version": "0.1.0",
   "private": true,
-  "workspaces": ["server", "ui"],
+  "workspaces": ["shared", "server", "ui"],
   "scripts": {
     "dev": "bun run --filter '*' dev",
     "build:ui": "bun run --cwd ui build",
