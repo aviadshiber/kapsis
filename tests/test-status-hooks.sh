@@ -366,12 +366,12 @@ test_inject_claude_creates_settings_if_missing() {
     source "$LIB_DIR/inject-status-hooks.sh"
     inject_claude_hooks >/dev/null 2>&1
 
-    # Verify settings.local.json was created
-    assert_file_exists "$TEST_HOME/.claude/settings.local.json" "settings.local.json should be created"
+    # Verify settings.json was created
+    assert_file_exists "$TEST_HOME/.claude/settings.json" "settings.json should be created"
 
     # Verify it contains our hooks
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$content" "PostToolUse" "Should contain PostToolUse hook"
     assert_contains "$content" "kapsis-status-hook.sh" "Should contain status hook"
     assert_contains "$content" "Stop" "Should contain Stop hook"
@@ -386,7 +386,7 @@ test_inject_claude_merges_with_existing() {
 
     # Create existing settings with user hooks
     mkdir -p "$TEST_HOME/.claude"
-    cat > "$TEST_HOME/.claude/settings.local.json" << 'EOF'
+    cat > "$TEST_HOME/.claude/settings.json" << 'EOF'
 {
   "hooks": {
     "PostToolUse": [{
@@ -403,13 +403,13 @@ EOF
 
     # Verify user hooks are preserved
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$content" "/user/custom-hook.sh" "User hook should be preserved"
     assert_contains "$content" "kapsis-status-hook.sh" "Kapsis hook should be added"
 
     # Count PostToolUse entries - should be 2 (user + kapsis)
     local hook_count
-    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "2" "$hook_count" "Should have 2 PostToolUse entries"
 
     cleanup_inject_test_env
@@ -426,11 +426,11 @@ test_inject_claude_idempotent() {
 
     # Verify hooks are not duplicated
     local hook_count
-    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "1" "$hook_count" "Should have exactly 1 PostToolUse entry after double injection"
 
     local stop_count
-    stop_count=$(jq '.hooks.Stop | length' "$TEST_HOME/.claude/settings.local.json")
+    stop_count=$(jq '.hooks.Stop | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "1" "$stop_count" "Should have exactly 1 Stop entry after double injection"
 
     cleanup_inject_test_env
@@ -449,21 +449,21 @@ test_inject_claude_with_gist_enabled() {
     inject_claude_hooks >/dev/null 2>&1
 
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
 
     # Gist hook must appear in settings
     assert_contains "$content" "kapsis-gist-hook.sh" "Gist hook should be injected when KAPSIS_INJECT_GIST=true"
 
     # Two PostToolUse entries: gist hook (first) + status hook (second)
     local hook_count
-    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "2" "$hook_count" "Should have 2 PostToolUse entries (gist + status)"
 
     # Gist hook must come before status hook so status reads the current gist.
     # Check ordering by comparing line positions in the serialized JSON.
     local gist_line status_line
-    gist_line=$(grep -n "kapsis-gist-hook.sh" "$TEST_HOME/.claude/settings.local.json" | head -1 | cut -d: -f1)
-    status_line=$(grep -n "kapsis-status-hook.sh" "$TEST_HOME/.claude/settings.local.json" | head -1 | cut -d: -f1)
+    gist_line=$(grep -n "kapsis-gist-hook.sh" "$TEST_HOME/.claude/settings.json" | head -1 | cut -d: -f1)
+    status_line=$(grep -n "kapsis-status-hook.sh" "$TEST_HOME/.claude/settings.json" | head -1 | cut -d: -f1)
     assert_true "[[ ${gist_line:-99} -lt ${status_line:-100} ]]" "Gist hook should appear before status hook in JSON"
 
     unset KAPSIS_INJECT_GIST
@@ -480,7 +480,7 @@ test_inject_claude_gist_disabled_when_hook_missing() {
     inject_claude_hooks >/dev/null 2>&1
 
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
 
     # Gist hook must NOT appear when the hook file is missing
     assert_not_contains "$content" "kapsis-gist-hook.sh" \
@@ -654,7 +654,7 @@ test_inject_skips_without_agent_id() {
     inject_kapsis_hooks "claude-cli" >/dev/null 2>&1
 
     # Verify no settings file was created
-    assert_false "[[ -f '$TEST_HOME/.claude/settings.local.json' ]]" "Should not create settings without agent ID"
+    assert_false "[[ -f '$TEST_HOME/.claude/settings.json' ]]" "Should not create settings without agent ID"
 
     cleanup_inject_test_env
 }
@@ -1298,7 +1298,7 @@ test_gist_hook_skips_when_inject_gist_false() {
 }
 
 #===============================================================================
-# Test: Gist Hook Injection into settings.local.json
+# Test: Gist Hook Injection into settings.json
 #===============================================================================
 
 test_inject_gist_hook_injected_when_enabled() {
@@ -1314,11 +1314,11 @@ test_inject_gist_hook_injected_when_enabled() {
     inject_claude_hooks >/dev/null 2>&1
 
     local hook_count
-    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "2" "$hook_count" "Should have 2 PostToolUse entries (status + gist) when KAPSIS_INJECT_GIST=true"
 
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$content" "kapsis-gist-hook.sh" "settings should contain gist hook path"
 
     cleanup_inject_test_env
@@ -1333,11 +1333,11 @@ test_inject_gist_hook_not_injected_when_disabled() {
     inject_claude_hooks >/dev/null 2>&1
 
     local hook_count
-    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "1" "$hook_count" "Should have 1 PostToolUse entry (status only) when KAPSIS_INJECT_GIST not set"
 
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
     assert_not_contains "$content" "kapsis-gist-hook.sh" "settings should not contain gist hook when disabled"
 
     cleanup_inject_test_env

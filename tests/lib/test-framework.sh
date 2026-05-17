@@ -512,6 +512,20 @@ assert_false() {
     fi
 }
 
+# assert_not_empty <text> <message>
+# Checks that text is non-empty
+assert_not_empty() {
+    local text="$1"
+    local message="${2:-Text should not be empty}"
+
+    if [[ -n "$text" ]]; then
+        return 0
+    else
+        _log_failure "$message" "Text was empty"
+        return 1
+    fi
+}
+
 # assert_matches <text> <regex_pattern> <message>
 # Checks if text matches a regex pattern (extended regex)
 # Example: assert_matches "$output" "[a-f0-9]{6}" "Should contain 6-char hex"

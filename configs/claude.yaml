@@ -115,7 +115,7 @@ git:
 
   # Attribution block appended to commits and PR descriptions.
   # Placeholders: {version}, {agent_id}, {branch}, {worktree}
-  # For Claude Code, these values are injected into ~/.claude/settings.local.json
+  # For Claude Code, these values are injected into ~/.claude/settings.json
   # as Claude's native `attribution.commit` / `attribution.pr` — Claude itself
   # writes them on its commits. For other agents, Kapsis appends them to commit
   # messages directly. Empty string ("") disables that attribution. Omit the
