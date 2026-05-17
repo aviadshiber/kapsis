@@ -370,12 +370,53 @@ check_disk_space() {
 #===============================================================================
 # MAIN PREFLIGHT CHECK
 #===============================================================================
+#===============================================================================
+# User namespace compatibility (#361)
+#===============================================================================
+
+# Check whether the host UID is in the range that triggers the keep-id
+# degenerate-mapping bug. On hosts where `id -u` exceeds POSIX UID_MAX
+# (60000 convention), plain --userns=keep-id intermittently emits a
+# single-ID mapping that doesn't include UID 1000 and the container
+# fails to attach with exit 126.
+#
+# This check fires a WARN (not ERROR) — by default the agent
+# autodetects and uses --userns=keep-id:uid=1000,gid=1000 for high
+# host UIDs, so launch will succeed. The warning is purely informational
+# so the user knows the override path if their config pins
+# security.userns: keep-id manually.
+check_userns_compat() {
+    local config_file="${1:-}"
+    local host_uid
+    host_uid=$(id -u 2>/dev/null || echo 0)
+
+    # Only warn when the user has manually pinned `keep-id` despite a
+    # high host UID — autodetect already handles the common case.
+    if (( host_uid <= 60000 )); then
+        return 0
+    fi
+
+    if [[ -n "$config_file" && -f "$config_file" ]] && command -v yq &>/dev/null; then
+        local pinned
+        pinned=$(yq -r '.security.userns // ""' "$config_file" 2>/dev/null)
+        if [[ "$pinned" == "keep-id" ]]; then
+            preflight_warn "security.userns: keep-id is pinned and host UID $host_uid > 60000"
+            preflight_warn "  Container attach may fail with exit 126 (kapsis#361)."
+            preflight_warn "  Remove the pin to use the autodetected default"
+            preflight_warn "  (keep-id:uid=1000,gid=1000) or set it explicitly."
+            return 0
+        fi
+    fi
+    preflight_ok "User namespace mode compatible with host UID $host_uid"
+}
+
 preflight_check() {
     local project_path="${1:-.}"
     local target_branch="${2:-}"
     local spec_file="${3:-}"
     local image_name="${4:-kapsis-sandbox:latest}"
     local agent_id="${5:-1}"
+    local agent_config="${6:-}"
 
     _PREFLIGHT_ERRORS=0
     _PREFLIGHT_WARNINGS=0
@@ -387,6 +428,7 @@ preflight_check() {
     check_podman || true
     check_disk_space || true
     check_images "$image_name" || true
+    check_userns_compat "$agent_config" || true
 
     if [[ -n "$target_branch" ]]; then
         check_git_status "$project_path" || true
