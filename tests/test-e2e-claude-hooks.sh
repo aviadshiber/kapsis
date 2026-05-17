@@ -123,7 +123,6 @@ test_real_posttooluse_gist_hook_fires() {
         KAPSIS_STATUS_AGENT_ID="$agent_id" \
         KAPSIS_INJECT_GIST="true" \
         KAPSIS_GIST_FILE="$gist_file" \
-        CLAUDE_CODE_OAUTH_TOKEN="${CLAUDE_CODE_OAUTH_TOKEN}" \
         claude --print \
                --model claude-haiku-4-5-20251001 \
                --max-turns 3 \
