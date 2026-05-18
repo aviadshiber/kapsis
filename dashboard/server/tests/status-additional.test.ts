@@ -52,15 +52,21 @@ describe("StatusStore — gap coverage", () => {
 
     await unlink(path);
     // fs.watch latency varies a lot on macOS CI runners — FSEvents
-    // coalescing has been observed past 1s. Poll up to 5s for the drop
-    // to land. Underlying budget is ~300ms (fs.watch) + 50ms (debounce)
-    // + 200ms (drop-grace) = ~550ms in the typical case.
-    for (let i = 0; i < 100 && !drops.includes("kapsis-demo-drop1.json"); i++) {
-      await Bun.sleep(50);
+    // coalescing has been observed past 1s, and on loaded runners
+    // (parallel matrix jobs, virtualized hosts) the delete event has
+    // missed the previous 5s window. Underlying happy-path budget is
+    // ~300ms (fs.watch) + 50ms (debounce) + 200ms (drop-grace) = ~550ms.
+    // Poll for up to 25s so a slow runner doesn't trip the test, and
+    // raise the per-test timeout to 30s (the third arg to `it()`) so
+    // the poll budget can actually run to completion instead of being
+    // truncated at Bun's default 5s test timeout.
+    const deadlineMs = Date.now() + 25_000;
+    while (!drops.includes("kapsis-demo-drop1.json") && Date.now() < deadlineMs) {
+      await Bun.sleep(100);
     }
     expect(drops).toContain("kapsis-demo-drop1.json");
     expect(store.get("drop1")).toBeUndefined();
-  });
+  }, 30_000);
 
   it("get(agentId) is O(1) via the secondary index (sanity check it returns)", async () => {
     for (let i = 0; i < 100; i++) {
