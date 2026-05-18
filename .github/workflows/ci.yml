@@ -31,6 +31,10 @@ jobs:
       container: ${{ steps.determine.outputs.container }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          # Need >1 ref to compare against HEAD's first parent for the
+          # per-push dashboard-only override below.
+          fetch-depth: 2
       - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d  # v4.0.1
         id: filter
         if: github.event_name != 'schedule'
@@ -49,16 +53,69 @@ jobs:
               - 'scripts/build-image.sh'
               - 'scripts/lib/**'
               - '.github/workflows/ci.yml'
+      # If the PUSH's delta (HEAD~1..HEAD) is entirely under dashboard/ or
+      # dashboard CI workflows, override the cumulative paths-filter result.
+      # A long-running dashboard PR may legitimately have touched scripts/
+      # in earlier commits, but a followup commit that only edits dashboard/
+      # files has zero effect on the container or kapsis scripts and should
+      # not re-run the 11-minute container test job.
+      - name: Detect dashboard-only push
+        id: dashboard-only
+        if: github.event_name != 'schedule'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -e
+          # `github.event.before` exists on push events; for pull_request
+          # we use the SECOND parent of the merge commit (the
+          # feature-branch-side parent).
+          if [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            PREV="$BEFORE_SHA"
+          elif [[ "$EVENT_NAME" == "pull_request" ]]; then
+            PREV=$(git rev-parse 'HEAD^2' 2>/dev/null || echo "")
+          else
+            PREV=$(git rev-parse 'HEAD~1' 2>/dev/null || echo "")
+          fi
+          if [[ -z "$PREV" ]]; then
+            echo "dashboard_only=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Could not determine previous commit — running full CI"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$PREV" "$HEAD_SHA" 2>/dev/null || true)
+          if [[ -z "$CHANGED" ]]; then
+            echo "dashboard_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          NON_DASHBOARD=$(printf '%s\n' "$CHANGED" | grep -vE '^(dashboard/|\.github/workflows/dashboard-)' || true)
+          if [[ -z "$NON_DASHBOARD" ]]; then
+            echo "dashboard_only=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Push touches only dashboard/ — skipping script/container/integration/e2e tests"
+          else
+            echo "dashboard_only=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Determine test scope
         id: determine
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DASHBOARD_ONLY: ${{ steps.dashboard-only.outputs.dashboard_only }}
+          SCRIPTS_FILTER: ${{ steps.filter.outputs.scripts }}
+          CONTAINER_FILTER: ${{ steps.filter.outputs.container }}
         run: |
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+          if [[ "$EVENT_NAME" == "schedule" ]]; then
             # Scheduled run: always run all tests regardless of what changed
             echo "scripts=true" >> "$GITHUB_OUTPUT"
             echo "container=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$DASHBOARD_ONLY" == "true" ]]; then
+            # Push touches only dashboard/ — script/container tests have
+            # no signal here. dashboard-build.yml runs the dashboard-specific
+            # tests for this push independently.
+            echo "scripts=false" >> "$GITHUB_OUTPUT"
+            echo "container=false" >> "$GITHUB_OUTPUT"
           else
-            echo "scripts=${{ steps.filter.outputs.scripts }}" >> "$GITHUB_OUTPUT"
-            echo "container=${{ steps.filter.outputs.container }}" >> "$GITHUB_OUTPUT"
+            echo "scripts=$SCRIPTS_FILTER" >> "$GITHUB_OUTPUT"
+            echo "container=$CONTAINER_FILTER" >> "$GITHUB_OUTPUT"
           fi
 
   # All test jobs run in parallel after change detection
