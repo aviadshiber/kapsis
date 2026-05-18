@@ -183,18 +183,29 @@ export function Maintenance({ readOnly }: Props) {
       </div>
 
       {running && (
-        <section style={{ marginTop: 24 }}>
-          <div style={{ display: "flex", alignItems: "baseline", gap: 12, marginBottom: 8 }}>
+        <section
+          className={running.exitCode === null
+            ? "run-card run-card--running"
+            : running.exitCode === 0
+              ? "run-card run-card--ok"
+              : "run-card run-card--err"}
+          style={{ marginTop: 24 }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
             <h3 style={{ margin: 0 }}>
               {running.dryRun ? "Preview" : "Execute"}: {running.target}
             </h3>
             {running.exitCode === null ? (
-              <span className="pill pending">
-                <span className="spinner" aria-hidden /> running · {elapsed(running.startedAt)} · {running.lines.length} lines
+              <span className="run-status run-status--running">
+                <span className="spinner" aria-hidden /> Running · {elapsed(running.startedAt)} · {running.lines.length} lines
+              </span>
+            ) : running.exitCode === 0 ? (
+              <span className="run-status run-status--ok">
+                <span className="check" aria-hidden>✓</span> Done · {elapsed(running.startedAt)} · {running.lines.length} lines
               </span>
             ) : (
-              <span className={`pill ${running.exitCode === 0 ? "complete" : "failed"}`}>
-                exit {running.exitCode} · {elapsed(running.startedAt)} · {running.lines.length} lines
+              <span className="run-status run-status--err">
+                <span className="cross" aria-hidden>✗</span> Failed · exit {running.exitCode} · {elapsed(running.startedAt)} · {running.lines.length} lines
               </span>
             )}
             <div style={{ flex: 1 }} />
