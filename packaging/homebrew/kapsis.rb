@@ -31,6 +31,51 @@ class Kapsis < Formula
   # Podman is the container runtime - required but not a Homebrew dependency
   # Users must install it separately (brew install podman on macOS)
 
+  # Per-platform kapsis-dashboard binaries.
+  #
+  # These resources reference release assets produced by the
+  # `compile-dashboard` job in .github/workflows/release.yml. The CI
+  # `Update Homebrew formula` step patches each block's url + sha256
+  # after the release is created (it computes the SHA256 by downloading
+  # the freshly-attached asset). The marker comments are load-bearing
+  # — do not remove or change their wording.
+  on_macos do
+    on_arm do
+      # DASHBOARD_DARWIN_ARM64_MARKER_START
+      resource "kapsis-dashboard" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.29.1/kapsis-dashboard-darwin-arm64"
+        sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      end
+      # DASHBOARD_DARWIN_ARM64_MARKER_END
+    end
+    on_intel do
+      # DASHBOARD_DARWIN_X64_MARKER_START
+      resource "kapsis-dashboard" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.29.1/kapsis-dashboard-darwin-x64"
+        sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      end
+      # DASHBOARD_DARWIN_X64_MARKER_END
+    end
+  end
+  on_linux do
+    on_arm do
+      # DASHBOARD_LINUX_ARM64_MARKER_START
+      resource "kapsis-dashboard" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.29.1/kapsis-dashboard-linux-arm64"
+        sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      end
+      # DASHBOARD_LINUX_ARM64_MARKER_END
+    end
+    on_intel do
+      # DASHBOARD_LINUX_X64_MARKER_START
+      resource "kapsis-dashboard" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.29.1/kapsis-dashboard-linux-x64"
+        sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      end
+      # DASHBOARD_LINUX_X64_MARKER_END
+    end
+  end
+
   def install
     # Install everything to libexec, then create wrappers
     libexec.install Dir["*"]
@@ -72,15 +117,21 @@ class Kapsis < Formula
       EOS
     end
 
-    # Install the dashboard binary if one was prebuilt and shipped in the release.
-    # Release artifacts come from .github/workflows/dashboard-build.yml as
-    # kapsis-dashboard-bun-{darwin,linux}-{arm64,x64}; the release packager
-    # renames the per-platform binary to dashboard/bin/kapsis-dashboard.
-    dashboard_bin = libexec/"dashboard/bin/kapsis-dashboard"
-    if dashboard_bin.exist?
-      chmod 0755, dashboard_bin
-      bin.install_symlink dashboard_bin => "kapsis-dashboard"
+    # Install the kapsis-dashboard binary from the per-platform release
+    # asset selected by the on_macos/on_linux + on_arm/on_intel resource
+    # blocks above. The asset is downloaded by Homebrew (sha256-verified
+    # against the formula) at install time.
+    resource("kapsis-dashboard").stage do
+      bin_dir = libexec/"dashboard/bin"
+      bin_dir.mkpath
+      # The staged file has the per-target suffix (e.g. kapsis-dashboard-darwin-arm64);
+      # rename to the generic name the bin symlink expects.
+      staged = Dir["kapsis-dashboard-*"].first
+      odie "kapsis-dashboard resource downloaded but no binary found" unless staged
+      cp staged, bin_dir/"kapsis-dashboard"
+      chmod 0755, bin_dir/"kapsis-dashboard"
     end
+    bin.install_symlink libexec/"dashboard/bin/kapsis-dashboard"
   end
 
   def caveats
@@ -125,5 +176,14 @@ class Kapsis < Formula
       assert_predicate libexec/script, :executable?,
         "#{script} should be executable"
     end
+
+    # Verify kapsis-dashboard binary was installed and is runnable.
+    assert_predicate bin/"kapsis-dashboard", :exist?,
+      "kapsis-dashboard binary should be installed"
+    assert_predicate bin/"kapsis-dashboard", :executable?,
+      "kapsis-dashboard binary should be executable"
+    # --version is the only flag that exits 0 without binding a port.
+    assert_match(/\d+\.\d+\.\d+/,
+      shell_output("#{bin}/kapsis-dashboard --version"))
   end
 end

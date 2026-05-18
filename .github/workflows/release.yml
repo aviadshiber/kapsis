@@ -134,10 +134,66 @@ jobs:
             echo "Pushed ${REGISTRY}/${IMAGE}:${VERSION}"
           done
 
+  compile-dashboard:
+    name: Compile Dashboard Binary (${{ matrix.target }})
+    needs: validate
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            bunTarget: bun-darwin-arm64
+            runner: macos-latest
+            runnerArch: ARM64
+          - target: darwin-x64
+            bunTarget: bun-darwin-x64
+            runner: macos-13
+            runnerArch: X64
+          - target: linux-arm64
+            bunTarget: bun-linux-arm64
+            runner: ubuntu-latest
+            runnerArch: X64
+          - target: linux-x64
+            bunTarget: bun-linux-x64
+            runner: ubuntu-latest
+            runnerArch: X64
+    defaults:
+      run:
+        working-directory: dashboard
+    env:
+      BUN_TARGET: ${{ matrix.bunTarget }}
+      OUT_NAME: kapsis-dashboard-${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: "1.3.11"
+      - run: bun install --frozen-lockfile
+      - name: Build UI
+        run: bun run build:ui
+      - name: Compile binary
+        run: |
+          mkdir -p bin
+          bun build --compile --minify --target="$BUN_TARGET" \
+            server/src/main.ts \
+            --outfile "bin/${OUT_NAME}"
+      # Smoke-test only when host arch matches target arch (cross-compiled
+      # binaries can't run on a foreign host).
+      - name: Verify binary runs
+        if: ${{ (contains(matrix.target, 'x64') && matrix.runnerArch == 'X64') || (contains(matrix.target, 'arm64') && matrix.runnerArch == 'ARM64') }}
+        run: ./bin/"$OUT_NAME" --version
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ env.OUT_NAME }}
+          path: dashboard/bin/${{ env.OUT_NAME }}
+          if-no-files-found: error
+          retention-days: 1
+
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [validate, test, build-and-push]
+    needs: [validate, test, build-and-push, compile-dashboard]
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -152,11 +208,29 @@ jobs:
           tar czf "kapsis-${VERSION}.tar.gz" "kapsis-${VERSION}"
           rm -rf "kapsis-${VERSION}"
 
+      - name: Download dashboard binaries
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
+        with:
+          pattern: kapsis-dashboard-*
+          path: dashboard-artifacts
+          merge-multiple: true
+
+      - name: Stage dashboard binaries
+        run: |
+          set -euo pipefail
+          ls -la dashboard-artifacts/
+          # download-artifact with merge-multiple flattens all artifact files
+          # into one directory; bring them to repo root so the release files:
+          # block picks them up by name.
+          mv dashboard-artifacts/kapsis-dashboard-* .
+          chmod 0755 kapsis-dashboard-*
+          ls -la kapsis-dashboard-*
+
       - name: Generate checksums
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          sha256sum "kapsis-${VERSION}.tar.gz" > checksums.sha256
+          sha256sum "kapsis-${VERSION}.tar.gz" kapsis-dashboard-* > checksums.sha256
 
           echo "Generated checksums:"
           cat checksums.sha256
@@ -251,6 +325,17 @@ jobs:
             echo '```'
             echo ""
 
+            echo "### 📊 Dashboard Binary"
+            echo ""
+            echo "Per-platform \`kapsis-dashboard\` binaries are attached below."
+            echo "The Homebrew formula installs the right one automatically; download manually with:"
+            echo '```bash'
+            echo "# macOS Apple Silicon"
+            echo "curl -L -o kapsis-dashboard https://github.com/${{ github.repository }}/releases/download/v${VERSION}/kapsis-dashboard-darwin-arm64"
+            echo "chmod +x kapsis-dashboard && ./kapsis-dashboard --version"
+            echo '```'
+            echo ""
+
             # Add compare link
             if [[ -n "$PREV_TAG" ]]; then
               echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...v${VERSION}"
@@ -273,6 +358,10 @@ jobs:
           files: |
             kapsis-${{ needs.validate.outputs.version }}.tar.gz
             checksums.sha256
+            kapsis-dashboard-darwin-arm64
+            kapsis-dashboard-darwin-x64
+            kapsis-dashboard-linux-arm64
+            kapsis-dashboard-linux-x64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -601,6 +690,52 @@ jobs:
           fi
 
           echo "✓ Updated Homebrew formula to v${VERSION}"
+
+          # Compute SHA256 for each per-platform kapsis-dashboard binary
+          # attached to the release and patch the corresponding marker block.
+          # Each block looks like:
+          #   # DASHBOARD_<TARGET>_MARKER_START
+          #   url "https://.../kapsis-dashboard-<target>"
+          #   sha256 "..."
+          #   # DASHBOARD_<TARGET>_MARKER_END
+          for TARGET in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            BIN_URL="https://github.com/${REPO}/releases/download/v${VERSION}/kapsis-dashboard-${TARGET}"
+            echo "Fetching SHA256 for kapsis-dashboard-${TARGET}..."
+
+            BIN_RETRY=0
+            BIN_SHA256=""
+            while [[ $BIN_RETRY -lt $MAX_RETRIES ]]; do
+              if BIN_SHA256=$(curl -fsSL --retry 3 "$BIN_URL" | sha256sum | cut -d' ' -f1); then
+                if [[ "$BIN_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+                  echo "  ${TARGET}: ${BIN_SHA256}"
+                  break
+                fi
+              fi
+              BIN_RETRY=$((BIN_RETRY + 1))
+              if [[ $BIN_RETRY -lt $MAX_RETRIES ]]; then
+                sleep 10
+              else
+                echo "::error::Failed to compute SHA256 for kapsis-dashboard-${TARGET}"
+                exit 1
+              fi
+            done
+
+            # Uppercase target marker (DARWIN_ARM64, etc.) for sed
+            MARKER=$(echo "$TARGET" | tr '[:lower:]-' '[:upper:]_')
+            sed -i.bak \
+              -e "/DASHBOARD_${MARKER}_MARKER_START/,/DASHBOARD_${MARKER}_MARKER_END/{
+                s|url \"https://github.com/.*/kapsis-dashboard-${TARGET}\"|url \"${BIN_URL}\"|
+                s|sha256 \"[a-f0-9]*\"|sha256 \"${BIN_SHA256}\"|
+              }" "$FORMULA_FILE"
+            rm -f "${FORMULA_FILE}.bak"
+
+            if ! grep -q "sha256 \"${BIN_SHA256}\"" "$FORMULA_FILE"; then
+              echo "::error::Failed to update dashboard ${TARGET} SHA256 in formula"
+              exit 1
+            fi
+          done
+
+          echo "✓ Updated all 4 dashboard binary SHA256s in formula"
 
       - name: Update RPM spec
         if: steps.check-app.outputs.configured == 'true'
