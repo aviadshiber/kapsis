@@ -111,13 +111,51 @@ Failed. Each rule is shown in the Overview tab with its detail string.
 | Tab | Source | Notes |
 |---|---|---|
 | Agents | `~/.kapsis/status/*.json` (fs.watch) | filter, search, drill-down |
-| Overview | status JSON + health | health rules, branch, commit, push, push-fallback command, error |
+| Overview | status JSON + health | health rules, current activity (gist), branch, commit, push, push-fallback command, error |
+| Spec | `<worktree>/.kapsis/task-spec-with-progress.md` or `kapsis-<id>-status` named volume | original `--task`/`--spec` rendered, Kapsis progress-instruction suffix hidden behind disclosure |
 | Logs | `~/.kapsis/logs/kapsis-<id>.log` | byte-offset tail, follow toggle |
+| Activity | `status.gist` transitions (server-side in-memory ring, 200/agent) | reverse-chronological list; live updates via SSE; cleared on agent reap |
 | Audit | `~/.kapsis/audit/<id>-*.jsonl` | hash-chain verification badge per file |
 | Conversation | `~/.kapsis/conversations/<id>/` | empty state when transcripts aren't configured |
 | Container | `podman inspect` + `podman stats` | live CPU/memory when running |
 | Disk usage | `du` of state dirs + `podman volume`/`images` | stacked bar by category |
 | Maintenance | `kapsis-cleanup.sh` wrapper | per-target Preview (dry-run) → Execute |
+
+### Spec tab — where the data lives
+
+Kapsis writes the launch spec (your `--task` text or the contents of `--spec <file>`)
+into either of two host-readable locations, depending on sandbox mode:
+
+- **Worktree mode**: `<worktree>/.kapsis/task-spec-with-progress.md` —
+  preferred and per-agent.
+- **Overlay mode (Linux)**: the per-agent named volume `kapsis-<agent_id>-status`.
+  The dashboard reads it via `podman volume inspect` and a direct file read.
+
+The dashboard intentionally does NOT fall back to the shared
+`~/.kapsis/status/task-spec-with-progress.md` host-mirror file because
+parallel agents overwrite it; using the volume directly guarantees the
+spec belongs to the agent you're looking at.
+
+> **macOS / overlay-mode limitation:** on macOS, Podman volume mountpoints
+> live inside the Podman VM (paths like `/var/home/core/...`) and are not
+> reachable from the host process the dashboard runs in. Overlay-mode
+> agents on macOS will therefore show the "no spec found" empty state on
+> the Spec tab even when a spec exists. Worktree mode is unaffected and
+> remains the default for most Kapsis profiles.
+
+Empty state ("This agent was launched without --task or --spec, or the
+spec hasn't been injected yet") covers the case where neither location
+has the spec yet — typically because the agent is still in `initializing`
+and `inject_progress_instructions()` has not yet run.
+
+### Activity tab — what counts as a transition
+
+Each PostToolUse event in the agent triggers `scripts/hooks/kapsis-gist-hook.sh`,
+which rewrites `status.gist`. The dashboard server's status watcher records
+every distinct gist value (de-duplicated against the prior value) into a
+per-agent in-memory ring of 200 entries. The ring is reseeded from the
+current status on dashboard restart, but historical transitions before
+the restart are lost — the agent log file is the durable ground truth.
 
 ## Troubleshooting
 

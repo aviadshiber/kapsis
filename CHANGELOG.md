@@ -31,6 +31,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Dashboard: new **Spec** tab on agent detail — renders the original
+  `--task` / `--spec` input (read from `<worktree>/.kapsis/task-spec-with-progress.md`
+  in worktree mode, or the per-agent `kapsis-<id>-status` named volume in
+  overlay mode). Kapsis's injected progress-reporting suffix is split off
+  and hidden behind a disclosure. Path-traversal and follow-symlink
+  defenses applied; 256 KB size cap.
+- Dashboard: new **Activity** tab on agent detail — reverse-chronological
+  timeline of `status.gist` transitions (the activity strings written by
+  `kapsis-gist-hook.sh`). Backed by an in-memory ring (200 entries per
+  agent); live updates over SSE.
+- Dashboard: **Current activity** card on Overview now surfaces the
+  latest gist + a relative timestamp.
+
 ## [2.1.1] - 2026-02-02
 
 ### Fixed

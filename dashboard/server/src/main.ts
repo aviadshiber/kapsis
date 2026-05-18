@@ -8,6 +8,8 @@ import { AuditStore } from "./store/audit";
 import { LogStore } from "./store/logs";
 import { ConversationStore } from "./store/conversations";
 import { DiskUsageStore } from "./store/disk";
+import { SpecStore, loadProgressInstructions } from "./store/spec";
+import { GistHistoryStore } from "./store/gist-history";
 import { DashboardAuditWriter } from "./control/audit-writer";
 import { CleanupRunner } from "./control/cleanup";
 import { SseBroker } from "./sse";
@@ -160,11 +162,17 @@ async function main(): Promise<void> {
   const logsStore = new LogStore(p.logs);
   const conv = new ConversationStore(p.conversations);
   const disk = new DiskUsageStore(p);
+  // Loaded once at startup. When null (Kapsis install missing), the splitter
+  // no-ops and the UI shows the full file content. Better degrade than break.
+  const injectedSuffix = await loadProgressInstructions();
+  const spec = new SpecStore(status, p.worktrees, { injectedSuffix });
   const dashAudit = new DashboardAuditWriter(p.dashboardAudit);
   await dashAudit.init();
   const sse = new SseBroker();
   const sseTokens = new EphemeralTokenStore();
   const cleanupRunner = new CleanupRunner();
+  const gistHistory = new GistHistoryStore(status, sse);
+  gistHistory.init();
 
   // Wire status changes to SSE.
   status.onChange((s, file) => {
@@ -172,7 +180,8 @@ async function main(): Promise<void> {
   });
 
   const server = startServer(config, {
-    status, audit, logs: logsStore, conv, disk, sse, dashAudit, sseTokens, cleanupRunner,
+    status, audit, logs: logsStore, conv, disk, spec, gistHistory,
+    sse, dashAudit, sseTokens, cleanupRunner,
     cleanupScript: args.cleanupScript, version: VERSION,
   });
 
@@ -194,10 +203,19 @@ async function main(): Promise<void> {
 
   const shutdown = async () => {
     log.info("shutting down");
-    sse.close();
-    sseTokens.close();
-    status.close();
-    server.stop(true);
+    // Best-effort close of every resource. If one throws (e.g. a watcher
+    // already in teardown), we still want the remaining resources released
+    // before the process exits — try-with-resources style. Errors are
+    // logged at debug so a "noisy shutdown on SIGTERM" stays out of normal
+    // operator output.
+    const tryClose = (name: string, fn: () => void): void => {
+      try { fn(); } catch (e) { log.debug(`shutdown: ${name}.close() threw`, { err: String(e) }); }
+    };
+    tryClose("gistHistory", () => gistHistory.close());
+    tryClose("sse", () => sse.close());
+    tryClose("sseTokens", () => sseTokens.close());
+    tryClose("status", () => status.close());
+    tryClose("server", () => server.stop(true));
     process.exit(0);
   };
   process.on("SIGINT", shutdown);

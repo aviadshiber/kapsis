@@ -15,7 +15,7 @@
 import type {
   AgentStatus, AgentHealth, ContainerInfo, ContainerStats,
   LogChunk, AuditEvent, AuditChainStatus, ConversationEntry, DiskUsageEntry,
-  KillResultWire,
+  KillResultWire, SpecResponse, GistEntry,
 } from "../types";
 
 function readToken(): string {
@@ -80,6 +80,12 @@ export const api = {
   }>("GET", `/api/v1/agents/${encodeURIComponent(id)}/audit`),
   conversation: (id: string) => request<ConversationEntry>(
     "GET", `/api/v1/agents/${encodeURIComponent(id)}/conversation`,
+  ),
+  spec: (id: string) => request<SpecResponse>(
+    "GET", `/api/v1/agents/${encodeURIComponent(id)}/spec`,
+  ),
+  gistHistory: (id: string) => request<{ entries: GistEntry[] }>(
+    "GET", `/api/v1/agents/${encodeURIComponent(id)}/gist-history`,
   ),
   disk: () => request<{ entries: DiskUsageEntry[] }>("GET", "/api/v1/disk/usage"),
   kill: (id: string, signal: "TERM" | "KILL" = "TERM") =>
