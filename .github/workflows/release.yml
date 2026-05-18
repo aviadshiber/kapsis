@@ -348,26 +348,6 @@ jobs:
             echo "configured=true" >> $GITHUB_OUTPUT
           fi
 
-      - name: Download dashboard binaries (for local SHA256 computation)
-        # Sourcing the SHA from the local artifact closes the TOCTOU /
-        # asset-swap window that re-downloading from the public release URL
-        # would leave open, and removes a network dependency. Gated on
-        # check-app so we don't pull artifacts when the GitHub App isn't
-        # configured (in which case every consuming step would skip anyway).
-        if: steps.check-app.outputs.configured == 'true'
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
-        with:
-          pattern: kapsis-dashboard-*
-          path: dashboard-artifacts
-          merge-multiple: true
-
-      - name: List downloaded dashboard binaries
-        # Self-diagnostic upfront so any artifact-availability issue is
-        # immediately visible without needing to re-run with debug logging.
-        if: steps.check-app.outputs.configured == 'true'
-        run: |
-          ls -la dashboard-artifacts/ || echo "::warning::dashboard-artifacts/ not present"
-
       - name: Generate GitHub App token
         id: app-token
         if: steps.check-app.outputs.configured == 'true'
@@ -385,6 +365,29 @@ jobs:
           # The app is configured as a bypass actor in the repository ruleset
           token: ${{ steps.app-token.outputs.token }}
           fetch-depth: 0
+
+      - name: Download dashboard binaries (for local SHA256 computation)
+        # MUST run AFTER `Checkout code`: actions/checkout@v6 defaults to
+        # `clean: true` which runs `git clean -ffdx` and wipes untracked
+        # files like dashboard-artifacts/. Sourcing the SHA from the local
+        # artifact closes the TOCTOU / asset-swap window that re-downloading
+        # from the public release URL would leave open, and removes a network
+        # dependency. Gated on check-app so we don't pull artifacts when the
+        # GitHub App isn't configured (in which case every consuming step
+        # would skip anyway).
+        if: steps.check-app.outputs.configured == 'true'
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
+        with:
+          pattern: kapsis-dashboard-*
+          path: dashboard-artifacts
+          merge-multiple: true
+
+      - name: List downloaded dashboard binaries
+        # Self-diagnostic upfront so any artifact-availability issue is
+        # immediately visible without needing to re-run with debug logging.
+        if: steps.check-app.outputs.configured == 'true'
+        run: |
+          ls -la dashboard-artifacts/ || echo "::warning::dashboard-artifacts/ not present"
 
       - name: Validate inputs
         if: steps.check-app.outputs.configured == 'true'
