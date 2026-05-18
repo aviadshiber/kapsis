@@ -242,7 +242,7 @@ Status is written as JSON to `~/.kapsis/status/`.
 | `scripts/lib/podman-health.sh` | Podman VM health probe & auto-heal (macOS pre-launch mount check) |
 | `scripts/lib/status-sync.sh` | Mirrors per-agent named volumes to `~/.kapsis/status/` (macOS) |
 | `scripts/lib/inject-lsp-config.sh` | LSP config injection — editor integration inside containers |
-| `scripts/lib/inject-plugin-hooks.sh` | Plugin hook injection — merges Claude Code plugin hooks into settings.local.json |
+| `scripts/lib/inject-plugin-hooks.sh` | Plugin hook injection — merges Claude Code plugin hooks into settings.json |
 | `scripts/lib/rewrite-plugin-paths.sh` | Plugin path rewriting — adjusts paths for container mounts |
 | `scripts/lib/ssh-config-compat.sh` | SSH config portability — normalizes SSH config across environments |
 | `scripts/backends/podman.sh` | Podman backend — local container execution |

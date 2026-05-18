@@ -769,7 +769,7 @@ parse_config() {
         # Plugin hook injection (default: true for claude-cli, false otherwise).
         # Kapsis bypasses Claude Code's native plugin loader; this flag tells the
         # in-container inject-plugin-hooks.sh to merge plugin hooks into
-        # ~/.claude/settings.local.json so they actually fire.
+        # ~/.claude/settings.json so they actually fire.
         case "$AGENT_CONFIG_TYPE" in
             claude|claude-cli|claude-code)
                 INSTALL_PLUGINS=$(yq -r '.agent.install_plugins // "true"' "$CONFIG_FILE")
@@ -2005,7 +2005,7 @@ generate_env_vars() {
 
     # Attribution templates (commit trailer + PR description).
     # - Claude Code (claude-cli): inject-status-hooks.sh writes these into
-    #   ~/.claude/settings.local.json so Claude Code uses them natively.
+    #   ~/.claude/settings.json so Claude Code uses them natively.
     # - Other agents: entrypoint.sh and host-side post-container-git.sh read
     #   KAPSIS_ATTRIBUTION_COMMIT and append it to commit messages directly.
     # Empty string disables attribution (Claude Code honors this explicitly).
