@@ -71,6 +71,16 @@ class Kapsis < Formula
         exec "#{libexec}/#{script}" "$@"
       EOS
     end
+
+    # Install the dashboard binary if one was prebuilt and shipped in the release.
+    # Release artifacts come from .github/workflows/dashboard-build.yml as
+    # kapsis-dashboard-bun-{darwin,linux}-{arm64,x64}; the release packager
+    # renames the per-platform binary to dashboard/bin/kapsis-dashboard.
+    dashboard_bin = libexec/"dashboard/bin/kapsis-dashboard"
+    if dashboard_bin.exist?
+      chmod 0755, dashboard_bin
+      bin.install_symlink dashboard_bin => "kapsis-dashboard"
+    end
   end
 
   def caveats

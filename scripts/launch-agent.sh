@@ -3102,7 +3102,26 @@ main() {
     #   4 = Mount failure (virtio-fs drop)
     #   5 = Agent completed but process hung (stuck child process)
     #   6 = Commit failure (agent produced work but git commit failed)
-    if [[ "$EXIT_CODE" -eq 4 ]]; then
+    # User-initiated kill (e.g. dashboard Kill button) drops a marker BEFORE
+    # `podman kill`, so the post-container handler can distinguish an intentional
+    # SIGTERM from a real mount failure / agent crash. SIGTERM tears down the
+    # container, which drops the virtio-fs mount and causes the entrypoint's
+    # mount probe to emit KAPSIS_MOUNT_FAILURE — without this check, every
+    # dashboard kill would be mis-classified as `mount_failure`.
+    local _kill_marker
+    _kill_marker="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/${AGENT_ID}.kill-requested"
+    if [[ -f "$_kill_marker" ]] && [[ "$EXIT_CODE" -ne 0 ]]; then
+        log_info "Kill marker present — agent was intentionally terminated (source: dashboard or equivalent)"
+        FINAL_EXIT_CODE=0
+        log_finalize 0
+        status_set_error_type "killed"
+        local kill_msg="Agent terminated by user request"
+        status_complete 0 "$kill_msg"
+        _STATUS_COMPLETE_SHOWN=true
+        display_complete 0 "" "$kill_msg"
+        _DISPLAY_COMPLETE_SHOWN=true
+        rm -f "$_kill_marker" 2>/dev/null || true
+    elif [[ "$EXIT_CODE" -eq 4 ]]; then
         # Mount failure detected via sentinel (Issue #248)
         FINAL_EXIT_CODE=4
         log_finalize 4
