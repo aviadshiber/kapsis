@@ -128,6 +128,12 @@ source "$SCRIPT_DIR/lib/vfkit-watchdog.sh"
 # Source host-side status volume sync (Issue #276) — no-op when KAPSIS_STATUS_VOLUME unset
 source "$SCRIPT_DIR/lib/status-sync.sh"
 
+# Source launch-phase serialization mutex (macOS AVF virtio-fs cache-coherency
+# bug workaround). Default-on for Darwin, no-op elsewhere; see launch-lock.sh
+# for design rationale and env-var knobs (KAPSIS_LAUNCH_LOCK_ENABLED,
+# KAPSIS_LAUNCH_LOCK_TIMEOUT, KAPSIS_LAUNCH_LOCK_POST_COOLDOWN).
+source "$SCRIPT_DIR/lib/launch-lock.sh"
+
 # Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
 NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
 CLI_NETWORK_MODE=""  # Track if CLI explicitly set network mode
@@ -2616,6 +2622,11 @@ main() {
             stop_status_sync "${AGENT_ID:-}" "$KAPSIS_STATUS_VOLUME" \
                 "${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}" 2>/dev/null || true
         fi
+        # Release the launch-phase lock if we still hold it on abnormal exit
+        # (the normal release happens right after setup_sandbox in main flow,
+        # but a crash between acquire and that release would leak the lock
+        # to the next agent's acquire-timeout). Idempotent.
+        launch_lock_release 2>/dev/null || true
         # Delegate backend-specific cleanup (secrets env file, inline spec, dns pin, etc.)
         backend_cleanup 2>/dev/null || true
         # Ensure status transitions to 'complete' on abnormal exit (Fix #168)
@@ -2708,14 +2719,25 @@ main() {
         status_phase "initializing" 15 "Pre-flight check passed" || true
     fi
 
-    # Setup sandbox (worktree/overlay) — only for backends that support it
+    # Setup sandbox (worktree/overlay) — only for backends that support it.
+    #
+    # Wrapped with the host-scoped launch lock (macOS-only by default) so two
+    # agents don't enter the heavy metadata-I/O window simultaneously and
+    # trip the AVF virtio-fs cache-coherency bug — see launch-lock.sh. The
+    # post-cooldown happens inside launch_lock_release so the VM-side overlay
+    # mount of THIS agent's container settles before the next launch starts.
     if backend_supports "worktree" || backend_supports "overlay"; then
         log_timer_start "sandbox_setup"
+        if ! launch_lock_acquire; then
+            log_warn "Launch lock unavailable — proceeding without serialization (next agent may race)"
+        fi
         if ! setup_sandbox; then
+            launch_lock_release  # release before failing exit
             status_complete 1 "Sandbox setup failed (mode: ${SANDBOX_MODE:-unknown})"
             _STATUS_COMPLETE_SHOWN=true
             exit 1
         fi
+        launch_lock_release
         log_timer_end "sandbox_setup"
     else
         log_info "Backend '$BACKEND' handles sandbox setup in-cluster"
