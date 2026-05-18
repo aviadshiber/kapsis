@@ -1167,6 +1167,35 @@ check_overlay_rw_support() {
     fi
 }
 
+# skip_if_not_mikefarah_yq
+# Skips the test if the installed yq is not mikefarah/yq v4.
+# The Debian/Ubuntu `apt install yq` package is a Python wrapper with incompatible
+# syntax (.key, yq eval, --inplace).  Tests that rely on mikefarah-specific features
+# must call this guard so they skip gracefully on developer machines that have the
+# wrong yq, rather than failing with cryptic assertion errors.
+skip_if_not_mikefarah_yq() {
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed (need mikefarah/yq v4+)"
+        return 1
+    fi
+    # mikefarah/yq identifies itself via --version; Python yq does not mention it
+    if yq --version 2>&1 | grep -qi 'mikefarah'; then
+        return 0
+    fi
+    # Fallback: probe the --inplace flag on a temp file — the capability that
+    # Python yq lacks and that inject_codex_hooks / k8s tests depend on.
+    local _tmp_yq
+    _tmp_yq=$(mktemp --suffix=.yaml 2>/dev/null || mktemp)
+    printf 'x: 1\n' > "$_tmp_yq"
+    if yq eval --inplace '.x = 2' "$_tmp_yq" 2>/dev/null; then
+        rm -f "$_tmp_yq"
+        return 0
+    fi
+    rm -f "$_tmp_yq"
+    log_skip "yq does not support 'eval --inplace' (need mikefarah/yq v4+, not the Debian Python wrapper)"
+    return 1
+}
+
 # skip_if_no_overlay_rw
 # Checks for overlay support. If not available, enables fuse-overlayfs for true CoW.
 skip_if_no_overlay_rw() {
