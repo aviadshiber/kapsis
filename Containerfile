@@ -573,7 +573,11 @@ RUN chmod 755 /opt/kapsis/*.sh /opt/kapsis/kapsis-ss-inject /opt/kapsis/git-cred
 # where inject-plugin-hooks.sh was added but not shipped).
 RUN set -e; \
     missing=""; \
-    refs=$(grep -oE '\$KAPSIS_HOME/lib/[A-Za-z0-9_.-]+\.(sh|py|md)' /opt/kapsis/entrypoint.sh | sed 's|.*/lib/||' | sort -u); \
+    refs=$(grep -oE '\$KAPSIS_HOME/lib/[A-Za-z0-9_.-]+\.(sh|py|md)' /opt/kapsis/entrypoint.sh | sed 's|.*/lib/||' | sort -u || true); \
+    if [ -z "$refs" ]; then \
+        echo "ERROR: lib-completeness-check found zero \$KAPSIS_HOME/lib/ references in entrypoint.sh — guard would pass vacuously. Either entrypoint.sh is mangled or the reference pattern changed; update the guard regex." >&2; \
+        exit 1; \
+    fi; \
     for f in $refs; do \
         if [ ! -f "/opt/kapsis/lib/$f" ]; then \
             missing="$missing $f"; \
