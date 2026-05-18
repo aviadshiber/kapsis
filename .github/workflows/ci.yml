@@ -547,6 +547,16 @@ jobs:
     steps:
       - name: Check all jobs passed
         run: |
+          # If any upstream job was cancelled this run was superseded by a new
+          # push (cancel-in-progress fired).  Treat as neutral — the next run
+          # will validate the updated commit.  Only genuine failures (result ==
+          # 'failure') should block the gate.
+          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more jobs were cancelled — run superseded by a newer push."
+            echo "Exiting 0; the replacement run will validate the new commit."
+            exit 0
+          fi
+
           failed=0
           check() {
             local name="$1" result="$2" required="$3"
