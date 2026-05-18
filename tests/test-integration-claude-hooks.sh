@@ -105,9 +105,10 @@ _stop_mock_server() {
 }
 
 setup_mock_env() {
-    # Defensive: remove any stale hooks dir left by a prior failed cleanup before
-    # creating a fresh copy, so tests never see residue from previous runs.
-    rm -rf "$KAPSIS_ROOT/hooks" 2>/dev/null || true
+    # Reset any state left by a prior failed test (HOME, dirs, env vars, guards).
+    # Safe to call before first test because _ORIG_HOME, TEST_HOME, and
+    # TEST_WORKSPACE are initialised at script level above.
+    cleanup_mock_env 2>/dev/null || true
     TEST_HOME=$(mktemp -d)
     TEST_WORKSPACE=$(mktemp -d)
     export HOME="$TEST_HOME"
