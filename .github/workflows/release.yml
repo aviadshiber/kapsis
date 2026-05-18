@@ -407,12 +407,21 @@ jobs:
           done <<< "$COMMITS"
 
           # Create a temporary file for the new changelog
+          # Build the new version section in a temp file so awk can splice
+          # it into the existing CHANGELOG in a single pass. The previous
+          # implementation used `head -7` (brittle — assumed the header was
+          # exactly 7 lines) plus a pair of sed pipelines that were supposed
+          # to carry the post-Unreleased history forward. The sed range
+          # `/^## \[Unreleased\]/,/^## \[/{d}` deleted the closing version
+          # header along with the Unreleased block, then the follow-up
+          # `/^## \[/,$p | tail -n +2` re-anchored to the SECOND next
+          # version header and skipped its first line — corrupting one
+          # version's header on every release run. Repeated over months,
+          # the file drifted into a state where ~20 historical release
+          # blocks lost their version headers and got concatenated under
+          # whatever single header survived (see CHANGELOG.md state on
+          # 2026-05-17: lines 16-812 mis-labelled as "[2.1.1]").
           {
-            # Keep header lines (title and format description)
-            head -7 "$CHANGELOG_FILE"
-            echo ""
-
-            # Add new version section
             echo "## [${VERSION}] - ${DATE}"
             echo ""
 
@@ -469,15 +478,31 @@ jobs:
               echo ""
             fi
 
-            # Add empty [Unreleased] section and rest of changelog (skip old unreleased content)
-            echo "## [Unreleased]"
-            echo ""
+          } > /tmp/cl_new_section.md
 
-            # Get everything after [Unreleased] section's content (starting from next version)
-            sed -n '/^## \[Unreleased\]/,/^## \[/{ /^## \[Unreleased\]/d; /^## \[/p; }' "$CHANGELOG_FILE"
-            sed -n '/^## \[Unreleased\]/,/^## \[/{d}; /^## \[/,$p' "$CHANGELOG_FILE" | tail -n +2
-
-          } > "${CHANGELOG_FILE}.new"
+          # Splice the new section in front of the existing Unreleased block,
+          # preserving everything else verbatim. State machine:
+          #   header        — print as-is, until we hit ## [Unreleased]
+          #   in_unreleased — drop the stale Unreleased body (it gets rolled
+          #                   into the new version section just emitted)
+          #   passthrough   — first ## [ after Unreleased onwards: print as-is
+          awk -v new_file="/tmp/cl_new_section.md" '
+            BEGIN { state = "header" }
+            state == "header" && /^## \[Unreleased\]/ {
+              while ((getline line < new_file) > 0) print line
+              print "## [Unreleased]"
+              print ""
+              state = "in_unreleased"
+              next
+            }
+            state == "in_unreleased" && /^## \[/ {
+              state = "passthrough"
+              print
+              next
+            }
+            state == "in_unreleased" { next }
+            { print }
+          ' "$CHANGELOG_FILE" > "${CHANGELOG_FILE}.new"
 
           # Update comparison links at the bottom
           # Add new version link and update Unreleased link

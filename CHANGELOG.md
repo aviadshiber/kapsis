@@ -6,15 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.28.7] - 2026-05-15
+## [2.28.9] - 2026-05-17
+
+### Fixed
+- Harden e2e-tests — env+permissions+harden-runner+pinned deps (#359)
+
+## [2.28.11] - 2026-05-17
+
+### Fixed
+- Harden #361 follow-up — env validation, regex tightening, expanded preflight + tests (#365)
+- Harden #361 follow-up — env validation, regex tightening, expanded preflight + tests (#364)
+- Resolve --userns via env > yaml > autodetect; fix #361 (#362)
+
+## [Unreleased]
+
+## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Skip write probe in overlay mode — read-only by design (#341) (#345)
 - Pre-create /home/developer/.claude as developer-owned (#340) (#346)
 
-## [Unreleased]
-
-## [2.1.1] - 2026-02-02
 
 ### Fixed
 - Skip write probe in overlay mode — workspace is read-only by design (#341) (#342)
@@ -949,7 +960,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.7...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.11...HEAD
+[2.28.11]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.11
+[2.28.9]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.9
 [2.28.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.7
 [2.28.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.6
 [2.28.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.5
