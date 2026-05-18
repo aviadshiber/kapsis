@@ -42,12 +42,41 @@ function elapsed(startedAt: number): string {
   return `${m}m ${(s - m * 60).toFixed(0)}s`;
 }
 
+interface ReapState {
+  loading: boolean;
+  preview: Awaited<ReturnType<typeof api.reapStale>> | null;
+  result: Awaited<ReturnType<typeof api.reapStale>> | null;
+  confirming: boolean;
+}
+
 export function Maintenance({ readOnly }: Props) {
   const [confirmTarget, setConfirmTarget] = useState<{ id: string; dryRun: boolean } | null>(null);
   const [running, setRunning] = useState<RunningState | null>(null);
+  const [reap, setReap] = useState<ReapState>({ loading: false, preview: null, result: null, confirming: false });
   const [, setTick] = useState(0);
   const streamRef = useRef<EventSource | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  async function previewReap() {
+    setReap((s) => ({ ...s, loading: true }));
+    try {
+      const r = await api.reapStale(true);
+      setReap({ loading: false, preview: r, result: null, confirming: false });
+    } catch (e) {
+      setReap({ loading: false, preview: null, result: null, confirming: false });
+      console.error("reap preview failed:", e);
+    }
+  }
+  async function executeReap() {
+    setReap((s) => ({ ...s, loading: true, confirming: false }));
+    try {
+      const r = await api.reapStale(false);
+      setReap({ loading: false, preview: null, result: r, confirming: false });
+    } catch (e) {
+      setReap({ loading: false, preview: null, result: null, confirming: false });
+      console.error("reap execute failed:", e);
+    }
+  }
 
   // Re-render every second while a run is in flight so the elapsed timer
   // ticks without re-fetching anything.
@@ -162,6 +191,35 @@ export function Maintenance({ readOnly }: Props) {
         run's state every 2s as a safety net.
       </p>
       <div className="cards">
+        <div className="card" key="reap-stale">
+          <h3>Reap stale agents</h3>
+          <div className="sub" style={{ minHeight: 32 }}>
+            Finds status files where the agent says it's running but its container is gone
+            (sleep / crash / terminal closed killed it without writing "complete"). Verifies
+            each via <code>podman inspect</code>, marks it complete with
+            <code> error_type=zombie</code>, and removes the file.
+          </div>
+          <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
+            <button onClick={previewReap} disabled={readOnly || reap.loading}>
+              {reap.loading && !reap.confirming ? "Scanning…" : "Preview"}
+            </button>
+            <button
+              className="danger"
+              onClick={() => setReap((s) => ({ ...s, confirming: true }))}
+              disabled={readOnly || reap.loading}
+            >Reap</button>
+          </div>
+          {(reap.preview || reap.result) && (() => {
+            const r = reap.result ?? reap.preview!;
+            return (
+              <div style={{ marginTop: 12, fontSize: 12, color: "var(--fg-muted)" }}>
+                {reap.result ? "Reaped" : "Would reap"} <strong>{r.reaped.length}</strong> of {r.scanned} stale candidates
+                {r.skipped.length > 0 && ` (skipped ${r.skipped.length} — container still alive)`}
+                {r.errors.length > 0 && ` · ${r.errors.length} errors`}
+              </div>
+            );
+          })()}
+        </div>
         {TARGETS.map((t) => (
           <div className="card" key={t.id}>
             <h3>{t.label}</h3>
@@ -181,6 +239,36 @@ export function Maintenance({ readOnly }: Props) {
           </div>
         ))}
       </div>
+
+      {(reap.preview || reap.result) && (() => {
+        const r = reap.result ?? reap.preview!;
+        return (
+          <section style={{ marginTop: 24 }}>
+            <h3 style={{ marginTop: 0 }}>
+              {reap.result ? "Reaped agents" : "Stale agents preview"} ({r.reaped.length})
+            </h3>
+            {r.reaped.length === 0 ? (
+              <div className="banner">No stale agents found — every non-complete status file has a live container.</div>
+            ) : (
+              <table className="table">
+                <thead><tr><th>Project</th><th>Agent</th><th>Phase</th><th>Last update</th><th>Age</th><th>Container</th></tr></thead>
+                <tbody>
+                  {r.reaped.map((row) => (
+                    <tr key={row.file}>
+                      <td><strong>{row.project}</strong></td>
+                      <td><code>{row.agentId}</code></td>
+                      <td>{row.phase}</td>
+                      <td style={{ color: "var(--fg-muted)" }}>{new Date(row.updatedAt).toLocaleString()}</td>
+                      <td>{(row.ageMs / 60_000).toFixed(0)} min</td>
+                      <td>{row.containerState ?? <em>missing</em>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </section>
+        );
+      })()}
 
       {running && (
         <section
@@ -235,6 +323,18 @@ export function Maintenance({ readOnly }: Props) {
             setConfirmTarget(null);
             await startRun(t.id, false);
           }}
+        />
+      )}
+
+      {reap.confirming && (
+        <ConfirmModal
+          title="Reap stale agents?"
+          prompt="Each agent whose container has actually exited will be marked complete (error_type=zombie) and its status file removed. Agents whose containers are still alive will be left alone."
+          challenge="reap"
+          destructive
+          confirmLabel="Reap"
+          onCancel={() => setReap((s) => ({ ...s, confirming: false }))}
+          onConfirm={executeReap}
         />
       )}
     </div>

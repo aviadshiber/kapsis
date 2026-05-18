@@ -107,6 +107,21 @@ export const api = {
       durationMs: number | null;
       lines: Array<{ kind: "stdout" | "stderr"; line: string }>;
     }>("GET", `/api/v1/maintenance/runs/${encodeURIComponent(runId)}`),
+  /**
+   * Find or reap status files where the agent claims to be running but its
+   * container is gone (Mac sleep / podman restart / terminal close killed
+   * it without writing a final "complete" status). The script's own status
+   * cleanup deliberately skips non-complete files, so these otherwise pile
+   * up forever.
+   */
+  reapStale: (dryRun: boolean) =>
+    request<{
+      scanned: number;
+      reaped: Array<{ agentId: string; project: string; file: string; phase: string; updatedAt: string; ageMs: number; containerState: string | null }>;
+      skipped: Array<{ agentId: string; project: string; phase: string; updatedAt: string; containerState: string | null }>;
+      errors: Array<{ file: string; err: string }>;
+      dryRun: boolean;
+    }>("POST", "/api/v1/maintenance/reap-stale", { dryRun }),
   mintSseToken: () => request<{ token: string; ttlMs: number }>("POST", "/api/v1/sse-token"),
 };
 

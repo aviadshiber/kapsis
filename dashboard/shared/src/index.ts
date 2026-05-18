@@ -47,6 +47,7 @@ export interface AgentStatus {
     | "push_failure"
     | "mount_failure"
     | "killed"
+    | "zombie"
     | null;
 }
 

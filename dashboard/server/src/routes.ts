@@ -41,6 +41,7 @@ export function buildRouter(deps: Deps): Router {
     dashAudit: deps.dashAudit,
     disk: deps.disk,
     cleanupRunner: deps.cleanupRunner,
+    kapsisHome: deps.config.kapsisHome,
   });
   return r;
 }

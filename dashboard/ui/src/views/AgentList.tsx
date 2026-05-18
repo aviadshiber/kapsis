@@ -9,10 +9,25 @@ interface Props {
   onSelect: (agentId: string) => void;
 }
 
-type Filter = "all" | "running" | "complete" | "failed";
+type Filter = "all" | "running" | "stale" | "complete" | "failed";
 
-function classify(s: AgentStatus): "running" | "complete" | "failed" {
-  if (s.phase !== "complete") return "running";
+/**
+ * Anything that says it's still working but hasn't written an update in
+ * 30 minutes is almost certainly dead — the liveness monitor would have
+ * killed a real agent inside the 900s default timeout. The "Reap stale
+ * agents" Maintenance card is what actually removes them.
+ */
+const STALE_AGE_MS = 30 * 60_000;
+
+function isLikelyStale(s: AgentStatus): boolean {
+  if (s.phase === "complete") return false;
+  const updated = Date.parse(s.updated_at);
+  if (Number.isNaN(updated)) return false;
+  return Date.now() - updated > STALE_AGE_MS;
+}
+
+function classify(s: AgentStatus): "running" | "stale" | "complete" | "failed" {
+  if (s.phase !== "complete") return isLikelyStale(s) ? "stale" : "running";
   return (s.exit_code ?? 0) === 0 ? "complete" : "failed";
 }
 
@@ -33,13 +48,21 @@ interface RowProps {
 // Memoized so unrelated SSE updates (other rows changing) don't re-render
 // every cell in a 200-row table.
 const AgentRow = memo(function AgentRow({ status: a, onSelect }: RowProps) {
-  const healthState = a.phase !== "complete" ? "unknown" : (a.exit_code ?? 0) === 0 ? "healthy" : "failed";
+  const cls = classify(a);
+  const healthState =
+    cls === "stale" ? "stalled" :
+    cls === "complete" ? "healthy" :
+    cls === "failed" ? "failed" : "unknown";
   return (
-    <tr onClick={() => onSelect(a.agent_id)}>
-      <td><HealthDot state={healthState} /></td>
+    <tr onClick={() => onSelect(a.agent_id)} className={cls === "stale" ? "row-stale" : undefined}>
+      <td><HealthDot state={healthState} title={cls === "stale" ? "Likely stale — no update in 30+ minutes" : healthState} /></td>
       <td><strong>{a.project}</strong></td>
       <td><code>{a.agent_id}</code></td>
-      <td><StatusPill status={a} /></td>
+      <td>
+        {cls === "stale"
+          ? <span className="pill failed" title={`phase=${a.phase}, no update in 30+ min`}>STALE</span>
+          : <StatusPill status={a} />}
+      </td>
       <td style={{ width: 140 }}><ProgressBar value={a.progress} /></td>
       <td style={{ color: "var(--fg-muted)" }}>{new Date(a.started_at).toLocaleString()}</td>
       <td>{duration(a)}</td>
@@ -62,21 +85,38 @@ export function AgentList({ onSelect }: Props) {
         const stream = await sseEphemeral("/sse/agents");
         if (!alive) { stream.close(); return; }
         streamRef.current = stream;
-        stream.onmessage = (ev) => {
+        // Note: SSE events with an `event:` field do NOT fire onmessage —
+        // they fire addEventListener(<event>, ...). Use both so the live
+        // list actually updates as agents change phase or get reaped.
+        stream.addEventListener("agent-changed", (ev: MessageEvent) => {
           try {
-            const msg = JSON.parse(ev.data) as { status?: AgentStatus };
-            if (!msg.status) return;
-            setAgents((prev) => {
-              const i = prev.findIndex((a) => a.agent_id === msg.status!.agent_id && a.project === msg.status!.project);
-              if (i === -1) return [msg.status!, ...prev];
-              const copy = prev.slice();
-              copy[i] = msg.status!;
-              return copy;
-            });
-          } catch { /* heartbeat */ }
-        };
+            const msg = JSON.parse(ev.data) as { status: AgentStatus | null; file?: string };
+            if (msg.status) {
+              setAgents((prev) => {
+                const i = prev.findIndex((a) => a.agent_id === msg.status!.agent_id && a.project === msg.status!.project);
+                if (i === -1) return [msg.status!, ...prev];
+                const copy = prev.slice();
+                copy[i] = msg.status!;
+                return copy;
+              });
+            } else if (msg.file) {
+              // status=null + file = the watcher noticed a file was deleted.
+              // Filename pattern: kapsis-<project>-<agent_id>.json
+              const m = msg.file.match(/^kapsis-(.+)-([^-]+)\.json$/);
+              if (m) {
+                const [, project, agentId] = m;
+                setAgents((prev) => prev.filter((a) => !(a.project === project && a.agent_id === agentId)));
+              }
+            }
+          } catch { /* parse error or heartbeat */ }
+        });
+        stream.addEventListener("agent-reaped", (ev: MessageEvent) => {
+          try {
+            const { agentId, project } = JSON.parse(ev.data) as { agentId: string; project: string };
+            setAgents((prev) => prev.filter((a) => !(a.project === project && a.agent_id === agentId)));
+          } catch { /* */ }
+        });
       } catch (e) {
-        // Token mint failed or SSE unavailable — fall back to no live updates.
         console.warn("SSE disabled:", e);
       }
     })();
@@ -100,6 +140,7 @@ export function AgentList({ onSelect }: Props) {
         <select value={filter} onChange={(e) => setFilter(e.target.value as Filter)}>
           <option value="all">All</option>
           <option value="running">Running</option>
+          <option value="stale">Stale (likely dead)</option>
           <option value="complete">Complete</option>
           <option value="failed">Failed</option>
         </select>

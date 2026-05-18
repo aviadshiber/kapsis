@@ -44,12 +44,20 @@ export function AgentDetail({ agentId, readOnly, onBack }: Props) {
         const stream = await sseEphemeral("/sse/agents");
         if (!alive) { stream.close(); return; }
         streamRef.current = stream;
-        stream.onmessage = (ev) => {
+        // SSE events with an `event:` field fire addEventListener(<event>),
+        // not onmessage. Subscribe to both relevant events.
+        stream.addEventListener("agent-changed", (ev: MessageEvent) => {
           try {
-            const msg = JSON.parse(ev.data) as { status?: AgentStatus };
+            const msg = JSON.parse(ev.data) as { status: AgentStatus | null };
             if (msg.status?.agent_id === agentId) load();
-          } catch { /* heartbeat */ }
-        };
+          } catch { /* heartbeat / parse error */ }
+        });
+        stream.addEventListener("agent-reaped", (ev: MessageEvent) => {
+          try {
+            const { agentId: reapedId } = JSON.parse(ev.data) as { agentId: string };
+            if (reapedId === agentId) load();
+          } catch { /* */ }
+        });
       } catch (e) {
         console.warn("SSE disabled, falling back to slow poll:", e);
         // Best-effort fallback: a slow (15s) poll so the page is not totally

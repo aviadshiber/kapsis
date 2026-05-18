@@ -4,7 +4,8 @@ import type { SseBroker } from "../sse";
 import type { DashboardAuditWriter } from "../control/audit-writer";
 import type { DiskUsageStore } from "../store/disk";
 import { CleanupRunner, type CleanupTarget } from "../control/cleanup";
-import { basename } from "node:path";
+import { reapStaleAgents, STALE_THRESHOLD_MS } from "../control/reaper";
+import { basename, join } from "node:path";
 
 interface MaintenanceDeps {
   config: DashboardConfig;
@@ -13,6 +14,7 @@ interface MaintenanceDeps {
   dashAudit: DashboardAuditWriter;
   disk: DiskUsageStore;
   cleanupRunner: CleanupRunner;
+  kapsisHome: string;
 }
 
 function sanitizeError(e: unknown): string {
@@ -27,7 +29,46 @@ function p(params: RouteParams, name: string): string {
 }
 
 export function registerMaintenanceRoutes(r: Router, deps: MaintenanceDeps): void {
-  const { config, sse, dashAudit, disk, cleanupScript, cleanupRunner } = deps;
+  const { config, sse, dashAudit, disk, cleanupScript, cleanupRunner, kapsisHome } = deps;
+  const statusDir = join(kapsisHome, "status");
+
+  // Stale-agent reaper — finds status JSONs where the agent claims to be
+  // running but is actually dead (Mac sleep / VM restart / terminal close
+  // killed it without writing the final "complete" status), verifies the
+  // container is gone via `podman inspect`, then marks the status file
+  // complete with error_type=zombie and removes it. The script's own
+  // clean_status explicitly skips non-complete files, so without this the
+  // list of "running" agents grows forever.
+  r.post("/api/v1/maintenance/reap-stale", async (req) => {
+    if (config.readOnly) return errorResponse(403, "dashboard is read-only");
+    const body = await safeJson(req);
+    const dryRun = body.dryRun !== false;
+    const thresholdMs = typeof body.thresholdMs === "number" && body.thresholdMs > 60_000
+      ? body.thresholdMs : STALE_THRESHOLD_MS;
+    try {
+      const outcome = await reapStaleAgents(statusDir, { dryRun, thresholdMs });
+      await dashAudit.record(
+        "dashboard",
+        dryRun ? "reap-stale-preview" : "reap-stale-execute",
+        `count:${outcome.reaped.length}`,
+        {
+          scanned: outcome.scanned,
+          reaped: outcome.reaped.length,
+          skipped: outcome.skipped.length,
+          errors: outcome.errors.length,
+          thresholdMinutes: Math.round(thresholdMs / 60_000),
+        },
+      );
+      if (!dryRun && outcome.reaped.length > 0) {
+        for (const r of outcome.reaped) {
+          sse.publish("agents", { event: "agent-reaped", data: { agentId: r.agentId, project: r.project } });
+        }
+      }
+      return json(outcome);
+    } catch (e) {
+      return errorResponse(400, sanitizeError(e));
+    }
+  });
 
   r.post("/api/v1/maintenance/cleanup", async (req) => {
     if (config.readOnly) return errorResponse(403, "dashboard is read-only");
