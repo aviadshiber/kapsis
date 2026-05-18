@@ -334,16 +334,6 @@ jobs:
     needs: [validate, release, compile-dashboard]
     if: needs.release.result == 'success'
     steps:
-      - name: Download dashboard binaries (for local SHA256 computation)
-        # Sourcing the SHA from the local artifact closes the TOCTOU /
-        # asset-swap window that re-downloading from the public release URL
-        # would leave open, and removes a network dependency.
-        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
-        with:
-          pattern: kapsis-dashboard-*
-          path: dashboard-artifacts
-          merge-multiple: true
-
       - name: Check if GitHub App is configured
         id: check-app
         env:
@@ -357,6 +347,26 @@ jobs:
           else
             echo "configured=true" >> $GITHUB_OUTPUT
           fi
+
+      - name: Download dashboard binaries (for local SHA256 computation)
+        # Sourcing the SHA from the local artifact closes the TOCTOU /
+        # asset-swap window that re-downloading from the public release URL
+        # would leave open, and removes a network dependency. Gated on
+        # check-app so we don't pull artifacts when the GitHub App isn't
+        # configured (in which case every consuming step would skip anyway).
+        if: steps.check-app.outputs.configured == 'true'
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
+        with:
+          pattern: kapsis-dashboard-*
+          path: dashboard-artifacts
+          merge-multiple: true
+
+      - name: List downloaded dashboard binaries
+        # Self-diagnostic upfront so any artifact-availability issue is
+        # immediately visible without needing to re-run with debug logging.
+        if: steps.check-app.outputs.configured == 'true'
+        run: |
+          ls -la dashboard-artifacts/ || echo "::warning::dashboard-artifacts/ not present"
 
       - name: Generate GitHub App token
         id: app-token

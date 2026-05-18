@@ -397,7 +397,7 @@ The four surfaces:
 
 Also update any CI workflow that builds the artifact (e.g., `.github/workflows/dashboard-build.yml`-style helper jobs) AND `.github/workflows/release.yml`'s `update-packages` job if the formula/spec contains version-locked URLs or sha256s that need to be patched after the release is cut (look for `RELEASE_VERSION_MARKER_START` / `DASHBOARD_*_MARKER_START` markers as the pattern to follow).
 
-Marker naming convention: lowercase-hyphenated target → uppercase-underscored marker. Example: `darwin-arm64` becomes `DASHBOARD_DARWIN_ARM64_MARKER_START` / `DASHBOARD_DARWIN_ARM64_MARKER_END`. The transformation is `tr '[:lower:]-' '[:upper:]_'`.
+Marker naming convention: `<ARTIFACT>_<TARGET>_MARKER_START` / `_END`, where the prefix is **artifact-specific** (not universal) and the target transformation is lowercase-hyphenated → uppercase-underscored via `tr '[:lower:]-' '[:upper:]_'`. Examples: for the `kapsis-dashboard` artifact, `darwin-arm64` becomes `DASHBOARD_DARWIN_ARM64_MARKER_START` / `_END`. For a hypothetical future `my-new-tool` artifact, the same target would become `MY_NEW_TOOL_DARWIN_ARM64_MARKER_START` / `_END`. Only the target portion is mechanically transformed; the prefix is yours to choose per artifact.
 
 For shell scripts, prefer adding them to `scripts/` so the existing `cp -r scripts ...` step in release.yml automatically picks them up for the source tarball — no release.yml change needed beyond the wrapper plumbing.
 
