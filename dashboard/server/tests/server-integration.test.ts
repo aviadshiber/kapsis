@@ -13,6 +13,7 @@ import { DiskUsageStore } from "../src/store/disk";
 import { DashboardAuditWriter } from "../src/control/audit-writer";
 import { SseBroker } from "../src/sse";
 import { EphemeralTokenStore } from "../src/sse-tokens";
+import { CleanupRunner } from "../src/control/cleanup";
 
 interface Harness {
   url: string;
@@ -53,9 +54,10 @@ async function spawnHarness(opts: { readOnly?: boolean } = {}): Promise<Harness>
   const dashAudit = new DashboardAuditWriter(paths.dashboardAudit); await dashAudit.init();
   const sse = new SseBroker(60_000);
   const sseTokens = new EphemeralTokenStore();
+  const cleanupRunner = new CleanupRunner();
 
   const server = startServer(config, {
-    status, audit, logs: logsS, conv, disk, sse, dashAudit, sseTokens,
+    status, audit, logs: logsS, conv, disk, sse, dashAudit, sseTokens, cleanupRunner,
     cleanupScript: join(root, "nonexistent-cleanup.sh"),
     version: "test",
   });
@@ -209,12 +211,13 @@ describe("server integration", () => {
     const dashAudit = new DashboardAuditWriter(paths.dashboardAudit); await dashAudit.init();
     const sse = new SseBroker(60_000);
     const sseTokens = new EphemeralTokenStore();
+    const cleanupRunner = new CleanupRunner();
     const config: DashboardConfig = {
       host: "127.0.0.1", port: 0, kapsisHome: root,
       readOnly: false, open: false, token, uiDistDir: null,
     };
     const server = startServer(config, {
-      status, audit, logs: logsS, conv, disk, sse, dashAudit, sseTokens,
+      status, audit, logs: logsS, conv, disk, sse, dashAudit, sseTokens, cleanupRunner,
       cleanupScript: join(root, "nope.sh"), version: "test",
     });
     const url = `http://127.0.0.1:${server.port}`;

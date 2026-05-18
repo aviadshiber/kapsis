@@ -9,6 +9,7 @@ import { LogStore } from "./store/logs";
 import { ConversationStore } from "./store/conversations";
 import { DiskUsageStore } from "./store/disk";
 import { DashboardAuditWriter } from "./control/audit-writer";
+import { CleanupRunner } from "./control/cleanup";
 import { SseBroker } from "./sse";
 import { EphemeralTokenStore } from "./sse-tokens";
 import { log } from "./logger";
@@ -163,6 +164,7 @@ async function main(): Promise<void> {
   await dashAudit.init();
   const sse = new SseBroker();
   const sseTokens = new EphemeralTokenStore();
+  const cleanupRunner = new CleanupRunner();
 
   // Wire status changes to SSE.
   status.onChange((s, file) => {
@@ -170,7 +172,7 @@ async function main(): Promise<void> {
   });
 
   const server = startServer(config, {
-    status, audit, logs: logsStore, conv, disk, sse, dashAudit, sseTokens,
+    status, audit, logs: logsStore, conv, disk, sse, dashAudit, sseTokens, cleanupRunner,
     cleanupScript: args.cleanupScript, version: VERSION,
   });
 

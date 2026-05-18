@@ -84,8 +84,21 @@ export const api = {
   disk: () => request<{ entries: DiskUsageEntry[] }>("GET", "/api/v1/disk/usage"),
   kill: (id: string, signal: "TERM" | "KILL" = "TERM") =>
     request<KillResultWire>("POST", `/api/v1/agents/${encodeURIComponent(id)}/kill`, { signal }),
+  /**
+   * Kicks off a cleanup. Returns immediately with a `runId`; the caller
+   * subscribes to `/sse/maintenance/<runId>` to stream the live log.
+   */
+  cleanupStart: (targets: string[], dryRun: boolean) =>
+    request<{ runId: string; argv: string[]; dryRun: boolean; targets: string[]; accepted: true }>(
+      "POST", "/api/v1/maintenance/cleanup", { targets, dryRun },
+    ),
+  cleanupResult: (runId: string) =>
+    request<CleanupResultWire>("GET", `/api/v1/maintenance/runs/${encodeURIComponent(runId)}`),
+  /** @deprecated kept for tests; new UI uses cleanupStart + SSE */
   cleanup: (targets: string[], dryRun: boolean) =>
-    request<CleanupResultWire>("POST", "/api/v1/maintenance/cleanup", { targets, dryRun }),
+    request<CleanupResultWire & { runId?: string }>(
+      "POST", "/api/v1/maintenance/cleanup", { targets, dryRun },
+    ),
   mintSseToken: () => request<{ token: string; ttlMs: number }>("POST", "/api/v1/sse-token"),
 };
 

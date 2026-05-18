@@ -6,6 +6,7 @@ import type { LogStore } from "./store/logs";
 import type { ConversationStore } from "./store/conversations";
 import type { DiskUsageStore } from "./store/disk";
 import type { DashboardAuditWriter } from "./control/audit-writer";
+import type { CleanupRunner } from "./control/cleanup";
 import type { SseBroker } from "./sse";
 import type { EphemeralTokenStore } from "./sse-tokens";
 import { registerAgentRoutes } from "./routes/agents";
@@ -23,6 +24,7 @@ export interface Deps {
   sse: SseBroker;
   sseTokens: EphemeralTokenStore;
   dashAudit: DashboardAuditWriter;
+  cleanupRunner: CleanupRunner;
   cleanupScript: string;
   version: string;
 }
@@ -38,6 +40,7 @@ export function buildRouter(deps: Deps): Router {
     sse: deps.sse,
     dashAudit: deps.dashAudit,
     disk: deps.disk,
+    cleanupRunner: deps.cleanupRunner,
   });
   return r;
 }
