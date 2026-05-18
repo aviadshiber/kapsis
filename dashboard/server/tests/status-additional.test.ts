@@ -51,8 +51,14 @@ describe("StatusStore — gap coverage", () => {
     store.onChange((s, file) => { if (s === null) drops.push(file); });
 
     await unlink(path);
-    // Wait past the debounce + drop grace.
-    await Bun.sleep(400);
+    // Poll until the drop fires or 1500 ms elapse.  fs.watch on macOS can
+    // take "a few hundred ms" to deliver events (per status.test.ts comment),
+    // so a fixed 400 ms budget races on slow CI runners.
+    // Budget: up to 300 ms fs.watch + 50 ms debounce + 200 ms drop-grace = 550 ms;
+    // 30 × 50 ms = 1500 ms gives plenty of headroom on any platform.
+    for (let i = 0; i < 30 && !drops.includes("kapsis-demo-drop1.json"); i++) {
+      await Bun.sleep(50);
+    }
     expect(drops).toContain("kapsis-demo-drop1.json");
     expect(store.get("drop1")).toBeUndefined();
   });
