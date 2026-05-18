@@ -143,15 +143,20 @@ test_plugin_hook_injected_into_settings_e2e() {
 
     mkdir -p "$fixture_root/.claude/plugins/cache/e2e-marketplace/test-plugin/1.0.0/hooks"
 
-    # installed_plugins.json — already path-rewritten to container-internal paths
+    # installed_plugins.json — already path-rewritten to container-internal paths.
+    # v2 shape: each plugin id maps to an ARRAY of version entries (the injector
+    # reads .value[0].installPath; a bare object here would be silently filtered
+    # out by the schema-defense check in inject-plugin-hooks.sh).
     cat > "$fixture_root/.claude/plugins/installed_plugins.json" <<EOF
 {
   "plugins": {
-    "$plugin_id": {
-      "installPath": "$plugin_install_path",
-      "version": "1.0.0",
-      "scope": "user"
-    }
+    "$plugin_id": [
+      {
+        "installPath": "$plugin_install_path",
+        "version": "1.0.0",
+        "scope": "user"
+      }
+    ]
   }
 }
 EOF
