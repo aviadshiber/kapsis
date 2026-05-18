@@ -10,6 +10,8 @@ import { AuditStore } from "../src/store/audit";
 import { LogStore } from "../src/store/logs";
 import { ConversationStore } from "../src/store/conversations";
 import { DiskUsageStore } from "../src/store/disk";
+import { SpecStore } from "../src/store/spec";
+import { GistHistoryStore } from "../src/store/gist-history";
 import { DashboardAuditWriter } from "../src/control/audit-writer";
 import { SseBroker } from "../src/sse";
 import { EphemeralTokenStore } from "../src/sse-tokens";
@@ -23,7 +25,7 @@ interface Harness {
 
 async function spawnHarness(opts: { readOnly?: boolean } = {}): Promise<Harness> {
   const root = await mkdtemp(join(tmpdir(), "kd-srv-"));
-  for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git"]) {
+  for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git", "specs"]) {
     await mkdir(join(root, d));
   }
   const token = generateToken();
@@ -44,6 +46,7 @@ async function spawnHarness(opts: { readOnly?: boolean } = {}): Promise<Harness>
     worktrees: join(root, "worktrees"),
     sandboxes: join(root, "sandboxes"),
     sanitizedGit: join(root, "sanitized-git"),
+    specs: join(root, "specs"),
     dashboardAudit: join(root, "audit", "dashboard.jsonl"),
   };
   const status = new StatusStore(paths.status); await status.init();
@@ -51,13 +54,23 @@ async function spawnHarness(opts: { readOnly?: boolean } = {}): Promise<Harness>
   const logsS = new LogStore(paths.logs);
   const conv = new ConversationStore(paths.conversations);
   const disk = new DiskUsageStore(paths);
+  // Tests don't exercise spec/gist by default; pass minimal stubs that 404
+  // / return empty so existing test bodies keep working unchanged. The
+  // dedicated spec/gist tests construct their own harness.
+  const spec = new SpecStore(status, paths.specs, paths.worktrees, {
+    injectedSuffix: null,
+    podmanVolumeMountpoint: async () => null,
+  });
   const dashAudit = new DashboardAuditWriter(paths.dashboardAudit); await dashAudit.init();
   const sse = new SseBroker(60_000);
   const sseTokens = new EphemeralTokenStore();
   const cleanupRunner = new CleanupRunner();
+  const gistHistory = new GistHistoryStore(status, sse);
+  gistHistory.init();
 
   const server = startServer(config, {
-    status, audit, logs: logsS, conv, disk, sse, dashAudit, sseTokens, cleanupRunner,
+    status, audit, logs: logsS, conv, disk, spec, gistHistory,
+    sse, dashAudit, sseTokens, cleanupRunner,
     cleanupScript: join(root, "nonexistent-cleanup.sh"),
     version: "test",
   });
@@ -66,6 +79,7 @@ async function spawnHarness(opts: { readOnly?: boolean } = {}): Promise<Harness>
     url,
     token,
     stop: () => {
+      gistHistory.close();
       sse.close();
       sseTokens.close();
       status.close();
@@ -233,7 +247,7 @@ describe("server integration", () => {
     // lands in the right place.
     h.stop();
     const seedRoot = await mkdtemp(join(tmpdir(), "kd-srv-reap-"));
-    for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git"]) {
+    for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git", "specs"]) {
       await mkdir(join(seedRoot, d));
     }
     await writeFile(
@@ -250,6 +264,7 @@ describe("server integration", () => {
       worktrees: join(seedRoot, "worktrees"),
       sandboxes: join(seedRoot, "sandboxes"),
       sanitizedGit: join(seedRoot, "sanitized-git"),
+      specs: join(seedRoot, "specs"),
       dashboardAudit: join(seedRoot, "audit", "dashboard.jsonl"),
     };
     const status = new StatusStore(paths.status); await status.init();
@@ -257,16 +272,21 @@ describe("server integration", () => {
     const logsS = new LogStore(paths.logs);
     const conv = new ConversationStore(paths.conversations);
     const disk = new DiskUsageStore(paths);
+    const spec = new SpecStore(status, paths.specs, paths.worktrees, {
+      injectedSuffix: null, podmanVolumeMountpoint: async () => null,
+    });
     const dashAudit = new DashboardAuditWriter(paths.dashboardAudit); await dashAudit.init();
     const sse = new SseBroker(60_000);
     const sseTokens = new EphemeralTokenStore();
     const cleanupRunner = new CleanupRunner();
+    const gistHistory = new GistHistoryStore(status, sse); gistHistory.init();
     const config: DashboardConfig = {
       host: "127.0.0.1", port: 0, kapsisHome: seedRoot,
       readOnly: false, open: false, token, uiDistDir: null,
     };
     const server = startServer(config, {
-      status, audit, logs: logsS, conv, disk, sse, dashAudit, sseTokens, cleanupRunner,
+      status, audit, logs: logsS, conv, disk, spec, gistHistory,
+      sse, dashAudit, sseTokens, cleanupRunner,
       cleanupScript: join(seedRoot, "nope.sh"), version: "test",
     });
     const url = `http://127.0.0.1:${server.port}`;
@@ -304,6 +324,7 @@ describe("server integration", () => {
       );
       expect(reapEntries.length).toBeGreaterThan(0);
     } finally {
+      gistHistory.close();
       sse.close();
       sseTokens.close();
       status.close();
@@ -324,7 +345,7 @@ describe("server integration", () => {
     h.stop();
     // Pre-write a status file, then boot.
     const root = await mkdtemp(join(tmpdir(), "kd-srv-seed-"));
-    for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git"]) {
+    for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git", "specs"]) {
       await mkdir(join(root, d));
     }
     const fixture = {
@@ -349,6 +370,7 @@ describe("server integration", () => {
       worktrees: join(root, "worktrees"),
       sandboxes: join(root, "sandboxes"),
       sanitizedGit: join(root, "sanitized-git"),
+    specs: join(root, "specs"),
       dashboardAudit: join(root, "audit", "dashboard.jsonl"),
     };
     const status = new StatusStore(paths.status); await status.init();
@@ -356,16 +378,21 @@ describe("server integration", () => {
     const logsS = new LogStore(paths.logs);
     const conv = new ConversationStore(paths.conversations);
     const disk = new DiskUsageStore(paths);
+    const spec = new SpecStore(status, paths.specs, paths.worktrees, {
+      injectedSuffix: null, podmanVolumeMountpoint: async () => null,
+    });
     const dashAudit = new DashboardAuditWriter(paths.dashboardAudit); await dashAudit.init();
     const sse = new SseBroker(60_000);
     const sseTokens = new EphemeralTokenStore();
     const cleanupRunner = new CleanupRunner();
+    const gistHistory = new GistHistoryStore(status, sse); gistHistory.init();
     const config: DashboardConfig = {
       host: "127.0.0.1", port: 0, kapsisHome: root,
       readOnly: false, open: false, token, uiDistDir: null,
     };
     const server = startServer(config, {
-      status, audit, logs: logsS, conv, disk, sse, dashAudit, sseTokens, cleanupRunner,
+      status, audit, logs: logsS, conv, disk, spec, gistHistory,
+      sse, dashAudit, sseTokens, cleanupRunner,
       cleanupScript: join(root, "nope.sh"), version: "test",
     });
     const url = `http://127.0.0.1:${server.port}`;
@@ -374,6 +401,7 @@ describe("server integration", () => {
     const body = (await r.json()) as { agents: Array<{ agent_id: string }> };
     expect(body.agents.find((a) => a.agent_id === "seeded")).toBeDefined();
 
+    gistHistory.close();
     sse.close();
     sseTokens.close();
     status.close();

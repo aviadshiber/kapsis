@@ -3,6 +3,7 @@ import type { DashboardConfig } from "../config";
 import type { SseBroker } from "../sse";
 import type { DashboardAuditWriter } from "../control/audit-writer";
 import type { DiskUsageStore } from "../store/disk";
+import type { GistHistoryStore } from "../store/gist-history";
 import { CleanupRunner, type CleanupTarget } from "../control/cleanup";
 import { reapStaleAgents, STALE_THRESHOLD_MS } from "../control/reaper";
 import { basename, join } from "node:path";
@@ -14,6 +15,7 @@ interface MaintenanceDeps {
   dashAudit: DashboardAuditWriter;
   disk: DiskUsageStore;
   cleanupRunner: CleanupRunner;
+  gistHistory: GistHistoryStore;
   kapsisHome: string;
 }
 
@@ -29,7 +31,7 @@ function p(params: RouteParams, name: string): string {
 }
 
 export function registerMaintenanceRoutes(r: Router, deps: MaintenanceDeps): void {
-  const { config, sse, dashAudit, disk, cleanupScript, cleanupRunner, kapsisHome } = deps;
+  const { config, sse, dashAudit, disk, cleanupScript, cleanupRunner, gistHistory, kapsisHome } = deps;
   const statusDir = join(kapsisHome, "status");
 
   // In-flight lock for the reaper. Only one reap (preview or execute) may
@@ -87,6 +89,10 @@ export function registerMaintenanceRoutes(r: Router, deps: MaintenanceDeps): voi
         if (!dryRun && outcome.reaped.length > 0) {
           for (const r of outcome.reaped) {
             sse.publish("agents", { event: "agent-reaped", data: { agentId: r.agentId, project: r.project } });
+            // Drop any retained gist-history ring for the reaped agent so a
+            // future agent that reuses the same id (unlikely but possible
+            // with --agent-id) starts with a clean slate.
+            gistHistory.drop(r.agentId);
           }
         }
         if (!outcome.podmanAvailable) {
