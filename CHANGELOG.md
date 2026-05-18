@@ -6,14 +6,60 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.28.0] - 2026-05-12
+## [2.28.9] - 2026-05-17
 
-### Added
-- Persist agent JSONL via shared host volume (Issue #265) (#322)
+### Fixed
+- Harden e2e-tests — env+permissions+harden-runner+pinned deps (#359)
+
+## [2.28.11] - 2026-05-17
+
+### Fixed
+- Harden #361 follow-up — env validation, regex tightening, expanded preflight + tests (#365)
+- Harden #361 follow-up — env validation, regex tightening, expanded preflight + tests (#364)
+- Resolve --userns via env > yaml > autodetect; fix #361 (#362)
+
+## [2.28.12] - 2026-05-18
+
+### Changed
+- Add timeout-minutes to prevent hung jobs (#353)
+- Add timeout-minutes to unit-tests and integration-tests jobs (#354)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Skip write probe in overlay mode — read-only by design (#341) (#345)
+- Pre-create /home/developer/.claude as developer-owned (#340) (#346)
+
+
+### Fixed
+- Skip write probe in overlay mode — workspace is read-only by design (#341) (#342)
+
+
+### Fixed
+- Pre-filter directory snapshots on macOS to keep :U safe (#338) (#339)
+
+
+### Fixed
+- Add :U mount flag + post-staging chmod for macOS UID mismatch (#328) (#333)
+
+
+### Fixed
+- Broaden benign-stderr classifier + chmod restrictive dst (#335) (#336)
+
+
+### Fixed
+- Tolerate benign cp stderr from unstattable readdir entries (#328 root cause) (#334)
+
+
+### Fixed
+- Harden HOME-side CoW + atomic-copy fallback (#328 followup) (#332)
+
+
+### Added
+- Persist agent JSONL via shared host volume (Issue #265) (#322)
+
 
 ### Added
 - Inject Claude Code plugin hooks into settings.local.json (#327)
@@ -920,7 +966,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.12...HEAD
+[2.28.12]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.12
+[2.28.11]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.11
+[2.28.9]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.9
+[2.28.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.7
+[2.28.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.6
+[2.28.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.5
+[2.28.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.4
+[2.28.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.3
+[2.28.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.2
+[2.28.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.1
 [2.28.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.0
 [2.27.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.27.0
 [2.26.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.26.1

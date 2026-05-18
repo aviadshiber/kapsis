@@ -5,7 +5,7 @@
 # Kapsis bypasses Claude Code's native plugin loader (which only runs in
 # interactive mode). To make plugins like deeperdive-java-linter actually fire
 # inside a Kapsis container, this script enumerates host-enabled plugins and
-# merges their hooks/hooks.json into ~/.claude/settings.local.json — alongside
+# merges their hooks/hooks.json into ~/.claude/settings.json — alongside
 # Kapsis's own status/gist hooks injected by inject-status-hooks.sh.
 #
 # Filters (both must pass):
@@ -26,7 +26,7 @@
 #
 # Requires (must run AFTER):
 #   - rewrite-plugin-paths.sh (installed_plugins.json paths must be container-correct)
-#   - inject-status-hooks.sh   (settings.local.json must already exist with Kapsis hooks)
+#   - inject-status-hooks.sh   (settings.json must already exist with Kapsis hooks)
 #
 # Environment:
 #   KAPSIS_INSTALL_PLUGINS   - "true" to activate (gate; falsy = no-op)
@@ -95,7 +95,7 @@ _plugins_cache_prefix() {
 }
 
 # Inject hooks from all host-enabled (and whitelisted) plugins into
-# ~/.claude/settings.local.json.
+# ~/.claude/settings.json.
 inject_plugin_hooks() {
     # Gate: opt-in
     if [[ "${KAPSIS_INSTALL_PLUGINS:-false}" != "true" ]]; then
@@ -104,9 +104,8 @@ inject_plugin_hooks() {
     fi
 
     local settings_dir="${HOME}/.claude"
-    local settings_local="${settings_dir}/settings.local.json"
+    local settings_local="${settings_dir}/settings.json"
     local plugins_file="${settings_dir}/plugins/installed_plugins.json"
-    local user_settings="${settings_dir}/settings.json"
 
     # jq is mandatory
     if ! command -v jq &>/dev/null; then
@@ -125,19 +124,20 @@ inject_plugin_hooks() {
     # agent's $HOME, and a symlinked installed_plugins.json could feed us
     # attacker-chosen content from an unexpected location.
     local f
-    for f in "$settings_local" "$plugins_file" "$user_settings"; do
+    for f in "$settings_local" "$plugins_file"; do
         if [[ -L "$f" ]]; then
             log_warn "Refusing to inject plugin hooks: $f is a symlink"
             return 1
         fi
     done
 
-    # settings.local.json should already exist (inject-status-hooks.sh ran first),
+    # settings.json should already exist (inject-status-hooks.sh ran first),
     # but be defensive — create empty if missing.
     mkdir -p "$settings_dir"
     if [[ ! -f "$settings_local" ]]; then
         echo '{}' > "$settings_local"
-        log_debug "Created empty settings.local.json (inject-status-hooks.sh should have run first)"
+        chmod 600 "$settings_local"
+        log_debug "Created empty settings.json (inject-status-hooks.sh should have run first)"
     fi
 
     # Normalize whitelist. _parse_whitelist exits 2 on corrupted input — propagate
@@ -151,8 +151,8 @@ inject_plugin_hooks() {
 
     # Read host enabledPlugins (default empty object if file missing or key absent)
     local enabled_plugins_json='{}'
-    if [[ -f "$user_settings" ]]; then
-        enabled_plugins_json=$(jq -c '.enabledPlugins // {}' "$user_settings" 2>/dev/null || echo '{}')
+    if [[ -f "$settings_local" ]]; then
+        enabled_plugins_json=$(jq -c '.enabledPlugins // {}' "$settings_local" 2>/dev/null || echo '{}')
     fi
 
     # Trusted prefix every installPath must live under (defense vs. attacker
@@ -266,12 +266,12 @@ inject_plugin_hooks() {
         #   (Only this token is substituted; other ${...} refs like $HOME are
         #   left intact for the shell to expand at hook execution time.)
         # - For each individual hook command, if it already exists anywhere
-        #   under that event in settings.local.json OR earlier in this same
+        #   under that event in settings.json OR earlier in this same
         #   merge pass, drop it. This catches both cross-plugin and
         #   intra-plugin (same command in two of a plugin's own groups)
         #   duplicates in a single run.
         # - If the substituted plugin_group still has at least one hook left,
-        #   append the group (preserving its matcher) to settings.local.json.
+        #   append the group (preserving its matcher) to settings.json.
         # Emits {settings: <merged>, plugin_hook_count: N} so the caller gets
         # both values without a follow-up jq fork.
         local tmp_file plugin_hook_count

@@ -769,7 +769,7 @@ parse_config() {
         # Plugin hook injection (default: true for claude-cli, false otherwise).
         # Kapsis bypasses Claude Code's native plugin loader; this flag tells the
         # in-container inject-plugin-hooks.sh to merge plugin hooks into
-        # ~/.claude/settings.local.json so they actually fire.
+        # ~/.claude/settings.json so they actually fire.
         case "$AGENT_CONFIG_TYPE" in
             claude|claude-cli|claude-code)
                 INSTALL_PLUGINS=$(yq -r '.agent.install_plugins // "true"' "$CONFIG_FILE")
@@ -967,6 +967,21 @@ parse_config() {
 
         cfg_val=$(yq -r '.security.process.no_new_privileges // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
         [[ "$cfg_val" == "false" ]] && [[ -z "${KAPSIS_NO_NEW_PRIVILEGES:-}" ]] && export KAPSIS_NO_NEW_PRIVILEGES="false"
+
+        # User namespace mode (#361 — domain-UID workaround). Empty falls
+        # through to security.sh's autodetect (`keep-id` for low host UIDs,
+        # `keep-id:uid=1000,gid=1000` for high). Set KAPSIS_USERNS env to
+        # override per-invocation.
+        #
+        # The override guard checks KAPSIS_USERNS (not SECURITY_USERNS) on
+        # purpose — KAPSIS_USERNS is the user-facing override documented in
+        # the README, matching how every other security setting in this
+        # block guards on a KAPSIS_* var. SECURITY_USERNS is an internal
+        # plumbing variable owned by this parse path; users who export it
+        # directly are bypassing the documented contract and we don't
+        # honour it as an override.
+        cfg_val=$(yq -r '.security.userns // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ -n "$cfg_val" ]] && [[ -z "${KAPSIS_USERNS:-}" ]] && export SECURITY_USERNS="$cfg_val"
     else
         log_error "yq is required but not installed."
         log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
@@ -1408,6 +1423,101 @@ _snapshot_file() {
     fi
 }
 
+#-------------------------------------------------------------------------------
+# _path_has_unstattable_entries <host_path>
+#
+# Returns 0 if the subtree under <host_path> contains any AF_UNIX socket,
+# FIFO, or device entry — the entry classes that virtio-fs on macOS
+# returns from readdir() but errors on stat()/lstat() (issue #338).
+# Used by generate_filesystem_includes() to decide whether a directory
+# source needs pre-filter snapshotting before applying the :U mount
+# flag (which makes podman chown-walk the source via lstat).
+#
+# Uses `find ... -print -quit` so it returns after the first match —
+# fast even on large trees like ~/.claude/projects.
+#-------------------------------------------------------------------------------
+_path_has_unstattable_entries() {
+    local p="$1"
+    [[ -d "$p" ]] || return 1
+    [[ -n "$(find "$p" \( -type s -o -type p -o -type c -o -type b \) -print -quit 2>/dev/null)" ]]
+}
+
+#-------------------------------------------------------------------------------
+# _snapshot_dir_filtered <host_path> <relative_name>
+#
+# Snapshots a host directory tree to ${SNAPSHOT_DIR}/<relative_name>,
+# omitting AF_UNIX sockets / FIFOs / devices. Returns the snapshot path
+# on success, falls back to <host_path> (live mount) on failure with a
+# log_warn.
+#
+# Issue #338: when the resulting mount is given the :U flag, podman
+# walks the source via lstat() to chown it. AF_UNIX sockets visible
+# from readdir() on macOS virtio-fs return ENOENT from lstat(),
+# aborting the container-prepare phase before entrypoint runs. By
+# producing a socket-free snapshot here, the :U traversal succeeds.
+#
+# Mode bits are preserved via `cp -Rp` (BSD + GNU compatible). Sockets
+# / FIFOs / devices are pruned post-cp to defend against platform
+# variance in how cp handles them. The in-container atomic-copy
+# classifier (scripts/lib/atomic-copy.sh) remains as defense in depth.
+#-------------------------------------------------------------------------------
+_snapshot_dir_filtered() {
+    local host_path="$1"
+    local relative_name="$2"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "$host_path"
+        return 0
+    fi
+
+    local snapshot_path="${SNAPSHOT_DIR}/${relative_name}"
+
+    # Pre-clean to avoid stale-entry merge on re-runs / agent resume.
+    # cp -Rp src/. dst/ merges files into an existing dst, so entries
+    # deleted from the host between launches would persist in the
+    # snapshot and be visible to the new container.
+    rm -rf "$snapshot_path" 2>/dev/null || true
+
+    if ! mkdir -p "$snapshot_path" 2>/dev/null; then
+        log_warn "Snapshot dir mkdir failed for ${snapshot_path}, falling back to live mount"
+        echo "$host_path"
+        return 1
+    fi
+
+    # cp -Rp may warn and exit non-zero on socket entries but still
+    # copies all regular files / dirs / symlinks. Suppress the noise
+    # and post-prune to handle any platform variance.
+    cp -Rp "${host_path}/." "${snapshot_path}/" 2>/dev/null || true
+    find "$snapshot_path" \( -type s -o -type p -o -type c -o -type b \) -delete 2>/dev/null || true
+
+    # Harden the snapshot subtree AFTER cp -Rp (which would otherwise
+    # propagate the source dir's mode onto snapshot_path and undo any
+    # earlier chmod). Inner file modes are preserved by `-p` (so
+    # id_rsa stays 0600), but the ancestor SNAPSHOT_DIR is created by
+    # the caller with the default umask (typically 0755). chmod 0700
+    # here keeps the credential contents enumerable only by the
+    # current user even if the parent is loose.
+    chmod 0700 "$snapshot_path" 2>/dev/null || true
+
+    # Validate completeness via regular-file count parity. This subsumes
+    # an "is the snapshot empty?" check and catches:
+    #   - cp entirely failed (src=N, dst=0)
+    #   - cp partial failure / mid-copy ENOSPC (src=N, dst=K, K<N)
+    #   - source contained only sockets (src=0, dst=0 — match, no fallback;
+    #     an empty snapshot is still a valid socket-free :U source)
+    # Mirrors atomic-copy.sh's count-based guard (issues #328, #335).
+    local _src_count _dst_count
+    _src_count=$(find "$host_path" -type f 2>/dev/null | wc -l | tr -d ' \n')
+    _dst_count=$(find "$snapshot_path" -type f 2>/dev/null | wc -l | tr -d ' \n')
+    if [[ "$_src_count" != "$_dst_count" ]]; then
+        log_warn "Snapshot file count mismatch for ${host_path} (src=${_src_count} dst=${_dst_count}), falling back to live mount"
+        echo "$host_path"
+        return 1
+    fi
+
+    echo "$snapshot_path"
+}
+
 generate_filesystem_includes() {
     local staging_dir="/kapsis-staging"
     STAGED_CONFIGS=""
@@ -1447,16 +1557,52 @@ generate_filesystem_includes() {
                 relative_path="${expanded_path#"$HOME"/}"
                 staging_path="${staging_dir}/${relative_path}"
 
-                # Snapshot regular files to prevent torn reads (issue #164)
-                # Directories are left as-is — they use fuse-overlayfs CoW inside the container
+                # Snapshot regular files to prevent torn reads (issue #164).
+                # Issue #338: on macOS, also snapshot directories that contain
+                # AF_UNIX sockets / FIFOs / devices, since podman's :U flag
+                # (added below for the #328 fix) chowns the source recursively
+                # via lstat() — and virtio-fs returns ENOENT from lstat() on
+                # those entry types, aborting container-prepare. Other
+                # directories keep the live mount + fuse-overlayfs CoW path.
                 local mount_source="$expanded_path"
+                local _dir_snapshot_fallback=0
                 if [[ -f "$expanded_path" ]]; then
                     mount_source=$(_snapshot_file "$expanded_path" "$relative_path")
-                    log_debug "Snapshot: ${expanded_path} -> ${mount_source}"
+                    log_debug "Snapshot (file): ${expanded_path} -> ${mount_source}"
+                elif [[ -d "$expanded_path" ]] && is_macos && _path_has_unstattable_entries "$expanded_path"; then
+                    if mount_source=$(_snapshot_dir_filtered "$expanded_path" "$relative_path"); then
+                        log_debug "Snapshot (dir, socket-free): ${expanded_path} -> ${mount_source}"
+                    else
+                        # Fallback returned live host_path; mounting it with :U
+                        # would re-trip the chown-walk on virtio-fs ENOENT (the
+                        # bug this code prevents). Drop :U for THIS entry; the
+                        # in-container atomic-copy classifier (#336) handles
+                        # the remaining cp-stage socket failures.
+                        _dir_snapshot_fallback=1
+                        log_warn "Directory snapshot for ${expanded_path} fell back to live mount; :U dropped on this entry to avoid #338 chown-walk"
+                    fi
                 fi
 
-                # Mount to staging directory (read-only)
-                VOLUME_MOUNTS+=("-v" "${mount_source}:${staging_path}:ro")
+                # Mount to staging directory (read-only).
+                # Issue #328: on macOS, the host user's UID (typically 501) maps to
+                # UID 0 (root) inside the container's user namespace, while the
+                # container process runs as developer (UID 1000). Directories with
+                # mode 0700 (e.g., .ssh, .claude) owned by UID 0 are inaccessible
+                # to UID 1000 — both fuse-overlayfs and cp fail with EACCES.
+                # The :U flag creates an idmapped mount (kernel 5.12+, Podman 4.3+)
+                # that remaps file ownership to the container user so mode-0700 dirs
+                # appear owned by developer and become readable. :ro is preserved;
+                # the host filesystem is never modified.
+                # Issue #338: :U makes podman chown-walk the source via lstat(),
+                # which trips on virtio-fs ENOENT for AF_UNIX sockets. The
+                # directory-snapshot above produces a socket-free source for
+                # affected dirs so :U traversal succeeds. If the snapshot
+                # itself fell back to the live path, drop :U for that entry.
+                local _staging_mount_opts="ro"
+                if is_macos && [[ "$_dir_snapshot_fallback" -eq 0 ]]; then
+                    _staging_mount_opts="ro,U"
+                fi
+                VOLUME_MOUNTS+=("-v" "${mount_source}:${staging_path}:${_staging_mount_opts}")
                 log_debug "Staged for copy: ${mount_source} -> ${staging_path}"
 
                 # Track for entrypoint to copy
@@ -1874,7 +2020,7 @@ generate_env_vars() {
 
     # Attribution templates (commit trailer + PR description).
     # - Claude Code (claude-cli): inject-status-hooks.sh writes these into
-    #   ~/.claude/settings.local.json so Claude Code uses them natively.
+    #   ~/.claude/settings.json so Claude Code uses them natively.
     # - Other agents: entrypoint.sh and host-side post-container-git.sh read
     #   KAPSIS_ATTRIBUTION_COMMIT and append it to commit messages directly.
     # Empty string disables attribution (Claude Code honors this explicitly).
@@ -2539,7 +2685,7 @@ main() {
     if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]] && [[ "$DRY_RUN" != "true" ]]; then
         log_timer_start "preflight"
         source "$SCRIPT_DIR/preflight-check.sh"
-        if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"; then
+        if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID" "$CONFIG_FILE"; then
             status_complete 1 "Pre-flight check failed"
             _STATUS_COMPLETE_SHOWN=true
             exit 1
@@ -2956,7 +3102,26 @@ main() {
     #   4 = Mount failure (virtio-fs drop)
     #   5 = Agent completed but process hung (stuck child process)
     #   6 = Commit failure (agent produced work but git commit failed)
-    if [[ "$EXIT_CODE" -eq 4 ]]; then
+    # User-initiated kill (e.g. dashboard Kill button) drops a marker BEFORE
+    # `podman kill`, so the post-container handler can distinguish an intentional
+    # SIGTERM from a real mount failure / agent crash. SIGTERM tears down the
+    # container, which drops the virtio-fs mount and causes the entrypoint's
+    # mount probe to emit KAPSIS_MOUNT_FAILURE — without this check, every
+    # dashboard kill would be mis-classified as `mount_failure`.
+    local _kill_marker
+    _kill_marker="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/${AGENT_ID}.kill-requested"
+    if [[ -f "$_kill_marker" ]] && [[ "$EXIT_CODE" -ne 0 ]]; then
+        log_info "Kill marker present — agent was intentionally terminated (source: dashboard or equivalent)"
+        FINAL_EXIT_CODE=0
+        log_finalize 0
+        status_set_error_type "killed"
+        local kill_msg="Agent terminated by user request"
+        status_complete 0 "$kill_msg"
+        _STATUS_COMPLETE_SHOWN=true
+        display_complete 0 "" "$kill_msg"
+        _DISPLAY_COMPLETE_SHOWN=true
+        rm -f "$_kill_marker" 2>/dev/null || true
+    elif [[ "$EXIT_CODE" -eq 4 ]]; then
         # Mount failure detected via sentinel (Issue #248)
         FINAL_EXIT_CODE=4
         log_finalize 4

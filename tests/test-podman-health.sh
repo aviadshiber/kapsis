@@ -188,13 +188,18 @@ test_count_uses_label_filter() {
 }
 
 test_count_reports_only_labeled_containers() {
-    log_test "count_running_kapsis_containers counts labeled containers"
+    log_test "count_running_kapsis_containers counts labeled responsive containers"
     local tmpdir
     tmpdir=$(mktemp -d)
-    # Fake podman: when asked for ps, print three container IDs (simulating
-    # that the --filter already matched only managed containers).
+    # Fake podman: ps returns three container IDs; exec succeeds for all
+    # (simulating responsive containers — Issue #348 added the responsiveness
+    # probe to count_running_kapsis_containers).
     _make_fake_podman "$tmpdir/podman" \
-        'if [[ "$1" == "ps" ]]; then printf "%s\n" "abc123" "def456" "xyz789"; fi'
+        'case "$1" in
+            ps)   printf "%s\n" "abc123" "def456" "xyz789" ;;
+            exec) exit 0 ;;
+            *)    exit 0 ;;
+        esac'
 
     local out
     out=$(bash -c "
@@ -202,7 +207,74 @@ test_count_reports_only_labeled_containers() {
         KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' count_running_kapsis_containers
     " 2>&1)
     rm -rf "$tmpdir"
-    assert_equals "3" "$out" "Should count 3 containers when podman ps returns 3 IDs"
+    assert_equals "3" "$out" "Should count 3 containers when podman ps returns 3 responsive IDs"
+}
+
+#===============================================================================
+# count_running_kapsis_containers — zombie exclusion (Issue #348)
+#===============================================================================
+
+test_count_excludes_wedged_containers() {
+    log_test "count_running_kapsis_containers excludes wedged containers (Issue #348)"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    # Fake podman: ps returns mixed IDs; exec succeeds for `alive*` and fails
+    # for `wedge*` (simulating D-state PID-1 unresponsive to exec).
+    _make_fake_podman "$tmpdir/podman" \
+        'case "$1" in
+            ps)
+                printf "%s\n" "alive1" "wedge1" "alive2"
+                ;;
+            exec)
+                # $2 is the container id
+                if [[ "$2" == wedge* ]]; then exit 1; fi
+                exit 0
+                ;;
+            *)
+                exit 0
+                ;;
+        esac'
+
+    local out
+    out=$(bash -c "
+        $(_load_lib_with_macos)
+        KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' \
+        KAPSIS_VFS_EXEC_PROBE_TIMEOUT=1 \
+        count_running_kapsis_containers
+    " 2>/dev/null)
+    rm -rf "$tmpdir"
+    assert_equals "2" "$out" "Should count only the 2 responsive containers"
+}
+
+test_count_excludes_all_when_no_timeout_binary() {
+    log_test "count_running_kapsis_containers excludes all when no timeout binary (Issue #348, fail-closed)"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    # Marker file: if `exec` is ever invoked, the test should fail. With no
+    # timeout binary, _probe_container_responsive must return early without
+    # invoking podman exec at all.
+    _make_fake_podman "$tmpdir/podman" \
+        'case "$1" in
+            ps)   printf "%s\n" "id1" "id2" ;;
+            exec) touch '"$tmpdir"'/exec-was-called; exit 0 ;;
+            *)    exit 0 ;;
+        esac'
+
+    local out
+    out=$(bash -c "
+        $(_load_lib_with_macos)
+        # Belt-and-braces: clear any cached timeout-cmd from compat.sh sourcing.
+        unset _KAPSIS_TIMEOUT_CMD
+        # Stub the timeout resolver to simulate no timeout/gtimeout on PATH.
+        _vfs_timeout_cmd() { printf ''; return 0; }
+        KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' count_running_kapsis_containers
+    " 2>/dev/null)
+
+    local exec_called="no"
+    [[ -f "$tmpdir/exec-was-called" ]] && exec_called="yes"
+    rm -rf "$tmpdir"
+    assert_equals "0" "$out" "Count must be 0 when no timeout binary (fail-closed)"
+    assert_equals "no" "$exec_called" "podman exec must NOT be invoked without a timeout wrapper"
 }
 
 #===============================================================================
@@ -262,6 +334,7 @@ test_autoheal_refuses_when_other_containers_running() {
                 exit 0 ;;
             run)     echo "$@" >> '"$tmpdir"'/calls.log; exit 42 ;;
             ps)      printf "%s\n" "other1" "other2" ;;
+            exec)    exit 0 ;;
             machine) echo "machine $*" >> '"$tmpdir"'/calls.log; exit 0 ;;
             *)       echo "unknown: $*" >&2; exit 1 ;;
         esac'
@@ -358,6 +431,189 @@ test_autoheal_disabled_refuses_restart() {
     rm -rf "$tmpdir"
     assert_equals "1" "$rc" "Should return 1 when auto-heal disabled"
     assert_not_contains "$calls" "machine stop" "Must NOT restart VM when auto-heal disabled"
+}
+
+#===============================================================================
+# maybe_autoheal_podman_vm — zombie sweep (Issue #348)
+#===============================================================================
+
+# Shared fake podman for the sweep tests. State machine:
+#   image exists  -> 0
+#   run (probe)   -> fail (42) on first call, succeed (0) on subsequent calls
+#   ps            -> emit the IDs passed in $KAPSIS_TEST_PS_IDS env
+#   exec ID       -> wedged ID (matches "wedge*") -> $KAPSIS_TEST_WEDGE_EXIT
+#                    (default 124 — matches real `timeout` exit on a hung
+#                    child); everything else -> 0
+#   rm -f ID      -> exit code from $KAPSIS_TEST_RM_EXIT (default 0)
+#   machine ...   -> record + exit 0
+_make_sweep_fake_podman() {
+    local target="$1"
+    local state_file="$2"
+    local calls_log="$3"
+    echo "0" > "$state_file"
+    cat > "$target" <<EOF
+#!/usr/bin/env bash
+set -u
+calls_log='$calls_log'
+state_file='$state_file'
+case "\${1:-}" in
+    image)
+        [[ "\${2:-}" == "exists" ]] && exit 0
+        exit 0
+        ;;
+    run)
+        n=\$(cat "\$state_file")
+        n=\$((n+1))
+        echo "\$n" > "\$state_file"
+        if [[ \$n -eq 1 ]]; then exit 42; else exit 0; fi
+        ;;
+    ps)
+        # Emit the IDs configured by the test via env.
+        for id in \${KAPSIS_TEST_PS_IDS:-}; do printf '%s\n' "\$id"; done
+        exit 0
+        ;;
+    exec)
+        # \$2 is the container id
+        if [[ "\${2:-}" == wedge* ]]; then exit "\${KAPSIS_TEST_WEDGE_EXIT:-124}"; fi
+        exit 0
+        ;;
+    rm)
+        # rm -f <id>
+        echo "rm \$*" >> "\$calls_log"
+        exit "\${KAPSIS_TEST_RM_EXIT:-0}"
+        ;;
+    machine)
+        echo "machine \$*" >> "\$calls_log"
+        exit 0
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+    chmod +x "$target"
+}
+
+test_autoheal_recovers_when_only_wedged_containers_present() {
+    log_test "maybe_autoheal_podman_vm restarts VM when only wedged zombies present (Issue #348)"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    _make_sweep_fake_podman "$tmpdir/podman" "$tmpdir/state" "$tmpdir/calls.log"
+
+    local rc=0
+    bash -c "
+        $(_load_lib_with_macos)
+        KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' \
+        KAPSIS_TEST_PS_IDS='wedge1' \
+        KAPSIS_VFS_EXEC_PROBE_TIMEOUT=1 \
+        KAPSIS_VFS_RECOVERY_DELAY=1 \
+        maybe_autoheal_podman_vm 1 2 1
+    " &>/dev/null || rc=$?
+
+    local calls
+    calls=$(cat "$tmpdir/calls.log" 2>/dev/null || echo "")
+    rm -rf "$tmpdir"
+    assert_equals "0" "$rc" "Heal must succeed when the only running container is wedged"
+    assert_contains "$calls" "machine stop" "VM must be stopped (heal proceeded past count check)"
+    assert_contains "$calls" "machine start" "VM must be started after stop"
+}
+
+test_autoheal_sweep_attempts_rm_for_wedged() {
+    log_test "maybe_autoheal_podman_vm runs rm -f on wedged containers (Issue #348)"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    _make_sweep_fake_podman "$tmpdir/podman" "$tmpdir/state" "$tmpdir/calls.log"
+
+    bash -c "
+        $(_load_lib_with_macos)
+        KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' \
+        KAPSIS_TEST_PS_IDS='wedge1' \
+        KAPSIS_VFS_EXEC_PROBE_TIMEOUT=1 \
+        KAPSIS_VFS_RECOVERY_DELAY=1 \
+        maybe_autoheal_podman_vm 1 2 1
+    " &>/dev/null || true
+
+    local calls
+    calls=$(cat "$tmpdir/calls.log" 2>/dev/null || echo "")
+    rm -rf "$tmpdir"
+    assert_contains "$calls" "rm -f wedge1" "Sweep must invoke 'podman rm -f' on wedged container"
+}
+
+test_autoheal_sweep_tolerates_rm_failure() {
+    log_test "maybe_autoheal_podman_vm restarts even if rm -f fails on wedged (Issue #348)"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    _make_sweep_fake_podman "$tmpdir/podman" "$tmpdir/state" "$tmpdir/calls.log"
+
+    local rc=0
+    bash -c "
+        $(_load_lib_with_macos)
+        KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' \
+        KAPSIS_TEST_PS_IDS='wedge1' \
+        KAPSIS_TEST_RM_EXIT=137 \
+        KAPSIS_VFS_EXEC_PROBE_TIMEOUT=1 \
+        KAPSIS_VFS_RECOVERY_DELAY=1 \
+        maybe_autoheal_podman_vm 1 2 1
+    " &>/dev/null || rc=$?
+
+    local calls
+    calls=$(cat "$tmpdir/calls.log" 2>/dev/null || echo "")
+    rm -rf "$tmpdir"
+    assert_equals "0" "$rc" "Heal must still succeed when rm -f exits non-zero (VM restart reaps zombie)"
+    assert_contains "$calls" "machine stop" "Restart must proceed despite rm -f failure"
+}
+
+test_autoheal_still_refuses_when_responsive_containers_running() {
+    log_test "maybe_autoheal_podman_vm still refuses when responsive containers are running (Issue #348 regression)"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    _make_sweep_fake_podman "$tmpdir/podman" "$tmpdir/state" "$tmpdir/calls.log"
+
+    local rc=0
+    bash -c "
+        $(_load_lib_with_macos)
+        KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' \
+        KAPSIS_TEST_PS_IDS='alive1 alive2' \
+        KAPSIS_VFS_EXEC_PROBE_TIMEOUT=1 \
+        KAPSIS_VFS_RECOVERY_DELAY=1 \
+        maybe_autoheal_podman_vm 1 2 1
+    " &>/dev/null || rc=$?
+
+    local calls
+    calls=$(cat "$tmpdir/calls.log" 2>/dev/null || echo "")
+    rm -rf "$tmpdir"
+    assert_equals "1" "$rc" "Must still refuse when other responsive agents are live"
+    assert_not_contains "$calls" "machine stop" "Must NOT restart VM with responsive agents running"
+    assert_not_contains "$calls" "rm -f" "Must NOT rm -f responsive containers"
+}
+
+test_autoheal_skips_rm_for_raced_exit_containers() {
+    log_test "maybe_autoheal_podman_vm skips rm -f when probe rc != 124 (raced exit, not wedged — PR #349 review)"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    _make_sweep_fake_podman "$tmpdir/podman" "$tmpdir/state" "$tmpdir/calls.log"
+
+    # Probe returns 125 (the conventional "podman exec failed to start" rc for
+    # a container that exited under us) — NOT 124. This is the race case, not
+    # a wedged D-state. Auto-heal should proceed (the container isn't really
+    # running) but it should NOT try to `rm -f` a vanished container.
+    local rc=0
+    bash -c "
+        $(_load_lib_with_macos)
+        KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' \
+        KAPSIS_TEST_PS_IDS='wedge1' \
+        KAPSIS_TEST_WEDGE_EXIT=125 \
+        KAPSIS_VFS_EXEC_PROBE_TIMEOUT=1 \
+        KAPSIS_VFS_RECOVERY_DELAY=1 \
+        maybe_autoheal_podman_vm 1 2 1
+    " &>/dev/null || rc=$?
+
+    local calls
+    calls=$(cat "$tmpdir/calls.log" 2>/dev/null || echo "")
+    rm -rf "$tmpdir"
+    assert_equals "0" "$rc" "Heal must proceed (raced-exit container doesn't block restart)"
+    assert_contains "$calls" "machine stop" "VM restart must still proceed"
+    assert_not_contains "$calls" "rm -f" "Must NOT rm -f a container that already exited (probe rc != 124)"
 }
 
 #===============================================================================
@@ -583,12 +839,23 @@ main() {
     run_test test_count_uses_label_filter
     run_test test_count_reports_only_labeled_containers
 
+    log_info "=== count_running_kapsis_containers — zombie exclusion (Issue #348) ==="
+    run_test test_count_excludes_wedged_containers
+    run_test test_count_excludes_all_when_no_timeout_binary
+
     log_info "=== maybe_autoheal_podman_vm ==="
     run_test test_autoheal_noop_on_linux
     run_test test_autoheal_fastpath_returns_0_when_probe_passes
     run_test test_autoheal_refuses_when_other_containers_running
     run_test test_autoheal_restarts_when_safe_and_probe_recovers
     run_test test_autoheal_disabled_refuses_restart
+
+    log_info "=== maybe_autoheal_podman_vm — zombie sweep (Issue #348) ==="
+    run_test test_autoheal_recovers_when_only_wedged_containers_present
+    run_test test_autoheal_sweep_attempts_rm_for_wedged
+    run_test test_autoheal_sweep_tolerates_rm_failure
+    run_test test_autoheal_still_refuses_when_responsive_containers_running
+    run_test test_autoheal_skips_rm_for_raced_exit_containers
 
     log_info "=== Review-gap tests (Issue #276 second round) ==="
     run_test test_autoheal_retry_exhaustion_returns_1

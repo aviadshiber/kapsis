@@ -7,7 +7,7 @@
 # are kept; everything else is removed.
 #
 # This runs INSIDE the container after CoW overlay setup (files are writable)
-# but BEFORE Kapsis hook injection (settings.local.json), so there's no conflict.
+# but BEFORE Kapsis hook injection (settings.json), so there's no conflict.
 #
 # Environment:
 #   KAPSIS_CLAUDE_HOOKS_INCLUDE  - Comma-separated substrings to match hook commands

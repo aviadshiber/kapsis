@@ -110,6 +110,12 @@ kapsis/
 │   ├── internal/controller/    # Reconciliation logic (pod builder, network policy, status bridge)
 │   ├── config/                 # Kustomize manifests, CRD, RBAC
 │   └── test/                   # E2E tests and utilities
+├── dashboard/                  # Local web dashboard (Bun + TypeScript, single binary)
+│   ├── server/                 # Bun.serve() HTTP/SSE; consumes ~/.kapsis/ state
+│   │   ├── src/store/          # Status, audit, logs, conversations, disk, health readers
+│   │   ├── src/control/        # kill / cleanup wrappers + dashboard audit writer
+│   │   └── tests/              # bun:test
+│   └── ui/                     # Vite + React + TypeScript SPA (embedded into the binary)
 ├── maven/                      # Maven config (isolated-settings.xml for in-container builds)
 ├── assets/                     # Static artifacts (logos, etc.)
 ├── security/                   # AppArmor & seccomp profiles
@@ -148,6 +154,7 @@ kapsis/
 | Plugin hook injection | `docs/PLUGINS.md` |
 | Security policy | `SECURITY.md` |
 | AI agent guidelines | `AGENTS.md` |
+| Dashboard | `docs/DASHBOARD.md` |
 
 ## Quick Commands
 
@@ -170,6 +177,12 @@ kapsis/
 ./scripts/kapsis-status.sh                   # Show running agents
 ./scripts/kapsis-status.sh --json            # Machine-readable status
 ./scripts/kapsis-cleanup.sh                  # Reclaim disk space
+
+# Dashboard (local web UI)
+cd dashboard && bun install
+bun run dev                                  # parallel server + Vite dev (proxy → 127.0.0.1:7777)
+bun run compile                              # single-binary release → dashboard/bin/kapsis-dashboard
+./dashboard/bin/kapsis-dashboard --open      # start + open browser; token printed to stdout
 
 # Audit
 ./scripts/audit-report.sh                    # Generate audit report
@@ -242,7 +255,7 @@ Status is written as JSON to `~/.kapsis/status/`.
 | `scripts/lib/podman-health.sh` | Podman VM health probe & auto-heal (macOS pre-launch mount check) |
 | `scripts/lib/status-sync.sh` | Mirrors per-agent named volumes to `~/.kapsis/status/` (macOS) |
 | `scripts/lib/inject-lsp-config.sh` | LSP config injection — editor integration inside containers |
-| `scripts/lib/inject-plugin-hooks.sh` | Plugin hook injection — merges Claude Code plugin hooks into settings.local.json |
+| `scripts/lib/inject-plugin-hooks.sh` | Plugin hook injection — merges Claude Code plugin hooks into settings.json |
 | `scripts/lib/rewrite-plugin-paths.sh` | Plugin path rewriting — adjusts paths for container mounts |
 | `scripts/lib/ssh-config-compat.sh` | SSH config portability — normalizes SSH config across environments |
 | `scripts/backends/podman.sh` | Podman backend — local container execution |
@@ -352,6 +365,24 @@ shellcheck scripts/**/*.sh tests/*.sh
 | `backend-rust` | Rust development with Cargo |
 | `ml-python` | Python ML/AI libraries |
 | `full-stack` | Everything combined (~2.1GB) |
+
+## Dashboard Sync Rule
+
+**Whenever a user-facing feature is added, changed, or removed in Kapsis, the dashboard (`dashboard/`) must be updated in the same PR to reflect it.**
+
+A "user-facing feature" includes:
+- New CLI flags or commands (e.g., `launch-agent.sh`, `kapsis-cleanup.sh`)
+- New status fields in `scripts/lib/status.sh` (the dashboard's primary data source)
+- New audit event types in `scripts/lib/audit.sh`
+- New error types or exit codes
+- New configuration options surfaced in `agent-sandbox.yaml`
+- New container resources (volumes, mounts, named directories) that affect disk usage
+
+The PR should either:
+1. Extend `dashboard/server/` to read/expose the new data, and `dashboard/ui/` to render it, or
+2. Open a follow-up GitHub issue tagged `dashboard-sync` if the surface change is large enough to warrant a separate PR.
+
+The TypeScript mirror of the status schema lives at `dashboard/server/src/types.ts` (`AgentStatus` interface) — keep it in lockstep with `scripts/lib/status.sh`. CI enforces this via `.github/workflows/dashboard-sync.yml`.
 
 ## Things to Avoid
 

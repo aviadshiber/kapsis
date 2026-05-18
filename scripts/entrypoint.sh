@@ -675,6 +675,15 @@ setup_staged_config_overlays() {
                 fi
                 log_warn "Falling back to atomic copy for ${relative_path}"
                 atomic_copy_dir "$src" "$dst" || log_warn "Atomic copy validation failed for dir: ${relative_path}"
+                # Issue #328: ensure every file in the staged dir is user-writable
+                # after any copy path (socket-file errors cause cp to exit 1 but
+                # still land all regular files with their original mode bits).
+                # Downstream writers (inject-lsp-config.sh, filter-agent-config.sh)
+                # need to modify files like settings.json; atomic_copy_dir
+                # preserves source perms via -p which can leave them mode 0444.
+                if [[ -d "$dst" ]]; then
+                    find "$dst" -type f -exec chmod u+rw {} + 2>/dev/null || true
+                fi
             fi
         else
             # File: atomic copy with validation (fixes race condition #151)
@@ -1252,7 +1261,7 @@ gemini-cli|Gemini CLI"
 #
 # Installs Kapsis status tracking hooks for supported agents.
 # Uses inject-status-hooks.sh which handles:
-#   - Claude Code: JSON merge into ~/.claude/settings.local.json
+#   - Claude Code: JSON merge into ~/.claude/settings.json
 #   - Codex CLI: YAML merge into ~/.codex/config.yaml
 #   - Gemini CLI: Shell scripts in ~/.gemini/hooks/
 #
@@ -1288,7 +1297,7 @@ install_agent_hooks() {
 # Add new agents by updating the hook_agents variable there.
 
 # Plugin hook installation (Claude Code only). Merges user-installed Claude
-# Code plugin hooks into the same ~/.claude/settings.local.json that
+# Code plugin hooks into the same ~/.claude/settings.json that
 # install_agent_hooks just wrote — so Kapsis (status/gist) hooks AND plugin
 # hooks (e.g. deeperdive-java-linter) both fire on agent tool calls.
 #
@@ -1675,9 +1684,15 @@ validate_workspace_mount() {
 # the agent command. On macOS virtio-fs can degrade during that window too.
 #
 # This probe runs immediately before exec and uses `timeout` so a hung virtio-
-# fs transport cannot freeze the container. A write probe is required (not
-# just stat) because the failure mode in #276 is that bash's `>` redirect open
-# fails even when stat succeeds on the parent dir.
+# fs transport cannot freeze the container. In worktree mode a write probe is
+# required (not just stat) because the failure mode in #276 is that bash's `>`
+# redirect open fails even when stat succeeds on the parent dir; /workspace is
+# read-write so the probe has signal. In overlay mode the workspace is
+# intentionally read-only (Issue #341): agent writes target $HOME and
+# /kapsis-status instead, so a write probe on /workspace always returns EROFS
+# regardless of mount health — only the stat probe runs. If KAPSIS_SANDBOX_MODE
+# is unset or empty the write probe runs (worktree behavior), which is the safe
+# default for callers that do not export the variable.
 #
 # On failure, emits the same KAPSIS_MOUNT_FAILURE: sentinel to stderr that the
 # liveness monitor uses (scripts/lib/liveness-monitor.sh:613), so the existing
@@ -1734,9 +1749,35 @@ probe_mount_readiness() {
         return 1
     fi
 
-    # Write probe: the real failure mode is that bash cannot open files for
-    # output redirect. Verify that the agent will be able to create files
-    # under the workspace before we exec into it.
+    # Issue #341: in overlay mode the workspace is read-only by design — the
+    # agent's writes go to the host-side upperdir (via :O,upperdir=,workdir=),
+    # to $HOME for staged-config CoW overlays (.claude, .ssh, …), and to
+    # /kapsis-status for task progress. The agent never writes to /workspace
+    # directly. A write probe here would always fail with EROFS regardless of
+    # mount health, masking the stat probe above and producing false-positive
+    # mount failures (exit 4) for every overlay-mode launch on macOS where
+    # podman 5.x mounts ":O,upperdir=,workdir=" as ro under --userns=keep-id.
+    # The mid-run liveness-monitor follows the same mode-aware pattern — see
+    # scripts/lib/liveness-monitor.sh::_mount_check_probe (uses stat + ls -A
+    # for both modes, only adds a git sentinel check in worktree mode).
+    # Mirrors the existing overlay short-circuit in
+    # scripts/lib/inject-status-hooks.sh::inject_gist_instructions.
+    #
+    # Normalise the mode string: lowercase and strip whitespace so "Overlay",
+    # " overlay", and future overlay-family names match. Unset/empty is treated
+    # as worktree (write probe runs) — safe default for callers that do not
+    # export KAPSIS_SANDBOX_MODE.
+    local _probe_mode="${KAPSIS_SANDBOX_MODE:-}"
+    _probe_mode="${_probe_mode,,}"                    # bash lowercase
+    _probe_mode="${_probe_mode//[[:space:]]/}"        # strip whitespace
+    if [[ "$_probe_mode" == "overlay" ]]; then
+        log_debug "Pre-agent mount readiness probe: stat passed; skipping write probe in overlay mode (read-only by design)"
+        return 0
+    fi
+
+    # Write probe (worktree mode): the real failure mode is that bash cannot
+    # open files for output redirect. Verify that the agent will be able to
+    # create files under the workspace before we exec into it.
     # Use mktemp for an unpredictable filename; fall back to PID-suffix on
     # systems where mktemp is unavailable inside the container (extremely rare).
     local probe_file
@@ -1788,7 +1829,7 @@ main() {
     setup_staged_config_overlays
 
     # Whitelist Claude agent config (hooks and MCP servers) based on YAML config
-    # Must happen after CoW (files writable) and before hook injection (settings.local.json)
+    # Must happen after CoW (files writable) and before hook injection (settings.json)
     local filter_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/filter-agent-config.sh"
     if [[ -f "$filter_lib" ]]; then
         source "$filter_lib"
@@ -1805,7 +1846,7 @@ main() {
 
     # Inject LSP server configuration based on YAML config
     # Must happen after CoW (files writable) and after filtering (clean slate)
-    # but before hook injection (both write to settings.local.json)
+    # but before hook injection (both write to settings.json)
     local lsp_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/inject-lsp-config.sh"
     if [[ -f "$lsp_lib" ]]; then
         source "$lsp_lib"

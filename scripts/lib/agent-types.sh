@@ -199,7 +199,7 @@ get_agent_hook_config_path() {
 
     case "$agent_type" in
         "$AGENT_TYPE_CLAUDE_CLI")
-            echo "${HOME}/.claude/settings.local.json"
+            echo "${HOME}/.claude/settings.json"
             ;;
         "$AGENT_TYPE_CODEX_CLI")
             echo "${HOME}/.codex/kapsis-hooks.yaml"
