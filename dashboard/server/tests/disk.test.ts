@@ -38,6 +38,7 @@ describe("DiskUsageStore", () => {
       worktrees: join(root, "worktrees"),
       sandboxes: join(root, "sandboxes"),
       sanitizedGit: join(root, "sanitized-git"),
+      specs: join(root, "specs"),
       dashboardAudit: join(root, "audit", "dashboard.jsonl"),
     });
   });

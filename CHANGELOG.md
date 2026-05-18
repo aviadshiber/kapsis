@@ -32,12 +32,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **scripts/lib/spec-store.sh**: new Kapsis core library that persists the
+  resolved `--spec` file (or `--task` inline string) to a canonical
+  per-agent location `${KAPSIS_SPECS_DIR:-~/.kapsis/specs}/<agent_id>.md`
+  at launch time. Source-agnostic — slack-bot, `/dev`, and manual launches
+  all land in the same place. 256 KB cap, 0600 perms, atomic write,
+  best-effort failure. `launch-agent.sh` calls it immediately after task
+  validation; interactive-mode launches are skipped silently.
 - Dashboard: new **Spec** tab on agent detail — renders the original
-  `--task` / `--spec` input (read from `<worktree>/.kapsis/task-spec-with-progress.md`
-  in worktree mode, or the per-agent `kapsis-<id>-status` named volume in
-  overlay mode). Kapsis's injected progress-reporting suffix is split off
-  and hidden behind a disclosure. Path-traversal and follow-symlink
-  defenses applied; 256 KB size cap.
+  `--task` / `--spec` input. Resolution order: (0) the canonical
+  `${kapsisHome}/specs/<id>.md` written by spec-store at launch,
+  (1) `<worktree>/.kapsis/task-spec-with-progress.md`,
+  (2) the `kapsis-<id>-status` named volume. Kapsis's injected
+  progress-reporting suffix is split off and hidden behind a disclosure.
+  Path-traversal and follow-symlink defenses applied; 256 KB size cap.
 - Dashboard: new **Activity** tab on agent detail — reverse-chronological
   timeline of `status.gist` transitions (the activity strings written by
   `kapsis-gist-hook.sh`). Backed by an in-memory ring (200 entries per

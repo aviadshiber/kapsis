@@ -33,13 +33,21 @@ interface SpecStoreOpts {
 
 export class SpecStore {
   private readonly statusStore: StatusStore;
+  private readonly persistedDir: string;
   private readonly worktreesRoot: string;
   private readonly injectedSuffix: string | null;
   private readonly podmanVolumeMountpoint: (volumeName: string) => Promise<string | null>;
   private readonly maxBytes: number;
 
-  constructor(statusStore: StatusStore, worktreesRoot: string, opts: SpecStoreOpts = {}) {
+  constructor(
+    statusStore: StatusStore,
+    /** `${kapsisHome}/specs` — where launch-agent.sh:persist_spec_for_dashboard writes. */
+    persistedDir: string,
+    worktreesRoot: string,
+    opts: SpecStoreOpts = {},
+  ) {
     this.statusStore = statusStore;
+    this.persistedDir = resolve(persistedDir);
     // Realpath-free resolve — we don't follow symlinks; we just want a clean
     // absolute baseline to compare against later. Resolving here also makes
     // the "isInside" check tolerant of trailing slashes the caller may pass.
@@ -53,27 +61,63 @@ export class SpecStore {
    * Resolve the spec for one agent, applying the safety rails described in
    * the design doc. Returns null when no spec was found anywhere it's safe
    * to read from — callers should respond 404.
+   *
+   * Resolution order:
+   *   0. `${kapsisHome}/specs/<agent_id>.md` — written at launch time. Most
+   *      reliable: doesn't depend on the agent reaching a particular phase
+   *      or on container-side write succeeding. Source-agnostic so slack-bot
+   *      and any other launcher get the same treatment.
+   *   1. `<worktree>/.kapsis/task-spec-with-progress.md` — populated by
+   *      entrypoint.sh's inject_progress_instructions(). Includes Kapsis's
+   *      injected progress-reporting suffix.
+   *   2. `kapsis-<id>-status` named volume — for overlay-mode agents.
    */
   async read(agentId: string): Promise<SpecResponse | null> {
     if (!isValidAgentId(agentId)) return null;
 
+    // Path 0: persisted-at-launch copy. Note we look this up by agent_id
+    // alone (no status.json required) — an agent whose status file was
+    // hand-deleted but whose spec we wrote still gets surfaced.
+    const fromPersisted = await this.readPersistedSpec(agentId);
+    if (fromPersisted) return fromPersisted;
+
     const status = this.statusStore.get(agentId);
     if (!status) return null;
 
-    // Path A: the per-agent worktree. Preferred because it's per-agent on
-    // disk and uniquely attributable to this agent.
+    // Path 1: the per-agent worktree.
     if (status.worktree_path) {
       const fromWorktree = await this.readWorktreeSpec(status.worktree_path);
       if (fromWorktree) return fromWorktree;
     }
 
-    // Path B: the per-agent named volume. Required for overlay-mode agents
+    // Path 2: the per-agent named volume. Required for overlay-mode agents
     // where the worktree is read-only and the spec lives in the named
     // volume Kapsis allocates for status.
     const fromVolume = await this.readVolumeSpec(agentId);
     if (fromVolume) return fromVolume;
 
     return null;
+  }
+
+  /**
+   * Read from the launch-time persisted location at
+   * `${persistedDir}/<agent_id>.md`. The agent_id has already passed
+   * `isValidAgentId` so it can be joined safely; we still defense-in-depth
+   * verify the resolved path stays under persistedDir (in case
+   * persistedDir was a relative path containing `..`, etc.).
+   */
+  private async readPersistedSpec(agentId: string): Promise<SpecResponse | null> {
+    const candidate = resolve(join(this.persistedDir, `${agentId}.md`));
+    if (!isInside(candidate, this.persistedDir)) {
+      log.debug("spec: persisted candidate outside persistedDir, refusing", {
+        persistedDir: this.persistedDir,
+      });
+      return null;
+    }
+    // The persisted file has no injected suffix — launch-agent.sh writes
+    // the raw spec text only. Read with the same defenses as worktree/volume
+    // paths but bypass the splitter.
+    return this.readSpecFromPath(candidate, "persisted", { splitSuffix: false });
   }
 
   /**
@@ -109,7 +153,16 @@ export class SpecStore {
     return this.readSpecFromPath(specPath, `volume:${volume}`);
   }
 
-  private async readSpecFromPath(specPath: string, source: string): Promise<SpecResponse | null> {
+  private async readSpecFromPath(
+    specPath: string,
+    source: string,
+    opts: { splitSuffix?: boolean } = {},
+  ): Promise<SpecResponse | null> {
+    // Whether to attempt the injected-suffix split. Worktree/volume paths
+    // contain the suffix; the launch-persisted path does not (spec-store.sh
+    // writes the raw spec only).
+    const splitSuffix = opts.splitSuffix ?? true;
+
     // lstat first — readFile of a symlink would follow it. We refuse to
     // follow because the link target may be an attacker-chosen path the
     // dashboard has no business reading. Same posture the reaper takes.
@@ -143,6 +196,9 @@ export class SpecStore {
       return null;
     }
 
+    if (!splitSuffix) {
+      return { spec: raw, injectedInstructions: null, source, sizeBytes, truncated };
+    }
     const { spec, injectedInstructions } = splitInjectedSuffix(raw, this.injectedSuffix);
     return { spec, injectedInstructions, source, sizeBytes, truncated };
   }

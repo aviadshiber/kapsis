@@ -27,6 +27,10 @@ export function paths(kapsisHome: string) {
     worktrees: join(kapsisHome, "worktrees"),
     sandboxes: join(kapsisHome, "sandboxes"),
     sanitizedGit: join(kapsisHome, "sanitized-git"),
+    // Where scripts/lib/spec-store.sh writes the per-agent launch spec.
+    // Read-only from the dashboard's perspective — the dashboard never
+    // writes here.
+    specs: join(kapsisHome, "specs"),
     dashboardAudit: join(kapsisHome, "audit", "dashboard.jsonl"),
   } as const;
 }

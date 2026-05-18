@@ -165,7 +165,7 @@ async function main(): Promise<void> {
   // Loaded once at startup. When null (Kapsis install missing), the splitter
   // no-ops and the UI shows the full file content. Better degrade than break.
   const injectedSuffix = await loadProgressInstructions();
-  const spec = new SpecStore(status, p.worktrees, { injectedSuffix });
+  const spec = new SpecStore(status, p.specs, p.worktrees, { injectedSuffix });
   const dashAudit = new DashboardAuditWriter(p.dashboardAudit);
   await dashAudit.init();
   const sse = new SseBroker();

@@ -57,6 +57,9 @@ source "$SCRIPT_DIR/lib/status.sh"
 # Source progress display library
 source "$SCRIPT_DIR/lib/progress-display.sh"
 
+# Source launch-spec persistence library (writes ~/.kapsis/specs/<id>.md)
+source "$SCRIPT_DIR/lib/spec-store.sh"
+
 # Bash 3.2 compatible uppercase conversion
 to_upper() {
     echo "$1" | tr '[:lower:]' '[:upper:]'
@@ -75,6 +78,7 @@ generate_agent_id() {
         printf '%x' "$(( $(date +%s)$$ ))" | cut -c1-6
     fi
 }
+
 
 #===============================================================================
 # DEFAULT VALUES
@@ -554,6 +558,16 @@ validate_inputs() {
     if [[ -n "$SPEC_FILE" && ! -f "$SPEC_FILE" ]]; then
         log_error "Spec file not found: $SPEC_FILE"
         exit 1
+    fi
+
+    # Persist the resolved spec/task to a canonical per-agent location
+    # via the spec-store library. Source-agnostic — slack-bot, /dev, and
+    # interactive launches all land in the same place; consumers (dashboard,
+    # future debug tools) just read $(spec_store_path "$AGENT_ID").
+    if [[ -n "$SPEC_FILE" ]]; then
+        spec_store_write "$AGENT_ID" --spec "$SPEC_FILE" || true
+    elif [[ -n "$TASK_INLINE" ]]; then
+        spec_store_write "$AGENT_ID" --task "$TASK_INLINE" || true
     fi
 
     # Validate git branch requirements

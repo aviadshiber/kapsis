@@ -25,7 +25,7 @@ interface Harness {
 
 async function spawnHarness(opts: { injectedSuffix?: string | null; volumeMountpoint?: string | null } = {}): Promise<Harness> {
   const root = await mkdtemp(join(tmpdir(), "kd-spec-route-"));
-  for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git"]) {
+  for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git", "specs"]) {
     await mkdir(join(root, d));
   }
   const token = generateToken();
@@ -36,7 +36,7 @@ async function spawnHarness(opts: { injectedSuffix?: string | null; volumeMountp
   const paths = {
     status: join(root, "status"), audit: join(root, "audit"), logs: join(root, "logs"),
     conversations: join(root, "conversations"), worktrees: join(root, "worktrees"),
-    sandboxes: join(root, "sandboxes"), sanitizedGit: join(root, "sanitized-git"),
+    sandboxes: join(root, "sandboxes"), sanitizedGit: join(root, "sanitized-git"), specs: join(root, "specs"),
     dashboardAudit: join(root, "audit", "dashboard.jsonl"),
   };
   const status = new StatusStore(paths.status); await status.init();
@@ -44,7 +44,7 @@ async function spawnHarness(opts: { injectedSuffix?: string | null; volumeMountp
   const logsS = new LogStore(paths.logs);
   const conv = new ConversationStore(paths.conversations);
   const disk = new DiskUsageStore(paths);
-  const spec = new SpecStore(status, paths.worktrees, {
+  const spec = new SpecStore(status, paths.specs, paths.worktrees, {
     injectedSuffix: opts.injectedSuffix ?? null,
     podmanVolumeMountpoint: async () => opts.volumeMountpoint ?? null,
   });
@@ -117,7 +117,7 @@ describe("GET /api/v1/agents/:id/spec — end-to-end with on-disk fixtures", () 
   it("returns spec with source=worktree", async () => {
     // We need access to the tmpdir to seed fixtures, so reimplement harness inline.
     const root = await mkdtemp(join(tmpdir(), "kd-spec-e2e-"));
-    for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git"]) {
+    for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git", "specs"]) {
       await mkdir(join(root, d));
     }
     const token = generateToken();
@@ -128,7 +128,7 @@ describe("GET /api/v1/agents/:id/spec — end-to-end with on-disk fixtures", () 
     const paths = {
       status: join(root, "status"), audit: join(root, "audit"), logs: join(root, "logs"),
       conversations: join(root, "conversations"), worktrees: join(root, "worktrees"),
-      sandboxes: join(root, "sandboxes"), sanitizedGit: join(root, "sanitized-git"),
+      sandboxes: join(root, "sandboxes"), sanitizedGit: join(root, "sanitized-git"), specs: join(root, "specs"),
       dashboardAudit: join(root, "audit", "dashboard.jsonl"),
     };
     // Seed the worktree spec file before SpecStore is created.
@@ -144,7 +144,7 @@ describe("GET /api/v1/agents/:id/spec — end-to-end with on-disk fixtures", () 
     const logsS = new LogStore(paths.logs);
     const conv = new ConversationStore(paths.conversations);
     const disk = new DiskUsageStore(paths);
-    const spec = new SpecStore(status, paths.worktrees, {
+    const spec = new SpecStore(status, paths.specs, paths.worktrees, {
       injectedSuffix: null, podmanVolumeMountpoint: async () => null,
     });
     const dashAudit = new DashboardAuditWriter(paths.dashboardAudit); await dashAudit.init();

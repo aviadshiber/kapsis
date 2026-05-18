@@ -43,24 +43,28 @@ interface Env {
   root: string;
   statusDir: string;
   worktreesRoot: string;
+  specsDir: string;
   status: StatusStore | null;
   cleanup: () => Promise<void>;
 }
 
 /**
- * Set up tmpdir + status dir + worktrees root. The StatusStore is created
- * lazily by publishStatus so its initial directory scan always picks up
- * the fixture — bypassing macOS FSEvents flake where fs.watch can take
- * seconds to register and miss new files on a freshly-created tmpdir.
+ * Set up tmpdir + status dir + worktrees root + persisted-specs dir. The
+ * StatusStore is created lazily by publishStatus so its initial directory
+ * scan always picks up the fixture — bypassing macOS FSEvents flake where
+ * fs.watch can take seconds to register and miss new files on a
+ * freshly-created tmpdir.
  */
 async function setupEnv(): Promise<Env> {
   const root = await mkdtemp(join(tmpdir(), "spec-test-"));
   const statusDir = join(root, "status");
   const worktreesRoot = join(root, "worktrees");
+  const specsDir = join(root, "specs");
   await mkdir(statusDir);
   await mkdir(worktreesRoot);
+  await mkdir(specsDir);
   const env: Env = {
-    root, statusDir, worktreesRoot, status: null,
+    root, statusDir, worktreesRoot, specsDir, status: null,
     cleanup: async () => {
       env.status?.close();
       await rm(root, { recursive: true, force: true });
@@ -153,7 +157,7 @@ describe("SpecStore.read — worktree path", () => {
 
   it("returns 404 when agent unknown", async () => {
     await bootEmptyStatusStore(env);
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async () => null,
     });
@@ -162,7 +166,7 @@ describe("SpecStore.read — worktree path", () => {
 
   it("returns 404 when worktree_path is null and no volume mount", async () => {
     await publishStatus(env, "demo", "abc123", { worktree_path: null });
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async () => null,
     });
@@ -174,7 +178,7 @@ describe("SpecStore.read — worktree path", () => {
     const user = "## Bug DEV-42\n\nFix the foo bar.";
     const wt = await writeWorktreeSpec(env.worktreesRoot, "demo-abc123", `${user}\n\n\n${suffix}`);
     await publishStatus(env, "demo", "abc123", { worktree_path: wt });
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: suffix,
       podmanVolumeMountpoint: async () => null,
     });
@@ -190,7 +194,7 @@ describe("SpecStore.read — worktree path", () => {
     const content = "## Just a task";
     const wt = await writeWorktreeSpec(env.worktreesRoot, "demo-abc123", content);
     await publishStatus(env, "demo", "abc123", { worktree_path: wt });
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async () => null,
     });
@@ -202,7 +206,7 @@ describe("SpecStore.read — worktree path", () => {
   it("rejects worktree_path outside the worktrees root (path traversal)", async () => {
     // Try to read /etc/passwd by setting worktree_path to /etc.
     await publishStatus(env, "demo", "abc123", { worktree_path: "/etc" });
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async () => null,
     });
@@ -216,7 +220,7 @@ describe("SpecStore.read — worktree path", () => {
     await mkdir(join(evil, ".kapsis"), { recursive: true });
     await writeFile(join(evil, ".kapsis", "task-spec-with-progress.md"), "leaked");
     await publishStatus(env, "demo", "abc123", { worktree_path: evil });
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async () => null,
     });
@@ -231,7 +235,7 @@ describe("SpecStore.read — worktree path", () => {
     await writeFile(realTarget, "SECRET");
     await symlink(realTarget, join(wt, ".kapsis", "task-spec-with-progress.md"));
     await publishStatus(env, "demo", "abc123", { worktree_path: wt });
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async () => null,
     });
@@ -242,7 +246,7 @@ describe("SpecStore.read — worktree path", () => {
     const wt = join(env.worktreesRoot, "demo-abc123");
     await mkdir(wt, { recursive: true });
     await publishStatus(env, "demo", "abc123", { worktree_path: wt });
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async () => null,
     });
@@ -255,7 +259,7 @@ describe("SpecStore.read — worktree path", () => {
     const big = "a".repeat(cap * 3);
     const wt = await writeWorktreeSpec(env.worktreesRoot, "demo-abc123", big);
     await publishStatus(env, "demo", "abc123", { worktree_path: wt });
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async () => null,
       maxBytes: cap,
@@ -281,7 +285,7 @@ describe("SpecStore.read — volume fallback", () => {
     await mkdir(mountpoint, { recursive: true });
     await writeFile(join(mountpoint, "task-spec-with-progress.md"), "## From volume");
 
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async (name) => {
         expect(name).toBe("kapsis-abc123-status");
@@ -303,7 +307,7 @@ describe("SpecStore.read — volume fallback", () => {
     await writeFile(join(mountpoint, "task-spec-with-progress.md"), "## From volume (NOT THIS)");
 
     let volumeCalled = false;
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async () => { volumeCalled = true; return mountpoint; },
     });
@@ -321,7 +325,7 @@ describe("SpecStore.read — volume fallback", () => {
     await writeFile(target, "secret");
     await symlink(target, join(mountpoint, "task-spec-with-progress.md"));
 
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async () => mountpoint,
     });
@@ -330,7 +334,7 @@ describe("SpecStore.read — volume fallback", () => {
 
   it("returns null when podman volume inspect returns null", async () => {
     await publishStatus(env, "demo", "abc123", { worktree_path: null });
-    const store = new SpecStore(env.status!, env.worktreesRoot, {
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
       injectedSuffix: null,
       podmanVolumeMountpoint: async () => null,
     });
@@ -341,5 +345,95 @@ describe("SpecStore.read — volume fallback", () => {
 describe("SPEC_MAX_BYTES default", () => {
   it("is 256 KB", () => {
     expect(SPEC_MAX_BYTES).toBe(256 * 1024);
+  });
+});
+
+describe("SpecStore.read — persisted path (Path 0)", () => {
+  let env: Env;
+  beforeEach(async () => { env = await setupEnv(); });
+  afterEach(async () => { await env.cleanup(); });
+
+  it("reads from the persisted dir without needing a worktree", async () => {
+    // Mimic spec-store.sh writing the raw spec (no injected suffix).
+    await writeFile(join(env.specsDir, "abc123.md"), "## DEV-42\n\nFix the foo.");
+    // Status has worktree_path=null and no volume — the path-1/2 fallbacks
+    // would otherwise return null. Persisted should still win.
+    await publishStatus(env, "demo", "abc123", { worktree_path: null });
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
+      injectedSuffix: null,
+      podmanVolumeMountpoint: async () => null,
+    });
+    const r = await store.read("abc123");
+    expect(r).not.toBeNull();
+    expect(r!.spec).toBe("## DEV-42\n\nFix the foo.");
+    expect(r!.injectedInstructions).toBeNull();
+    expect(r!.source).toBe("persisted");
+  });
+
+  it("persisted wins over worktree (higher priority)", async () => {
+    await writeFile(join(env.specsDir, "abc123.md"), "FROM PERSISTED");
+    const wt = await writeWorktreeSpec(env.worktreesRoot, "demo-abc123", "FROM WORKTREE");
+    await publishStatus(env, "demo", "abc123", { worktree_path: wt });
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
+      injectedSuffix: null,
+      podmanVolumeMountpoint: async () => null,
+    });
+    const r = await store.read("abc123");
+    expect(r!.spec).toBe("FROM PERSISTED");
+    expect(r!.source).toBe("persisted");
+  });
+
+  it("falls back to worktree when persisted is absent", async () => {
+    const wt = await writeWorktreeSpec(env.worktreesRoot, "demo-abc123", "FROM WORKTREE");
+    await publishStatus(env, "demo", "abc123", { worktree_path: wt });
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
+      injectedSuffix: null,
+      podmanVolumeMountpoint: async () => null,
+    });
+    const r = await store.read("abc123");
+    expect(r!.spec).toBe("FROM WORKTREE");
+    expect(r!.source).toBe("worktree");
+  });
+
+  it("rejects a symlinked persisted file (CWE-59)", async () => {
+    const target = join(env.root, "secret.md");
+    await writeFile(target, "SECRET");
+    await symlink(target, join(env.specsDir, "abc123.md"));
+    await publishStatus(env, "demo", "abc123", { worktree_path: null });
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
+      injectedSuffix: null,
+      podmanVolumeMountpoint: async () => null,
+    });
+    expect(await store.read("abc123")).toBeNull();
+  });
+
+  it("works even when no status.json exists (just the persisted file)", async () => {
+    // Path 0 doesn't require status.json — useful for an agent whose status
+    // file was hand-deleted but whose persisted spec is still on disk.
+    await writeFile(join(env.specsDir, "abc123.md"), "ORPHANED BUT READABLE");
+    await bootEmptyStatusStore(env);
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
+      injectedSuffix: null,
+      podmanVolumeMountpoint: async () => null,
+    });
+    const r = await store.read("abc123");
+    expect(r).not.toBeNull();
+    expect(r!.spec).toBe("ORPHANED BUT READABLE");
+    expect(r!.source).toBe("persisted");
+  });
+
+  it("truncates a persisted file over the size cap", async () => {
+    const cap = 256;
+    await writeFile(join(env.specsDir, "abc123.md"), "x".repeat(cap * 3));
+    await publishStatus(env, "demo", "abc123", { worktree_path: null });
+    const store = new SpecStore(env.status!, env.specsDir, env.worktreesRoot, {
+      injectedSuffix: null,
+      podmanVolumeMountpoint: async () => null,
+      maxBytes: cap,
+    });
+    const r = await store.read("abc123");
+    expect(r!.truncated).toBe(true);
+    expect(r!.sizeBytes).toBe(cap * 3);
+    expect(r!.spec.length).toBeLessThanOrEqual(cap);
   });
 });

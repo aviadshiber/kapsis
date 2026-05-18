@@ -124,10 +124,16 @@ Failed. Each rule is shown in the Overview tab with its detail string.
 ### Spec tab — where the data lives
 
 Kapsis writes the launch spec (your `--task` text or the contents of `--spec <file>`)
-into either of two host-readable locations, depending on sandbox mode:
+to three host-readable locations, tried in order:
 
+- **Persisted at launch** (`${KAPSIS_SPECS_DIR:-~/.kapsis/specs}/<agent_id>.md`):
+  written by `scripts/lib/spec-store.sh` immediately after task validation.
+  Source-agnostic, present from the first second of the agent's life, and
+  unaffected by container-side issues. **Preferred — the dashboard tries
+  this first.** Doesn't even require `status.json` to exist.
 - **Worktree mode**: `<worktree>/.kapsis/task-spec-with-progress.md` —
-  preferred and per-agent.
+  written by entrypoint inside the container. Includes Kapsis's injected
+  progress-reporting suffix; the dashboard splits it back out.
 - **Overlay mode (Linux)**: the per-agent named volume `kapsis-<agent_id>-status`.
   The dashboard reads it via `podman volume inspect` and a direct file read.
 
