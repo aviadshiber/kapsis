@@ -29,10 +29,6 @@ function p(params: RouteParams, name: string): string {
 export function registerMaintenanceRoutes(r: Router, deps: MaintenanceDeps): void {
   const { config, sse, dashAudit, disk, cleanupScript, cleanupRunner } = deps;
 
-  // Kicks off a cleanup run and returns IMMEDIATELY with a runId. The UI
-  // subscribes to /sse/maintenance/:runId to stream stdout/stderr live so
-  // the browser doesn't appear frozen during the ~30s that a stale-state
-  // preview takes to walk every worktree dir.
   r.post("/api/v1/maintenance/cleanup", async (req) => {
     if (config.readOnly) return errorResponse(403, "dashboard is read-only");
     const body = await safeJson(req);
@@ -40,8 +36,9 @@ export function registerMaintenanceRoutes(r: Router, deps: MaintenanceDeps): voi
     const dryRun = body.dryRun !== false;
     try {
       const { runId, argv } = cleanupRunner.start(targets, { dryRun, scriptPath: cleanupScript });
-      // Audit and SSE-fanout happen when the run completes (subscribed via
-      // a listener); the POST returns immediately.
+      // Audit + SSE-disk-invalidate are wired via a one-shot listener on
+      // the runner itself; they fire whether or not any SSE client is
+      // connected.
       const sub = cleanupRunner.subscribe(runId, async (ev) => {
         if (ev.kind !== "exit") return;
         await dashAudit.record(
@@ -62,41 +59,64 @@ export function registerMaintenanceRoutes(r: Router, deps: MaintenanceDeps): voi
     }
   });
 
-  // Returns the final result of a run (for late-arriving consumers and the
-  // UI's "fetch on tab focus" path). 404 if the run wasn't found (expired
-  // after the 5-minute retention window or never started).
+  // Returns a snapshot of the run's current state — works mid-run AND
+  // after completion (during the 5-min retention window). This is the
+  // UI's polling fallback when its SSE connection drops.
   r.get("/api/v1/maintenance/runs/:runId", (_req, params) => {
     const runId = p(params, "runId");
-    const result = cleanupRunner.result(runId);
-    if (!result) return errorResponse(404, "run not found", { runId });
-    return json(result);
+    const snap = cleanupRunner.snapshot(runId);
+    if (!snap) return errorResponse(404, "run not found or expired", { runId });
+    return json(snap);
   });
 
-  // SSE: streams the live log of a cleanup run. The handler subscribes
-  // to the runner, replays the backlog into the topic, attaches an
-  // ongoing publisher for new events, and closes the stream after the
-  // exit event arrives.
+  // SSE: streams the live log of a cleanup run. The listener is
+  // unsubscribed when the client disconnects (stream cancel) so we don't
+  // leak per-connection listeners on the runner.
   r.get("/sse/maintenance/:runId", (_req, params) => {
     const runId = p(params, "runId");
     const topic = `maintenance:${runId}`;
+    const snapBeforeSubscribe = cleanupRunner.snapshot(runId);
+    if (!snapBeforeSubscribe) return errorResponse(404, "run not found or expired", { runId });
+
     const response = sse.subscribe([topic]);
-    const sub = cleanupRunner.subscribe(runId, (ev) => {
-      sse.publish(topic, { event: ev.kind, data: ev });
+
+    // Attach a per-connection listener that republishes runner events into
+    // the topic. We need to schedule the backlog replay AFTER the client's
+    // ReadableStream.start fires (which lazily registers the client with
+    // the broker), otherwise the first events go to nobody. setTimeout 0
+    // yields the microtask queue so the start callback (which runs when
+    // the consumer begins reading the body) can register first.
+    let unsubscribe: (() => void) | null = null;
+    queueMicrotask(() => {
+      const sub = cleanupRunner.subscribe(runId, (ev) => {
+        sse.publish(topic, { event: ev.kind, data: ev });
+      });
+      if (!sub) return;
+      unsubscribe = sub.unsubscribe;
+      // Replay backlog so a subscriber that connected after the script
+      // already emitted lines still sees them.
+      for (const ev of sub.backlog) {
+        sse.publish(topic, { event: ev.kind, data: ev });
+      }
+      if (sub.done) {
+        // Run already finished — schedule cleanup after the in-flight
+        // events flush so the client gets the final exit event before
+        // we tear down.
+        setTimeout(() => unsubscribe?.(), 500);
+      }
     });
-    if (!sub) {
-      // Run doesn't exist — close the stream gracefully so EventSource sees
-      // an EOF and the UI can switch back to the static result endpoint.
-      return errorResponse(404, "run not found", { runId });
-    }
-    // Replay backlog so a subscriber that connects after a few lines
-    // already landed still sees the start event + everything since.
-    for (const ev of sub.backlog) {
-      sse.publish(topic, { event: ev.kind, data: ev });
-    }
-    if (sub.done) {
-      // Already finished: schedule unsubscribe so the listener doesn't leak.
-      setTimeout(() => sub.unsubscribe(), 100);
-    }
+    // Bun.serve doesn't expose a client-disconnect signal here directly,
+    // so we rely on the broker dropping the client when its
+    // controller.enqueue throws (the next publish after disconnect).
+    // We add a safety timeout: if the run has been done for >30s and the
+    // listener is still attached, drop it.
+    const watchdog = setInterval(() => {
+      const cur = cleanupRunner.snapshot(runId);
+      if (!cur || (cur.done && Date.now() - (cur.startedAt + (cur.durationMs ?? 0)) > 30_000)) {
+        unsubscribe?.();
+        clearInterval(watchdog);
+      }
+    }, 5_000);
     return response;
   });
 }

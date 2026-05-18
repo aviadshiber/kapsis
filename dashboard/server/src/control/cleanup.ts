@@ -186,8 +186,36 @@ export class CleanupRunner {
     };
   }
 
-  result(runId: string): CleanupResult | null {
-    return this.runs.get(runId)?.result ?? null;
+  /**
+   * Snapshot of a run's current state — works mid-run too. The UI polls
+   * this as a fallback when its SSE connection drops so a transient
+   * network blip doesn't leave the user staring at a fake "still running"
+   * indicator forever.
+   */
+  snapshot(runId: string): {
+    runId: string;
+    argv: string[];
+    startedAt: number;
+    done: boolean;
+    exitCode: number | null;
+    durationMs: number | null;
+    lines: Array<{ kind: "stdout" | "stderr"; line: string }>;
+  } | null {
+    const state = this.runs.get(runId);
+    if (!state) return null;
+    const lines: Array<{ kind: "stdout" | "stderr"; line: string }> = [];
+    for (const ev of state.buffer) {
+      if (ev.kind === "stdout" || ev.kind === "stderr") lines.push({ kind: ev.kind, line: ev.line });
+    }
+    return {
+      runId,
+      argv: state.argv,
+      startedAt: state.startedAt,
+      done: state.done,
+      exitCode: state.result?.exitCode ?? null,
+      durationMs: state.result?.durationMs ?? null,
+      lines,
+    };
   }
 
   private emit(runId: string, ev: CleanupRunEvent): void {

@@ -1,6 +1,6 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 
-const DEFAULT_TTL_MS = 60_000;
+const DEFAULT_TTL_MS = 10 * 60_000;
 
 interface Entry {
   token: string;
@@ -10,10 +10,18 @@ interface Entry {
 /**
  * EventSource cannot send custom Authorization headers, so SSE auth has to
  * travel in the URL. To avoid leaking the long-lived bearer in
- * URL/access-log/referer surfaces, the dashboard mints short-lived,
- * single-purpose tokens via a bearer-gated POST endpoint. Each ephemeral
- * token is valid for ~60s and consumed at SSE-connect time; the long-lived
- * bearer never appears in any URL on the wire.
+ * URL/access-log/referer surfaces, the dashboard mints short-lived
+ * ephemeral tokens via a bearer-gated POST endpoint. Each token is valid
+ * for ~10 minutes and can be re-consumed within that window (so
+ * EventSource's automatic reconnect logic works after transient network
+ * blips); the long-lived bearer never appears in any URL on the wire.
+ *
+ * Threat model: localhost-only dashboard, so URL-sniffing requires local
+ * process access, which already implies the attacker can read the bearer
+ * from the dashboard's process tree. Replay within the 10-min window is
+ * acceptable in that model — making the token one-shot broke
+ * EventSource auto-reconnect across long-running SSE streams (e.g. live
+ * cleanup output).
  */
 export class EphemeralTokenStore {
   private entries = new Map<string, Entry>();
@@ -35,6 +43,11 @@ export class EphemeralTokenStore {
     return { token, ttlMs: this.ttlMs };
   }
 
+  /**
+   * Returns true when `presented` matches a non-expired token. Does NOT
+   * delete the token on success — the same token can be re-presented
+   * within the TTL window. Expired entries are evicted lazily.
+   */
   consume(presented: string | null): boolean {
     if (!presented) return false;
     const now = Date.now();
@@ -45,8 +58,6 @@ export class EphemeralTokenStore {
       }
       if (k.length !== presented.length) continue;
       if (timingSafeEqual(Buffer.from(k), Buffer.from(presented))) {
-        // One-shot: invalidate after first use.
-        this.entries.delete(k);
         return true;
       }
     }

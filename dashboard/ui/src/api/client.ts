@@ -15,7 +15,7 @@
 import type {
   AgentStatus, AgentHealth, ContainerInfo, ContainerStats,
   LogChunk, AuditEvent, AuditChainStatus, ConversationEntry, DiskUsageEntry,
-  KillResultWire, CleanupResultWire,
+  KillResultWire,
 } from "../types";
 
 function readToken(): string {
@@ -92,13 +92,21 @@ export const api = {
     request<{ runId: string; argv: string[]; dryRun: boolean; targets: string[]; accepted: true }>(
       "POST", "/api/v1/maintenance/cleanup", { targets, dryRun },
     ),
-  cleanupResult: (runId: string) =>
-    request<CleanupResultWire>("GET", `/api/v1/maintenance/runs/${encodeURIComponent(runId)}`),
-  /** @deprecated kept for tests; new UI uses cleanupStart + SSE */
-  cleanup: (targets: string[], dryRun: boolean) =>
-    request<CleanupResultWire & { runId?: string }>(
-      "POST", "/api/v1/maintenance/cleanup", { targets, dryRun },
-    ),
+  /**
+   * Mid-run snapshot — works while the script is still running AND after
+   * completion. The UI polls this every 2s as a safety net so a dropped
+   * SSE stream doesn't leave the spinner spinning forever.
+   */
+  cleanupSnapshot: (runId: string) =>
+    request<{
+      runId: string;
+      argv: string[];
+      startedAt: number;
+      done: boolean;
+      exitCode: number | null;
+      durationMs: number | null;
+      lines: Array<{ kind: "stdout" | "stderr"; line: string }>;
+    }>("GET", `/api/v1/maintenance/runs/${encodeURIComponent(runId)}`),
   mintSseToken: () => request<{ token: string; ttlMs: number }>("POST", "/api/v1/sse-token"),
 };
 

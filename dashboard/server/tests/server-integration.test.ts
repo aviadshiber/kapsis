@@ -117,7 +117,11 @@ describe("server integration", () => {
     expect(r.status).toBe(401);
   });
 
-  it("SSE accepts a one-shot ephemeral token; second use fails", async () => {
+  it("SSE accepts an ephemeral token and lets the same one reconnect within its ttl", async () => {
+    // Reused-within-window is intentional: EventSource auto-reconnects on
+    // any blip, so a one-shot token would tear down long-running SSE
+    // streams (e.g. live cleanup output). The token still expires (10 min
+    // default), so the leak window is bounded.
     const minted = await fetch(`${h.url}/api/v1/sse-token`, {
       method: "POST",
       headers: { Authorization: `Bearer ${h.token}` },
@@ -130,9 +134,11 @@ describe("server integration", () => {
     expect(ok.headers.get("content-type")).toBe("text/event-stream");
     await ok.body!.cancel();
 
-    // Second attempt with the same ephemeral must be rejected (one-shot).
+    // Reconnect with the same ephemeral must SUCCEED (the auto-reconnect
+    // path), not 401.
     const reuse = await fetch(`${h.url}/sse/agents?t=${encodeURIComponent(ephem)}`);
-    expect(reuse.status).toBe(401);
+    expect(reuse.status).toBe(200);
+    await reuse.body!.cancel();
   });
 
   it("kill endpoint validates agent id (400 for malformed)", async () => {

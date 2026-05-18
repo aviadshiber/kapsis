@@ -14,12 +14,13 @@ describe("EphemeralTokenStore", () => {
     expect(a.ttlMs).toBeGreaterThan(0);
   });
 
-  it("accepts a valid token exactly once (one-shot)", () => {
+  it("accepts a valid token repeatedly within the ttl (so EventSource reconnect works)", () => {
     const s = new EphemeralTokenStore();
     stores.push(s);
     const { token } = s.mint();
     expect(s.consume(token)).toBe(true);
-    expect(s.consume(token)).toBe(false);
+    expect(s.consume(token)).toBe(true);
+    expect(s.consume(token)).toBe(true);
   });
 
   it("rejects unknown tokens", () => {
