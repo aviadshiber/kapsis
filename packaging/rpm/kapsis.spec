@@ -49,6 +49,7 @@ install -m 755 scripts/build-image.sh %{buildroot}%{_libexecdir}/%{name}/scripts
 install -m 755 scripts/build-agent-image.sh %{buildroot}%{_libexecdir}/%{name}/scripts/
 install -m 755 scripts/kapsis-cleanup.sh %{buildroot}%{_libexecdir}/%{name}/scripts/
 install -m 755 scripts/kapsis-status.sh %{buildroot}%{_libexecdir}/%{name}/scripts/
+install -m 755 scripts/kapsis-recovery-action.sh %{buildroot}%{_libexecdir}/%{name}/scripts/
 install -m 755 scripts/entrypoint.sh %{buildroot}%{_libexecdir}/%{name}/scripts/
 install -m 755 scripts/worktree-manager.sh %{buildroot}%{_libexecdir}/%{name}/scripts/
 install -m 755 scripts/post-container-git.sh %{buildroot}%{_libexecdir}/%{name}/scripts/
@@ -110,6 +111,14 @@ exec %{_libexecdir}/kapsis/scripts/kapsis-status.sh "$@"
 EOF
 chmod 755 %{buildroot}%{_bindir}/kapsis-status
 
+cat > %{buildroot}%{_bindir}/kapsis-recovery-action << 'EOF'
+#!/bin/bash
+export KAPSIS_HOME="%{_datadir}/kapsis"
+export KAPSIS_CMD_NAME="kapsis-recovery-action"
+exec %{_libexecdir}/kapsis/scripts/kapsis-recovery-action.sh "$@"
+EOF
+chmod 755 %{buildroot}%{_bindir}/kapsis-recovery-action
+
 cat > %{buildroot}%{_bindir}/kapsis-setup << 'EOF'
 #!/bin/bash
 export KAPSIS_HOME="%{_datadir}/kapsis"
@@ -139,6 +148,7 @@ install -m 755 dashboard/bin/kapsis-dashboard %{buildroot}%{_bindir}/kapsis-dash
 %{_bindir}/kapsis-build
 %{_bindir}/kapsis-cleanup
 %{_bindir}/kapsis-status
+%{_bindir}/kapsis-recovery-action
 %{_bindir}/kapsis-setup
 %{_bindir}/kapsis-quick
 %{_bindir}/kapsis-dashboard

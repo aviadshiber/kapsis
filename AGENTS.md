@@ -19,6 +19,11 @@
 ## Dashboard Sync Rule
 **Any user-facing feature change (CLI flags, status schema, audit events, error/exit codes, config options, container resources) MUST update `dashboard/` in the same PR** so the dashboard reflects the change. The status schema mirror is `dashboard/server/src/types.ts` (`AgentStatus`); CI enforces sync via `.github/workflows/dashboard-sync.yml`. Details in `CLAUDE.md`.
 
+## Release Artifact Rule
+**Any new user-facing binary, CLI script, or release artifact MUST update ALL FOUR distribution surfaces** (release.yml, Homebrew formula, RPM spec, Debian rules) **in the same PR**, or platforms silently lose the feature (see #372 for a recent example: `kapsis-dashboard` shipped only as source in v2.29.1 because the formula's `test` block didn't assert the binary existed, so the skip went undetected).
+
+For the full rule — including the four-surface checklist, the `test`-block assertion that is the actual regression-catching mechanism, the marker-naming convention for CI-patched sha256s, and the source-tarball auto-pickup behavior for `scripts/*.sh` — see **CLAUDE.md § Release Artifact Rule**. CLAUDE.md is the single source of truth for this rule — update it there (not this summary) when the process changes.
+
 ## Build, Test, and Development Commands
 - `./scripts/build-image.sh` builds the base Podman image used by Kapsis.
 - `./scripts/build-agent-image.sh <profile>` builds an agent-specific image (see `configs/agents/`).

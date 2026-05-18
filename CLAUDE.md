@@ -384,6 +384,23 @@ The PR should either:
 
 The TypeScript mirror of the status schema lives at `dashboard/server/src/types.ts` (`AgentStatus` interface) — keep it in lockstep with `scripts/lib/status.sh`. CI enforces this via `.github/workflows/dashboard-sync.yml`.
 
+## Release Artifact Rule
+
+**Whenever a new user-facing binary, CLI script, or release artifact is added, ALL FOUR distribution surfaces must be updated in the same PR.** Missing one means users on that platform silently lose the feature.
+
+The four surfaces:
+
+1. **`.github/workflows/release.yml`** — if the artifact needs to be built or downloaded for the GitHub Release, add a build job (gated by `validate`) and append the file to the `files:` list of the `softprops/action-gh-release` step. Include it in `checksums.sha256`. Add a section to the release notes block describing how to download/use it.
+2. **`packaging/homebrew/kapsis.rb`** — add either (a) a `bin/<name>` wrapper to the wrapper-script hash in `install` (for shell scripts shipped in the source tarball), or (b) an `on_macos`/`on_linux` + `on_arm`/`on_intel` `resource` block (for per-platform binaries downloaded from release assets). Add an `assert_predicate` to the `test` block that runs `<name> --version` (or another no-side-effect smoke check) — this is what catches the regression upfront.
+3. **`packaging/rpm/kapsis.spec`** — add an `install -m 755 …` line under "Install executable scripts" (for shell scripts) or copy the binary from the staged location, add the corresponding `cat > %{buildroot}%{_bindir}/<name> << 'EOF' … EOF` wrapper, and list `%{_bindir}/<name>` in the `%files` section.
+4. **`packaging/debian/debian/rules`** — add the matching `install -m 755 …` line under "Install main executable scripts" plus the `echo '#!/bin/bash' > … kapsis/usr/bin/<name>` wrapper block. For per-platform binaries staged from CI, also update `debian/install` if needed.
+
+Also update any CI workflow that builds the artifact (e.g., `.github/workflows/dashboard-build.yml`-style helper jobs) AND `.github/workflows/release.yml`'s `update-packages` job if the formula/spec contains version-locked URLs or sha256s that need to be patched after the release is cut (look for `RELEASE_VERSION_MARKER_START` / `DASHBOARD_*_MARKER_START` markers as the pattern to follow).
+
+Marker naming convention: `<ARTIFACT>_<TARGET>_MARKER_START` / `_END`, where the prefix is **artifact-specific** (not universal) and the target transformation is lowercase-hyphenated → uppercase-underscored via `tr '[:lower:]-' '[:upper:]_'`. Examples: for the `kapsis-dashboard` artifact, `darwin-arm64` becomes `DASHBOARD_DARWIN_ARM64_MARKER_START` / `_END`. For a hypothetical future `my-new-tool` artifact, the same target would become `MY_NEW_TOOL_DARWIN_ARM64_MARKER_START` / `_END`. Only the target portion is mechanically transformed; the prefix is yours to choose per artifact.
+
+For shell scripts, prefer adding them to `scripts/` so the existing `cp -r scripts ...` step in release.yml automatically picks them up for the source tarball — no release.yml change needed beyond the wrapper plumbing.
+
 ## Things to Avoid
 
 1. **Hardcoding paths** — use `$KAPSIS_HOME`, `$SCRIPT_DIR`, constants from `scripts/lib/constants.sh`
