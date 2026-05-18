@@ -24,6 +24,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add timeout-minutes to prevent hung jobs (#353)
 - Add timeout-minutes to unit-tests and integration-tests jobs (#354)
 
+## [2.29.1] - 2026-05-18
+
+### Changed
+- Bump vite from 5.4.21 to 8.0.13 in /dashboard/ui in the npm_and_yarn group across 1 directory (#371)
+
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
@@ -966,7 +971,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.12...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.29.1...HEAD
+[2.29.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.29.1
 [2.28.12]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.12
 [2.28.11]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.11
 [2.28.9]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.9
