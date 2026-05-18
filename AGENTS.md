@@ -20,15 +20,9 @@
 **Any user-facing feature change (CLI flags, status schema, audit events, error/exit codes, config options, container resources) MUST update `dashboard/` in the same PR** so the dashboard reflects the change. The status schema mirror is `dashboard/server/src/types.ts` (`AgentStatus`); CI enforces sync via `.github/workflows/dashboard-sync.yml`. Details in `CLAUDE.md`.
 
 ## Release Artifact Rule
-**Any new user-facing binary, CLI script, or release artifact MUST update ALL FOUR distribution surfaces in the same PR**, or platforms silently lose the feature (see #372 for a recent example: `kapsis-dashboard` shipped only as source in v2.29.1 because release.yml didn't build it, Homebrew silently skipped the missing binary, and the formula's `test` block didn't assert it existed).
+**Any new user-facing binary, CLI script, or release artifact MUST update ALL FOUR distribution surfaces** (release.yml, Homebrew formula, RPM spec, Debian rules) **in the same PR**, or platforms silently lose the feature (see #372 for a recent example: `kapsis-dashboard` shipped only as source in v2.29.1 because the formula's `test` block didn't assert the binary existed, so the skip went undetected).
 
-The four surfaces:
-1. **`.github/workflows/release.yml`** — build job (if compiled), append to `files:` list of `softprops/action-gh-release`, add to `checksums.sha256`, mention in the release-notes block. If the formula contains version-locked URLs/sha256s, also extend the `update-packages` job to patch them.
-2. **`packaging/homebrew/kapsis.rb`** — wrapper hash entry (shell scripts) OR `on_macos`/`on_linux` + `on_arm`/`on_intel` `resource` block (per-platform binaries). MUST add a `--version` (or equivalent) check to the `test` block — this is what catches the regression.
-3. **`packaging/rpm/kapsis.spec`** — `install -m 755` line, `cat > … << EOF` wrapper, `%files` entry.
-4. **`packaging/debian/debian/rules`** — matching `install -m 755` line and `echo '#!/bin/bash' > …` wrapper block.
-
-For shell scripts under `scripts/`, the source tarball already picks them up via `cp -r scripts …` in release.yml — only wrapper plumbing changes are needed. Details and worked example in `CLAUDE.md`'s "Release Artifact Rule" section.
+For the full rule — including the four-surface checklist, the `test`-block assertion that is the actual regression-catching mechanism, the marker-naming convention for CI-patched sha256s, and the source-tarball auto-pickup behavior for `scripts/*.sh` — see **CLAUDE.md § Release Artifact Rule**. Keep that section as the single source of truth and update it (not this paragraph) when the process changes.
 
 ## Build, Test, and Development Commands
 - `./scripts/build-image.sh` builds the base Podman image used by Kapsis.

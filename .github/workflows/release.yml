@@ -138,6 +138,11 @@ jobs:
     name: Compile Dashboard Binary (${{ matrix.target }})
     needs: validate
     runs-on: ${{ matrix.runner }}
+    # Least-privilege: this job only reads the source and uploads artifacts.
+    # Overrides the workflow-level contents: write so a compromised npm
+    # post-install or third-party action can't publish a malicious release.
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -145,6 +150,9 @@ jobs:
           - target: darwin-arm64
             bunTarget: bun-darwin-arm64
             runner: macos-latest
+            # runnerArch matches the host CPU, NOT the build target — it's
+            # only used by the "Verify binary runs" if-guard to skip the
+            # smoke-test when the host can't execute a cross-compiled binary.
             runnerArch: ARM64
           - target: darwin-x64
             bunTarget: bun-darwin-x64
@@ -152,6 +160,10 @@ jobs:
             runnerArch: X64
           - target: linux-arm64
             bunTarget: bun-linux-arm64
+            # No GitHub-hosted Linux ARM64 runner is allocated for this
+            # matrix slot, so the smoke-test if-guard below is structurally
+            # unreachable for linux-arm64. Tracked in a follow-up issue;
+            # the cross-compiled binary still ships, just unverified on host.
             runner: ubuntu-latest
             runnerArch: X64
           - target: linux-x64
@@ -169,26 +181,53 @@ jobs:
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
         with:
           bun-version: "1.3.11"
-      - run: bun install --frozen-lockfile
-      - name: Build UI
-        run: bun run build:ui
+      # Cache the Bun module store keyed on the lockfile so the cold install
+      # only runs when dependencies actually change. Mirrors the pattern in
+      # dashboard-build.yml.
+      - name: Cache Bun install
+        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf  # v4.2.4
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('dashboard/bun.lockb') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-bun-
+      # --ignore-scripts neutralizes npm lifecycle hooks (defense-in-depth
+      # against a compromised transitive package); the dashboard build does
+      # not rely on any post-install scripts.
+      - run: bun install --frozen-lockfile --ignore-scripts
+      # Run the full `build` script (build:ui + embed:ui + build:server)
+      # exactly as the `compile:*` scripts in dashboard/package.json do.
+      # Skipping `embed:ui` ships a binary without the UI bundle embedded.
+      - name: Build (UI + embed + server)
+        run: bun run build
       - name: Compile binary
         run: |
           mkdir -p bin
-          bun build --compile --minify --target="$BUN_TARGET" \
+          # --sourcemap matches every `compile:*` script in package.json so
+          # production crash traces remain debuggable post-minify.
+          bun build --compile --minify --sourcemap --target="$BUN_TARGET" \
             server/src/main.ts \
             --outfile "bin/${OUT_NAME}"
       # Smoke-test only when host arch matches target arch (cross-compiled
       # binaries can't run on a foreign host).
       - name: Verify binary runs
         if: ${{ (contains(matrix.target, 'x64') && matrix.runnerArch == 'X64') || (contains(matrix.target, 'arm64') && matrix.runnerArch == 'ARM64') }}
-        run: ./bin/"$OUT_NAME" --version
+        run: |
+          set -euo pipefail
+          OUTPUT=$(./bin/"$OUT_NAME" --version)
+          if ! echo "$OUTPUT" | grep -Eq '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::Binary --version did not print a semver string: $OUTPUT"
+            exit 1
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: ${{ env.OUT_NAME }}
           path: dashboard/bin/${{ env.OUT_NAME }}
           if-no-files-found: error
-          retention-days: 1
+          # 7 days mirrors dashboard-build.yml so a failed `release` job can
+          # be re-run without re-triggering the entire (expensive, multi-runner)
+          # compile matrix.
+          retention-days: 7
 
   release:
     name: Create GitHub Release
@@ -225,6 +264,16 @@ jobs:
           mv dashboard-artifacts/kapsis-dashboard-* .
           chmod 0755 kapsis-dashboard-*
           ls -la kapsis-dashboard-*
+          # Guard against future regressions: a name collision in
+          # merge-multiple would silently overwrite one binary with another,
+          # or a missing artifact would slip through `if-no-files-found:
+          # error` (which only fails the producer, not the consumer).
+          COUNT=$(ls kapsis-dashboard-* 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$COUNT" -ne 4 ]; then
+            echo "::error::Expected exactly 4 dashboard binaries, found $COUNT"
+            ls -la kapsis-dashboard-* 2>&1 || true
+            exit 1
+          fi
 
       - name: Generate checksums
         env:
@@ -368,9 +417,19 @@ jobs:
   update-packages:
     name: Update Package Definitions
     runs-on: ubuntu-latest
-    needs: [validate, release]
+    needs: [validate, release, compile-dashboard]
     if: needs.release.result == 'success'
     steps:
+      - name: Download dashboard binaries (for local SHA256 computation)
+        # Sourcing the SHA from the local artifact closes the TOCTOU /
+        # asset-swap window that re-downloading from the public release URL
+        # would leave open, and removes a network dependency.
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
+        with:
+          pattern: kapsis-dashboard-*
+          path: dashboard-artifacts
+          merge-multiple: true
+
       - name: Check if GitHub App is configured
         id: check-app
         env:
@@ -692,33 +751,32 @@ jobs:
           echo "✓ Updated Homebrew formula to v${VERSION}"
 
           # Compute SHA256 for each per-platform kapsis-dashboard binary
-          # attached to the release and patch the corresponding marker block.
+          # FROM THE LOCAL ARTIFACT (downloaded earlier in this job from the
+          # compile-dashboard job's artifacts — not from the published release
+          # URL) and patch the corresponding marker block. Sourcing locally
+          # closes the TOCTOU window: if the release asset were ever swapped
+          # between checksum-computation and Homebrew user download, the
+          # formula's recorded hash would still match the binary CI built.
           # Each block looks like:
           #   # DASHBOARD_<TARGET>_MARKER_START
           #   url "https://.../kapsis-dashboard-<target>"
           #   sha256 "..."
           #   # DASHBOARD_<TARGET>_MARKER_END
           for TARGET in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            LOCAL_BIN="dashboard-artifacts/kapsis-dashboard-${TARGET}"
             BIN_URL="https://github.com/${REPO}/releases/download/v${VERSION}/kapsis-dashboard-${TARGET}"
-            echo "Fetching SHA256 for kapsis-dashboard-${TARGET}..."
 
-            BIN_RETRY=0
-            BIN_SHA256=""
-            while [[ $BIN_RETRY -lt $MAX_RETRIES ]]; do
-              if BIN_SHA256=$(curl -fsSL --retry 3 "$BIN_URL" | sha256sum | cut -d' ' -f1); then
-                if [[ "$BIN_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
-                  echo "  ${TARGET}: ${BIN_SHA256}"
-                  break
-                fi
-              fi
-              BIN_RETRY=$((BIN_RETRY + 1))
-              if [[ $BIN_RETRY -lt $MAX_RETRIES ]]; then
-                sleep 10
-              else
-                echo "::error::Failed to compute SHA256 for kapsis-dashboard-${TARGET}"
-                exit 1
-              fi
-            done
+            if [[ ! -f "$LOCAL_BIN" ]]; then
+              echo "::error::Local artifact missing: $LOCAL_BIN (compile-dashboard job did not produce it, or retention expired)"
+              exit 1
+            fi
+
+            BIN_SHA256=$(sha256sum "$LOCAL_BIN" | cut -d' ' -f1)
+            if [[ ! "$BIN_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "::error::Invalid SHA256 computed for ${TARGET}: $BIN_SHA256"
+              exit 1
+            fi
+            echo "  ${TARGET}: ${BIN_SHA256}"
 
             # Uppercase target marker (DARWIN_ARM64, etc.) for sed
             MARKER=$(echo "$TARGET" | tr '[:lower:]-' '[:upper:]_')
@@ -729,11 +787,27 @@ jobs:
               }" "$FORMULA_FILE"
             rm -f "${FORMULA_FILE}.bak"
 
+            # Validate BOTH url AND sha256 were patched. A silent url-sed
+            # failure (e.g., regex drift from a URL format change) would
+            # otherwise leave the formula with a correct hash but stale URL,
+            # making Homebrew installs fail with a confusing checksum mismatch.
+            if ! grep -q "url \"${BIN_URL}\"" "$FORMULA_FILE"; then
+              echo "::error::Failed to update dashboard ${TARGET} URL in formula"
+              exit 1
+            fi
             if ! grep -q "sha256 \"${BIN_SHA256}\"" "$FORMULA_FILE"; then
               echo "::error::Failed to update dashboard ${TARGET} SHA256 in formula"
               exit 1
             fi
           done
+
+          # Final sanity check: no placeholder all-zero sha256s remain.
+          # Catches the case where sed silently matched the wrong block range.
+          if grep -q 'sha256 "0\{64\}"' "$FORMULA_FILE"; then
+            echo "::error::Formula still contains placeholder all-zero sha256 after patching"
+            grep -n 'sha256 "0\{64\}"' "$FORMULA_FILE"
+            exit 1
+          fi
 
           echo "✓ Updated all 4 dashboard binary SHA256s in formula"
 

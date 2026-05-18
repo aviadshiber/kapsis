@@ -36,9 +36,15 @@ class Kapsis < Formula
   # These resources reference release assets produced by the
   # `compile-dashboard` job in .github/workflows/release.yml. The CI
   # `Update Homebrew formula` step patches each block's url + sha256
-  # after the release is created (it computes the SHA256 by downloading
-  # the freshly-attached asset). The marker comments are load-bearing
-  # — do not remove or change their wording.
+  # after the release is created (it sha256sums the local artifact
+  # uploaded by compile-dashboard, NOT the published release URL, to
+  # close the TOCTOU window). The marker comments are load-bearing —
+  # do not remove or change their wording.
+  #
+  # Placeholder sha256 = 64 zeros. `brew audit` will reject this until
+  # CI patches it; that is intentional — `brew install` against an
+  # un-patched formula must fail loudly rather than silently install
+  # nothing.
   on_macos do
     on_arm do
       # DASHBOARD_DARWIN_ARM64_MARKER_START
@@ -89,6 +95,7 @@ class Kapsis < Formula
       scripts/worktree-manager.sh
       scripts/kapsis-cleanup.sh
       scripts/kapsis-status.sh
+      scripts/kapsis-recovery-action.sh
       scripts/lib/logging.sh
       scripts/lib/status.sh
       scripts/lib/constants.sh
@@ -184,7 +191,17 @@ class Kapsis < Formula
     assert_predicate bin/"kapsis-dashboard", :executable?,
       "kapsis-dashboard binary should be executable"
     # --version is the only flag that exits 0 without binding a port.
+    # Pass explicit exit code 0 so any non-zero exit produces a clear
+    # failure instead of an opaque pattern-match miss.
     assert_match(/\d+\.\d+\.\d+/,
-      shell_output("#{bin}/kapsis-dashboard --version"))
+      shell_output("#{bin}/kapsis-dashboard --version", 0))
+
+    # Verify kapsis-recovery-action wrapper is installed and its --help
+    # smoke check works. Catches the same packaging-skip class of bug
+    # the dashboard test above is designed to catch (see #372).
+    assert_predicate bin/"kapsis-recovery-action", :exist?,
+      "kapsis-recovery-action wrapper should be installed"
+    assert_match "Usage:",
+      shell_output("#{bin}/kapsis-recovery-action --help 2>&1", 0)
   end
 end
