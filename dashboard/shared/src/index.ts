@@ -160,3 +160,33 @@ export interface CleanupResultWire {
   stderr: string;
   exitCode: number;
 }
+
+/** Cap matches `SPEC_MAX_BYTES` in dashboard/server/src/store/spec.ts. */
+export const SPEC_MAX_BYTES = 256 * 1024;
+
+/** Maximum gist-history entries retained per agent in the server ring buffer. */
+export const GIST_HISTORY_MAX_PER_AGENT = 200;
+
+export interface SpecResponse {
+  /** The user-authored portion of the spec (the injected Kapsis suffix is stripped). */
+  spec: string;
+  /** The Kapsis progress-instruction suffix that was stripped, or null when nothing was stripped. */
+  injectedInstructions: string | null;
+  /**
+   * Where the spec was read from. `worktree` is the per-agent canonical
+   * location; `volume:<name>` is the named-volume fallback used by
+   * overlay-mode agents whose worktree is read-only.
+   */
+  source: "worktree" | string;
+  /** Length of the raw on-disk file before splitting/truncation. */
+  sizeBytes: number;
+  /** True when the on-disk file exceeded `SPEC_MAX_BYTES` and was truncated. */
+  truncated: boolean;
+}
+
+export interface GistEntry {
+  /** ISO-8601 UTC timestamp of the gist transition. */
+  at: string;
+  /** Gist text at that moment (the new value, not the prior one). */
+  gist: string;
+}

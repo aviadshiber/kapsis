@@ -4,6 +4,8 @@ import type { StatusStore } from "../store/status";
 import type { AuditStore } from "../store/audit";
 import type { LogStore } from "../store/logs";
 import type { ConversationStore } from "../store/conversations";
+import type { SpecStore } from "../store/spec";
+import type { GistHistoryStore } from "../store/gist-history";
 import { computeHealth } from "../store/health";
 import { inspectContainer, containerStats, invalidateContainerCache } from "../store/container";
 import { killAgent } from "../control/kill";
@@ -17,6 +19,8 @@ interface AgentsDeps {
   audit: AuditStore;
   logs: LogStore;
   conv: ConversationStore;
+  spec: SpecStore;
+  gistHistory: GistHistoryStore;
   sse: SseBroker;
   dashAudit: DashboardAuditWriter;
 }
@@ -28,7 +32,7 @@ function p(params: RouteParams, name: string): string {
 }
 
 export function registerAgentRoutes(r: Router, deps: AgentsDeps): void {
-  const { config, status, audit, logs, conv, sse, dashAudit } = deps;
+  const { config, status, audit, logs, conv, spec, gistHistory, sse, dashAudit } = deps;
 
   r.get("/api/v1/agents", () => json({ agents: status.list() }));
 
@@ -78,6 +82,29 @@ export function registerAgentRoutes(r: Router, deps: AgentsDeps): void {
     const files = await audit.listFiles(id);
     const chains = await Promise.all(files.map((f) => audit.verifyFile(f, texts.get(f))));
     return json({ events, files: files.map((f, i) => ({ file: f, chain: chains[i] })) });
+  });
+
+  r.get("/api/v1/agents/:id/spec", async (_req, params) => {
+    const id = p(params, "id");
+    const bad = requireAgentId(id);
+    if (bad) return bad;
+    const result = await spec.read(id);
+    if (!result) return errorResponse(404, "spec not found", { agentId: id });
+    return json(result);
+  });
+
+  r.get("/api/v1/agents/:id/gist-history", (_req, params) => {
+    const id = p(params, "id");
+    const bad = requireAgentId(id);
+    if (bad) return bad;
+    return json({ entries: gistHistory.get(id) });
+  });
+
+  r.get("/sse/agents/:id/gist-history", (_req, params) => {
+    const id = p(params, "id");
+    const bad = requireAgentId(id);
+    if (bad) return bad;
+    return sse.subscribe([`gist-history:${id}`]);
   });
 
   r.get("/api/v1/agents/:id/conversation", async (_req, params) => {
