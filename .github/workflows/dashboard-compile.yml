@@ -48,8 +48,17 @@ jobs:
             runnerArch: ARM64
           - target: darwin-x64
             bunTarget: bun-darwin-x64
-            runner: macos-13
-            runnerArch: X64
+            # Cross-compile from ARM64 macOS instead of running on macos-13
+            # (Intel). GitHub's Intel macOS runner pool has shrunk since
+            # Apple's ARM transition and routinely queues for tens of
+            # minutes, blocking every dashboard PR. Bun supports
+            # cross-compilation via --target so we don't need a native x64
+            # host — the trade-off is the smoke-test gets skipped here
+            # (host arch is ARM64, binary is X64; the host can't exec it
+            # without Rosetta, which CI doesn't have). Same posture as
+            # linux-arm64 below.
+            runner: macos-latest
+            runnerArch: ARM64
           - target: linux-arm64
             bunTarget: bun-linux-arm64
             # No GitHub-hosted Linux ARM64 runner is allocated for this
