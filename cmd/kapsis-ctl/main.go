@@ -19,6 +19,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -89,11 +90,10 @@ func cmdInspect(ctx context.Context, client *podman.Client, args []string) int {
 
 	info, err := client.Inspect(ctx, name)
 	if err != nil {
-		if strings.Contains(err.Error(), "not found") {
-			fmt.Fprintf(os.Stderr, "kapsis-ctl inspect: %v\n", err)
+		fmt.Fprintf(os.Stderr, "kapsis-ctl inspect: %v\n", err)
+		if errors.Is(err, podman.ErrNotFound) {
 			return 3
 		}
-		fmt.Fprintf(os.Stderr, "kapsis-ctl inspect: %v\n", err)
 		return 1
 	}
 

@@ -1,3 +1,5 @@
+//go:build !windows
+
 // Package podman provides a minimal HTTP client for the Podman libpod REST API
 // over a Unix socket. It is intentionally stdlib-only and covers only the
 // read-only container query operations needed by Phase 1 of kapsis-ctl.
@@ -6,7 +8,9 @@ package podman
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -19,6 +23,15 @@ import (
 
 // apiVersion is the libpod API version string used in request paths.
 const apiVersion = "v5.0.0"
+
+// maxResponseBodyBytes caps response reads to guard against a runaway/malicious
+// Podman API sending an unbounded body that could OOM the host.
+const maxResponseBodyBytes = 16 * 1024 * 1024 // 16 MB
+
+// ErrNotFound is returned by Inspect (and transitively by Alive) when the
+// named container does not exist. Use errors.Is to distinguish it from other
+// errors such as a broken socket connection.
+var ErrNotFound = errors.New("container not found")
 
 // nameRE validates container names: alphanumeric, dash, dot, underscore, max 253 chars.
 // This prevents path traversal and HTTP request smuggling when the name is
@@ -36,6 +49,12 @@ var allowedFilterKeys = map[string]bool{
 
 // ContainerInfo is the normalised output type for all kapsis-ctl subcommands.
 // Field names are lower-case for consistent jq consumption from bash scripts.
+//
+// Security note: Config.Env is intentionally absent — container env vars
+// routinely contain API keys and tokens; opt-in output is left for a future
+// --show-env flag. Labels are included as-is; callers should be aware that
+// some CI tooling stores credentials in container labels. The kapsis codebase
+// uses only "kapsis.*"-prefixed labels on its own containers.
 type ContainerInfo struct {
 	ID      string            `json:"id"`
 	Name    string            `json:"name"`
@@ -73,7 +92,8 @@ func newClient(socketPath string) (*Client, error) {
 	}
 	sp := socketPath
 	httpClient := &http.Client{
-		Timeout: 10 * time.Second,
+		// No client-level Timeout: callers pass a context with their own deadline.
+		// Dialer.Timeout covers the connection-establishment phase only.
 		Transport: &http.Transport{
 			DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 				return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", sp)
@@ -92,9 +112,13 @@ func newClient(socketPath string) (*Client, error) {
 //
 // Discovery order:
 //  1. KAPSIS_PODMAN_SOCKET env var (explicit override)
-//  2. $XDG_RUNTIME_DIR/podman/podman.sock (Linux rootless standard)
+//  2. $XDG_RUNTIME_DIR/podman/podman.sock  (Linux rootless standard)
 //  3. ~/.local/share/containers/podman/machine/{podman,qemu,applehv}/podman.sock (macOS)
-//  4. /run/user/<uid>/podman/podman.sock (Linux rootless fallback)
+//  4. /run/user/<uid>/podman/podman.sock   (Linux rootless uid fallback)
+//
+// The /tmp/podman-run-<uid> path is intentionally excluded: /tmp is
+// world-writable and a local attacker could pre-create a socket there to
+// intercept or forge Podman API responses.
 func discoverSocket() (string, error) {
 	if s := os.Getenv("KAPSIS_PODMAN_SOCKET"); s != "" {
 		return s, nil
@@ -108,7 +132,7 @@ func discoverSocket() (string, error) {
 
 	if home, err := os.UserHomeDir(); err == nil {
 		machineBase := filepath.Join(home, ".local", "share", "containers", "podman", "machine")
-		// Podman 4/5 on macOS place the socket in a hypervisor-specific subdirectory;
+		// Podman 4/5 on macOS places the socket in a hypervisor-specific subdirectory;
 		// check the bare machine dir first for future versions or symlinks.
 		candidates = append(candidates,
 			filepath.Join(machineBase, "podman.sock"),
@@ -120,7 +144,6 @@ func discoverSocket() (string, error) {
 	uid := fmt.Sprintf("%d", os.Getuid())
 	candidates = append(candidates,
 		filepath.Join("/run/user", uid, "podman", "podman.sock"),
-		filepath.Join("/tmp", "podman-run-"+uid, "podman", "podman.sock"),
 	)
 
 	for _, p := range candidates {
@@ -162,6 +185,12 @@ func validateSocketPath(p string) error {
 // ValidateName returns an error if name contains characters that could cause
 // path traversal or HTTP request smuggling when embedded in a URL path.
 func ValidateName(name string) error {
+	// Explicitly reject dot-only names before the regex check.
+	// Both "." and ".." pass [a-zA-Z0-9_.-] and url.PathEscape does not
+	// encode them, which could produce /containers/./json or /containers/../json.
+	if name == "." || name == ".." {
+		return fmt.Errorf("invalid container name %q: reserved path component", name)
+	}
 	if !nameRE.MatchString(name) {
 		return fmt.Errorf(
 			"invalid container name %q: must match [a-zA-Z0-9_.-]{1,253}",
@@ -190,6 +219,7 @@ func ValidateFilters(filters map[string][]string) error {
 }
 
 // Inspect returns normalised information about a single container.
+// Returns ErrNotFound (wrapped) when the container does not exist.
 func (c *Client) Inspect(ctx context.Context, name string) (*ContainerInfo, error) {
 	if err := ValidateName(name); err != nil {
 		return nil, err
@@ -203,7 +233,7 @@ func (c *Client) Inspect(ctx context.Context, name string) (*ContainerInfo, erro
 
 	switch resp.StatusCode {
 	case http.StatusNotFound:
-		return nil, fmt.Errorf("container %q not found", name)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
 	case http.StatusOK:
 	default:
 		return nil, fmt.Errorf("podman API returned %s", resp.Status)
@@ -220,11 +250,10 @@ func (c *Client) Inspect(ctx context.Context, name string) (*ContainerInfo, erro
 		Image   string `json:"Image"`
 		Config  struct {
 			Labels map[string]string `json:"Labels"`
-			// Env is intentionally omitted — it may contain API keys and tokens.
-			// Use --show-env flag (not yet implemented) to opt in to env output.
+			// Env intentionally omitted — may contain API keys and tokens.
 		} `json:"Config"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes)).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decoding inspect response: %w", err)
 	}
 
@@ -273,7 +302,7 @@ func (c *Client) List(ctx context.Context, filters map[string][]string) ([]Conta
 		State  string            `json:"State"`
 		Labels map[string]string `json:"Labels"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBodyBytes)).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("decoding list response: %w", err)
 	}
 
@@ -294,19 +323,29 @@ func (c *Client) List(ctx context.Context, filters map[string][]string) ([]Conta
 	return result, nil
 }
 
-// Alive reports whether a container exists and is in the "running" state.
-// It uses Inspect rather than the /exists endpoint because /exists returns
-// true for containers in any state (exited, paused, etc.).
+// aliveStates is the set of container states that kapsis-ctl alive considers
+// "alive". Running is the primary state; paused and restarting are transient
+// states during podman pause/restart operations and should not be treated as
+// dead during brief polling windows.
+var aliveStates = map[string]bool{
+	"running":    true,
+	"paused":     true,
+	"restarting": true,
+}
+
+// Alive reports whether a container is in an alive state (running, paused, or
+// restarting). It uses Inspect rather than the /exists endpoint because /exists
+// returns true for containers in any state including exited.
+// Returns false (not an error) when the container does not exist.
 func (c *Client) Alive(ctx context.Context, name string) (bool, error) {
 	info, err := c.Inspect(ctx, name)
 	if err != nil {
-		// Container not found is not an error — it just means not alive.
-		if strings.Contains(err.Error(), "not found") {
+		if errors.Is(err, ErrNotFound) {
 			return false, nil
 		}
 		return false, err
 	}
-	return info.State == "running", nil
+	return aliveStates[info.State], nil
 }
 
 func (c *Client) get(ctx context.Context, rawURL string) (*http.Response, error) {

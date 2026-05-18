@@ -271,6 +271,35 @@ probe_virtio_fs_health() {
 #-------------------------------------------------------------------------------
 count_running_kapsis_containers() {
     local podman_bin="${KAPSIS_VFS_PROBE_PODMAN:-podman}"
+
+    # Prefer kapsis-ctl (issue #266) when available: direct libpod REST API
+    # query, no new SSH process per call.  Falls back to podman ps when the
+    # binary is absent (e.g. fresh checkout without a prior `make build-ctl`).
+    local kapsis_ctl="${KAPSIS_CTL:-}"
+    if [[ -z "$kapsis_ctl" ]]; then
+        local _self_dir
+        _self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+        local _candidate="${_self_dir}/../../bin/kapsis-ctl"
+        [[ -x "$_candidate" ]] && kapsis_ctl="$_candidate"
+    fi
+
+    if [[ -n "$kapsis_ctl" ]] && [[ -x "$kapsis_ctl" ]]; then
+        # `kapsis-ctl list` outputs a JSON array; count entries with grep -c
+        # on the "id" key (one per entry) to avoid requiring jq in this lib.
+        local count
+        count="$("$kapsis_ctl" list \
+            --filter label=kapsis.managed=true \
+            --filter status=running \
+            2>/dev/null | grep -c '"id"' 2>/dev/null)" || count=""
+        if [[ "$count" =~ ^[0-9]+$ ]]; then
+            log_debug "count_running_kapsis_containers: kapsis-ctl => $count"
+            echo "$count"
+            return 0
+        fi
+        log_debug "count_running_kapsis_containers: kapsis-ctl failed, falling back to podman ps"
+    fi
+
+    # Fallback: original podman ps approach.
     local ids
     ids="$("$podman_bin" ps --filter 'label=kapsis.managed=true' --format '{{.ID}}' 2>/dev/null || true)"
     if [[ -z "$ids" ]]; then
