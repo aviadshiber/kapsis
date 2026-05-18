@@ -1,9 +1,10 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { api, sseEphemeral } from "../api/client";
-import type { AgentStatus } from "../types";
+import { memo, useCallback, useEffect, useMemo, useState } from "react";
+import { api } from "../api/client";
+import { STALE_AGENT_THRESHOLD_MS, type AgentStatus } from "../types";
 import { StatusPill } from "../components/StatusPill";
 import { ProgressBar } from "../components/ProgressBar";
 import { HealthDot } from "../components/HealthDot";
+import { useAgentSseListener } from "../hooks/useAgentSseListener";
 
 interface Props {
   onSelect: (agentId: string) => void;
@@ -11,19 +12,11 @@ interface Props {
 
 type Filter = "all" | "running" | "stale" | "complete" | "failed";
 
-/**
- * Anything that says it's still working but hasn't written an update in
- * 30 minutes is almost certainly dead — the liveness monitor would have
- * killed a real agent inside the 900s default timeout. The "Reap stale
- * agents" Maintenance card is what actually removes them.
- */
-const STALE_AGE_MS = 30 * 60_000;
-
 function isLikelyStale(s: AgentStatus): boolean {
   if (s.phase === "complete") return false;
   const updated = Date.parse(s.updated_at);
   if (Number.isNaN(updated)) return false;
-  return Date.now() - updated > STALE_AGE_MS;
+  return Date.now() - updated > STALE_AGENT_THRESHOLD_MS;
 }
 
 function classify(s: AgentStatus): "running" | "stale" | "complete" | "failed" {
@@ -54,13 +47,13 @@ const AgentRow = memo(function AgentRow({ status: a, onSelect }: RowProps) {
     cls === "complete" ? "healthy" :
     cls === "failed" ? "failed" : "unknown";
   return (
-    <tr onClick={() => onSelect(a.agent_id)} className={cls === "stale" ? "row-stale" : undefined}>
+    <tr onClick={() => onSelect(a.agent_id)}>
       <td><HealthDot state={healthState} title={cls === "stale" ? "Likely stale — no update in 30+ minutes" : healthState} /></td>
       <td><strong>{a.project}</strong></td>
       <td><code>{a.agent_id}</code></td>
       <td>
         {cls === "stale"
-          ? <span className="pill failed" title={`phase=${a.phase}, no update in 30+ min`}>STALE</span>
+          ? <span className="pill stale" title={`phase=${a.phase}, no update in 30+ min`}>STALE</span>
           : <StatusPill status={a} />}
       </td>
       <td style={{ width: 140 }}><ProgressBar value={a.progress} /></td>
@@ -75,53 +68,43 @@ export function AgentList({ onSelect }: Props) {
   const [agents, setAgents] = useState<AgentStatus[]>([]);
   const [filter, setFilter] = useState<Filter>("all");
   const [q, setQ] = useState("");
-  const streamRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
     let alive = true;
     api.agents().then(({ agents }) => { if (alive) setAgents(agents); });
-    void (async () => {
-      try {
-        const stream = await sseEphemeral("/sse/agents");
-        if (!alive) { stream.close(); return; }
-        streamRef.current = stream;
-        // Note: SSE events with an `event:` field do NOT fire onmessage —
-        // they fire addEventListener(<event>, ...). Use both so the live
-        // list actually updates as agents change phase or get reaped.
-        stream.addEventListener("agent-changed", (ev: MessageEvent) => {
-          try {
-            const msg = JSON.parse(ev.data) as { status: AgentStatus | null; file?: string };
-            if (msg.status) {
-              setAgents((prev) => {
-                const i = prev.findIndex((a) => a.agent_id === msg.status!.agent_id && a.project === msg.status!.project);
-                if (i === -1) return [msg.status!, ...prev];
-                const copy = prev.slice();
-                copy[i] = msg.status!;
-                return copy;
-              });
-            } else if (msg.file) {
-              // status=null + file = the watcher noticed a file was deleted.
-              // Filename pattern: kapsis-<project>-<agent_id>.json
-              const m = msg.file.match(/^kapsis-(.+)-([^-]+)\.json$/);
-              if (m) {
-                const [, project, agentId] = m;
-                setAgents((prev) => prev.filter((a) => !(a.project === project && a.agent_id === agentId)));
-              }
-            }
-          } catch { /* parse error or heartbeat */ }
-        });
-        stream.addEventListener("agent-reaped", (ev: MessageEvent) => {
-          try {
-            const { agentId, project } = JSON.parse(ev.data) as { agentId: string; project: string };
-            setAgents((prev) => prev.filter((a) => !(a.project === project && a.agent_id === agentId)));
-          } catch { /* */ }
-        });
-      } catch (e) {
-        console.warn("SSE disabled:", e);
-      }
-    })();
-    return () => { alive = false; streamRef.current?.close(); };
+    return () => { alive = false; };
   }, []);
+
+  const onAgentChanged = useCallback((status: AgentStatus | null, file?: string) => {
+    if (status) {
+      setAgents((prev) => {
+        const i = prev.findIndex((a) => a.agent_id === status.agent_id && a.project === status.project);
+        if (i === -1) return [status, ...prev];
+        const copy = prev.slice();
+        copy[i] = status;
+        return copy;
+      });
+    } else if (file) {
+      // status=null + file = the watcher noticed a file was deleted.
+      // Filename pattern: kapsis-<project>-<agent_id>.json
+      // The greedy `(.+)` is load-bearing: it lets dashed project names
+      // like "helm-charts" match correctly. With a non-greedy `(.+?)` the
+      // filename "kapsis-helm-charts-abc123.json" would parse project as
+      // "helm" and agent_id as "charts-abc123" (the trailing `([^-]+)`
+      // anchors the agent_id, so greediness on the project side wins).
+      const m = file.match(/^kapsis-(.+)-([^-]+)\.json$/);
+      if (m) {
+        const [, project, agentId] = m;
+        setAgents((prev) => prev.filter((a) => !(a.project === project && a.agent_id === agentId)));
+      }
+    }
+  }, []);
+
+  const onAgentReaped = useCallback((agentId: string, project: string) => {
+    setAgents((prev) => prev.filter((a) => !(a.project === project && a.agent_id === agentId)));
+  }, []);
+
+  useAgentSseListener({ onAgentChanged, onAgentReaped });
 
   const filtered = useMemo(() => {
     return agents.filter((a) => {

@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import { api, sseEphemeral } from "../api/client";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { api } from "../api/client";
 import type { AgentHealth, AgentStatus, AuditChainStatus, AuditEvent, ContainerInfo, ContainerStats, ConversationEntry, LogChunk } from "../types";
 import { StatusPill } from "../components/StatusPill";
 import { ProgressBar } from "../components/ProgressBar";
 import { HealthDot } from "../components/HealthDot";
 import { ConfirmModal } from "../components/ConfirmModal";
+import { useAgentSseListener } from "../hooks/useAgentSseListener";
 
 type Tab = "overview" | "logs" | "audit" | "conversation" | "container";
 
@@ -22,53 +23,54 @@ interface Detail {
 }
 
 export function AgentDetail({ agentId, readOnly, onBack }: Props) {
-  const [data, setData] = useState<Detail | null>(null);
+  const [data, setDataState] = useState<Detail | null>(null);
   const [tab, setTab] = useState<Tab>("overview");
   const [showKill, setShowKill] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const streamRef = useRef<EventSource | null>(null);
+  // Mirrors the latest loaded status so SSE handler closures can read the
+  // current project without re-binding the listener on every render. Short
+  // hex agent ids can collide across projects (e.g. `abc123` may exist in
+  // both "products" and "helm-charts"), so the agent-reaped match must be
+  // project-scoped.
+  const statusRef = useRef<AgentStatus | null>(null);
+  const aliveRef = useRef(true);
+
+  // Wrapped setter that keeps statusRef in sync with whatever the view
+  // currently believes is "the loaded status".
+  const setData = useCallback((d: Detail | null) => {
+    statusRef.current = d?.status ?? null;
+    setDataState(d);
+  }, []);
+
+  const load = useCallback(() => {
+    return api.agent(agentId)
+      .then((d) => { if (aliveRef.current) setData(d); })
+      .catch((e) => { if (aliveRef.current) setErr(String(e)); });
+  }, [agentId, setData]);
 
   useEffect(() => {
-    let alive = true;
-    const load = () => api.agent(agentId)
-      .then((d) => { if (alive) setData(d); })
-      .catch((e) => { if (alive) setErr(String(e)); });
-    load();
+    aliveRef.current = true;
+    void load();
+    return () => { aliveRef.current = false; };
+  }, [load]);
 
-    // Subscribe to SSE for this agent only. We previously polled every 4s
-    // unconditionally — that forked podman on every tick. Now we only
-    // refetch when the status file for this agent actually changes.
-    void (async () => {
-      try {
-        const stream = await sseEphemeral("/sse/agents");
-        if (!alive) { stream.close(); return; }
-        streamRef.current = stream;
-        // SSE events with an `event:` field fire addEventListener(<event>),
-        // not onmessage. Subscribe to both relevant events.
-        stream.addEventListener("agent-changed", (ev: MessageEvent) => {
-          try {
-            const msg = JSON.parse(ev.data) as { status: AgentStatus | null };
-            if (msg.status?.agent_id === agentId) load();
-          } catch { /* heartbeat / parse error */ }
-        });
-        stream.addEventListener("agent-reaped", (ev: MessageEvent) => {
-          try {
-            const { agentId: reapedId } = JSON.parse(ev.data) as { agentId: string };
-            if (reapedId === agentId) load();
-          } catch { /* */ }
-        });
-      } catch (e) {
-        console.warn("SSE disabled, falling back to slow poll:", e);
-        // Best-effort fallback: a slow (15s) poll so the page is not totally
-        // static if SSE setup fails. Far below the old 4s cadence.
-        const id = setInterval(load, 15_000);
-        return () => clearInterval(id);
-      }
-    })();
+  const onAgentChanged = useCallback((status: AgentStatus | null) => {
+    if (status?.agent_id === agentId && status.project === statusRef.current?.project) {
+      void load();
+    } else if (status?.agent_id === agentId && statusRef.current === null) {
+      // Initial load hasn't completed yet — still refetch so we don't miss the first update.
+      void load();
+    }
+  }, [agentId, load]);
 
-    return () => { alive = false; streamRef.current?.close(); };
-  }, [agentId]);
+  const onAgentReaped = useCallback((reapedId: string, reapedProject: string) => {
+    if (reapedId === agentId && statusRef.current?.project === reapedProject) {
+      void load();
+    }
+  }, [agentId, load]);
+
+  useAgentSseListener({ onAgentChanged, onAgentReaped });
 
   if (err) return <div className="banner">{err}</div>;
   if (!data) return <div>Loading…</div>;

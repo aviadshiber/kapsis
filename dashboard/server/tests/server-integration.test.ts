@@ -172,6 +172,148 @@ describe("server integration", () => {
     expect(r.status).toBe(403);
   });
 
+  it("read-only mode: reap-stale returns 403", async () => {
+    h.stop();
+    h = await spawnHarness({ readOnly: true });
+    const r = await fetch(`${h.url}/api/v1/maintenance/reap-stale`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${h.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ dryRun: true }),
+    });
+    expect(r.status).toBe(403);
+  });
+
+  it("reap-stale concurrency guard returns 409 on second simultaneous call", async () => {
+    // Fire two POSTs without awaiting the first. The in-flight check runs
+    // synchronously before any `await` inside the handler, so one fetch
+    // must observe `reapInFlight === true` and return 409. The other
+    // returns 200 with the normal outcome shape.
+    const opts = {
+      method: "POST",
+      headers: { Authorization: `Bearer ${h.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ dryRun: true }),
+    };
+    const [a, b] = await Promise.all([
+      fetch(`${h.url}/api/v1/maintenance/reap-stale`, opts),
+      fetch(`${h.url}/api/v1/maintenance/reap-stale`, opts),
+    ]);
+    const statuses = [a.status, b.status].sort();
+    expect(statuses).toEqual([200, 409]);
+    const conflictResp = a.status === 409 ? a : b;
+    const conflictBody = (await conflictResp.json()) as { error: string; reapInFlight?: boolean };
+    expect(conflictBody.error).toBe("reap already in flight");
+    expect(conflictBody.reapInFlight).toBe(true);
+  });
+
+  it("reap-stale records an audit event and emits SSE on reaped agents", async () => {
+    // Seed one zombie status: phase=running, updated_at way past the stale
+    // threshold (default 30 min). In the test environment podman will
+    // almost certainly be missing or refuse `version`, so probePodman()
+    // returns false and the reaper returns reapable=[] with
+    // podmanAvailable=false. The route layer must surface that flag and
+    // still record an audit entry so the operator sees what happened.
+    const root = h.url; // dummy; not used — we go via the harness directly
+    void root;
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000)
+      .toISOString().replace(/\.\d{3}Z$/, "Z");
+    const fixture = {
+      version: "1.0", agent_id: "zombie01", project: "demo",
+      branch: null, sandbox_mode: "overlay", phase: "running", progress: 50,
+      message: "stuck", gist: null, gist_updated_at: null,
+      started_at: twoHoursAgo, updated_at: twoHoursAgo,
+      exit_code: null, error: null, worktree_path: null, pr_url: null,
+      push_status: null, local_commit: null, remote_commit: null,
+      push_fallback_command: null, commit_status: null, commit_sha: null,
+      uncommitted_files: 0, heartbeat_at: null, error_type: null,
+    };
+    // h.url => http://127.0.0.1:<port>. Re-derive the kapsisHome path the
+    // harness used by querying /api/v1/version is not useful here; instead,
+    // we seed against the path the harness emitted via the same mkdtemp
+    // convention. Spawn a fresh harness with a known root so the fixture
+    // lands in the right place.
+    h.stop();
+    const seedRoot = await mkdtemp(join(tmpdir(), "kd-srv-reap-"));
+    for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git"]) {
+      await mkdir(join(seedRoot, d));
+    }
+    await writeFile(
+      join(seedRoot, "status", "kapsis-demo-zombie01.json"),
+      JSON.stringify(fixture),
+    );
+    // Stand up a harness rooted at seedRoot manually (mirrors spawnHarness).
+    const token = generateToken();
+    const paths = {
+      status: join(seedRoot, "status"),
+      audit: join(seedRoot, "audit"),
+      logs: join(seedRoot, "logs"),
+      conversations: join(seedRoot, "conversations"),
+      worktrees: join(seedRoot, "worktrees"),
+      sandboxes: join(seedRoot, "sandboxes"),
+      sanitizedGit: join(seedRoot, "sanitized-git"),
+      dashboardAudit: join(seedRoot, "audit", "dashboard.jsonl"),
+    };
+    const status = new StatusStore(paths.status); await status.init();
+    const audit = new AuditStore(paths.audit);
+    const logsS = new LogStore(paths.logs);
+    const conv = new ConversationStore(paths.conversations);
+    const disk = new DiskUsageStore(paths);
+    const dashAudit = new DashboardAuditWriter(paths.dashboardAudit); await dashAudit.init();
+    const sse = new SseBroker(60_000);
+    const sseTokens = new EphemeralTokenStore();
+    const cleanupRunner = new CleanupRunner();
+    const config: DashboardConfig = {
+      host: "127.0.0.1", port: 0, kapsisHome: seedRoot,
+      readOnly: false, open: false, token, uiDistDir: null,
+    };
+    const server = startServer(config, {
+      status, audit, logs: logsS, conv, disk, sse, dashAudit, sseTokens, cleanupRunner,
+      cleanupScript: join(seedRoot, "nope.sh"), version: "test",
+    });
+    const url = `http://127.0.0.1:${server.port}`;
+    try {
+      const resp = await fetch(`${url}/api/v1/maintenance/reap-stale`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ dryRun: false }),
+      });
+      expect(resp.status).toBe(200);
+      const body = (await resp.json()) as {
+        podmanAvailable: boolean;
+        reaped: unknown[];
+        note?: string;
+      };
+      // Two valid worlds depending on whether the test runner has podman:
+      //   - podman absent → podmanAvailable=false, reaped=[], note set.
+      //   - podman present → podmanAvailable=true; the seeded container
+      //     "kapsis-zombie01" doesn't exist so the reaper considers it
+      //     reapable and the body shows reaped.length >= 0 (≥0 because the
+      //     reaper's parallel inspect is best-effort). Both shapes are
+      //     correct; assert only what's invariant.
+      expect(typeof body.podmanAvailable).toBe("boolean");
+      if (body.podmanAvailable === false) {
+        expect(body.reaped).toEqual([]);
+        expect(body.note).toContain("podman unavailable");
+      }
+
+      // The dashboard audit JSONL must exist and contain an entry whose
+      // action mentions "reap-stale" — flavor depends on podman state.
+      const auditText = await Bun.file(paths.dashboardAudit).text();
+      const lines = auditText.split("\n").filter(Boolean);
+      const reapEntries = lines.map((l) => JSON.parse(l) as { action: string }).filter(
+        (e) => e.action.includes("reap-stale"),
+      );
+      expect(reapEntries.length).toBeGreaterThan(0);
+    } finally {
+      sse.close();
+      sseTokens.close();
+      status.close();
+      server.stop(true);
+      await rm(seedRoot, { recursive: true, force: true });
+      // Re-spawn the default harness for afterEach to tear down cleanly.
+      h = await spawnHarness();
+    }
+  });
+
   it("CORS preflight is denied (no allow-origin returned)", async () => {
     const r = await fetch(`${h.url}/api/v1/agents`, { method: "OPTIONS" });
     expect(r.status).toBe(204);

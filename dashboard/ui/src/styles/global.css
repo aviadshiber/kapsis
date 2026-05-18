@@ -127,6 +127,7 @@ pre { background: var(--bg-elev); padding: 12px; border-radius: 6px; overflow: a
 .pill.complete { background: rgba(110, 118, 129, 0.15); color: var(--gray); }
 .pill.failed { background: rgba(248, 81, 73, 0.15); color: var(--red); }
 .pill.pending { background: rgba(210, 153, 34, 0.15); color: var(--yellow); }
+.pill.stale { background: rgba(240, 136, 62, 0.18); color: var(--orange); }
 
 .health-dot {
   display: inline-block;

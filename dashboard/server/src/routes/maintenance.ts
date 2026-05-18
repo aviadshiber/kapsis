@@ -32,6 +32,14 @@ export function registerMaintenanceRoutes(r: Router, deps: MaintenanceDeps): voi
   const { config, sse, dashAudit, disk, cleanupScript, cleanupRunner, kapsisHome } = deps;
   const statusDir = join(kapsisHome, "status");
 
+  // In-flight lock for the reaper. Only one reap (preview or execute) may
+  // run at a time per server instance. Unlike cleanup we don't need a
+  // per-run id — the reaper is fast, synchronous-ish, and has no streaming
+  // surface. A second concurrent call gets 409 immediately. The check is
+  // synchronous (before any `await`), so Promise.all of two POSTs cannot
+  // race past it.
+  let reapInFlight = false;
+
   // Stale-agent reaper — finds status JSONs where the agent claims to be
   // running but is actually dead (Mac sleep / VM restart / terminal close
   // killed it without writing the final "complete" status), verifies the
@@ -41,32 +49,58 @@ export function registerMaintenanceRoutes(r: Router, deps: MaintenanceDeps): voi
   // list of "running" agents grows forever.
   r.post("/api/v1/maintenance/reap-stale", async (req) => {
     if (config.readOnly) return errorResponse(403, "dashboard is read-only");
-    const body = await safeJson(req);
-    const dryRun = body.dryRun !== false;
-    const thresholdMs = typeof body.thresholdMs === "number" && body.thresholdMs > 60_000
-      ? body.thresholdMs : STALE_THRESHOLD_MS;
+    if (reapInFlight) {
+      return errorResponse(409, "reap already in flight", { reapInFlight: true });
+    }
+    reapInFlight = true;
     try {
-      const outcome = await reapStaleAgents(statusDir, { dryRun, thresholdMs });
-      await dashAudit.record(
-        "dashboard",
-        dryRun ? "reap-stale-preview" : "reap-stale-execute",
-        `count:${outcome.reaped.length}`,
-        {
-          scanned: outcome.scanned,
-          reaped: outcome.reaped.length,
-          skipped: outcome.skipped.length,
-          errors: outcome.errors.length,
-          thresholdMinutes: Math.round(thresholdMs / 60_000),
-        },
-      );
-      if (!dryRun && outcome.reaped.length > 0) {
-        for (const r of outcome.reaped) {
-          sse.publish("agents", { event: "agent-reaped", data: { agentId: r.agentId, project: r.project } });
+      const body = await safeJson(req);
+      const dryRun = body.dryRun !== false;
+      const thresholdMs = typeof body.thresholdMs === "number" && body.thresholdMs > 60_000
+        ? body.thresholdMs : STALE_THRESHOLD_MS;
+      try {
+        const outcome = await reapStaleAgents(statusDir, { dryRun, thresholdMs });
+        // When podman is unavailable, the reaper deliberately returns
+        // `reapable: []` to avoid mass-zombifying live agents during a
+        // transient podman outage. The route layer surfaces this to the
+        // user via a distinct audit action AND a `note` field in the
+        // response body so the UI can render a clear warning instead of
+        // silently reporting "0 reaped" (which looks like success).
+        const action = !outcome.podmanAvailable
+          ? "reap-stale-podman-unavailable"
+          : dryRun
+            ? "reap-stale-preview"
+            : "reap-stale-execute";
+        await dashAudit.record(
+          "dashboard",
+          action,
+          `count:${outcome.reaped.length}`,
+          {
+            scanned: outcome.scanned,
+            reaped: outcome.reaped.length,
+            skipped: outcome.skipped.length,
+            errors: outcome.errors.length,
+            thresholdMinutes: Math.round(thresholdMs / 60_000),
+            podmanAvailable: outcome.podmanAvailable,
+          },
+        );
+        if (!dryRun && outcome.reaped.length > 0) {
+          for (const r of outcome.reaped) {
+            sse.publish("agents", { event: "agent-reaped", data: { agentId: r.agentId, project: r.project } });
+          }
         }
+        if (!outcome.podmanAvailable) {
+          return json({
+            ...outcome,
+            note: "podman unavailable; no agents reaped to avoid mass data loss on a transient outage",
+          });
+        }
+        return json(outcome);
+      } catch (e) {
+        return errorResponse(400, sanitizeError(e));
       }
-      return json(outcome);
-    } catch (e) {
-      return errorResponse(400, sanitizeError(e));
+    } finally {
+      reapInFlight = false;
     }
   });
 

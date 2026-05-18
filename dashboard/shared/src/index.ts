@@ -7,6 +7,9 @@
  * interface here in the same PR. CI enforces this via dashboard-sync.yml.
  */
 
+/** Threshold past which a non-complete agent is considered stale / likely dead. */
+export const STALE_AGENT_THRESHOLD_MS = 30 * 60_000;
+
 export interface AgentStatus {
   version: string;
   agent_id: string;

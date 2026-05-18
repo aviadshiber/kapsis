@@ -42,11 +42,62 @@ function elapsed(startedAt: number): string {
   return `${m}m ${(s - m * 60).toFixed(0)}s`;
 }
 
+type ReapData = Awaited<ReturnType<typeof api.reapStale>>;
+
 interface ReapState {
   loading: boolean;
-  preview: Awaited<ReturnType<typeof api.reapStale>> | null;
-  result: Awaited<ReturnType<typeof api.reapStale>> | null;
+  preview: ReapData | null;
+  result: ReapData | null;
   confirming: boolean;
+}
+
+/**
+ * Renders either the in-card 1-line summary or the bottom-of-page detail
+ * table for a reap preview/result. Both views share the exact same
+ * data-extraction pattern (prefer result over preview, treat result as
+ * "happened" vs. preview as "would happen"), so they live in one component
+ * to keep the two displays consistent.
+ */
+function ReapPreviewSection({ data, isResult, variant }: {
+  data: ReapData;
+  isResult: boolean;
+  variant: "summary" | "detail";
+}) {
+  if (variant === "summary") {
+    return (
+      <div style={{ marginTop: 12, fontSize: 12, color: "var(--fg-muted)" }}>
+        {isResult ? "Reaped" : "Would reap"} <strong>{data.reaped.length}</strong> of {data.scanned} stale candidates
+        {data.skipped.length > 0 && ` (skipped ${data.skipped.length} — container still alive)`}
+        {data.errors.length > 0 && ` · ${data.errors.length} errors`}
+      </div>
+    );
+  }
+  return (
+    <section style={{ marginTop: 24 }}>
+      <h3 style={{ marginTop: 0 }}>
+        {isResult ? "Reaped agents" : "Stale agents preview"} ({data.reaped.length})
+      </h3>
+      {data.reaped.length === 0 ? (
+        <div className="banner">No stale agents found — every non-complete status file has a live container.</div>
+      ) : (
+        <table className="table">
+          <thead><tr><th>Project</th><th>Agent</th><th>Phase</th><th>Last update</th><th>Age</th><th>Container</th></tr></thead>
+          <tbody>
+            {data.reaped.map((row) => (
+              <tr key={row.file}>
+                <td><strong>{row.project}</strong></td>
+                <td><code>{row.agentId}</code></td>
+                <td>{row.phase}</td>
+                <td style={{ color: "var(--fg-muted)" }}>{new Date(row.updatedAt).toLocaleString()}</td>
+                <td>{(row.ageMs / 60_000).toFixed(0)} min</td>
+                <td>{row.containerState ?? <em>missing</em>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  );
 }
 
 export function Maintenance({ readOnly }: Props) {
@@ -209,16 +260,13 @@ export function Maintenance({ readOnly }: Props) {
               disabled={readOnly || reap.loading}
             >Reap</button>
           </div>
-          {(reap.preview || reap.result) && (() => {
-            const r = reap.result ?? reap.preview!;
-            return (
-              <div style={{ marginTop: 12, fontSize: 12, color: "var(--fg-muted)" }}>
-                {reap.result ? "Reaped" : "Would reap"} <strong>{r.reaped.length}</strong> of {r.scanned} stale candidates
-                {r.skipped.length > 0 && ` (skipped ${r.skipped.length} — container still alive)`}
-                {r.errors.length > 0 && ` · ${r.errors.length} errors`}
-              </div>
-            );
-          })()}
+          {(reap.preview || reap.result) && (
+            <ReapPreviewSection
+              data={reap.result ?? reap.preview!}
+              isResult={reap.result !== null}
+              variant="summary"
+            />
+          )}
         </div>
         {TARGETS.map((t) => (
           <div className="card" key={t.id}>
@@ -240,35 +288,13 @@ export function Maintenance({ readOnly }: Props) {
         ))}
       </div>
 
-      {(reap.preview || reap.result) && (() => {
-        const r = reap.result ?? reap.preview!;
-        return (
-          <section style={{ marginTop: 24 }}>
-            <h3 style={{ marginTop: 0 }}>
-              {reap.result ? "Reaped agents" : "Stale agents preview"} ({r.reaped.length})
-            </h3>
-            {r.reaped.length === 0 ? (
-              <div className="banner">No stale agents found — every non-complete status file has a live container.</div>
-            ) : (
-              <table className="table">
-                <thead><tr><th>Project</th><th>Agent</th><th>Phase</th><th>Last update</th><th>Age</th><th>Container</th></tr></thead>
-                <tbody>
-                  {r.reaped.map((row) => (
-                    <tr key={row.file}>
-                      <td><strong>{row.project}</strong></td>
-                      <td><code>{row.agentId}</code></td>
-                      <td>{row.phase}</td>
-                      <td style={{ color: "var(--fg-muted)" }}>{new Date(row.updatedAt).toLocaleString()}</td>
-                      <td>{(row.ageMs / 60_000).toFixed(0)} min</td>
-                      <td>{row.containerState ?? <em>missing</em>}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            )}
-          </section>
-        );
-      })()}
+      {(reap.preview || reap.result) && (
+        <ReapPreviewSection
+          data={reap.result ?? reap.preview!}
+          isResult={reap.result !== null}
+          variant="detail"
+        />
+      )}
 
       {running && (
         <section
