@@ -134,100 +134,14 @@ jobs:
             echo "Pushed ${REGISTRY}/${IMAGE}:${VERSION}"
           done
 
+  # The actual matrix lives in .github/workflows/dashboard-compile.yml —
+  # shared with dashboard-build.yml so the two callers can't drift (#372
+  # was caused by exactly that drift).
   compile-dashboard:
-    name: Compile Dashboard Binary (${{ matrix.target }})
     needs: validate
-    runs-on: ${{ matrix.runner }}
-    # Least-privilege: this job only reads the source and uploads artifacts.
-    # Overrides the workflow-level contents: write so a compromised npm
-    # post-install or third-party action can't publish a malicious release.
-    permissions:
-      contents: read
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - target: darwin-arm64
-            bunTarget: bun-darwin-arm64
-            runner: macos-latest
-            # runnerArch matches the host CPU, NOT the build target — it's
-            # only used by the "Verify binary runs" if-guard to skip the
-            # smoke-test when the host can't execute a cross-compiled binary.
-            runnerArch: ARM64
-          - target: darwin-x64
-            bunTarget: bun-darwin-x64
-            runner: macos-13
-            runnerArch: X64
-          - target: linux-arm64
-            bunTarget: bun-linux-arm64
-            # No GitHub-hosted Linux ARM64 runner is allocated for this
-            # matrix slot, so the smoke-test if-guard below is structurally
-            # unreachable for linux-arm64. Tracked in a follow-up issue;
-            # the cross-compiled binary still ships, just unverified on host.
-            runner: ubuntu-latest
-            runnerArch: X64
-          - target: linux-x64
-            bunTarget: bun-linux-x64
-            runner: ubuntu-latest
-            runnerArch: X64
-    defaults:
-      run:
-        working-directory: dashboard
-    env:
-      BUN_TARGET: ${{ matrix.bunTarget }}
-      OUT_NAME: kapsis-dashboard-${{ matrix.target }}
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
-        with:
-          bun-version: "1.3.11"
-      # Cache the Bun module store keyed on the lockfile so the cold install
-      # only runs when dependencies actually change. Mirrors the pattern in
-      # dashboard-build.yml.
-      - name: Cache Bun install
-        uses: actions/cache@d4323d4df104b026a6aa633fdb11d772146be0bf  # v4.2.4
-        with:
-          path: ~/.bun/install/cache
-          key: ${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('dashboard/bun.lockb') }}
-          restore-keys: |
-            ${{ runner.os }}-${{ runner.arch }}-bun-
-      # --ignore-scripts neutralizes npm lifecycle hooks (defense-in-depth
-      # against a compromised transitive package); the dashboard build does
-      # not rely on any post-install scripts.
-      - run: bun install --frozen-lockfile --ignore-scripts
-      # Run the full `build` script (build:ui + embed:ui + build:server)
-      # exactly as the `compile:*` scripts in dashboard/package.json do.
-      # Skipping `embed:ui` ships a binary without the UI bundle embedded.
-      - name: Build (UI + embed + server)
-        run: bun run build
-      - name: Compile binary
-        run: |
-          mkdir -p bin
-          # --sourcemap matches every `compile:*` script in package.json so
-          # production crash traces remain debuggable post-minify.
-          bun build --compile --minify --sourcemap --target="$BUN_TARGET" \
-            server/src/main.ts \
-            --outfile "bin/${OUT_NAME}"
-      # Smoke-test only when host arch matches target arch (cross-compiled
-      # binaries can't run on a foreign host).
-      - name: Verify binary runs
-        if: ${{ (contains(matrix.target, 'x64') && matrix.runnerArch == 'X64') || (contains(matrix.target, 'arm64') && matrix.runnerArch == 'ARM64') }}
-        run: |
-          set -euo pipefail
-          OUTPUT=$(./bin/"$OUT_NAME" --version)
-          if ! echo "$OUTPUT" | grep -Eq '[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "::error::Binary --version did not print a semver string: $OUTPUT"
-            exit 1
-          fi
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
-        with:
-          name: ${{ env.OUT_NAME }}
-          path: dashboard/bin/${{ env.OUT_NAME }}
-          if-no-files-found: error
-          # 7 days mirrors dashboard-build.yml so a failed `release` job can
-          # be re-run without re-triggering the entire (expensive, multi-runner)
-          # compile matrix.
-          retention-days: 7
+    uses: ./.github/workflows/dashboard-compile.yml
+    with:
+      retention-days: 7
 
   release:
     name: Create GitHub Release
