@@ -134,10 +134,19 @@ jobs:
             echo "Pushed ${REGISTRY}/${IMAGE}:${VERSION}"
           done
 
+  # The actual matrix lives in .github/workflows/dashboard-compile.yml —
+  # shared with dashboard-build.yml so the two callers can't drift (#372
+  # was caused by exactly that drift).
+  compile-dashboard:
+    needs: validate
+    uses: ./.github/workflows/dashboard-compile.yml
+    with:
+      retention-days: 7
+
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [validate, test, build-and-push]
+    needs: [validate, test, build-and-push, compile-dashboard]
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -152,11 +161,39 @@ jobs:
           tar czf "kapsis-${VERSION}.tar.gz" "kapsis-${VERSION}"
           rm -rf "kapsis-${VERSION}"
 
+      - name: Download dashboard binaries
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
+        with:
+          pattern: kapsis-dashboard-*
+          path: dashboard-artifacts
+          merge-multiple: true
+
+      - name: Stage dashboard binaries
+        run: |
+          set -euo pipefail
+          ls -la dashboard-artifacts/
+          # download-artifact with merge-multiple flattens all artifact files
+          # into one directory; bring them to repo root so the release files:
+          # block picks them up by name.
+          mv dashboard-artifacts/kapsis-dashboard-* .
+          chmod 0755 kapsis-dashboard-*
+          ls -la kapsis-dashboard-*
+          # Guard against future regressions: a name collision in
+          # merge-multiple would silently overwrite one binary with another,
+          # or a missing artifact would slip through `if-no-files-found:
+          # error` (which only fails the producer, not the consumer).
+          COUNT=$(ls kapsis-dashboard-* 2>/dev/null | wc -l | tr -d ' ')
+          if [ "$COUNT" -ne 4 ]; then
+            echo "::error::Expected exactly 4 dashboard binaries, found $COUNT"
+            ls -la kapsis-dashboard-* 2>&1 || true
+            exit 1
+          fi
+
       - name: Generate checksums
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          sha256sum "kapsis-${VERSION}.tar.gz" > checksums.sha256
+          sha256sum "kapsis-${VERSION}.tar.gz" kapsis-dashboard-* > checksums.sha256
 
           echo "Generated checksums:"
           cat checksums.sha256
@@ -251,6 +288,17 @@ jobs:
             echo '```'
             echo ""
 
+            echo "### 📊 Dashboard Binary"
+            echo ""
+            echo "Per-platform \`kapsis-dashboard\` binaries are attached below."
+            echo "The Homebrew formula installs the right one automatically; download manually with:"
+            echo '```bash'
+            echo "# macOS Apple Silicon"
+            echo "curl -L -o kapsis-dashboard https://github.com/${{ github.repository }}/releases/download/v${VERSION}/kapsis-dashboard-darwin-arm64"
+            echo "chmod +x kapsis-dashboard && ./kapsis-dashboard --version"
+            echo '```'
+            echo ""
+
             # Add compare link
             if [[ -n "$PREV_TAG" ]]; then
               echo "**Full Changelog**: https://github.com/${{ github.repository }}/compare/${PREV_TAG}...v${VERSION}"
@@ -273,13 +321,17 @@ jobs:
           files: |
             kapsis-${{ needs.validate.outputs.version }}.tar.gz
             checksums.sha256
+            kapsis-dashboard-darwin-arm64
+            kapsis-dashboard-darwin-x64
+            kapsis-dashboard-linux-arm64
+            kapsis-dashboard-linux-x64
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   update-packages:
     name: Update Package Definitions
     runs-on: ubuntu-latest
-    needs: [validate, release]
+    needs: [validate, release, compile-dashboard]
     if: needs.release.result == 'success'
     steps:
       - name: Check if GitHub App is configured
@@ -295,6 +347,26 @@ jobs:
           else
             echo "configured=true" >> $GITHUB_OUTPUT
           fi
+
+      - name: Download dashboard binaries (for local SHA256 computation)
+        # Sourcing the SHA from the local artifact closes the TOCTOU /
+        # asset-swap window that re-downloading from the public release URL
+        # would leave open, and removes a network dependency. Gated on
+        # check-app so we don't pull artifacts when the GitHub App isn't
+        # configured (in which case every consuming step would skip anyway).
+        if: steps.check-app.outputs.configured == 'true'
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53  # v6.0.0
+        with:
+          pattern: kapsis-dashboard-*
+          path: dashboard-artifacts
+          merge-multiple: true
+
+      - name: List downloaded dashboard binaries
+        # Self-diagnostic upfront so any artifact-availability issue is
+        # immediately visible without needing to re-run with debug logging.
+        if: steps.check-app.outputs.configured == 'true'
+        run: |
+          ls -la dashboard-artifacts/ || echo "::warning::dashboard-artifacts/ not present"
 
       - name: Generate GitHub App token
         id: app-token
@@ -601,6 +673,67 @@ jobs:
           fi
 
           echo "✓ Updated Homebrew formula to v${VERSION}"
+
+          # Compute SHA256 for each per-platform kapsis-dashboard binary
+          # FROM THE LOCAL ARTIFACT (downloaded earlier in this job from the
+          # compile-dashboard job's artifacts — not from the published release
+          # URL) and patch the corresponding marker block. Sourcing locally
+          # closes the TOCTOU window: if the release asset were ever swapped
+          # between checksum-computation and Homebrew user download, the
+          # formula's recorded hash would still match the binary CI built.
+          # Each block looks like:
+          #   # DASHBOARD_<TARGET>_MARKER_START
+          #   url "https://.../kapsis-dashboard-<target>"
+          #   sha256 "..."
+          #   # DASHBOARD_<TARGET>_MARKER_END
+          for TARGET in darwin-arm64 darwin-x64 linux-arm64 linux-x64; do
+            LOCAL_BIN="dashboard-artifacts/kapsis-dashboard-${TARGET}"
+            BIN_URL="https://github.com/${REPO}/releases/download/v${VERSION}/kapsis-dashboard-${TARGET}"
+
+            if [[ ! -f "$LOCAL_BIN" ]]; then
+              echo "::error::Local artifact missing: $LOCAL_BIN (compile-dashboard job did not produce it, or retention expired)"
+              exit 1
+            fi
+
+            BIN_SHA256=$(sha256sum "$LOCAL_BIN" | cut -d' ' -f1)
+            if [[ ! "$BIN_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "::error::Invalid SHA256 computed for ${TARGET}: $BIN_SHA256"
+              exit 1
+            fi
+            echo "  ${TARGET}: ${BIN_SHA256}"
+
+            # Uppercase target marker (DARWIN_ARM64, etc.) for sed
+            MARKER=$(echo "$TARGET" | tr '[:lower:]-' '[:upper:]_')
+            sed -i.bak \
+              -e "/DASHBOARD_${MARKER}_MARKER_START/,/DASHBOARD_${MARKER}_MARKER_END/{
+                s|url \"https://github.com/.*/kapsis-dashboard-${TARGET}\"|url \"${BIN_URL}\"|
+                s|sha256 \"[a-f0-9]*\"|sha256 \"${BIN_SHA256}\"|
+              }" "$FORMULA_FILE"
+            rm -f "${FORMULA_FILE}.bak"
+
+            # Validate BOTH url AND sha256 were patched. A silent url-sed
+            # failure (e.g., regex drift from a URL format change) would
+            # otherwise leave the formula with a correct hash but stale URL,
+            # making Homebrew installs fail with a confusing checksum mismatch.
+            if ! grep -q "url \"${BIN_URL}\"" "$FORMULA_FILE"; then
+              echo "::error::Failed to update dashboard ${TARGET} URL in formula"
+              exit 1
+            fi
+            if ! grep -q "sha256 \"${BIN_SHA256}\"" "$FORMULA_FILE"; then
+              echo "::error::Failed to update dashboard ${TARGET} SHA256 in formula"
+              exit 1
+            fi
+          done
+
+          # Final sanity check: no placeholder all-zero sha256s remain.
+          # Catches the case where sed silently matched the wrong block range.
+          if grep -q 'sha256 "0\{64\}"' "$FORMULA_FILE"; then
+            echo "::error::Formula still contains placeholder all-zero sha256 after patching"
+            grep -n 'sha256 "0\{64\}"' "$FORMULA_FILE"
+            exit 1
+          fi
+
+          echo "✓ Updated all 4 dashboard binary SHA256s in formula"
 
       - name: Update RPM spec
         if: steps.check-app.outputs.configured == 'true'

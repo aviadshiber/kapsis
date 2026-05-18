@@ -5,6 +5,8 @@ import type { AuditStore } from "./store/audit";
 import type { LogStore } from "./store/logs";
 import type { ConversationStore } from "./store/conversations";
 import type { DiskUsageStore } from "./store/disk";
+import type { SpecStore } from "./store/spec";
+import type { GistHistoryStore } from "./store/gist-history";
 import type { DashboardAuditWriter } from "./control/audit-writer";
 import type { CleanupRunner } from "./control/cleanup";
 import type { SseBroker } from "./sse";
@@ -21,6 +23,8 @@ export interface Deps {
   logs: LogStore;
   conv: ConversationStore;
   disk: DiskUsageStore;
+  spec: SpecStore;
+  gistHistory: GistHistoryStore;
   sse: SseBroker;
   sseTokens: EphemeralTokenStore;
   dashAudit: DashboardAuditWriter;
@@ -41,6 +45,7 @@ export function buildRouter(deps: Deps): Router {
     dashAudit: deps.dashAudit,
     disk: deps.disk,
     cleanupRunner: deps.cleanupRunner,
+    gistHistory: deps.gistHistory,
     kapsisHome: deps.config.kapsisHome,
   });
   return r;
