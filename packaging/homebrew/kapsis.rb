@@ -103,6 +103,7 @@ class Kapsis < Formula
       "kapsis-build" => "scripts/build-image.sh",
       "kapsis-cleanup" => "scripts/kapsis-cleanup.sh",
       "kapsis-status" => "scripts/kapsis-status.sh",
+      "kapsis-recovery-action" => "scripts/kapsis-recovery-action.sh",
       "kapsis-setup" => "setup.sh",
       "kapsis-quick" => "quick-start.sh",
     }.each do |cmd, script|
