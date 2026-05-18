@@ -117,12 +117,14 @@ describe("reaper", () => {
   });
 
   describe("scanForStaleAgents", () => {
-    it("returns empty plan and podmanAvailable=true when statusDir is missing", async () => {
+    it("returns empty plan when statusDir is missing", async () => {
       const plan = await scanForStaleAgents(join(dir, "does-not-exist"));
       expect(plan.candidates).toEqual([]);
       expect(plan.reapable).toEqual([]);
-      // PATH is intact in this test, so podman should be available.
-      expect(plan.podmanAvailable).toBe(true);
+      // podmanAvailable depends on whether the host has podman installed
+      // (CI runners typically don't). Either value is valid here — the
+      // missing-statusDir contract is what we're verifying.
+      expect(typeof plan.podmanAvailable).toBe("boolean");
     });
 
     it("returns empty plan when no files match kapsis-*-* pattern", async () => {
