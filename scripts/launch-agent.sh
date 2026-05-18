@@ -967,6 +967,21 @@ parse_config() {
 
         cfg_val=$(yq -r '.security.process.no_new_privileges // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
         [[ "$cfg_val" == "false" ]] && [[ -z "${KAPSIS_NO_NEW_PRIVILEGES:-}" ]] && export KAPSIS_NO_NEW_PRIVILEGES="false"
+
+        # User namespace mode (#361 — domain-UID workaround). Empty falls
+        # through to security.sh's autodetect (`keep-id` for low host UIDs,
+        # `keep-id:uid=1000,gid=1000` for high). Set KAPSIS_USERNS env to
+        # override per-invocation.
+        #
+        # The override guard checks KAPSIS_USERNS (not SECURITY_USERNS) on
+        # purpose — KAPSIS_USERNS is the user-facing override documented in
+        # the README, matching how every other security setting in this
+        # block guards on a KAPSIS_* var. SECURITY_USERNS is an internal
+        # plumbing variable owned by this parse path; users who export it
+        # directly are bypassing the documented contract and we don't
+        # honour it as an override.
+        cfg_val=$(yq -r '.security.userns // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ -n "$cfg_val" ]] && [[ -z "${KAPSIS_USERNS:-}" ]] && export SECURITY_USERNS="$cfg_val"
     else
         log_error "yq is required but not installed."
         log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
@@ -2670,7 +2685,7 @@ main() {
     if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]] && [[ "$DRY_RUN" != "true" ]]; then
         log_timer_start "preflight"
         source "$SCRIPT_DIR/preflight-check.sh"
-        if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"; then
+        if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID" "$CONFIG_FILE"; then
             status_complete 1 "Pre-flight check failed"
             _STATUS_COMPLETE_SHOWN=true
             exit 1
@@ -3087,7 +3102,26 @@ main() {
     #   4 = Mount failure (virtio-fs drop)
     #   5 = Agent completed but process hung (stuck child process)
     #   6 = Commit failure (agent produced work but git commit failed)
-    if [[ "$EXIT_CODE" -eq 4 ]]; then
+    # User-initiated kill (e.g. dashboard Kill button) drops a marker BEFORE
+    # `podman kill`, so the post-container handler can distinguish an intentional
+    # SIGTERM from a real mount failure / agent crash. SIGTERM tears down the
+    # container, which drops the virtio-fs mount and causes the entrypoint's
+    # mount probe to emit KAPSIS_MOUNT_FAILURE — without this check, every
+    # dashboard kill would be mis-classified as `mount_failure`.
+    local _kill_marker
+    _kill_marker="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/${AGENT_ID}.kill-requested"
+    if [[ -f "$_kill_marker" ]] && [[ "$EXIT_CODE" -ne 0 ]]; then
+        log_info "Kill marker present — agent was intentionally terminated (source: dashboard or equivalent)"
+        FINAL_EXIT_CODE=0
+        log_finalize 0
+        status_set_error_type "killed"
+        local kill_msg="Agent terminated by user request"
+        status_complete 0 "$kill_msg"
+        _STATUS_COMPLETE_SHOWN=true
+        display_complete 0 "" "$kill_msg"
+        _DISPLAY_COMPLETE_SHOWN=true
+        rm -f "$_kill_marker" 2>/dev/null || true
+    elif [[ "$EXIT_CODE" -eq 4 ]]; then
         # Mount failure detected via sentinel (Issue #248)
         FINAL_EXIT_CODE=4
         log_finalize 4

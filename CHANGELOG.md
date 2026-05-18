@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Harden e2e-tests — env+permissions+harden-runner+pinned deps (#359)
 
+## [2.28.11] - 2026-05-17
+
+### Fixed
+- Harden #361 follow-up — env validation, regex tightening, expanded preflight + tests (#365)
+- Harden #361 follow-up — env validation, regex tightening, expanded preflight + tests (#364)
+- Resolve --userns via env > yaml > autodetect; fix #361 (#362)
+
+## [2.28.12] - 2026-05-18
+
+### Changed
+- Add timeout-minutes to prevent hung jobs (#353)
+- Add timeout-minutes to unit-tests and integration-tests jobs (#354)
+
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
@@ -953,7 +966,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.9...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.28.12...HEAD
+[2.28.12]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.12
+[2.28.11]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.11
 [2.28.9]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.9
 [2.28.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.7
 [2.28.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.6

@@ -370,12 +370,89 @@ check_disk_space() {
 #===============================================================================
 # MAIN PREFLIGHT CHECK
 #===============================================================================
+#===============================================================================
+# User namespace compatibility (#361)
+#===============================================================================
+
+# Two related concerns, both surfaced at launch as WARN (never ERROR):
+#
+#   1. Host UID > KAPSIS_USERNS_THRESHOLD AND the resolved --userns value is
+#      plain `keep-id`. This produces the #361 degenerate single-ID mapping
+#      and container attach fails with exit 126. Default autodetect handles
+#      this, but a user who manually pinned `security.userns: keep-id` (in
+#      YAML) or `KAPSIS_USERNS=keep-id` (in env) overrides the autodetect
+#      and re-introduces the failure.
+#
+#   2. The resolved --userns value visibly weakens the security posture
+#      (host = no namespace isolation, auto = subuid auto-allocate may
+#      collide, keep-id:uid=0 = container root maps to host UID). These
+#      are valid debug knobs but should not be silent in normal launches.
+check_userns_compat() {
+    local config_file="${1:-}"
+    local host_uid
+    local threshold="${KAPSIS_USERNS_THRESHOLD:-60000}"
+
+    # See _detect_userns_default in security.sh — same intentional fallback
+    # above the threshold so a transient `id` failure picks the safe path.
+    host_uid=$(id -u 2>/dev/null || echo 99999)
+
+    # Determine the effective userns by mirroring _resolve_userns precedence:
+    # KAPSIS_USERNS env > security.userns YAML > "(autodetect)".
+    local effective_userns="" effective_source=""
+    if [[ -n "${KAPSIS_USERNS:-}" ]]; then
+        effective_userns="$KAPSIS_USERNS"
+        effective_source="KAPSIS_USERNS env"
+    elif [[ -n "$config_file" && -f "$config_file" ]] && command -v yq &>/dev/null; then
+        local pinned
+        pinned=$(yq -r '.security.userns // ""' "$config_file" 2>/dev/null)
+        if [[ -n "$pinned" && "$pinned" != "null" ]]; then
+            effective_userns="$pinned"
+            effective_source="security.userns YAML"
+        fi
+    fi
+
+    # Concern 1: high host UID + explicit `keep-id` pin → reproduces #361.
+    if (( host_uid > threshold )) && [[ "$effective_userns" == "keep-id" ]]; then
+        preflight_warn "${effective_source}: 'keep-id' pinned and host UID $host_uid > $threshold"
+        preflight_warn "  Container attach may fail with exit 126 (kapsis#361)."
+        preflight_warn "  Remove the pin to use the autodetected default"
+        preflight_warn "  (keep-id:uid=1000,gid=1000) or set it explicitly."
+        return 0
+    fi
+
+    # Concern 2: explicitly weakened modes.
+    case "$effective_userns" in
+        host)
+            preflight_warn "${effective_source}: 'host' disables user namespace isolation."
+            preflight_warn "  Container processes share the host's namespace; not recommended"
+            preflight_warn "  outside Linux-on-Linux debug scenarios."
+            ;;
+        auto)
+            preflight_warn "${effective_source}: 'auto' allocates a subuid block per container."
+            preflight_warn "  May exhaust /etc/subuid on long-lived hosts (~15 containers max"
+            preflight_warn "  with default 1M-ID range). Prefer the autodetected default."
+            ;;
+        keep-id:uid=0,*|keep-id:uid=0)
+            preflight_warn "${effective_source}: maps container UID 0 (root) to host UID."
+            preflight_warn "  This is a privilege uplift surface. Use uid>=1000 unless you"
+            preflight_warn "  understand the implications."
+            ;;
+        "")
+            preflight_ok "User namespace mode autodetected for host UID $host_uid"
+            ;;
+        *)
+            preflight_ok "User namespace mode '$effective_userns' (host UID $host_uid)"
+            ;;
+    esac
+}
+
 preflight_check() {
     local project_path="${1:-.}"
     local target_branch="${2:-}"
     local spec_file="${3:-}"
     local image_name="${4:-kapsis-sandbox:latest}"
     local agent_id="${5:-1}"
+    local agent_config="${6:-}"
 
     _PREFLIGHT_ERRORS=0
     _PREFLIGHT_WARNINGS=0
@@ -387,6 +464,7 @@ preflight_check() {
     check_podman || true
     check_disk_space || true
     check_images "$image_name" || true
+    check_userns_compat "$agent_config" || true
 
     if [[ -n "$target_branch" ]]; then
         check_git_status "$project_path" || true
@@ -500,6 +578,6 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
     # Default if no config file provided
     [[ -z "$IMAGE_NAME" ]] && IMAGE_NAME="kapsis-sandbox:latest"
 
-    preflight_check "$PROJECT_PATH" "$TARGET_BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"
+    preflight_check "$PROJECT_PATH" "$TARGET_BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID" "$CONFIG_FILE"
     exit $?
 fi
