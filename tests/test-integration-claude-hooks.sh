@@ -53,7 +53,9 @@ fi
 # Shared setup / teardown
 #===============================================================================
 
-_ORIG_HOME=""
+# Saved once at script start so a failed test that skips cleanup cannot corrupt
+# the restore point for subsequent test functions.
+_ORIG_HOME="$HOME"
 TEST_HOME=""
 TEST_WORKSPACE=""
 _mock_pid=""
@@ -103,7 +105,9 @@ _stop_mock_server() {
 }
 
 setup_mock_env() {
-    _ORIG_HOME="$HOME"
+    # Defensive: remove any stale hooks dir left by a prior failed cleanup before
+    # creating a fresh copy, so tests never see residue from previous runs.
+    rm -rf "$KAPSIS_ROOT/hooks" 2>/dev/null || true
     TEST_HOME=$(mktemp -d)
     TEST_WORKSPACE=$(mktemp -d)
     export HOME="$TEST_HOME"

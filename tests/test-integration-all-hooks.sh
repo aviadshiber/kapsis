@@ -39,10 +39,14 @@ HOOKS_SRC="$KAPSIS_ROOT/scripts/hooks"
 # Shared setup / teardown
 #===============================================================================
 
-_E2E_ALL_ORIG_HOME=""
+# Saved once at script start so a failed test that skips cleanup cannot corrupt
+# the restore point for subsequent test functions.
+_E2E_ALL_ORIG_HOME="$HOME"
 
 setup_e2e_env() {
-    _E2E_ALL_ORIG_HOME="$HOME"
+    # Defensive: remove any stale hooks dir left by a prior failed cleanup before
+    # creating a fresh copy, so tests never see residue from previous runs.
+    rm -rf "$KAPSIS_ROOT/hooks" 2>/dev/null || true
     TEST_HOME=$(mktemp -d)
     export HOME="$TEST_HOME"
     export KAPSIS_HOME="$KAPSIS_ROOT"
@@ -62,7 +66,7 @@ setup_e2e_env() {
 cleanup_e2e_env() {
     export HOME="$_E2E_ALL_ORIG_HOME"
     rm -rf "$TEST_HOME" "$KAPSIS_ROOT/hooks"
-    unset TEST_HOME KAPSIS_HOME
+    unset TEST_HOME KAPSIS_HOME KAPSIS_LIB
     _KAPSIS_LOG_FILE_PATH=""
     # shellcheck disable=SC2034
     export KAPSIS_LOG_TO_FILE="false"
@@ -70,6 +74,7 @@ cleanup_e2e_env() {
           KAPSIS_INSTALL_PLUGINS KAPSIS_PLUGIN_WHITELIST \
           KAPSIS_LSP_SERVERS_JSON 2>/dev/null || true
     unset _KAPSIS_INJECT_PLUGIN_HOOKS_LOADED 2>/dev/null || true
+    unset _KAPSIS_INJECT_STATUS_HOOKS_LOADED 2>/dev/null || true
 }
 
 # Add enabledPlugins for a plugin ID to the existing settings.json without
