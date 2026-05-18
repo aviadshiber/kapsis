@@ -117,7 +117,38 @@ jobs:
           bun build --compile --minify --sourcemap --target="$BUN_TARGET" \
             server/src/main.ts \
             --outfile "bin/${OUT_NAME}"
-      - name: Verify binary runs
+      # Structural arch verification — runs on EVERY matrix slot regardless
+      # of host arch. Catches the failure mode where Bun's --target flag is
+      # silently ignored or misspelt and we ship a host-arch binary under
+      # an x64/arm64 filename. Compare the `file(1)` output to what we asked
+      # for via $MATRIX_TARGET; mismatched arch fails the job loudly.
+      - name: Verify binary architecture matches target
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          out=$(file "bin/${OUT_NAME}")
+          echo "$out"
+          case "$MATRIX_TARGET" in
+            darwin-arm64) expect='Mach-O.*arm64' ;;
+            darwin-x64)   expect='Mach-O.*x86_64' ;;
+            linux-arm64)  expect='ELF.*aarch64' ;;
+            linux-x64)    expect='ELF.*x86-64' ;;
+            *) echo "::error::unknown matrix target: $MATRIX_TARGET"; exit 1 ;;
+          esac
+          if ! echo "$out" | grep -Eq "$expect"; then
+            echo "::error::binary arch mismatch: expected pattern '$expect' for target '$MATRIX_TARGET', got: $out"
+            exit 1
+          fi
+      # `hostArch` here is the CPU of the runner — used only to decide
+      # whether this host can natively execute the cross-compiled binary.
+      # When host and target diverge (e.g. darwin-x64 built on macos-latest
+      # ARM64, or linux-arm64 built on ubuntu-latest x64) we skip the
+      # smoke-test because the runner can't exec the binary without
+      # emulation, which GitHub-hosted runners don't provide. The arch
+      # verification above already proves the binary IS the right shape;
+      # the smoke-test is the additional "and it actually starts" check.
+      - name: Verify binary runs (host-native only)
         if: ${{ (contains(matrix.target, 'x64') && matrix.runnerArch == 'X64') || (contains(matrix.target, 'arm64') && matrix.runnerArch == 'ARM64') }}
         run: |
           set -euo pipefail
