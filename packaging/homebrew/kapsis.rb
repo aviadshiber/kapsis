@@ -11,9 +11,9 @@ class Kapsis < Formula
 
   # Stable release - automatically updated by CI on each release
   # RELEASE_VERSION_MARKER_START - Do not remove, used by CI
-  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.28.11.tar.gz"
-  sha256 "5e72d840b1156f1d0b2a555b88be17696f30a6718b162fea27fc4b8b54e8a749"
-  version "2.28.11"
+  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.28.12.tar.gz"
+  sha256 "dedbd2aeed868801eb482cb0cbb42d2370e8698f4cc8316fc9c08b31b23820b3"
+  version "2.28.12"
   # RELEASE_VERSION_MARKER_END
 
   # Homebrew livecheck - detects new releases automatically
@@ -70,6 +70,16 @@ class Kapsis < Formula
         export KAPSIS_CMD_NAME="#{cmd}"
         exec "#{libexec}/#{script}" "$@"
       EOS
+    end
+
+    # Install the dashboard binary if one was prebuilt and shipped in the release.
+    # Release artifacts come from .github/workflows/dashboard-build.yml as
+    # kapsis-dashboard-bun-{darwin,linux}-{arm64,x64}; the release packager
+    # renames the per-platform binary to dashboard/bin/kapsis-dashboard.
+    dashboard_bin = libexec/"dashboard/bin/kapsis-dashboard"
+    if dashboard_bin.exist?
+      chmod 0755, dashboard_bin
+      bin.install_symlink dashboard_bin => "kapsis-dashboard"
     end
   end
 
