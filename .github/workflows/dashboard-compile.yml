@@ -88,7 +88,7 @@ jobs:
       # never invalidate). Hashing package.json sets gives partial
       # invalidation when any workspace's deps change.
       - name: Cache Bun install
-        uses: actions/cache@0400d5f644dc74513175e3cd8d07132dd4860809  # v4.2.4
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
         with:
           path: ~/.bun/install/cache
           key: ${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('dashboard/package.json', 'dashboard/server/package.json', 'dashboard/ui/package.json', 'dashboard/shared/package.json') }}
