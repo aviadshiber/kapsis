@@ -29,29 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Bump vite from 5.4.21 to 8.0.13 in /dashboard/ui in the npm_and_yarn group across 1 directory (#371)
 
-## [Unreleased]
+## [2.31.2] - 2026-05-18
 
-### Added
-- **scripts/lib/spec-store.sh**: new Kapsis core library that persists the
-  resolved `--spec` file (or `--task` inline string) to a canonical
-  per-agent location `${KAPSIS_SPECS_DIR:-~/.kapsis/specs}/<agent_id>.md`
-  at launch time. Source-agnostic — slack-bot, `/dev`, and manual launches
-  all land in the same place. 256 KB cap, 0600 perms, atomic write,
-  best-effort failure. `launch-agent.sh` calls it immediately after task
-  validation; interactive-mode launches are skipped silently.
-- Dashboard: new **Spec** tab on agent detail — renders the original
-  `--task` / `--spec` input. Resolution order: (0) the canonical
-  `${kapsisHome}/specs/<id>.md` written by spec-store at launch,
-  (1) `<worktree>/.kapsis/task-spec-with-progress.md`,
-  (2) the `kapsis-<id>-status` named volume. Kapsis's injected
-  progress-reporting suffix is split off and hidden behind a disclosure.
-  Path-traversal and follow-symlink defenses applied; 256 KB size cap.
-- Dashboard: new **Activity** tab on agent detail — reverse-chronological
-  timeline of `status.gist` transitions (the activity strings written by
-  `kapsis-gist-hook.sh`). Backed by an in-memory ring (200 entries per
-  agent); live updates over SSE.
-- Dashboard: **Current activity** card on Overview now surfaces the
-  latest gist + a relative timestamp.
+### Fixed
+- Move dashboard-artifact download AFTER Checkout to survive its clean (#378)
+
+## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
 
@@ -993,7 +976,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.29.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.31.2...HEAD
+[2.31.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.31.2
 [2.29.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.29.1
 [2.28.12]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.12
 [2.28.11]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.11
