@@ -509,6 +509,17 @@ RUN mkdir -p /home/${USERNAME}/.m2/repository \
              /workspace && \
     chown -R ${USERNAME}:${USERNAME} /home/${USERNAME} /workspace
 
+# PR #380 follow-up: fuse-overlayfs upper/work base dirs must exist and be
+# developer-writable BEFORE entrypoint.sh runs as the developer user. Without
+# this, every staged config (.claude, .ssh, .gitconfig, …) silently falls back
+# to atomic_copy_dir — which then trips the bind-mount-busy bug for .claude
+# (the conversations sub-mount prevents rm -rf, mv nests tmp inside dst,
+# settings.json::enabledPlugins never reaches the container).
+# Reference: setup_staged_config_overlays in scripts/entrypoint.sh
+RUN mkdir -p /kapsis-upper /kapsis-work && \
+    chown ${USER_ID}:${GROUP_ID} /kapsis-upper /kapsis-work && \
+    chmod 0755 /kapsis-upper /kapsis-work
+
 #===============================================================================
 # KAPSIS SCRIPTS AND CONFIGURATION
 #===============================================================================
