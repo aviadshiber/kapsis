@@ -79,12 +79,16 @@ test_kapsis_upper_work_dirs_exist_and_owned() {
 test_claude_staging_enabled_plugins_survive_busy_conversations_mount() {
     log_test "Testing .claude staging preserves settings.json::enabledPlugins under busy bind-mount (PR #380 follow-up)"
 
-    # Probe: skip if rootless container can't create bind mounts (mirrors
-    # the skip in test-atomic-copy-integration.sh::busy_mount test).
+    # Probe: skip if rootless container can't create bind mounts. Mirrors the
+    # log_skip pattern in test-atomic-copy-integration.sh::busy_mount test so
+    # the test output shows [SKIP] rather than silently masquerading as [PASS].
+    # NOTE: the framework's run_test still counts a 0-return as PASSED — there
+    # is no per-test SKIPPED counter today. Bug reproducer is genuinely
+    # unavailable on rootless hosts; CI rootful lanes will exercise it.
     if ! podman run --rm --cap-add=SYS_ADMIN "$KAPSIS_TEST_IMAGE" \
             bash -c 'mkdir -p /tmp/_p_a /tmp/_p_b && mount --bind /tmp/_p_a /tmp/_p_b 2>/dev/null && umount /tmp/_p_b' \
             >/dev/null 2>&1; then
-        echo "SKIP: rootless container cannot create bind mounts (no CAP_SYS_ADMIN) — bug reproducer unavailable on this host"
+        log_skip "  rootless container cannot create bind mounts (no CAP_SYS_ADMIN) — bug reproducer unavailable on this host"
         return 0
     fi
 

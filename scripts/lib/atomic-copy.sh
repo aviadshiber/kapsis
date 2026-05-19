@@ -661,23 +661,46 @@ atomic_copy_dir() {
                     return 0
                 fi
                 log_warn "atomic_copy_dir: atomic mv failed for $(basename "$dst") after clean rm-rf — falling back to merge-copy"
+                # Review feedback (medium): rm-rf removed dst entirely; mv then
+                # failed (cross-FS rename). Recreate dst so the subsequent find
+                # has something to walk — find on a missing path exits 1 even
+                # with 2>/dev/null and would abort under set -o pipefail.
+                mkdir -p "$dst" 2>/dev/null || true
             else
                 log_warn "atomic_copy_dir: rm-rf left $(basename "$dst") in place (rm rc=${_rm_rc}; likely a busy bind-mount descendant such as .claude/conversations). Using merge-style cp instead of mv-into-existing-dst (would nest tmp inside dst)."
             fi
             # Merge-style fallback: clear what we CAN at the top level, then
             # cp -rp from tmp. -mindepth 1 -maxdepth 1 lets us delete loose
             # top-level entries without descending into busy mount points.
+            #
+            # Trailing `|| true`: under `set -o pipefail` (atomic-copy.sh top)
+            # this pipeline would exit 1 when `find` itself fails (e.g. dst
+            # is gone after the mv-failure branch above, or empty). Callers
+            # under `set -e` outside a `||` compound (tests/test-atomic-copy.sh)
+            # would then abort before reaching the cp below. The cp + `>=`
+            # count assertion are the actual correctness guards.
             find "$dst" -mindepth 1 -maxdepth 1 -print0 2>/dev/null | \
                 while IFS= read -r -d '' _entry; do
                     rm -rf "$_entry" 2>/dev/null || \
                         log_debug "atomic_copy_dir: leaving busy entry in place during merge: $_entry"
-                done
-            local _merge_err
-            _merge_err=$(cp -rp "$tmp_dir/." "$dst/" 2>&1) || {
-                log_warn "atomic_copy_dir: merge cp into $(basename "$dst") failed: ${_merge_err:-no stderr}"
+                done || true
+            # Use the same enoent-tolerant cp wrapper the main and scratch
+            # paths use. Without it, the merge fallback is strictly less
+            # reliable than the main path on macOS+virtio-fs hosts that emit
+            # benign socket/FIFO stat errors (issue #335 territory).
+            # --remove-destination unlinks any pre-existing dst file BEFORE
+            # cp opens it — defense against an attacker-planted symlink in
+            # the persistent conversations/ bind-mount that would otherwise
+            # be followed (CWE-59, defense-in-depth; rootless userns bounds
+            # the practical blast radius).
+            _atomic_cp_with_enoent_tolerance "merge-path cp tmp→dst for $(basename "$dst")" \
+                -rp --remove-destination "$tmp_dir/." "$dst/"
+            local _merge_cp_rc=$?
+            if [[ $_merge_cp_rc -ne 0 ]]; then
+                log_warn "atomic_copy_dir: merge cp into $(basename "$dst") failed: ${_ATOMIC_CP_STDERR:-no stderr}"
                 rm -rf "$tmp_dir" 2>/dev/null || true
                 return 1
-            }
+            fi
             find "$dst" -type d -exec chmod u+w {} + 2>/dev/null || true
             rm -rf "$tmp_dir" 2>/dev/null || true
             # Validate: dst MUST have at least src's file count. Use >= (not ==)
