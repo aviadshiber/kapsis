@@ -196,7 +196,11 @@ EOF
     chmod -R a+rwX "$fixture_root"
 
     # Run install_plugin_hooks against the fixture and let it mutate the
-    # bind-mounted settings.json in place.
+    # bind-mounted settings.json in place. Dump the final settings.json
+    # content to stdout via a SETTINGS_CONTENT marker — the host-side bind
+    # mount read is unreliable in CI (rootful Podman + --userns=keep-id
+    # uid-mapping makes the post-merge mode-600 file owned by a uid the
+    # runner cannot read, so cat falls back to "{}").
     local container_output exit_code=0
     container_output=$(podman run --rm \
         --name "$CONTAINER_TEST_ID" \
@@ -215,18 +219,17 @@ EOF
             source /opt/kapsis/lib/logging.sh
             source /opt/kapsis/lib/inject-plugin-hooks.sh
             inject_plugin_hooks
+            echo "----SETTINGS_CONTENT_START----"
+            cat /home/developer/.claude/settings.json
+            echo "----SETTINGS_CONTENT_END----"
         ' 2>&1) || exit_code=$?
-
-    # Read the (potentially) mutated settings.json from the host side
-    local settings_after
-    settings_after=$(cat "$fixture_root/.claude/settings.json" 2>/dev/null || echo "{}")
 
     cleanup_container_test
 
     assert_exit_code 0 "$exit_code" \
         "inject_plugin_hooks should complete without error (container output: $container_output)"
-    assert_contains "$settings_after" "$marker_cmd" \
-        "settings.json should contain the fixture plugin's hook command after injection — container output was: $container_output"
+    assert_contains "$container_output" "$marker_cmd" \
+        "settings.json (in-container) should contain the fixture plugin's hook command after injection — container output was: $container_output"
 }
 
 #===============================================================================
