@@ -125,6 +125,11 @@ source "$SCRIPT_DIR/lib/podman-health.sh"
 # shellcheck source=lib/vfkit-watchdog.sh
 source "$SCRIPT_DIR/lib/vfkit-watchdog.sh"
 
+# shellcheck source=lib/exec-channel-watchdog.sh
+# Catches the silent-wedge mode that vfkit-watchdog cannot (Issue #382): vfkit
+# alive, container Up, but `podman exec` channel hung.
+source "$SCRIPT_DIR/lib/exec-channel-watchdog.sh"
+
 # Source host-side status volume sync (Issue #276) — no-op when KAPSIS_STATUS_VOLUME unset
 source "$SCRIPT_DIR/lib/status-sync.sh"
 
@@ -2586,6 +2591,16 @@ main() {
     # inside the container cannot forge a mount_failure exit.
     _VFKIT_FIRED_SENTINEL=""
 
+    # PID of exec-channel watchdog subshell (Issue #382). macOS-only; empty
+    # when disabled. Cleaned up in _cleanup_with_completion.
+    _EXEC_CHANNEL_WATCHDOG_PID=""
+
+    # Host-only sentinel path written by the exec-channel watchdog when
+    # `podman exec <container> true` hangs N consecutive times. Same trust
+    # model as _VFKIT_FIRED_SENTINEL: under $TMPDIR, host-private, NOT
+    # bind-mounted into the container.
+    _EXEC_HANG_FIRED_SENTINEL=""
+
     # Cleanup function that ensures completion message is shown
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
@@ -2614,6 +2629,19 @@ main() {
         # run with the same AGENT_ID (resume mode).
         if [[ -n "${_VFKIT_FIRED_SENTINEL:-}" ]]; then
             rm -f "$_VFKIT_FIRED_SENTINEL" 2>/dev/null || true
+        fi
+        # Same shape as the vfkit watchdog teardown above. Killed before
+        # backend_cleanup so a stale watchdog cannot fire on a future agent
+        # after the container has already exited normally. `wait` drains the
+        # subshell so any in-flight `_status_write` finishes before this trap
+        # runs `status_complete` again.
+        if [[ -n "${_EXEC_CHANNEL_WATCHDOG_PID:-}" ]]; then
+            kill "$_EXEC_CHANNEL_WATCHDOG_PID" 2>/dev/null || true
+            wait "$_EXEC_CHANNEL_WATCHDOG_PID" 2>/dev/null || true
+            _EXEC_CHANNEL_WATCHDOG_PID=""
+        fi
+        if [[ -n "${_EXEC_HANG_FIRED_SENTINEL:-}" ]]; then
+            rm -f "$_EXEC_HANG_FIRED_SENTINEL" 2>/dev/null || true
         fi
         # Stop host-side status volume sync and flush one final snapshot to
         # the host status dir so post-exit consumers see the definitive state
@@ -2895,6 +2923,15 @@ main() {
         rm -f "$_VFKIT_FIRED_SENTINEL" 2>/dev/null || true
         start_vfkit_watchdog "$AGENT_ID" "" "" "$_VFKIT_FIRED_SENTINEL" \
             || log_warn "vfkit watchdog failed to start — mount failure detection disabled for this session"
+
+        # exec-channel watchdog (Issue #382): catches the silent-wedge mode
+        # where vfkit is alive but `podman exec` hangs (the v2.24.0 vfkit
+        # watchdog cannot detect this). Same trust model as the vfkit
+        # sentinel — host-only path under $TMPDIR, never bind-mounted.
+        _EXEC_HANG_FIRED_SENTINEL="${TMPDIR:-/tmp}/kapsis-${AGENT_ID}.exec-hang-fired"
+        rm -f "$_EXEC_HANG_FIRED_SENTINEL" 2>/dev/null || true
+        start_exec_channel_watchdog "$AGENT_ID" "" "" "" "" "$_EXEC_HANG_FIRED_SENTINEL" \
+            || log_warn "exec-channel watchdog failed to start — silent-wedge detection disabled for this session"
     fi
 
     # Display progress header (shows sandbox ready status with timer)
@@ -3090,6 +3127,37 @@ main() {
         fi
     fi
 
+    # Check for exec-channel watchdog hang (Issue #382). Same trust model
+    # as the vfkit override above: host-only sentinel is the authoritative
+    # signal; status.json's `error_type: exec_channel_hang` is defense in
+    # depth. Skipped if the vfkit watchdog already escalated EXIT_CODE=4 —
+    # both watchdogs share the exit code, and `exec_channel_hang` would
+    # otherwise overwrite the more specific `mount_failure` error_type
+    # when both fire in close succession (e.g. vfkit dies while exec is
+    # already hung). Order matches the spawn order.
+    if [[ "$EXIT_CODE" -ne 0 ]] \
+       && [[ -n "${_EXEC_HANG_FIRED_SENTINEL:-}" && -f "$_EXEC_HANG_FIRED_SENTINEL" ]] \
+       && [[ ! -f "${_VFKIT_FIRED_SENTINEL:-/dev/null}" ]]; then
+        local _status_file_exec
+        _status_file_exec="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/kapsis-$(basename "$PROJECT_PATH")-${AGENT_ID}.json"
+        local status_exit_exec status_err_exec
+        status_exit_exec=$(status_get_exit_code 2>/dev/null || echo "")
+        status_err_exec=""
+        if [[ -f "$_status_file_exec" ]] \
+           && grep -Eq '"error_type":[[:space:]]*"exec_channel_hang"' "$_status_file_exec" 2>/dev/null; then
+            status_err_exec="exec_channel_hang"
+        fi
+        if [[ "$status_exit_exec" == "4" && "$status_err_exec" == "exec_channel_hang" ]]; then
+            log_warn "Exec-channel hang confirmed by host-side watchdog (sentinel + status.json exec_channel_hang) — overriding exit code from $EXIT_CODE to 4"
+            EXIT_CODE=4
+            _KAPSIS_EXEC_HANG_DETECTED=true
+        else
+            log_warn "Exec-channel hang detected via host sentinel (status.json mismatch — disk full?) — overriding exit code from $EXIT_CODE to 4"
+            EXIT_CODE=4
+            _KAPSIS_EXEC_HANG_DETECTED=true
+        fi
+    fi
+
     rm -f "$container_output"
     # Update status to post_processing (Fix #3: don't report "completed" until commit verified)
     status_phase "post_processing" 85 "Processing agent output (exit code: $EXIT_CODE)" || true
@@ -3158,11 +3226,20 @@ main() {
         _DISPLAY_COMPLETE_SHOWN=true
         rm -f "$_kill_marker" 2>/dev/null || true
     elif [[ "$EXIT_CODE" -eq 4 ]]; then
-        # Mount failure detected via sentinel (Issue #248)
+        # Mount-class failure detected via sentinel (Issue #248 / #382).
+        # _KAPSIS_EXEC_HANG_DETECTED distinguishes the silent-wedge mode
+        # from a true virtio-fs drop so the user message and error_type
+        # reflect the actual diagnosis.
         FINAL_EXIT_CODE=4
         log_finalize 4
-        status_set_error_type "mount_failure"
-        local mount_error="Workspace mount lost (virtio-fs drop). Recovery: podman machine stop && podman machine start, then re-run."
+        local mount_error
+        if [[ "${_KAPSIS_EXEC_HANG_DETECTED:-false}" == "true" ]]; then
+            status_set_error_type "exec_channel_hang"
+            mount_error="Container exec channel wedged (podman daemon hang while vfkit alive). Recovery: podman machine stop && podman machine start, then re-run."
+        else
+            status_set_error_type "mount_failure"
+            mount_error="Workspace mount lost (virtio-fs drop). Recovery: podman machine stop && podman machine start, then re-run."
+        fi
         status_complete 4 "$mount_error"
         _STATUS_COMPLETE_SHOWN=true
         display_complete 4 "" "$mount_error"
