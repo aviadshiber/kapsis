@@ -3115,26 +3115,32 @@ main() {
         if [[ "$status_exit_vfkit" == "4" && "$status_err_vfkit" == "mount_failure" ]]; then
             log_warn "Mount failure confirmed by vfkit watchdog (host sentinel + status.json mount_failure) — overriding exit code from $EXIT_CODE to 4"
             EXIT_CODE=4
+            _KAPSIS_VFKIT_HANG_DETECTED=true
         else
             # Sentinel present but status.json doesn't agree — possible
             # status_complete failure inside the watchdog subshell. Still
             # safe to override because the sentinel is host-trusted.
             log_warn "Mount failure detected via vfkit watchdog host sentinel (status.json mismatch — disk full?) — overriding exit code from $EXIT_CODE to 4"
             EXIT_CODE=4
+            _KAPSIS_VFKIT_HANG_DETECTED=true
         fi
     fi
 
     # Check for exec-channel watchdog hang (Issue #382). Same trust model
     # as the vfkit override above: host-only sentinel is the authoritative
     # signal; status.json's `error_type: exec_channel_hang` is defense in
-    # depth. Skipped if the vfkit watchdog already escalated EXIT_CODE=4 —
-    # both watchdogs share the exit code, and `exec_channel_hang` would
-    # otherwise overwrite the more specific `mount_failure` error_type
-    # when both fire in close succession (e.g. vfkit dies while exec is
-    # already hung). Order matches the spawn order.
+    # depth. Skipped if the vfkit watchdog already fired — both watchdogs
+    # share exit code 4, and `exec_channel_hang` would otherwise overwrite
+    # the more specific `mount_failure` error_type when both fire in close
+    # succession (e.g. vfkit dies while exec is already hung). We gate on
+    # the `_KAPSIS_VFKIT_HANG_DETECTED` boolean rather than the sentinel
+    # file because `_cleanup_with_completion` may delete the sentinel
+    # before this block runs (e.g. via an ERR/EXIT trap during a fatal
+    # error earlier in main), and a missing sentinel would otherwise let
+    # this block silently overwrite the vfkit watchdog's diagnosis.
     if [[ "$EXIT_CODE" -ne 0 ]] \
        && [[ -n "${_EXEC_HANG_FIRED_SENTINEL:-}" && -f "$_EXEC_HANG_FIRED_SENTINEL" ]] \
-       && [[ ! -f "${_VFKIT_FIRED_SENTINEL:-/dev/null}" ]]; then
+       && [[ "${_KAPSIS_VFKIT_HANG_DETECTED:-false}" != "true" ]]; then
         local _status_file_exec
         _status_file_exec="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/kapsis-$(basename "$PROJECT_PATH")-${AGENT_ID}.json"
         local status_exit_exec status_err_exec
