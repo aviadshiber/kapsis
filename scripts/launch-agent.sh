@@ -124,10 +124,7 @@ source "$SCRIPT_DIR/lib/dns-pin.sh"
 source "$SCRIPT_DIR/lib/podman-health.sh"
 # shellcheck source=lib/vfkit-watchdog.sh
 source "$SCRIPT_DIR/lib/vfkit-watchdog.sh"
-
 # shellcheck source=lib/exec-channel-watchdog.sh
-# Catches the silent-wedge mode that vfkit-watchdog cannot (Issue #382): vfkit
-# alive, container Up, but `podman exec` channel hung.
 source "$SCRIPT_DIR/lib/exec-channel-watchdog.sh"
 
 # Source host-side status volume sync (Issue #276) — no-op when KAPSIS_STATUS_VOLUME unset
