@@ -1,0 +1,8 @@
+{
+  "name": "kapsis-ci-deps",
+  "description": "Tracks npm versions pinned in CI workflow files for Dependabot bump PRs.",
+  "private": true,
+  "devDependencies": {
+    "@anthropic-ai/claude-code": "2.1.143"
+  }
+}

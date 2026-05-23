@@ -122,6 +122,7 @@ jobs:
   lint:
     name: ShellCheck Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
     steps:
@@ -169,6 +170,7 @@ jobs:
   verify-pinning:
     name: Verify Supply Chain Pinning
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
     steps:
@@ -268,6 +270,7 @@ jobs:
   config-validation:
     name: Config Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
     steps:
@@ -278,8 +281,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq yamllint
-          # Install yq for YAML parsing
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          # Install yq for YAML parsing (pinned version with checksum — matches unit-tests / container-tests)
+          YQ_VERSION="v4.52.5"
+          YQ_SHA256="75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9"
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
           sudo chmod +x /usr/local/bin/yq
 
       - name: Validate YAML configs
@@ -349,7 +355,10 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q jq
           # Node.js 20.x is pre-installed on ubuntu-latest runners
-          npm install -g @anthropic-ai/claude-code@latest
+          # Pinned version — keep in sync with e2e-tests (line ~465).
+          # Bump both together; a floating @latest breaks CI silently when
+          # Anthropic ships a hook-schema or CLI-flag change (#355).
+          npm install -g @anthropic-ai/claude-code@2.1.143
 
       - name: Configure git (required by Claude Code)
         run: |
