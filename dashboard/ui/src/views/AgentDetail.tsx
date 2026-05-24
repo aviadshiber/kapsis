@@ -1,13 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../api/client";
-import type { AgentHealth, AgentStatus, AuditChainStatus, AuditEvent, ContainerInfo, ContainerStats, ConversationEntry, LogChunk } from "../types";
+import type { AgentHealth, AgentStatus, AuditChainStatus, AuditEvent, ContainerInfo, ContainerStats, ConversationEntry, GistEntry, LogChunk, SpecResponse } from "../types";
 import { StatusPill } from "../components/StatusPill";
 import { ProgressBar } from "../components/ProgressBar";
 import { HealthDot } from "../components/HealthDot";
 import { ConfirmModal } from "../components/ConfirmModal";
 import { useAgentSseListener } from "../hooks/useAgentSseListener";
+import { useGistHistorySse } from "../hooks/useGistHistorySse";
 
-type Tab = "overview" | "logs" | "audit" | "conversation" | "container";
+type Tab = "overview" | "spec" | "logs" | "activity" | "audit" | "conversation" | "container";
+
+const TAB_ORDER: Tab[] = ["overview", "spec", "logs", "activity", "audit", "conversation", "container"];
 
 interface Props {
   agentId: string;
@@ -97,7 +100,7 @@ export function AgentDetail({ agentId, readOnly, onBack }: Props) {
       </header>
 
       <div className="tabs">
-        {(["overview", "logs", "audit", "conversation", "container"] as Tab[]).map((t) => (
+        {TAB_ORDER.map((t) => (
           <span key={t} className={`tab ${tab === t ? "active" : ""}`} onClick={() => setTab(t)}>
             {t[0]!.toUpperCase() + t.slice(1)}
           </span>
@@ -105,7 +108,9 @@ export function AgentDetail({ agentId, readOnly, onBack }: Props) {
       </div>
 
       {tab === "overview" && <OverviewTab status={status} health={health} />}
+      {tab === "spec" && <SpecTab agentId={agentId} />}
       {tab === "logs" && <LogsTab agentId={agentId} phase={status.phase} />}
+      {tab === "activity" && <ActivityTab agentId={agentId} />}
       {tab === "audit" && <AuditTab agentId={agentId} />}
       {tab === "conversation" && <ConversationTab agentId={agentId} />}
       {tab === "container" && <ContainerTab container={container} stats={stats} />}
@@ -152,6 +157,17 @@ function OverviewTab({ status, health }: { status: AgentStatus; health: AgentHea
             <li key={r.name}><HealthDot state={r.state} /> <code>{r.name}</code>: {r.detail}</li>
           ))}
         </ul>
+      </div>
+      <div className="card">
+        <h3>Current activity</h3>
+        {status.gist ? (
+          <>
+            <div className="value" style={{ fontSize: 14 }}>{status.gist}</div>
+            <div className="sub">{status.gist_updated_at ? formatRelative(status.gist_updated_at) : "—"}</div>
+          </>
+        ) : (
+          <div className="sub">No activity recorded yet — wait for the first tool call.</div>
+        )}
       </div>
       <div className="card">
         <h3>Branch & Commit</h3>
@@ -300,6 +316,175 @@ function ConversationTab({ agentId }: { agentId: string }) {
       </tbody>
     </table>
   );
+}
+
+/**
+ * Renders the user's original task spec. The server returns user spec and
+ * Kapsis-injected progress-reporting suffix split apart; we render the
+ * user portion as a safe markdown-like fallback and hide the injected
+ * portion behind a disclosure so the operator's eyes stay on what they
+ * actually wrote.
+ *
+ * We intentionally do NOT pull in react-markdown for this v1. The spec is
+ * trusted (the operator wrote it for themselves) but we still render it as
+ * `<pre>`-formatted text so no surprises around inline HTML, links, or
+ * embedded scripts can land in the UI. A future iteration can swap in a
+ * sanitized markdown renderer; for now, monospaced readable text is the
+ * lowest-risk presentation and is what most operators do `cat spec.md`
+ * to read anyway.
+ */
+function SpecTab({ agentId }: { agentId: string }) {
+  const [data, setData] = useState<SpecResponse | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [showInjected, setShowInjected] = useState(false);
+
+  useEffect(() => {
+    let alive = true;
+    setData(null); setErr(null); setShowInjected(false);
+    api.spec(agentId)
+      .then((r) => { if (alive) setData(r); })
+      .catch((e) => {
+        if (!alive) return;
+        // 404 is expected for "no spec" — render the empty state, not an error banner.
+        const status = (e as { status?: number }).status;
+        if (status === 404) { setData(null); setErr("__missing__"); return; }
+        setErr(String(e));
+      });
+    return () => { alive = false; };
+  }, [agentId]);
+
+  if (err === "__missing__") {
+    return (
+      <div className="banner">
+        No spec found for this agent. The agent was launched without <code>--task</code> /
+        <code>--spec</code>, or Kapsis hasn't injected the spec into the worktree yet.
+      </div>
+    );
+  }
+  if (err) return <div className="banner">{err}</div>;
+  if (!data) return <div>Loading spec…</div>;
+
+  const injectedLineCount = data.injectedInstructions
+    ? data.injectedInstructions.split("\n").length
+    : 0;
+
+  return (
+    <div>
+      <div style={{ marginBottom: 12, color: "var(--fg-muted)", fontSize: 12 }}>
+        <span>Source: <code>{data.source}</code></span>
+        <span style={{ marginLeft: 16 }}>{data.sizeBytes.toLocaleString()} bytes</span>
+        {data.truncated && (
+          <span style={{ marginLeft: 16, color: "var(--red, #b94a48)" }}>
+            ⚠ truncated — showing first 256 KB
+          </span>
+        )}
+      </div>
+      <pre className="log-tail" style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{data.spec}</pre>
+      {data.injectedInstructions && (
+        <details style={{ marginTop: 12 }} open={showInjected} onToggle={(e) => setShowInjected((e.target as HTMLDetailsElement).open)}>
+          <summary style={{ cursor: "pointer", color: "var(--fg-muted)", fontSize: 12 }}>
+            {showInjected ? "Hide" : "Show"} Kapsis progress instructions ({injectedLineCount} lines)
+          </summary>
+          <pre
+            className="log-tail"
+            style={{ whiteSpace: "pre-wrap", wordBreak: "break-word", marginTop: 8, opacity: 0.7 }}
+          >
+            {data.injectedInstructions}
+          </pre>
+        </details>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Reverse-chronological list of gist activity transitions for one agent.
+ *
+ * The server keeps an in-memory ring (200 entries max) populated from the
+ * existing status watcher. We fetch the snapshot on mount, then subscribe
+ * via SSE — every gist-appended event prepends a new entry in O(1).
+ *
+ * Empty state distinguishes "agent has never made a tool call" from "the
+ * dashboard restarted" (history is reseeded from current status on
+ * dashboard boot, so a long-running agent at least shows its current gist).
+ */
+function ActivityTab({ agentId }: { agentId: string }) {
+  const [entries, setEntries] = useState<GistEntry[] | null>(null);
+  const [follow, setFollow] = useState(true);
+  const followRef = useRef(follow);
+  followRef.current = follow;
+
+  useEffect(() => {
+    let alive = true;
+    setEntries(null);
+    api.gistHistory(agentId)
+      .then((r) => { if (alive) setEntries(r.entries); })
+      .catch(() => { if (alive) setEntries([]); });
+    return () => { alive = false; };
+  }, [agentId]);
+
+  useGistHistorySse(agentId, (entry) => {
+    if (!followRef.current) return;
+    setEntries((prev) => {
+      const next = [entry, ...(prev ?? [])];
+      // Server caps at 200; match the cap client-side so a long-lived
+      // dashboard doesn't accumulate forever.
+      if (next.length > 200) next.length = 200;
+      return next;
+    });
+  });
+
+  if (entries === null) return <div>Loading activity…</div>;
+  if (entries.length === 0) {
+    return (
+      <div className="banner">
+        No activity recorded. Gist updates appear once the agent starts making tool calls
+        (each PostToolUse hook updates the gist).
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div style={{ marginBottom: 8 }}>
+        <label>
+          <input type="checkbox" checked={follow} onChange={(e) => setFollow(e.target.checked)} /> follow
+        </label>
+        <span style={{ marginLeft: 16, color: "var(--fg-muted)" }}>{entries.length} entries</span>
+      </div>
+      <table className="table">
+        <thead><tr><th style={{ width: 200 }}>When</th><th>Activity</th></tr></thead>
+        <tbody>
+          {entries.map((e, i) => (
+            <tr key={`${e.at}-${i}`}>
+              <td style={{ color: "var(--fg-muted)", fontFamily: "var(--mono)", fontSize: 12 }}>
+                {formatRelative(e.at)}
+              </td>
+              <td>{e.gist}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+/**
+ * Best-effort "Xs / Xm / Xh ago" formatter. Tolerates a missing timestamp
+ * (renders "—") so a malformed status field never crashes the row.
+ */
+function formatRelative(iso: string): string {
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return "—";
+  const diff = Math.max(0, Date.now() - t);
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
 }
 
 function ContainerTab({ container, stats }: { container: ContainerInfo | null; stats: ContainerStats | null }) {

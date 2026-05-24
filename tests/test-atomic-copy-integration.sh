@@ -241,11 +241,85 @@ test_atomic_copy_dir_real_host_socket_e2e() {
 }
 
 #===============================================================================
+# TEST 3: Busy bind-mount descendant under dst (PR #380 follow-up)
+#
+# Reproduces the production failure where $HOME/.claude/conversations is a
+# podman bind-mount that rm-rf cannot unlink. Without the fix, GNU mv moves
+# the temp dir INSIDE $dst and returns 0 — silently corrupting staging.
+#
+# Requires CAP_SYS_ADMIN inside the container to do `mount --bind`. Cleanly
+# skipped when rootless mode denies the capability.
+#===============================================================================
+
+test_atomic_copy_dir_busy_mount_descendant_e2e() {
+    log_test "atomic_copy_dir: busy bind-mounted descendant under dst must not nest tmp inside dst (PR #380 follow-up)"
+
+    setup_container_test "atomic-copy-int-busymount"
+
+    # Probe: can this container actually create bind mounts? Rootless podman
+    # typically denies SYS_ADMIN even when --cap-add asks for it. Skip cleanly
+    # rather than hard-failing on environments that can't reproduce the bug.
+    if ! podman run --rm --cap-add=SYS_ADMIN "$KAPSIS_TEST_IMAGE" \
+            bash -c 'mkdir -p /tmp/_probe_a /tmp/_probe_b && mount --bind /tmp/_probe_a /tmp/_probe_b 2>/dev/null && umount /tmp/_probe_b' \
+            >/dev/null 2>&1; then
+        log_skip "  rootless container cannot create bind mounts (no CAP_SYS_ADMIN) — bug reproducer unavailable on this host"
+        cleanup_container_test
+        return 0
+    fi
+
+    local output exit_code=0
+    output=$(run_simple_container "
+        set -e
+        SRC=/tmp/src
+        DST=/tmp/dst
+        BUSY=/tmp/busysrc
+        mkdir -p \$SRC \$DST \$BUSY \$DST/conversations
+        # Source payload mirrors the host shape (settings.json the staging
+        # is supposed to bring across).
+        echo 'src-settings' > \$SRC/settings.json
+        # Busy bind-mount target carries content that pre-dates staging.
+        # This is the per-agent conversations dir in production.
+        echo 'host-file' > \$BUSY/host.txt
+        mount --bind \$BUSY \$DST/conversations
+        trap 'umount \$DST/conversations 2>/dev/null || true' EXIT
+
+        source /opt/kapsis/lib/logging.sh
+        source /opt/kapsis/lib/atomic-copy.sh
+
+        atomic_copy_dir \$SRC \$DST 2>&1
+        ACD_RC=\$?
+        echo \"ACD_RC=\$ACD_RC\"
+
+        # Assertions:
+        # 1. src payload reached top-level dst
+        test -f \$DST/settings.json && echo HAS_PAYLOAD || echo MISSING_PAYLOAD
+        # 2. busy mount survived (we did NOT clobber it)
+        test -f \$DST/conversations/host.txt && echo BUSY_MOUNT_PRESERVED || echo BUSY_MOUNT_LOST
+        # 3. Load-bearing regression check: NO .atomic-copy-dir-* nested
+        #    inside dst (would mean mv-into-existing-dst nesting bug returned)
+        if ls \$DST/.atomic-copy-dir-* >/dev/null 2>&1; then
+            echo NESTING_BUG
+            ls -la \$DST/.atomic-copy-dir-*/ 2>&1 | head -5
+        else
+            echo NO_NESTING
+        fi
+    " --cap-add=SYS_ADMIN "${LIB_MOUNT_ARGS[@]}") || exit_code=$?
+
+    cleanup_container_test
+
+    assert_exit_code 0 "$exit_code" "Container command should exit 0"
+    assert_contains "$output" "ACD_RC=0" "atomic_copy_dir must succeed via merge-copy fallback"
+    assert_contains "$output" "HAS_PAYLOAD" "src settings.json must reach dst's top level"
+    assert_contains "$output" "BUSY_MOUNT_PRESERVED" "busy child mount must survive the staging operation"
+    assert_contains "$output" "NO_NESTING" "no .atomic-copy-dir-* nested inside dst — load-bearing regression check"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
 main() {
-    print_test_header "atomic_copy_dir integration (issues #328 / #335)"
+    print_test_header "atomic_copy_dir integration (issues #328 / #335 / PR #380)"
 
     if ! check_prerequisites; then
         echo "Skipping atomic-copy integration tests — prerequisites not met"
@@ -257,6 +331,7 @@ main() {
 
     run_test test_atomic_copy_dir_real_chmod_restrictive_dst_e2e
     run_test test_atomic_copy_dir_real_host_socket_e2e
+    run_test test_atomic_copy_dir_busy_mount_descendant_e2e
 
     print_summary
 }

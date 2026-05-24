@@ -57,6 +57,9 @@ source "$SCRIPT_DIR/lib/status.sh"
 # Source progress display library
 source "$SCRIPT_DIR/lib/progress-display.sh"
 
+# Source launch-spec persistence library (writes ~/.kapsis/specs/<id>.md)
+source "$SCRIPT_DIR/lib/spec-store.sh"
+
 # Bash 3.2 compatible uppercase conversion
 to_upper() {
     echo "$1" | tr '[:lower:]' '[:upper:]'
@@ -75,6 +78,7 @@ generate_agent_id() {
         printf '%x' "$(( $(date +%s)$$ ))" | cut -c1-6
     fi
 }
+
 
 #===============================================================================
 # DEFAULT VALUES
@@ -120,9 +124,17 @@ source "$SCRIPT_DIR/lib/dns-pin.sh"
 source "$SCRIPT_DIR/lib/podman-health.sh"
 # shellcheck source=lib/vfkit-watchdog.sh
 source "$SCRIPT_DIR/lib/vfkit-watchdog.sh"
+# shellcheck source=lib/exec-channel-watchdog.sh
+source "$SCRIPT_DIR/lib/exec-channel-watchdog.sh"
 
 # Source host-side status volume sync (Issue #276) — no-op when KAPSIS_STATUS_VOLUME unset
 source "$SCRIPT_DIR/lib/status-sync.sh"
+
+# Source launch-phase serialization mutex (macOS AVF virtio-fs cache-coherency
+# bug workaround). Default-on for Darwin, no-op elsewhere; see launch-lock.sh
+# for design rationale and env-var knobs (KAPSIS_LAUNCH_LOCK_ENABLED,
+# KAPSIS_LAUNCH_LOCK_TIMEOUT, KAPSIS_LAUNCH_LOCK_POST_COOLDOWN).
+source "$SCRIPT_DIR/lib/launch-lock.sh"
 
 # Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
 NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
@@ -554,6 +566,16 @@ validate_inputs() {
     if [[ -n "$SPEC_FILE" && ! -f "$SPEC_FILE" ]]; then
         log_error "Spec file not found: $SPEC_FILE"
         exit 1
+    fi
+
+    # Persist the resolved spec/task to a canonical per-agent location
+    # via the spec-store library. Source-agnostic — slack-bot, /dev, and
+    # interactive launches all land in the same place; consumers (dashboard,
+    # future debug tools) just read $(spec_store_path "$AGENT_ID").
+    if [[ -n "$SPEC_FILE" ]]; then
+        spec_store_write "$AGENT_ID" --spec "$SPEC_FILE" || true
+    elif [[ -n "$TASK_INLINE" ]]; then
+        spec_store_write "$AGENT_ID" --task "$TASK_INLINE" || true
     fi
 
     # Validate git branch requirements
@@ -2566,6 +2588,16 @@ main() {
     # inside the container cannot forge a mount_failure exit.
     _VFKIT_FIRED_SENTINEL=""
 
+    # PID of exec-channel watchdog subshell (Issue #382). macOS-only; empty
+    # when disabled. Cleaned up in _cleanup_with_completion.
+    _EXEC_CHANNEL_WATCHDOG_PID=""
+
+    # Host-only sentinel path written by the exec-channel watchdog when
+    # `podman exec <container> true` hangs N consecutive times. Same trust
+    # model as _VFKIT_FIRED_SENTINEL: under $TMPDIR, host-private, NOT
+    # bind-mounted into the container.
+    _EXEC_HANG_FIRED_SENTINEL=""
+
     # Cleanup function that ensures completion message is shown
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
@@ -2595,6 +2627,19 @@ main() {
         if [[ -n "${_VFKIT_FIRED_SENTINEL:-}" ]]; then
             rm -f "$_VFKIT_FIRED_SENTINEL" 2>/dev/null || true
         fi
+        # Same shape as the vfkit watchdog teardown above. Killed before
+        # backend_cleanup so a stale watchdog cannot fire on a future agent
+        # after the container has already exited normally. `wait` drains the
+        # subshell so any in-flight `_status_write` finishes before this trap
+        # runs `status_complete` again.
+        if [[ -n "${_EXEC_CHANNEL_WATCHDOG_PID:-}" ]]; then
+            kill "$_EXEC_CHANNEL_WATCHDOG_PID" 2>/dev/null || true
+            wait "$_EXEC_CHANNEL_WATCHDOG_PID" 2>/dev/null || true
+            _EXEC_CHANNEL_WATCHDOG_PID=""
+        fi
+        if [[ -n "${_EXEC_HANG_FIRED_SENTINEL:-}" ]]; then
+            rm -f "$_EXEC_HANG_FIRED_SENTINEL" 2>/dev/null || true
+        fi
         # Stop host-side status volume sync and flush one final snapshot to
         # the host status dir so post-exit consumers see the definitive state
         # (Issue #276). No-op when KAPSIS_STATUS_VOLUME is unset.
@@ -2602,6 +2647,11 @@ main() {
             stop_status_sync "${AGENT_ID:-}" "$KAPSIS_STATUS_VOLUME" \
                 "${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}" 2>/dev/null || true
         fi
+        # Release the launch-phase lock if we still hold it on abnormal exit
+        # (the normal release happens right after setup_sandbox in main flow,
+        # but a crash between acquire and that release would leak the lock
+        # to the next agent's acquire-timeout). Idempotent.
+        launch_lock_release 2>/dev/null || true
         # Delegate backend-specific cleanup (secrets env file, inline spec, dns pin, etc.)
         backend_cleanup 2>/dev/null || true
         # Ensure status transitions to 'complete' on abnormal exit (Fix #168)
@@ -2694,14 +2744,25 @@ main() {
         status_phase "initializing" 15 "Pre-flight check passed" || true
     fi
 
-    # Setup sandbox (worktree/overlay) — only for backends that support it
+    # Setup sandbox (worktree/overlay) — only for backends that support it.
+    #
+    # Wrapped with the host-scoped launch lock (macOS-only by default) so two
+    # agents don't enter the heavy metadata-I/O window simultaneously and
+    # trip the AVF virtio-fs cache-coherency bug — see launch-lock.sh. The
+    # post-cooldown happens inside launch_lock_release so the VM-side overlay
+    # mount of THIS agent's container settles before the next launch starts.
     if backend_supports "worktree" || backend_supports "overlay"; then
         log_timer_start "sandbox_setup"
+        if ! launch_lock_acquire; then
+            log_warn "Launch lock unavailable — proceeding without serialization (next agent may race)"
+        fi
         if ! setup_sandbox; then
+            launch_lock_release  # release before failing exit
             status_complete 1 "Sandbox setup failed (mode: ${SANDBOX_MODE:-unknown})"
             _STATUS_COMPLETE_SHOWN=true
             exit 1
         fi
+        launch_lock_release
         log_timer_end "sandbox_setup"
     else
         log_info "Backend '$BACKEND' handles sandbox setup in-cluster"
@@ -2859,6 +2920,15 @@ main() {
         rm -f "$_VFKIT_FIRED_SENTINEL" 2>/dev/null || true
         start_vfkit_watchdog "$AGENT_ID" "" "" "$_VFKIT_FIRED_SENTINEL" \
             || log_warn "vfkit watchdog failed to start — mount failure detection disabled for this session"
+
+        # exec-channel watchdog (Issue #382): catches the silent-wedge mode
+        # where vfkit is alive but `podman exec` hangs (the v2.24.0 vfkit
+        # watchdog cannot detect this). Same trust model as the vfkit
+        # sentinel — host-only path under $TMPDIR, never bind-mounted.
+        _EXEC_HANG_FIRED_SENTINEL="${TMPDIR:-/tmp}/kapsis-${AGENT_ID}.exec-hang-fired"
+        rm -f "$_EXEC_HANG_FIRED_SENTINEL" 2>/dev/null || true
+        start_exec_channel_watchdog "$AGENT_ID" "" "" "" "" "$_EXEC_HANG_FIRED_SENTINEL" \
+            || log_warn "exec-channel watchdog failed to start — silent-wedge detection disabled for this session"
     fi
 
     # Display progress header (shows sandbox ready status with timer)
@@ -3045,12 +3115,49 @@ main() {
         if [[ "$status_exit_vfkit" == "4" && "$status_err_vfkit" == "mount_failure" ]]; then
             log_warn "Mount failure confirmed by vfkit watchdog (host sentinel + status.json mount_failure) — overriding exit code from $EXIT_CODE to 4"
             EXIT_CODE=4
+            _KAPSIS_VFKIT_HANG_DETECTED=true
         else
             # Sentinel present but status.json doesn't agree — possible
             # status_complete failure inside the watchdog subshell. Still
             # safe to override because the sentinel is host-trusted.
             log_warn "Mount failure detected via vfkit watchdog host sentinel (status.json mismatch — disk full?) — overriding exit code from $EXIT_CODE to 4"
             EXIT_CODE=4
+            _KAPSIS_VFKIT_HANG_DETECTED=true
+        fi
+    fi
+
+    # Check for exec-channel watchdog hang (Issue #382). Same trust model
+    # as the vfkit override above: host-only sentinel is the authoritative
+    # signal; status.json's `error_type: exec_channel_hang` is defense in
+    # depth. Skipped if the vfkit watchdog already fired — both watchdogs
+    # share exit code 4, and `exec_channel_hang` would otherwise overwrite
+    # the more specific `mount_failure` error_type when both fire in close
+    # succession (e.g. vfkit dies while exec is already hung). We gate on
+    # the `_KAPSIS_VFKIT_HANG_DETECTED` boolean rather than the sentinel
+    # file because `_cleanup_with_completion` may delete the sentinel
+    # before this block runs (e.g. via an ERR/EXIT trap during a fatal
+    # error earlier in main), and a missing sentinel would otherwise let
+    # this block silently overwrite the vfkit watchdog's diagnosis.
+    if [[ "$EXIT_CODE" -ne 0 ]] \
+       && [[ -n "${_EXEC_HANG_FIRED_SENTINEL:-}" && -f "$_EXEC_HANG_FIRED_SENTINEL" ]] \
+       && [[ "${_KAPSIS_VFKIT_HANG_DETECTED:-false}" != "true" ]]; then
+        local _status_file_exec
+        _status_file_exec="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/kapsis-$(basename "$PROJECT_PATH")-${AGENT_ID}.json"
+        local status_exit_exec status_err_exec
+        status_exit_exec=$(status_get_exit_code 2>/dev/null || echo "")
+        status_err_exec=""
+        if [[ -f "$_status_file_exec" ]] \
+           && grep -Eq '"error_type":[[:space:]]*"exec_channel_hang"' "$_status_file_exec" 2>/dev/null; then
+            status_err_exec="exec_channel_hang"
+        fi
+        if [[ "$status_exit_exec" == "4" && "$status_err_exec" == "exec_channel_hang" ]]; then
+            log_warn "Exec-channel hang confirmed by host-side watchdog (sentinel + status.json exec_channel_hang) — overriding exit code from $EXIT_CODE to 4"
+            EXIT_CODE=4
+            _KAPSIS_EXEC_HANG_DETECTED=true
+        else
+            log_warn "Exec-channel hang detected via host sentinel (status.json mismatch — disk full?) — overriding exit code from $EXIT_CODE to 4"
+            EXIT_CODE=4
+            _KAPSIS_EXEC_HANG_DETECTED=true
         fi
     fi
 
@@ -3122,11 +3229,20 @@ main() {
         _DISPLAY_COMPLETE_SHOWN=true
         rm -f "$_kill_marker" 2>/dev/null || true
     elif [[ "$EXIT_CODE" -eq 4 ]]; then
-        # Mount failure detected via sentinel (Issue #248)
+        # Mount-class failure detected via sentinel (Issue #248 / #382).
+        # _KAPSIS_EXEC_HANG_DETECTED distinguishes the silent-wedge mode
+        # from a true virtio-fs drop so the user message and error_type
+        # reflect the actual diagnosis.
         FINAL_EXIT_CODE=4
         log_finalize 4
-        status_set_error_type "mount_failure"
-        local mount_error="Workspace mount lost (virtio-fs drop). Recovery: podman machine stop && podman machine start, then re-run."
+        local mount_error
+        if [[ "${_KAPSIS_EXEC_HANG_DETECTED:-false}" == "true" ]]; then
+            status_set_error_type "exec_channel_hang"
+            mount_error="Container exec channel wedged (podman daemon hang while vfkit alive). Recovery: podman machine stop && podman machine start, then re-run."
+        else
+            status_set_error_type "mount_failure"
+            mount_error="Workspace mount lost (virtio-fs drop). Recovery: podman machine stop && podman machine start, then re-run."
+        fi
         status_complete 4 "$mount_error"
         _STATUS_COMPLETE_SHOWN=true
         display_complete 4 "" "$mount_error"

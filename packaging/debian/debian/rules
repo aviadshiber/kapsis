@@ -18,6 +18,7 @@ override_dh_auto_install:
 	install -m 755 scripts/build-agent-image.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
 	install -m 755 scripts/kapsis-cleanup.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
 	install -m 755 scripts/kapsis-status.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
+	install -m 755 scripts/kapsis-recovery-action.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
 	install -m 755 scripts/entrypoint.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
 	install -m 755 scripts/worktree-manager.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
 	install -m 755 scripts/post-container-git.sh $(CURDIR)/debian/kapsis/usr/lib/kapsis/scripts/
@@ -69,6 +70,12 @@ override_dh_auto_install:
 	echo 'export KAPSIS_CMD_NAME="kapsis-status"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
 	echo 'exec /usr/lib/kapsis/scripts/kapsis-status.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
 	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-status
+
+	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-recovery-action
+	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-recovery-action
+	echo 'export KAPSIS_CMD_NAME="kapsis-recovery-action"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-recovery-action
+	echo 'exec /usr/lib/kapsis/scripts/kapsis-recovery-action.sh "$$@"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-recovery-action
+	chmod 755 $(CURDIR)/debian/kapsis/usr/bin/kapsis-recovery-action
 
 	echo '#!/bin/bash' > $(CURDIR)/debian/kapsis/usr/bin/kapsis-setup
 	echo 'export KAPSIS_HOME="/usr/share/kapsis"' >> $(CURDIR)/debian/kapsis/usr/bin/kapsis-setup

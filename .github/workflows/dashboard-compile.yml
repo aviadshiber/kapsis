@@ -1,0 +1,165 @@
+name: dashboard-compile (reusable)
+
+# Reusable workflow: cross-compile the kapsis-dashboard binary for all four
+# supported platforms. Called from both:
+#   - dashboard-build.yml (CI on every dashboard/** change)
+#   - release.yml's compile-dashboard job (on every release tag)
+#
+# Keeping the matrix + build steps in one place prevents the two callers
+# from drifting (#372 was caused by exactly that drift — dashboard-build.yml's
+# binaries were never attached to releases, and the release-path compile was
+# missing embed:ui + --sourcemap).
+#
+# Also wired to workflow_dispatch so the matrix can be exercised in
+# isolation (e.g. regenerate artifacts after a packaging-only change)
+# without triggering the whole release or CI pipeline.
+
+on:
+  workflow_call:
+    inputs:
+      retention-days:
+        description: "Artifact retention in days (1-90)"
+        type: number
+        default: 7
+  workflow_dispatch:
+    inputs:
+      retention-days:
+        description: "Artifact retention in days (1-90)"
+        type: number
+        default: 7
+
+permissions:
+  contents: read
+
+jobs:
+  compile:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: darwin-arm64
+            bunTarget: bun-darwin-arm64
+            runner: macos-latest
+            # runnerArch matches the host CPU (NOT the build target) — only
+            # used by the smoke-test if-guard to skip when the host can't
+            # execute the cross-compiled binary.
+            runnerArch: ARM64
+          - target: darwin-x64
+            bunTarget: bun-darwin-x64
+            # Cross-compile from ARM64 macOS instead of running on macos-13
+            # (Intel). GitHub's Intel macOS runner pool has shrunk since
+            # Apple's ARM transition and routinely queues for tens of
+            # minutes, blocking every dashboard PR. Bun supports
+            # cross-compilation via --target so we don't need a native x64
+            # host — the trade-off is the smoke-test gets skipped here
+            # (host arch is ARM64, binary is X64; the host can't exec it
+            # without Rosetta, which CI doesn't have). Same posture as
+            # linux-arm64 below.
+            runner: macos-latest
+            runnerArch: ARM64
+          - target: linux-arm64
+            bunTarget: bun-linux-arm64
+            # No GitHub-hosted Linux ARM64 runner is allocated for this
+            # matrix slot, so the smoke-test if-guard below is structurally
+            # unreachable for linux-arm64. The cross-compiled binary still
+            # ships, just unverified on host. Tracked as a follow-up.
+            runner: ubuntu-latest
+            runnerArch: X64
+          - target: linux-x64
+            bunTarget: bun-linux-x64
+            runner: ubuntu-latest
+            runnerArch: X64
+    defaults:
+      run:
+        working-directory: dashboard
+    env:
+      BUN_TARGET: ${{ matrix.bunTarget }}
+      OUT_NAME: kapsis-dashboard-${{ matrix.target }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2.2.0
+        with:
+          bun-version: "1.3.11"
+      # Cache the Bun module store. Keyed on the workspace package.json
+      # files because dashboard/bun.lockb is gitignored (so hashFiles on
+      # the lockfile would silently collapse the key to a constant and
+      # never invalidate). Hashing package.json sets gives partial
+      # invalidation when any workspace's deps change.
+      - name: Cache Bun install
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: ~/.bun/install/cache
+          key: ${{ runner.os }}-${{ runner.arch }}-bun-${{ hashFiles('dashboard/package.json', 'dashboard/server/package.json', 'dashboard/ui/package.json', 'dashboard/shared/package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-${{ runner.arch }}-bun-
+      # --ignore-scripts is defense-in-depth, NOT the primary
+      # supply-chain control: Bun already blocks dependency lifecycle
+      # scripts by default (only packages in `trustedDependencies` run
+      # them). This flag adds a second layer by also blocking the
+      # project's OWN pre/postinstall — currently a no-op since the
+      # dashboard package.json defines none, but future-proofs against
+      # an accidental script addition.
+      - run: bun install --frozen-lockfile --ignore-scripts
+      # Use `bun run build` (= build:ui + embed:ui + build:server) and a
+      # SEPARATE `bun build --compile` step, instead of `bun run
+      # compile:$TARGET`. The compile:* scripts in package.json
+      # internally call `bun run build` themselves, so invoking them
+      # here would double-build the UI + embed steps. Keep the split.
+      - name: Build (UI + embed + server)
+        run: bun run build
+      - name: Compile binary
+        run: |
+          mkdir -p bin
+          # --sourcemap matches every `compile:*` script in package.json so
+          # production crash traces remain debuggable post-minify.
+          bun build --compile --minify --sourcemap --target="$BUN_TARGET" \
+            server/src/main.ts \
+            --outfile "bin/${OUT_NAME}"
+      # Structural arch verification — runs on EVERY matrix slot regardless
+      # of host arch. Catches the failure mode where Bun's --target flag is
+      # silently ignored or misspelt and we ship a host-arch binary under
+      # an x64/arm64 filename. Compare the `file(1)` output to what we asked
+      # for via $MATRIX_TARGET; mismatched arch fails the job loudly.
+      - name: Verify binary architecture matches target
+        env:
+          MATRIX_TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          out=$(file "bin/${OUT_NAME}")
+          echo "$out"
+          case "$MATRIX_TARGET" in
+            darwin-arm64) expect='Mach-O.*arm64' ;;
+            darwin-x64)   expect='Mach-O.*x86_64' ;;
+            linux-arm64)  expect='ELF.*aarch64' ;;
+            linux-x64)    expect='ELF.*x86-64' ;;
+            *) echo "::error::unknown matrix target: $MATRIX_TARGET"; exit 1 ;;
+          esac
+          if ! echo "$out" | grep -Eq "$expect"; then
+            echo "::error::binary arch mismatch: expected pattern '$expect' for target '$MATRIX_TARGET', got: $out"
+            exit 1
+          fi
+      # `hostArch` here is the CPU of the runner — used only to decide
+      # whether this host can natively execute the cross-compiled binary.
+      # When host and target diverge (e.g. darwin-x64 built on macos-latest
+      # ARM64, or linux-arm64 built on ubuntu-latest x64) we skip the
+      # smoke-test because the runner can't exec the binary without
+      # emulation, which GitHub-hosted runners don't provide. The arch
+      # verification above already proves the binary IS the right shape;
+      # the smoke-test is the additional "and it actually starts" check.
+      - name: Verify binary runs (host-native only)
+        if: ${{ (contains(matrix.target, 'x64') && matrix.runnerArch == 'X64') || (contains(matrix.target, 'arm64') && matrix.runnerArch == 'ARM64') }}
+        run: |
+          set -euo pipefail
+          OUTPUT=$(./bin/"$OUT_NAME" --version)
+          if ! echo "$OUTPUT" | grep -Eq '[0-9]+\.[0-9]+\.[0-9]+'; then
+            echo "::error::Binary --version did not print a semver string: $OUTPUT"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ env.OUT_NAME }}
+          path: dashboard/bin/${{ env.OUT_NAME }}
+          if-no-files-found: error
+          retention-days: ${{ inputs.retention-days }}

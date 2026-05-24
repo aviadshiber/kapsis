@@ -59,6 +59,16 @@ describe("terminalRule", () => {
   it("failed on mount_failure", () => {
     expect(terminalRule(baseStatus({ phase: "complete", exit_code: 4, error_type: "mount_failure", error: "vfs" }))!.state).toBe("failed");
   });
+  it("failed on exec_channel_hang with detail from error field", () => {
+    const r = terminalRule(baseStatus({ phase: "complete", exit_code: 4, error_type: "exec_channel_hang", error: "channel wedged" }))!;
+    expect(r.state).toBe("failed");
+    expect(r.detail).toBe("channel wedged");
+  });
+  it("failed on exec_channel_hang with detail fallback when error is null", () => {
+    const r = terminalRule(baseStatus({ phase: "complete", exit_code: 4, error_type: "exec_channel_hang", error: null }))!;
+    expect(r.state).toBe("failed");
+    expect(r.detail).toBe("exec channel hang");
+  });
   it("failed on generic non-zero", () => {
     expect(terminalRule(baseStatus({ phase: "complete", exit_code: 5 }))!.state).toBe("failed");
   });
