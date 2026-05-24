@@ -1,4 +1,4 @@
-import { readdir, readFile, watch } from "node:fs/promises";
+import { readdir, readFile, watch, lstat } from "node:fs/promises";
 import { join, basename } from "node:path";
 import type { FSWatcher } from "node:fs";
 import { log } from "../logger";
@@ -101,6 +101,17 @@ export class StatusStore {
     const file = basename(path);
     if (!FILE_RE.test(file)) return;
     try {
+      // Symlink guard (defense in depth, parity with reaper.ts:170-172). A
+      // symlinked status file could redirect reads to an arbitrary path the
+      // dashboard process can reach (e.g. /etc/passwd via a kapsis-*-*.json
+      // symlink). status files are produced by kapsis itself via atomic mv,
+      // never as symlinks; rejecting them here closes the surface even if
+      // the status dir's permissions ever weaken.
+      const st = await lstat(path);
+      if (st.isSymbolicLink()) {
+        log.debug("status: skipping symlinked file", { file });
+        return;
+      }
       const buf = await readFile(path, "utf8");
       const status = JSON.parse(buf) as AgentStatus;
       const prev = this.cache.get(file);
@@ -119,6 +130,7 @@ export class StatusStore {
       }
     } catch (e) {
       // Atomic mv via temp file occasionally races; ignore single-shot read errors.
+      // lstat ENOENT also lands here (file vanished between readdir and lstat).
       log.debug("status read race", { path, err: String(e) });
     }
   }
@@ -186,11 +198,15 @@ export class StatusStore {
   /**
    * Compare on-disk directory contents to cache and reconcile gaps.
    *
-   * - Files present in cache but missing on disk → dropOneSoon (notifies
-   *   listeners with null after the same grace period an fs.watch-driven
-   *   delete uses).
-   * - Files present on disk but missing from cache → refreshOne (notifies
-   *   listeners with the loaded status).
+   * - Files in cache but missing on disk → dropOneSoon (notifies listeners
+   *   with null after the same grace period an fs.watch-driven delete uses).
+   * - Files on disk but missing from cache → refreshOne (notifies listeners
+   *   with the loaded status).
+   * - Files on disk AND in cache → refreshOne. refreshOne's diff check
+   *   (`!prev || prev.updated_at !== status.updated_at || prev.phase !==
+   *   status.phase`) suppresses no-op notifications when content is
+   *   unchanged, but catches the case where fs.watch dropped a modify
+   *   event (file still on disk, content changed since last refresh).
    *
    * Exposed via the periodic interval started in `startReconcile()` as a
    * safety net against dropped fs.watch events (macOS FSEvents under load).
@@ -203,24 +219,21 @@ export class StatusStore {
     } catch {
       return; // Directory transiently missing; refreshAll handles full failures.
     }
-    const onDisk = new Set(
-      files.filter((f) => !f.startsWith(".") && f.endsWith(".json")),
-    );
+    const onDisk = files.filter((f) => !f.startsWith(".") && f.endsWith(".json"));
+    const onDiskSet = new Set(onDisk);
     // Deletes missed by fs.watch — schedule drop with the same grace period
     // an atomic-rename write would use, so a concurrent write that just
     // happened to land between readdir and the reconcile tick doesn't
     // produce a spurious null notification.
     for (const file of this.cache.keys()) {
-      if (!onDisk.has(file)) this.dropOneSoon(file);
+      if (!onDiskSet.has(file)) this.dropOneSoon(file);
     }
-    // Creates missed by fs.watch — refresh into cache. Skips files already
-    // present (refreshOne's `if (!prev || ... updated_at differs ...)` keeps
-    // listeners from firing on no-op rescans of unchanged files).
-    for (const file of onDisk) {
-      if (!this.cache.has(file)) {
-        await this.refreshOne(join(this.statusDir, file));
-      }
-    }
+    // Refresh every on-disk file in parallel — same shape as refreshAll on
+    // boot. Covers BOTH creates and stale-updates missed by fs.watch (the
+    // diff check inside refreshOne suppresses notifications when content
+    // is unchanged, so unchanged cache entries are zero-overhead beyond
+    // one stat+read per tick).
+    await Promise.all(onDisk.map((f) => this.refreshOne(join(this.statusDir, f))));
   }
 }
 

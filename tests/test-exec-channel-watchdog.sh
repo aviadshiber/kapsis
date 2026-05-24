@@ -454,21 +454,19 @@ _simulate_override() {
     if [[ "$EXIT_CODE" -ne 0 ]] \
        && [[ -n "$exec_sentinel" && -f "$exec_sentinel" ]] \
        && [[ "$vfkit_hang_detected" != "true" ]]; then
-        # Read status.json defensively — both branches upgrade EXIT_CODE, but
-        # the branch label differentiates confirmed-by-status-json from the
-        # sentinel-only fallback. This mirrors the production override.
+        # Read status.json the same way production does (launch-agent.sh override
+        # block): exit_code via status_get_exit_code (the canonical accessor that
+        # reads $_KAPSIS_STATUS_FILE), error_type via grep on the file path
+        # passed in by the caller. Earlier this helper used BASH_REMATCH on the
+        # file content, which drifted from production's read path — the
+        # results were equivalent but a future refactor of status_get_exit_code
+        # would silently miss this code path.
         local status_exit_exec status_err_exec
-        status_exit_exec=""
+        status_exit_exec=$(status_get_exit_code 2>/dev/null || echo "")
         status_err_exec=""
-        if [[ -f "$status_file" ]]; then
-            local content
-            content=$(<"$status_file")
-            if [[ "$content" =~ \"exit_code\":\ *([0-9]+) ]]; then
-                status_exit_exec="${BASH_REMATCH[1]}"
-            fi
-            if grep -Eq '"error_type":[[:space:]]*"exec_channel_hang"' "$status_file" 2>/dev/null; then
-                status_err_exec="exec_channel_hang"
-            fi
+        if [[ -f "$status_file" ]] \
+           && grep -Eq '"error_type":[[:space:]]*"exec_channel_hang"' "$status_file" 2>/dev/null; then
+            status_err_exec="exec_channel_hang"
         fi
         if [[ "$status_exit_exec" == "4" && "$status_err_exec" == "exec_channel_hang" ]]; then
             branch="confirmed"
