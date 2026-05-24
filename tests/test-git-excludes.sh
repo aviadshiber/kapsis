@@ -169,6 +169,13 @@ test_contains_all_required_patterns() {
     assert_file_contains "$exclude_path" ".codex/" "Should ignore .codex/"
     assert_file_contains "$exclude_path" ".aider/" "Should ignore .aider/"
 
+    # Regression: products PR #102836. Worktree-mode mount points must be excluded
+    # so `git add -A` inside the container can't stage the sanitized git dir or
+    # the shared object database. Anchored with leading "/" because the mounts
+    # live at the worktree root (/workspace/.git-safe, /workspace/.git-objects).
+    assert_file_contains "$exclude_path" "/.git-safe/" "Should ignore /.git-safe/ (Kapsis GIT_DIR mount)"
+    assert_file_contains "$exclude_path" "/.git-objects/" "Should ignore /.git-objects/ (Kapsis object DB mount)"
+
     # Check for literal tilde patterns (tricky - need to verify ~ is in file)
     if ! grep -q "^~$" "$exclude_path" && ! grep -q "^~/$" "$exclude_path"; then
         # At least one tilde pattern should exist
@@ -217,6 +224,27 @@ test_info_exclude_actually_ignores_files() {
 
     if echo "$untracked" | grep -q "\.claude/"; then
         log_fail ".claude/ files should be ignored by git"
+        cleanup_test_worktree
+        return 1
+    fi
+
+    # Regression: products PR #102836. Simulate Kapsis worktree-mode mounts at
+    # the worktree root; both must be ignored so a stray `git add -A` cannot
+    # stage them.
+    mkdir -p .git-safe/refs/heads
+    echo "ref: refs/heads/main" > .git-safe/HEAD
+    echo "marker" > .git-safe/kapsis-meta
+    mkdir -p .git-objects/ab
+    echo "blob" > .git-objects/ab/cdef0123456789
+
+    untracked=$(git status --porcelain 2>/dev/null || echo "")
+    if echo "$untracked" | grep -q "\.git-safe/"; then
+        log_fail ".git-safe/ files should be ignored by git (info/exclude)"
+        cleanup_test_worktree
+        return 1
+    fi
+    if echo "$untracked" | grep -q "\.git-objects/"; then
+        log_fail ".git-objects/ files should be ignored by git (info/exclude)"
         cleanup_test_worktree
         return 1
     fi

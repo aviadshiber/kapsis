@@ -91,6 +91,8 @@ run_git() {
 # - .claude/           : Claude Code config files
 # - .codex/            : Codex CLI config files
 # - .aider/            : Aider config files
+# - /.git-safe/        : Sanitized GIT_DIR bind-mount (worktree mode)
+# - /.git-objects/     : Shared object DB bind-mount (worktree mode)
 #===============================================================================
 ensure_git_excludes() {
     local worktree_path="$1"
