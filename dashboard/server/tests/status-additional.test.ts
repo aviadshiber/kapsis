@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, mkdir, rm, writeFile, unlink } from "node:fs/promises";
+import { mkdtemp, mkdir, rm, writeFile, unlink, symlink } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { StatusStore } from "../src/store/status";
@@ -117,5 +117,54 @@ describe("StatusStore — gap coverage", () => {
 
     expect(store.get("late")?.agent_id).toBe("late");
     expect(updates).toContain("kapsis-demo-late.json");
+  });
+
+  it("reconcile() picks up content updates missed by fs.watch (stale-update path)", async () => {
+    // Regression for the gap the previous reconcile design left open: a file
+    // already in cache that gets MODIFIED on disk (not created, not deleted),
+    // with the fs.watch modify event dropped. Reconcile must notice the new
+    // content and notify listeners. Earlier behavior only checked membership
+    // (cache.has vs onDisk.has) and silently kept the stale entry.
+    const path = join(dir, "kapsis-demo-stale.json");
+    await writeFile(path, fixture({ agent_id: "stale", updated_at: "2026-05-17T10:00:00Z" }));
+    store = new StatusStore(dir, { reconcileIntervalMs: 0 });
+    await store.init();
+    expect(store.get("stale")?.updated_at).toBe("2026-05-17T10:00:00Z");
+
+    const updates: { file: string; updated_at: string }[] = [];
+    store.onChange((s, file) => {
+      if (s !== null) updates.push({ file, updated_at: s.updated_at });
+    });
+
+    // Rewrite the file with a newer updated_at. fs.watch may or may not
+    // fire; reconcile must catch it either way.
+    await writeFile(path, fixture({ agent_id: "stale", updated_at: "2026-05-17T11:00:00Z" }));
+    await store.reconcile();
+
+    expect(store.get("stale")?.updated_at).toBe("2026-05-17T11:00:00Z");
+    expect(updates.some((u) => u.file === "kapsis-demo-stale.json" && u.updated_at === "2026-05-17T11:00:00Z"))
+      .toBe(true);
+  });
+
+  it("reconcile() rejects symlinked status files (defense-in-depth parity with reaper)", async () => {
+    // A status file replaced with a symlink to another readable file
+    // (worst case: /etc/passwd) could leak unrelated content through the
+    // dashboard if reads followed the symlink. status files are produced
+    // by kapsis via atomic mv, never as symlinks, so the rejection here
+    // closes the surface without false positives.
+    const target = join(dir, "secret-target");
+    await writeFile(target, "ROOT_SECRETS_DO_NOT_LEAK");
+    const symPath = join(dir, "kapsis-demo-symlinked.json");
+    await symlink(target, symPath);
+
+    store = new StatusStore(dir, { reconcileIntervalMs: 0 });
+    await store.init();
+
+    // The symlinked file matches FILE_RE but must NOT be in cache.
+    expect(store.get("symlinked")).toBeUndefined();
+
+    // And a reconcile pass must not change that.
+    await store.reconcile();
+    expect(store.get("symlinked")).toBeUndefined();
   });
 });
