@@ -127,6 +127,23 @@ validate_staged_files() {
         has_security_issues=1
     fi
 
+    # Check for .git-safe/ and .git-objects/ (Kapsis worktree mount points).
+    # In worktree mode Kapsis mounts the sanitized GIT_DIR at /workspace/.git-safe
+    # and the shared object DB at /workspace/.git-objects. Both appear as
+    # untracked directories at the worktree root; if they reach a commit, the
+    # repo size doubles (entire object DB ships as tracked files).
+    # Regression: products PR #102836.
+    local kapsis_mount_files
+    kapsis_mount_files=$(git diff --cached --name-only 2>/dev/null | grep -E "^\.git-(safe|objects)/" || true)
+    if [[ -n "$kapsis_mount_files" ]]; then
+        log_warn "Found staged Kapsis git-mount files (should be ignored):"
+        while IFS= read -r f; do
+            log_warn "  - $f"
+            suspicious_files+=("$f")
+        done <<< "$kapsis_mount_files"
+        has_security_issues=1
+    fi
+
     # Check for submodule references (mode 160000)
     # These can happen when a directory with .git is accidentally staged
     # Pattern :000000 160000 catches NEW submodules being added

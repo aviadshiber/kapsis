@@ -157,7 +157,13 @@ readonly KAPSIS_GIT_EXCLUDE_PATTERNS="# Kapsis internal files
 # AI tool configuration directories (should stay local)
 .claude/
 .codex/
-.aider/"
+.aider/
+
+# Kapsis worktree-mode mount points (CONTAINER_GIT_PATH / CONTAINER_OBJECTS_PATH).
+# Anchored at the worktree root because these are bind-mounts at /workspace/.
+# Regression guard for products PR #102836 (committed entire object DB).
+/.git-safe/
+/.git-objects/"
 
 #===============================================================================
 # SECRET STORE INJECTION
