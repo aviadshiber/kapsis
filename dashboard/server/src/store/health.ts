@@ -48,6 +48,9 @@ export function terminalRule(s: AgentStatus): HealthRule | null {
   if (s.error_type === "mount_failure") {
     return { name: "terminal", state: "failed", detail: s.error ?? "mount failure" };
   }
+  if (s.error_type === "exec_channel_hang") {
+    return { name: "terminal", state: "failed", detail: s.error ?? "exec channel hang" };
+  }
   return { name: "terminal", state: "failed", detail: s.error ?? `exit ${s.exit_code ?? "?"}` };
 }
 
