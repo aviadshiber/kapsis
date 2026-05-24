@@ -26,6 +26,7 @@ jobs:
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       scripts: ${{ steps.determine.outputs.scripts }}
       container: ${{ steps.determine.outputs.container }}
@@ -297,6 +298,16 @@ jobs:
           # Run config verifier with pattern matching tests
           ./scripts/lib/config-verifier.sh --all --test
 
+      - name: Assert claude-code pin consistent (package.json vs ci.yml)
+        run: |
+          pkg_version=$(jq -r '.devDependencies["@anthropic-ai/claude-code"]' .github/package.json)
+          ci_count=$(grep -cF "npm install -g @anthropic-ai/claude-code@${pkg_version}" .github/workflows/ci.yml || echo "0")
+          if [[ "$ci_count" -ne 2 ]]; then
+            echo "::error::ci.yml claude-code pins (${ci_count}/2) don't match .github/package.json (${pkg_version}). Bump integration-tests, e2e-tests, and package.json in lockstep."
+            exit 1
+          fi
+          echo "✓ claude-code pin consistent: ${pkg_version} (2/2 ci.yml occurrences match)"
+
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
@@ -380,6 +391,7 @@ jobs:
   e2e-tests:
     name: E2E Tests (live API)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # SECURITY layers (defence in depth — each one independently blocks a class
     # of attack):
     #
@@ -495,6 +507,7 @@ jobs:
   container-tests:
     name: Container Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: changes
     # Only run if container-related files changed (Containerfile, entrypoint, build scripts, libs)
     if: needs.changes.outputs.container == 'true'
@@ -608,6 +621,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [changes, lint, verify-pinning, config-validation, unit-tests, integration-tests, e2e-tests, container-tests]
     if: always()
     steps:
