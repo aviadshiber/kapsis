@@ -651,8 +651,13 @@ setup_staged_config_overlays() {
             continue
         fi
 
-        # Create directories
-        mkdir -p "$upper" "$work" "$(dirname "$dst")" 2>/dev/null || true
+        # Create directories. PR #380 follow-up: surface mkdir failures so a
+        # regression (e.g. missing Containerfile RUN that creates /kapsis-upper
+        # as developer-owned) is loud instead of silently falling through to
+        # the atomic-copy path on every staged config.
+        local _mk_err
+        _mk_err=$(mkdir -p "$upper" "$work" "$(dirname "$dst")" 2>&1) || \
+            log_warn "Failed to mkdir overlay dirs for ${relative_path}: ${_mk_err} — overlay will fail, falling back to copy"
 
         if [[ -d "$src" ]]; then
             # Directory: create overlay mount
