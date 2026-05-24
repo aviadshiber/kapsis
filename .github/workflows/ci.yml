@@ -26,6 +26,7 @@ jobs:
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       scripts: ${{ steps.determine.outputs.scripts }}
       container: ${{ steps.determine.outputs.container }}
@@ -122,6 +123,7 @@ jobs:
   lint:
     name: ShellCheck Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
     steps:
@@ -169,6 +171,7 @@ jobs:
   verify-pinning:
     name: Verify Supply Chain Pinning
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
     steps:
@@ -268,6 +271,7 @@ jobs:
   config-validation:
     name: Config Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
     steps:
@@ -278,8 +282,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq yamllint
-          # Install yq for YAML parsing
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          # Install yq for YAML parsing (pinned version with checksum — matches unit-tests / container-tests)
+          YQ_VERSION="v4.52.5"
+          YQ_SHA256="75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9"
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
           sudo chmod +x /usr/local/bin/yq
 
       - name: Validate YAML configs
@@ -290,6 +297,16 @@ jobs:
 
           # Run config verifier with pattern matching tests
           ./scripts/lib/config-verifier.sh --all --test
+
+      - name: Assert claude-code pin consistent (package.json vs ci.yml)
+        run: |
+          pkg_version=$(jq -r '.devDependencies["@anthropic-ai/claude-code"]' .github/package.json)
+          ci_count=$(grep -cF "npm install -g @anthropic-ai/claude-code@${pkg_version}" .github/workflows/ci.yml || echo "0")
+          if [[ "$ci_count" -ne 2 ]]; then
+            echo "::error::ci.yml claude-code pins (${ci_count}/2) don't match .github/package.json (${pkg_version}). Bump integration-tests, e2e-tests, and package.json in lockstep."
+            exit 1
+          fi
+          echo "✓ claude-code pin consistent: ${pkg_version} (2/2 ci.yml occurrences match)"
 
   unit-tests:
     name: Unit Tests
@@ -349,7 +366,10 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q jq
           # Node.js 20.x is pre-installed on ubuntu-latest runners
-          npm install -g @anthropic-ai/claude-code@latest
+          # Pinned version — keep in sync with e2e-tests (line ~465).
+          # Bump both together; a floating @latest breaks CI silently when
+          # Anthropic ships a hook-schema or CLI-flag change (#355).
+          npm install -g @anthropic-ai/claude-code@2.1.143
 
       - name: Configure git (required by Claude Code)
         run: |
@@ -371,6 +391,7 @@ jobs:
   e2e-tests:
     name: E2E Tests (live API)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # SECURITY layers (defence in depth — each one independently blocks a class
     # of attack):
     #
@@ -486,6 +507,7 @@ jobs:
   container-tests:
     name: Container Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: changes
     # Only run if container-related files changed (Containerfile, entrypoint, build scripts, libs)
     if: needs.changes.outputs.container == 'true'
@@ -599,6 +621,7 @@ jobs:
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     needs: [changes, lint, verify-pinning, config-validation, unit-tests, integration-tests, e2e-tests, container-tests]
     if: always()
     steps:
