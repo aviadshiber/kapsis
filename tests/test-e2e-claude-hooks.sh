@@ -53,10 +53,17 @@ fi
 # Shared setup / teardown
 #===============================================================================
 
-_REAL_ORIG_HOME=""
+# Saved once at script start so a failed test that skips cleanup cannot corrupt
+# the restore point for subsequent test functions.
+_REAL_ORIG_HOME="$HOME"
+TEST_HOME=""
+TEST_WORKSPACE=""
 
 setup_real_env() {
-    _REAL_ORIG_HOME="$HOME"
+    # Reset any state left by a prior failed test (HOME, dirs, env vars, guards).
+    # Safe to call before first test because _REAL_ORIG_HOME, TEST_HOME, and
+    # TEST_WORKSPACE are initialised at script level above.
+    cleanup_real_env 2>/dev/null || true
     TEST_HOME=$(mktemp -d)
     TEST_WORKSPACE=$(mktemp -d)
     export HOME="$TEST_HOME"

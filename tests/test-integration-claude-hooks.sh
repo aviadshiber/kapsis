@@ -53,7 +53,9 @@ fi
 # Shared setup / teardown
 #===============================================================================
 
-_ORIG_HOME=""
+# Saved once at script start so a failed test that skips cleanup cannot corrupt
+# the restore point for subsequent test functions.
+_ORIG_HOME="$HOME"
 TEST_HOME=""
 TEST_WORKSPACE=""
 _mock_pid=""
@@ -103,7 +105,10 @@ _stop_mock_server() {
 }
 
 setup_mock_env() {
-    _ORIG_HOME="$HOME"
+    # Reset any state left by a prior failed test (HOME, dirs, env vars, guards).
+    # Safe to call before first test because _ORIG_HOME, TEST_HOME, and
+    # TEST_WORKSPACE are initialised at script level above.
+    cleanup_mock_env 2>/dev/null || true
     TEST_HOME=$(mktemp -d)
     TEST_WORKSPACE=$(mktemp -d)
     export HOME="$TEST_HOME"

@@ -30,10 +30,16 @@ HOOKS_SRC="$KAPSIS_ROOT/scripts/hooks"
 # Shared setup / teardown
 #===============================================================================
 
-_E2E_ORIG_HOME=""
+# Saved once at script start so a failed test that skips cleanup cannot corrupt
+# the restore point for subsequent test functions.
+_E2E_ORIG_HOME="$HOME"
+TEST_HOME=""
 
 setup_e2e_env() {
-    _E2E_ORIG_HOME="$HOME"
+    # Reset any state left by a prior failed test (HOME, dirs, env vars, guards).
+    # Safe to call before first test because _E2E_ORIG_HOME and TEST_HOME are
+    # initialised at script level above.
+    cleanup_e2e_env 2>/dev/null || true
     TEST_HOME=$(mktemp -d)
     export HOME="$TEST_HOME"
     export KAPSIS_HOME="$KAPSIS_ROOT"
@@ -52,13 +58,14 @@ setup_e2e_env() {
 
 cleanup_e2e_env() {
     export HOME="$_E2E_ORIG_HOME"
-    rm -rf "$TEST_HOME" "$KAPSIS_ROOT/hooks"
-    unset TEST_HOME KAPSIS_HOME
+    rm -rf "${TEST_HOME:-}" "$KAPSIS_ROOT/hooks"
+    unset TEST_HOME KAPSIS_HOME KAPSIS_LIB
     _KAPSIS_LOG_FILE_PATH=""
     # shellcheck disable=SC2034
     export KAPSIS_LOG_TO_FILE="false"
     unset KAPSIS_INJECT_GIST 2>/dev/null || true
     unset KAPSIS_STATUS_AGENT_ID 2>/dev/null || true
+    unset _KAPSIS_INJECT_STATUS_HOOKS_LOADED 2>/dev/null || true
 }
 
 #===============================================================================
