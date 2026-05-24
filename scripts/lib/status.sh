@@ -428,7 +428,7 @@ status_get_commit_sha() {
 # Arguments:
 #   $1 - Error type: "agent_failure", "agent_partial", "commit_failure",
 #        "push_failure", "uncommitted_work", "mount_failure",
-#        "hung_after_completion", "killed"
+#        "exec_channel_hang", "hung_after_completion", "killed"
 status_set_error_type() {
     _KAPSIS_ERROR_TYPE="${1:-}"
 }

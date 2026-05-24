@@ -49,6 +49,7 @@ export interface AgentStatus {
     | "commit_failure"
     | "push_failure"
     | "mount_failure"
+    | "exec_channel_hang"
     | "killed"
     | "zombie"
     | null;

@@ -10,8 +10,26 @@ const DEBOUNCE_MS = 50;
 // appears. Wait this long before treating a "file vanished" event as a real
 // delete; otherwise the UI flickers every time status.sh writes.
 const DROP_GRACE_MS = 200;
+// Backstop reconcile cadence. fs.watch on macOS FSEvents can drop events
+// under load (parallel matrix CI runners, virtualized hosts), leaving a
+// finished agent's status file deleted on disk but still present in the
+// cache. A periodic directory rescan catches the gap. 30s is cheap (one
+// readdir per tick) and bounds the worst-case dashboard staleness.
+const DEFAULT_RECONCILE_INTERVAL_MS = 30_000;
 
 export type StatusListener = (status: AgentStatus | null, file: string) => void;
+
+export interface StatusStoreOptions {
+  /**
+   * How often to rescan the status directory as a safety net against dropped
+   * fs.watch events. Defaults to 30s. Tests use a much shorter value so the
+   * reconcile loop closes the gap within the test timeout.
+   *
+   * Set to 0 to disable reconciliation entirely (useful for tests that want
+   * to assert pure fs.watch behavior).
+   */
+  reconcileIntervalMs?: number;
+}
 
 export class StatusStore {
   private cache = new Map<string, AgentStatus>();
@@ -20,17 +38,26 @@ export class StatusStore {
   private watcher: AbortController | null = null;
   private debounce = new Map<string, ReturnType<typeof setTimeout>>();
   private dropTimers = new Map<string, ReturnType<typeof setTimeout>>();
+  private reconcileTimer: ReturnType<typeof setInterval> | null = null;
+  private reconcileIntervalMs: number;
 
-  constructor(private statusDir: string) {}
+  constructor(private statusDir: string, opts: StatusStoreOptions = {}) {
+    this.reconcileIntervalMs = opts.reconcileIntervalMs ?? DEFAULT_RECONCILE_INTERVAL_MS;
+  }
 
   async init(): Promise<void> {
     await this.refreshAll();
     this.startWatch();
+    this.startReconcile();
   }
 
   close(): void {
     this.watcher?.abort();
     this.watcher = null;
+    if (this.reconcileTimer) {
+      clearInterval(this.reconcileTimer);
+      this.reconcileTimer = null;
+    }
     this.listeners.clear();
     for (const t of this.debounce.values()) clearTimeout(t);
     this.debounce.clear();
@@ -139,6 +166,61 @@ export class StatusStore {
         }
       }
     })();
+  }
+
+  private startReconcile(): void {
+    if (this.reconcileIntervalMs <= 0) return;
+    this.reconcileTimer = setInterval(() => {
+      void this.reconcile().catch((e: unknown) => {
+        log.warn("status reconcile failed", { err: String(e) });
+      });
+    }, this.reconcileIntervalMs);
+    // Don't keep the event loop alive for the timer alone — when the server
+    // shuts down (e.g. via SIGTERM), Bun should be free to exit even if
+    // close() wasn't explicitly called.
+    if (typeof (this.reconcileTimer as { unref?: () => void }).unref === "function") {
+      (this.reconcileTimer as unknown as { unref: () => void }).unref();
+    }
+  }
+
+  /**
+   * Compare on-disk directory contents to cache and reconcile gaps.
+   *
+   * - Files present in cache but missing on disk → dropOneSoon (notifies
+   *   listeners with null after the same grace period an fs.watch-driven
+   *   delete uses).
+   * - Files present on disk but missing from cache → refreshOne (notifies
+   *   listeners with the loaded status).
+   *
+   * Exposed via the periodic interval started in `startReconcile()` as a
+   * safety net against dropped fs.watch events (macOS FSEvents under load).
+   * Also useful in tests that want to force a synchronous reconciliation.
+   */
+  async reconcile(): Promise<void> {
+    let files: string[];
+    try {
+      files = await readdir(this.statusDir);
+    } catch {
+      return; // Directory transiently missing; refreshAll handles full failures.
+    }
+    const onDisk = new Set(
+      files.filter((f) => !f.startsWith(".") && f.endsWith(".json")),
+    );
+    // Deletes missed by fs.watch — schedule drop with the same grace period
+    // an atomic-rename write would use, so a concurrent write that just
+    // happened to land between readdir and the reconcile tick doesn't
+    // produce a spurious null notification.
+    for (const file of this.cache.keys()) {
+      if (!onDisk.has(file)) this.dropOneSoon(file);
+    }
+    // Creates missed by fs.watch — refresh into cache. Skips files already
+    // present (refreshOne's `if (!prev || ... updated_at differs ...)` keeps
+    // listeners from firing on no-op rescans of unchanged files).
+    for (const file of onDisk) {
+      if (!this.cache.has(file)) {
+        await this.refreshOne(join(this.statusDir, file));
+      }
+    }
   }
 }
 
