@@ -491,6 +491,99 @@ test_returns_1_for_kapsis_internal() {
     cleanup_test_repo
 }
 
+# REGRESSION: products PR #102836 — Kapsis worktree mode mounts the sanitized
+# git directory at /workspace/.git-safe and the shared object database at
+# /workspace/.git-objects. Both appear as untracked directories at the
+# worktree root. If git add -A picks them up, the resulting commit doubles
+# the repo size (the entire object DB ships as tracked files).
+test_detects_git_safe_internal_files() {
+    log_test "Testing detection of .git-safe/ internal files (Kapsis mount)"
+
+    setup_test_repo "git-safe"
+    cd "$TEST_REPO"
+
+    mkdir -p .git-safe/refs/heads
+    echo "ref: refs/heads/main" > .git-safe/HEAD
+    echo "[core]" > .git-safe/config
+    echo "marker" > .git-safe/kapsis-meta
+
+    git add .git-safe/
+
+    local staged_before
+    staged_before=$(git diff --cached --name-only | grep "^\.git-safe/" || echo "")
+    if [[ -z "$staged_before" ]]; then
+        log_fail ".git-safe/ files should be staged before validation"
+        cleanup_test_repo
+        return 1
+    fi
+
+    validate_staged_files "$TEST_REPO"
+
+    local staged_after
+    staged_after=$(git diff --cached --name-only | grep "^\.git-safe/" || echo "")
+    if [[ -n "$staged_after" ]]; then
+        log_fail ".git-safe/ files should be unstaged after validation"
+        cleanup_test_repo
+        return 1
+    fi
+
+    cleanup_test_repo
+}
+
+test_detects_git_objects_internal_files() {
+    log_test "Testing detection of .git-objects/ internal files (Kapsis mount)"
+
+    setup_test_repo "git-objects"
+    cd "$TEST_REPO"
+
+    mkdir -p .git-objects/ab
+    echo "compressed-blob" > .git-objects/ab/cdef0123456789
+
+    git add .git-objects/
+
+    local staged_before
+    staged_before=$(git diff --cached --name-only | grep "^\.git-objects/" || echo "")
+    if [[ -z "$staged_before" ]]; then
+        log_fail ".git-objects/ files should be staged before validation"
+        cleanup_test_repo
+        return 1
+    fi
+
+    validate_staged_files "$TEST_REPO"
+
+    local staged_after
+    staged_after=$(git diff --cached --name-only | grep "^\.git-objects/" || echo "")
+    if [[ -n "$staged_after" ]]; then
+        log_fail ".git-objects/ files should be unstaged after validation"
+        cleanup_test_repo
+        return 1
+    fi
+
+    cleanup_test_repo
+}
+
+test_returns_1_for_git_safe_internal() {
+    log_test "Testing return code: 1 (security abort) for .git-safe/ file"
+
+    setup_test_repo "rc-git-safe"
+    cd "$TEST_REPO"
+
+    mkdir -p .git-safe
+    echo "ref: refs/heads/main" > .git-safe/HEAD
+    git add .git-safe/HEAD
+
+    local rc=0
+    validate_staged_files "$TEST_REPO" || rc=$?
+
+    if [[ $rc -ne 1 ]]; then
+        log_fail "Expected return 1 for .git-safe/ file (security abort), got $rc"
+        cleanup_test_repo
+        return 1
+    fi
+
+    cleanup_test_repo
+}
+
 #===============================================================================
 # TEST RUNNER
 #===============================================================================
@@ -514,6 +607,9 @@ main() {
     run_test test_returns_0_for_filter_only
     run_test test_returns_1_for_tilde_path
     run_test test_returns_1_for_kapsis_internal
+    run_test test_detects_git_safe_internal_files
+    run_test test_detects_git_objects_internal_files
+    run_test test_returns_1_for_git_safe_internal
 
     print_summary
     return "$TESTS_FAILED"

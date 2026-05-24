@@ -8,6 +8,8 @@ configs/*-personal.yaml
 # Sandbox directories
 .ai-sandboxes/
 .worktrees/
+.git-safe/
+.git-objects/
 
 # IDE
 .idea/
