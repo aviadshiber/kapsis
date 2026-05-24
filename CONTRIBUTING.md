@@ -336,6 +336,27 @@ This installs:
 - **pre-commit hook**: Runs shellcheck, shfmt, yamllint, markdownlint, and detect-secrets on staged files
 - **pre-push hook**: Runs security scan before pushing
 
+#### Required local tools for running quick tests
+
+The quick test suite (`./tests/run-all-tests.sh --quick`) requires **mikefarah/yq v4+**.
+The Debian/Ubuntu `apt install yq` package is a Python wrapper with incompatible syntax and will cause silent test failures.
+
+Install the correct binary:
+
+```bash
+# macOS
+brew install yq
+
+# Linux
+sudo wget https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64 \
+     -O /usr/local/bin/yq && sudo chmod +x /usr/local/bin/yq
+
+# Verify
+yq --version   # must print "mikefarah/yq ..."
+```
+
+Tests that require mikefarah/yq use `skip_if_not_mikefarah_yq` to skip gracefully when the wrong binary is installed, rather than failing with cryptic assertion errors.
+
 ### Running Hooks Manually
 
 ```bash
