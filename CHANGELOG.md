@@ -42,13 +42,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Ship inject-plugin-hooks.sh in container + build-time guard against future drift (#380)
 
-## [Unreleased]
+## [2.32.0] - 2026-05-24
 
 ### Added
-- Host-side `podman exec` channel watchdog catches the silent-wedge mode where vfkit is alive but the in-VM podman daemon's exec channel hangs (#382). New `scripts/lib/exec-channel-watchdog.sh` probes the container every 30s with `timeout 5 podman exec <ctr> true`; after 3 consecutive failures (~90s blind window) it writes `exit_code: 4` + `error_type: exec_channel_hang` to status.json, touches a host-only sentinel under `$TMPDIR`, and SIGTERMs the agent's `podman run`. Mirrors the vfkit watchdog trust model — host sentinel is the authoritative fire signal; the override block in `launch-agent.sh` yields to the vfkit watchdog when both fire so the more specific `mount_failure` error_type wins. Knobs: `KAPSIS_EXEC_WATCHDOG_{ENABLED,INTERVAL,TIMEOUT,THRESHOLD}`. macOS-only; no-op on Linux.
+- Host-side podman exec channel watchdog (#382) (#383)
 
 ### Fixed
-- StatusStore periodic reconcile loop closes the gap when `fs.watch` drops events under load (macOS FSEvents coalescing). Previously a dropped unlink event left a finished agent phantom in the dashboard until process restart; a dropped create event hid a new agent until the next watch event. The reconcile loop rescans the status directory every 30s by default (`StatusStoreOptions.reconcileIntervalMs`, env-knob via constructor; `0` disables), reconciles cache vs disk via the same `dropOneSoon`/`refreshOne` paths, and now also detects stale-update (cached entry whose `updated_at` differs from on-disk), rejects symlinked status files (defense-in-depth parity with the reaper), and caches files that fail filename validation so each tick doesn't re-readFile them.
+- Exclude .git-safe and .git-objects from commits (#385)
+
+## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
 
@@ -990,7 +992,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.31.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.32.0...HEAD
+[2.32.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.32.0
 [2.31.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.31.3
 [2.31.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.31.2
 [2.29.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.29.1
