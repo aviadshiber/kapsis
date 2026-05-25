@@ -617,12 +617,43 @@ jobs:
           # Use 'open' network mode in CI - 'filtered' requires dnsmasq which can't run in CI containers
           KAPSIS_NETWORK_MODE: "open"
 
+  # Build and test the kapsis-ctl Go binary (issue #266)
+  go-build:
+    name: kapsis-ctl Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5  # v5.5.0
+        with:
+          go-version-file: cmd/kapsis-ctl/go.mod
+          # No go.sum — stdlib-only module; Go tool cache is still useful
+          cache: true
+
+      - name: vet
+        working-directory: cmd/kapsis-ctl
+        run: go vet ./...
+
+      - name: test
+        working-directory: cmd/kapsis-ctl
+        run: go test ./...
+
+      - name: build
+        working-directory: cmd/kapsis-ctl
+        run: go build -trimpath -ldflags="-s -w" -o ../../bin/kapsis-ctl .
+
+      - name: smoke-test help
+        run: ./bin/kapsis-ctl --help
+
   # Summary job that all required checks depend on
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs: [changes, lint, verify-pinning, config-validation, unit-tests, integration-tests, e2e-tests, container-tests]
+    needs: [changes, lint, verify-pinning, config-validation, unit-tests, integration-tests, e2e-tests, container-tests, go-build]
     if: always()
     steps:
       - name: Check all jobs passed
@@ -652,6 +683,10 @@ jobs:
 
           scripts_changed="${{ needs.changes.outputs.scripts }}"
           container_changed="${{ needs.changes.outputs.container }}"
+
+          # go-build runs on every push (no path gate) — always required so
+          # the kapsis-ctl binary never silently breaks on docs-only PRs.
+          check "go-build" "${{ needs.go-build.result }}" "true"
 
           if [[ "$scripts_changed" != "true" ]]; then
             echo "No script changes detected — CI tests skipped (docs/assets only)"

@@ -105,6 +105,11 @@ kapsis/
 ├── docs/                       # Extended documentation (15 guides + designs/)
 │   ├── designs/                # Design documents (agent-profiles-architecture.md)
 │   └── *.md                    # Reference guides (see Documentation Map below)
+├── cmd/
+│   └── kapsis-ctl/             # Host-side Podman query binary (Phase 1, issue #266)
+│       ├── go.mod              # Separate module — stdlib-only, no operator deps
+│       ├── main.go             # Entry point + subcommand dispatch
+│       └── podman/             # libpod REST API client + types + validation
 ├── operator/                   # K8s operator (Go, kubebuilder)
 │   ├── api/v1alpha1/           # AgentRequest CRD types
 │   ├── internal/controller/    # Reconciliation logic (pod builder, network policy, status bridge)
@@ -116,11 +121,13 @@ kapsis/
 │   │   ├── src/control/        # kill / cleanup wrappers + dashboard audit writer
 │   │   └── tests/              # bun:test
 │   └── ui/                     # Vite + React + TypeScript SPA (embedded into the binary)
+├── bin/                        # Built binaries (git-ignored); produced by `make build-ctl`
 ├── maven/                      # Maven config (isolated-settings.xml for in-container builds)
 ├── assets/                     # Static artifacts (logos, etc.)
 ├── security/                   # AppArmor & seccomp profiles
 ├── packaging/                  # Debian, Homebrew, RPM packages
 ├── .github/workflows/          # CI/CD (ci, auto-release, release, security, packages, deploy-pages, sync-homebrew-tap)
+├── Makefile                    # Top-level targets: build-ctl, test-ctl, vet-ctl, all-ctl
 ├── Containerfile               # Multi-stage container image definition
 ├── setup.sh                    # Initial system setup & dependency validation
 ├── quick-start.sh              # Simplified one-line agent launcher
@@ -235,6 +242,9 @@ Status is written as JSON to `~/.kapsis/status/`.
 
 | File | Purpose |
 |------|---------|
+| `cmd/kapsis-ctl/` | **Phase 1 only — dev/operator tool, not packaged yet.** Build with `make build-ctl`. MUST NOT be installed inside container images (see issue #266 for Phase 2/3 roadmap). |
+| `cmd/kapsis-ctl/podman/client.go` | libpod REST API client — socket discovery, validation, Inspect/List/Alive |
+| `Makefile` | Top-level build targets for `kapsis-ctl` (`build-ctl`, `test-ctl`, `vet-ctl`) |
 | `scripts/launch-agent.sh` | Main entry point — orchestrates config, image, worktree, container |
 | `scripts/entrypoint.sh` | Container startup — SDKMAN, NVM, Maven settings, credential injection |
 | `scripts/worktree-manager.sh` | Git worktree isolation — creates sanitized git views for containers |
