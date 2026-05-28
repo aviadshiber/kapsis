@@ -50,6 +50,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Exclude .git-safe and .git-objects from commits (#385)
 
+## [2.33.0] - 2026-05-28
+
+### Added
+- Kapsis-ctl Phase 1 — read-only Podman container queries via libpod REST API (issue #266) (#347)
+
+### Changed
+- Bump the github-actions group across 1 directory with 3 updates (#388)
+- Fix state pollution causing --quick failures for integration hook tests (#367)
+- Add job timeouts, pin claude-code version, harden yq supply-chain (#355, #356) (#384)
+
+### Fixed
+- Disable Go module cache for stdlib-only kapsis-ctl (#392)
+
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
@@ -992,7 +1005,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.32.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.33.0...HEAD
+[2.33.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.33.0
 [2.32.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.32.0
 [2.31.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.31.3
 [2.31.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.31.2
