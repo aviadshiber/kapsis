@@ -58,17 +58,76 @@ _pattern_to_regex() {
         # Directory-prefix: **/__pycache__/ matches src/__pycache__/foo.pyc
         local dir_name="${p#\*\*/}"
         dir_name="${dir_name%/}"
-        # Escape literal dots so they don't match any character in grep -E
+        # Escape literal dots, then convert * glob to [^/]* (no path separator)
         local escaped_dir="${dir_name//./\\.}"
+        escaped_dir="${escaped_dir//\*/[^/]*}"
         echo "(^|/)${escaped_dir}/"
     elif [[ "$p" == "**/"* ]]; then
         local base="${p#\*\*/}"
         local escaped_base="${base//./\\.}"
+        escaped_base="${escaped_base//\*/[^/]*}"
         echo "(^|/)${escaped_base}$"
     else
         local escaped_p="${p//./\\.}"
+        escaped_p="${escaped_p//\*/[^/]*}"
         echo "^${escaped_p}$"
     fi
+}
+
+#===============================================================================
+# STRIP KAPSIS INFRASTRUCTURE INJECTIONS (Issue #391)
+#
+# Removes Kapsis-injected blocks from CLAUDE.md and AGENTS.md before staging.
+# These blocks are added by inject_gist_instructions() in entrypoint.sh to
+# guide the agent during the session but must not land in user commits.
+#
+# The begin/end HTML-comment markers are written by inject_gist_instructions().
+# This function is idempotent: files without the markers are left unchanged.
+#===============================================================================
+strip_kapsis_injections() {
+    local worktree_path="$1"
+    local marker_begin="<!-- KAPSIS_GIST_BEGIN -->"
+    local marker_end="<!-- KAPSIS_GIST_END -->"
+
+    cd "$worktree_path"
+
+    local stripped_count=0
+    local md_file
+    for md_file in CLAUDE.md AGENTS.md; do
+        if [[ ! -f "$md_file" ]]; then
+            continue
+        fi
+        if ! grep -qF "$marker_begin" "$md_file" 2>/dev/null; then
+            continue
+        fi
+
+        local tmp_file
+        tmp_file=$(mktemp "${TMPDIR:-/tmp}/kapsis-strip-XXXXXX")
+
+        awk -v begin="$marker_begin" -v end="$marker_end" '
+            $0 == begin { skip=1; next }
+            skip && $0 == end { skip=0; next }
+            !skip { print }
+        ' "$md_file" > "$tmp_file"
+
+        if [[ -s "$tmp_file" ]]; then
+            mv "$tmp_file" "$md_file" || {
+                log_warn "strip_kapsis_injections: could not overwrite $md_file — injection left in place"
+                rm -f "$tmp_file"
+                continue
+            }
+            log_info "Stripped Kapsis gist injection from $md_file"
+            ((stripped_count++)) || true
+        else
+            rm -f "$tmp_file"
+            log_warn "strip_kapsis_injections: $md_file would be empty after strip — leaving original"
+        fi
+    done
+
+    if [[ "$stripped_count" -gt 0 ]]; then
+        log_success "Removed Kapsis infrastructure injections from $stripped_count file(s)"
+    fi
+    return 0
 }
 
 #===============================================================================
@@ -352,6 +411,10 @@ commit_changes() {
     local co_authors="${4:-}"
 
     cd "$worktree_path"
+
+    # Strip Kapsis infrastructure injections (gist blocks, etc.) before staging
+    # so they never reach the user's branch commit (issue #391).
+    strip_kapsis_injections "$worktree_path"
 
     # Note: git read-tree HEAD for cache-tree rebuild is handled by
     # sync_index_from_container(). The duplicate here was removed in

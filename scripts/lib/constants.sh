@@ -52,10 +52,14 @@ readonly CONTAINER_STATUS_PATH="/kapsis-status"
 
 # Default patterns for files that should never be committed by Kapsis
 # These are typically config files that the sandbox may modify but shouldn't commit
+# Issue #391: .claude/settings.json is modified by LSP/plugin injection during the session;
+# committing it would pollute the user's branch with agent-session config mutations.
 readonly KAPSIS_DEFAULT_COMMIT_EXCLUDE=".gitignore
 **/.gitignore
 .gitattributes
-**/.gitattributes"
+**/.gitattributes
+.claude/settings.json
+**/.claude/settings.json"
 
 #===============================================================================
 # PUSH TIMEOUT (Issue #227)
@@ -82,7 +86,8 @@ readonly KAPSIS_DEFAULT_PUSH_TIMEOUT=60
 readonly KAPSIS_DEFAULT_EPHEMERAL_PATTERNS="**/__pycache__/
 **/.pytest_cache/
 .coverage
-**/.coverage"
+**/.coverage
+**/*.bak*"
 
 #===============================================================================
 # NETWORK ISOLATION

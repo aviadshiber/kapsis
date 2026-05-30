@@ -355,6 +355,8 @@ inject_gist_instructions() {
     }
 
     # Append to CLAUDE.md if it exists (for Claude Code)
+    # Wrapped in HTML-comment sentinels so post-container-git.sh can strip the
+    # block before committing — keeping gist instructions session-local (#391).
     local claude_md="${workspace}/CLAUDE.md"
     if [[ -f "$claude_md" ]]; then
         if [[ ! -w "$claude_md" ]]; then
@@ -362,9 +364,11 @@ inject_gist_instructions() {
         elif ! grep -q "$marker" "$claude_md" 2>/dev/null; then
             {
                 echo ""
-                echo "---"
+                echo "<!-- KAPSIS_GIST_BEGIN -->"
                 echo ""
                 echo "$rendered"
+                echo ""
+                echo "<!-- KAPSIS_GIST_END -->"
             } >> "$claude_md"
             log_debug "Gist instructions appended to $claude_md"
             injected=true
@@ -379,9 +383,11 @@ inject_gist_instructions() {
         elif ! grep -q "$marker" "$agents_md" 2>/dev/null; then
             {
                 echo ""
-                echo "---"
+                echo "<!-- KAPSIS_GIST_BEGIN -->"
                 echo ""
                 echo "$rendered"
+                echo ""
+                echo "<!-- KAPSIS_GIST_END -->"
             } >> "$agents_md"
             log_debug "Gist instructions appended to $agents_md"
             injected=true
