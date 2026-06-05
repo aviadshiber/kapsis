@@ -2602,6 +2602,22 @@ main() {
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
         local exit_code=$?
+        # Save partial transcript on abnormal exit before deleting the buffer (Issue #390).
+        # The normal path (run_agent) saves transcript before rm; this trap catches
+        # SIGTERM / early ERR exits where that code never ran.
+        if [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && [[ -s "$_CONTAINER_OUTPUT_TMP" ]]; then
+            local _trap_conv_dir="${KAPSIS_CONVERSATIONS_DIR:-$HOME/.kapsis/conversations/${AGENT_ID:-unknown}}"
+            if [[ -d "$_trap_conv_dir" ]]; then
+                local _trap_ts="${_trap_conv_dir}/transcript.txt"
+                if [[ ! -f "$_trap_ts" ]]; then
+                    {
+                        printf '# kapsis-transcript (interrupted) agent=%s at=%s\n' \
+                            "${AGENT_ID:-unknown}" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)"
+                        cat "$_CONTAINER_OUTPUT_TMP"
+                    } | sed 's/\x1b\[[0-9;]*m//g' > "$_trap_ts" 2>/dev/null || true
+                fi
+            fi
+        fi
         # Clean up temp files if they exist
         [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
         # Stop macOS sleep prevention if active (Issue #276).
@@ -3159,6 +3175,32 @@ main() {
             EXIT_CODE=4
             _KAPSIS_EXEC_HANG_DETECTED=true
         fi
+    fi
+
+    # Persist conversation transcript before discarding the buffer (Issue #390).
+    # The full container stdout+stderr is already captured in $container_output by
+    # backend_run/tee.  Copy it to conversations/<agent-id>/transcript.txt so the
+    # post-mortem debugging workflow ("read the transcript when an agent hangs")
+    # actually has something to read.  50 MB cap; tail is kept because the agent's
+    # own output is always at the end — the head is just container bootstrap noise.
+    local _conv_dir_save="${KAPSIS_CONVERSATIONS_DIR:-$HOME/.kapsis/conversations/${AGENT_ID}}"
+    if [[ -d "$_conv_dir_save" ]] && [[ -f "$container_output" ]] && [[ -s "$container_output" ]]; then
+        local _transcript_path="${_conv_dir_save}/transcript.txt"
+        local _max_transcript_bytes="${KAPSIS_TRANSCRIPT_MAX_BYTES:-$((50 * 1024 * 1024))}"
+        local _actual_bytes
+        _actual_bytes=$(wc -c < "$container_output" 2>/dev/null || echo 0)
+        {
+            printf '# kapsis-transcript agent=%s exit=%s at=%s\n' \
+                "${AGENT_ID}" "${EXIT_CODE}" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)"
+            if (( _actual_bytes > _max_transcript_bytes )); then
+                printf '# TRUNCATED: %d bytes total; showing last %d bytes\n' \
+                    "$_actual_bytes" "$_max_transcript_bytes"
+                tail -c "$_max_transcript_bytes" "$container_output"
+            else
+                cat "$container_output"
+            fi
+        } | sed 's/\x1b\[[0-9;]*m//g' > "$_transcript_path" 2>/dev/null || true
+        log_debug "Conversation transcript saved: $_transcript_path (${_actual_bytes} bytes)"
     fi
 
     rm -f "$container_output"

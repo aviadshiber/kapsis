@@ -892,7 +892,7 @@ clean_conversations() {
         # In --all mode clean everything; otherwise only expire past TTL
         if [[ "$CLEAN_ALL" != "true" ]]; then
             local mtime
-            mtime=$(get_file_mtime "$conv_dir" 2>/dev/null) || continue
+            mtime=$(get_dir_mtime "$conv_dir" 2>/dev/null) || continue
             [[ -z "$mtime" ]] && continue
             local age=$((now - mtime))
             if [[ "$age" -le "$ttl_seconds" ]]; then

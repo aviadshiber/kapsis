@@ -2001,6 +2001,17 @@ main() {
         exec bash
     else
         log_info "Executing command: $1"
+        # Secondary transcript capture (Issue #390).
+        # Primary capture is host-side in launch-agent.sh (full container output).
+        # This in-container tee covers direct podman/container invocations that
+        # bypass launch-agent.sh and gives a clean agent-only view for claude-cli.
+        # The guard is intentionally loose: skip only when dir is absent or
+        # unwritable, so it never blocks agent startup on unexpected state.
+        _KAPSIS_CONV_DIR="${CONTAINER_CONVERSATIONS_PATH:-/home/developer/.claude/conversations}"
+        if [[ -d "$_KAPSIS_CONV_DIR" ]] && [[ -w "$_KAPSIS_CONV_DIR" ]]; then
+            _KAPSIS_AGENT_OUT="${_KAPSIS_CONV_DIR}/agent-output.txt"
+            exec 1> >(tee -a "$_KAPSIS_AGENT_OUT") 2>&1
+        fi
         exec "$@"
     fi
 }
