@@ -337,6 +337,30 @@ test_disk_pressure_skips_cache_in_dry_run() {
     rm -rf "$fake_kapsis"
 }
 
+# Regression for PR #393 review: a non-numeric KAPSIS_DIR_WARN_SIZE_GB (e.g.
+# "50g") must NOT crash the script via the arithmetic on the next line.
+# Cleanup work is already done by the time check_disk_pressure runs, so a
+# silent non-zero exit would let callers (slack-bot dispatch, cron wrappers)
+# think cleanup failed.
+test_disk_pressure_rejects_non_numeric_threshold() {
+    local fake_kapsis
+    fake_kapsis=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-nonnumeric.XXXXXX")
+    echo "x" > "$fake_kapsis/marker"
+
+    local exit_code=0
+    _run_check_disk_pressure "$fake_kapsis" "50g" "false" >/dev/null 2>&1 || exit_code=$?
+
+    [[ "$exit_code" -eq 0 ]] || {
+        _log_failure "Non-numeric KAPSIS_DIR_WARN_SIZE_GB should not crash" \
+            "Got exit code: $exit_code"
+        return 1
+    }
+    assert_file_not_exists "$fake_kapsis/.disk-usage-cache" \
+        "Non-numeric threshold should short-circuit before cache write"
+
+    rm -rf "$fake_kapsis"
+}
+
 #===============================================================================
 # Runner
 #===============================================================================
@@ -360,5 +384,6 @@ run_test test_symlinked_top_dir_refused
 run_test test_disk_pressure_writes_cache
 run_test test_disk_pressure_zero_threshold_disables
 run_test test_disk_pressure_skips_cache_in_dry_run
+run_test test_disk_pressure_rejects_non_numeric_threshold
 
 print_summary

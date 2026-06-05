@@ -1026,6 +1026,9 @@ check_disk_pressure() {
     local threshold_gb="${KAPSIS_DIR_WARN_SIZE_GB:-${KAPSIS_DEFAULT_DIR_WARN_SIZE_GB:-50}}"
     # 0 disables the check entirely.
     [[ "$threshold_gb" -eq 0 ]] 2>/dev/null && return 0
+    # Reject non-numeric values (e.g. "50g") so the arithmetic below doesn't
+    # abort kapsis-cleanup with no diagnostic — see review on PR #393.
+    [[ "$threshold_gb" =~ ^[0-9]+$ ]] || return 0
 
     local bytes
     bytes=$(get_dir_size "$KAPSIS_DIR")
