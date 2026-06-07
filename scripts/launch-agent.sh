@@ -103,6 +103,7 @@ DRY_RUN=false
 # Use KAPSIS_IMAGE env var if set (for CI), otherwise default
 IMAGE_NAME="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 SANDBOX_MODE=""  # auto-detect, worktree, or overlay
+OVERLAY_VOLUME=""  # named volume for overlay upper/work on macOS (Issue #376)
 WORKTREE_PATH=""
 SANITIZED_GIT_PATH=""
 OBJECTS_PATH=""
@@ -1277,15 +1278,28 @@ setup_overlay_sandbox() {
 
     log_info "Setting up overlay sandbox: $SANDBOX_ID"
 
-    ensure_dir "$UPPER_DIR"
-    ensure_dir "$WORK_DIR"
-
-    if [[ "$DRY_RUN" == "true" ]]; then
-        log_info "  [DRY-RUN] Would create upper directory: $UPPER_DIR"
-        log_info "  [DRY-RUN] Would create work directory: $WORK_DIR"
+    if is_macos && [[ "${KAPSIS_OVERLAY_USE_VOLUME:-true}" == "true" ]]; then
+        # Issue #376: on macOS move overlay upper/work off the virtio-fs share onto
+        # VM-native ext4 via a Podman named volume.  SANDBOX_DIR is still created on
+        # the host so export_overlay_volume_to_host() has a target to extract into.
+        OVERLAY_VOLUME="kapsis-${AGENT_ID}${KAPSIS_OVERLAY_VOLUME_SUFFIX}"
+        ensure_dir "$SANDBOX_DIR"
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_info "  [DRY-RUN] Would create overlay volume: $OVERLAY_VOLUME"
+        else
+            log_info "  Overlay volume (VM-native ext4): $OVERLAY_VOLUME"
+            log_info "  Export target: $SANDBOX_DIR"
+        fi
     else
-        log_info "  Upper directory: $UPPER_DIR"
-        log_info "  Work directory: $WORK_DIR"
+        ensure_dir "$UPPER_DIR"
+        ensure_dir "$WORK_DIR"
+        if [[ "$DRY_RUN" == "true" ]]; then
+            log_info "  [DRY-RUN] Would create upper directory: $UPPER_DIR"
+            log_info "  [DRY-RUN] Would create work directory: $WORK_DIR"
+        else
+            log_info "  Upper directory: $UPPER_DIR"
+            log_info "  Work directory: $WORK_DIR"
+        fi
     fi
 }
 
@@ -1389,8 +1403,18 @@ generate_volume_mounts_worktree() {
 generate_volume_mounts_overlay() {
     VOLUME_MOUNTS=()
 
-    # Project with CoW overlay
-    VOLUME_MOUNTS+=("-v" "${PROJECT_PATH}:/workspace:O,upperdir=${UPPER_DIR},workdir=${WORK_DIR}")
+    if is_macos && [[ "${KAPSIS_OVERLAY_USE_VOLUME:-true}" == "true" ]]; then
+        # Issue #376: fuse-overlayfs mode — upper/work in VM-native named volume.
+        # Project is mounted read-only as /lower; entrypoint.sh's setup_fuse_overlay()
+        # merges it with the named volume's /overlay/upper into /workspace via
+        # fuse-overlayfs (userspace, no virtio-fs round-trips on metadata).
+        VOLUME_MOUNTS+=("-v" "${PROJECT_PATH}:/lower:ro")
+        VOLUME_MOUNTS+=("-v" "${OVERLAY_VOLUME}:/overlay")
+    else
+        # Linux / macOS with KAPSIS_OVERLAY_USE_VOLUME=false: kernel OverlayFS.
+        # upper/work live on the host filesystem (ext4 on Linux, virtio-fs on macOS).
+        VOLUME_MOUNTS+=("-v" "${PROJECT_PATH}:/workspace:O,upperdir=${UPPER_DIR},workdir=${WORK_DIR}")
+    fi
 
     # Add common mounts (status, caches, spec, filesystem includes, SSH)
     add_common_volume_mounts
@@ -2065,6 +2089,10 @@ generate_env_vars() {
         ENV_VARS+=("-e" "KAPSIS_WORKTREE_MODE=true")
     else
         ENV_VARS+=("-e" "KAPSIS_SANDBOX_DIR=${SANDBOX_DIR}")
+        # Issue #376: signal entrypoint to mount fuse-overlayfs from /lower → /workspace
+        if is_macos && [[ "${KAPSIS_OVERLAY_USE_VOLUME:-true}" == "true" ]]; then
+            ENV_VARS+=("-e" "KAPSIS_USE_FUSE_OVERLAY=true")
+        fi
     fi
 
     if [[ -n "$BRANCH" ]]; then
@@ -2388,6 +2416,14 @@ build_container_command() {
     mapfile -t security_args < <(generate_security_args "$AGENT_NAME" "$RESOURCE_MEMORY" "$RESOURCE_CPUS")
     CONTAINER_CMD+=("${security_args[@]}")
 
+    # Issue #376: fuse-overlayfs (macOS overlay mode) needs /dev/fuse and SYS_ADMIN
+    # so the container can mount a FUSE filesystem inside the unprivileged runtime.
+    # Gated by KAPSIS_OVERLAY_USE_VOLUME so users can opt out on macOS if needed.
+    if [[ "$SANDBOX_MODE" == "overlay" ]] && is_macos && [[ "${KAPSIS_OVERLAY_USE_VOLUME:-true}" == "true" ]]; then
+        CONTAINER_CMD+=("--device" "/dev/fuse")
+        CONTAINER_CMD+=("--cap-add" "SYS_ADMIN")
+    fi
+
     # Network isolation mode
     case "$NETWORK_MODE" in
         none)
@@ -2536,13 +2572,13 @@ cleanup_agent_volumes() {
     local agent_id="$1"
     local removed=0
 
-    # Build the suffix list: "-status" is macOS-only because that's the only
-    # platform where we back /kapsis-status with a named volume (Issue #276).
-    # On Linux the bind mount is used and the -status volume never exists,
-    # so attempting to `podman volume rm` it is just noise.
+    # Build the suffix list: "-status" and "-overlay" are macOS-only because those
+    # are the only platforms where named volumes back /kapsis-status and the overlay
+    # upper/work dirs (Issues #276, #376).  On Linux direct bind mounts are used and
+    # those volumes never exist, so attempting to `podman volume rm` them is noise.
     local suffixes=(m2 gradle ge)
     if is_macos; then
-        suffixes+=(status)
+        suffixes+=(status overlay)
     fi
 
     for suffix in "${suffixes[@]}"; do
@@ -3184,6 +3220,8 @@ main() {
         if [[ "$SANDBOX_MODE" == "worktree" ]]; then
             post_container_worktree || POST_EXIT_CODE=$?
         else
+            # Issue #376: export overlay named volume → UPPER_DIR before inspecting it
+            export_overlay_volume_to_host || true
             post_container_overlay || POST_EXIT_CODE=$?
         fi
         log_timer_end "post_container"
@@ -3495,6 +3533,36 @@ post_container_worktree() {
     # Without this, the function returns 0 implicitly and the commit-failure detection
     # chain (exit code 6, error_type, worktree preservation in main) is never triggered.
     return "$_pcg_rc"
+}
+
+#===============================================================================
+# POST-CONTAINER: OVERLAY VOLUME EXPORT (macOS, Issue #376)
+#===============================================================================
+# After the container exits, extract the overlay named volume's upper/ subtree
+# to UPPER_DIR on the host so the rest of post_container_overlay() can inspect,
+# scope-validate, and present changes without knowing about named volumes.
+#
+# The volume is exported as a tar; the first path component is stripped because
+# the tar root maps to SANDBOX_DIR (which contains upper/ and work/ as children).
+export_overlay_volume_to_host() {
+    if ! is_macos || [[ "${KAPSIS_OVERLAY_USE_VOLUME:-true}" != "true" ]]; then
+        return 0
+    fi
+    [[ -z "${OVERLAY_VOLUME:-}" ]] && return 0
+
+    log_info "Exporting overlay volume to host for post-container analysis..."
+    ensure_dir "$SANDBOX_DIR"
+
+    local export_rc=0
+    podman volume export "$OVERLAY_VOLUME" 2>/dev/null \
+        | tar -xf - -C "$SANDBOX_DIR" 2>/dev/null \
+        || export_rc=$?
+
+    if [[ "$export_rc" -eq 0 ]]; then
+        log_success "Overlay volume exported to $SANDBOX_DIR"
+    else
+        log_warn "Overlay volume export failed (rc=$export_rc) — UPPER_DIR may be empty"
+    fi
 }
 
 #===============================================================================
