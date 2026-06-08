@@ -393,3 +393,26 @@ readonly KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS=7
 
 # Prevent macOS from sleeping while an agent is running
 readonly KAPSIS_DEFAULT_PREVENT_SLEEP=true
+
+#===============================================================================
+# VM MEMORY SIZING (Issue #377)
+#
+# Preflight advisor thresholds for macOS Podman VM memory sizing.
+# When the VM is under-allocated the AVF virtio-fs cache-coherency race window
+# (Apple FB16008360) widens, increasing mount_failure (exit_code=4) frequency.
+# Override each constant via the corresponding KAPSIS_VM_* environment variable.
+#===============================================================================
+
+# VM base memory overhead (GB) — VM OS + Podman daemon + fuse-overlayfs baseline
+readonly KAPSIS_DEFAULT_VM_BASE_MEMORY_GB=2
+
+# Additional memory per parallel agent (GB) — covers agent process + toolchain heap
+readonly KAPSIS_DEFAULT_VM_PER_AGENT_MEMORY_GB=3
+
+# Maximum VM:host RAM ratio (percent) above which the AVF helper becomes jetsam's
+# primary target, amplifying the virtio-fs cache race window.
+readonly KAPSIS_DEFAULT_VM_MAX_HOST_PCT=80
+
+# Swap usage above this threshold (percent of total swap) indicates elevated
+# host memory pressure — the main amplifier of the AVF virtio-fs bug class.
+readonly KAPSIS_DEFAULT_VM_SWAP_WARN_PCT=50

@@ -224,6 +224,21 @@ sandbox:
   interactive_merge: true
 
 #===============================================================================
+# VM MEMORY ADVISOR (macOS, Issue #377)
+#===============================================================================
+# The preflight check reads max_parallel_agents to compute a recommended Podman
+# VM memory allocation: base(2GB) + max_parallel_agents × per_agent(3GB).
+# A warning is printed when the current VM allocation is below the threshold,
+# along with the exact `podman machine set --memory` command to fix it.
+# Override the formula constants via KAPSIS_VM_BASE_MEMORY_GB,
+# KAPSIS_VM_PER_AGENT_MEMORY_GB, and KAPSIS_VM_MAX_HOST_PCT environment variables.
+vm:
+  # Number of agents you intend to run in parallel on this machine.
+  # Single-agent setup: 1 (default, recommends 5GB VM)
+  # High-concurrency:   4 (recommends 14GB VM)
+  max_parallel_agents: 1
+
+#===============================================================================
 # MACOS SLEEP PREVENTION (Issue #276)
 #===============================================================================
 # Prevents macOS idle/system sleep while the agent is running.

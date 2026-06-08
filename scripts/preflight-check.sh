@@ -446,6 +446,149 @@ check_userns_compat() {
     esac
 }
 
+# Check Podman VM memory allocation (macOS only — Issue #377)
+#
+# Warns when the VM is sized below the recommended minimum for the planned
+# parallel-agent concurrency, and when it consumes too much host RAM (jetsam risk).
+# Neither warning blocks launch — both print the exact `podman machine set`
+# remediation command so the user can act.
+check_podman_vm_memory() {
+    local config_file="${1:-}"
+
+    # macOS only — Linux uses native Podman, no VM to size
+    if ! is_macos; then
+        return 0
+    fi
+
+    log_info "Checking Podman VM memory sizing..."
+
+    local machine
+    machine="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
+
+    local base_gb per_agent_gb max_host_pct
+    base_gb="${KAPSIS_VM_BASE_MEMORY_GB:-${KAPSIS_DEFAULT_VM_BASE_MEMORY_GB}}"
+    per_agent_gb="${KAPSIS_VM_PER_AGENT_MEMORY_GB:-${KAPSIS_DEFAULT_VM_PER_AGENT_MEMORY_GB}}"
+    max_host_pct="${KAPSIS_VM_MAX_HOST_PCT:-${KAPSIS_DEFAULT_VM_MAX_HOST_PCT}}"
+
+    # Resolve max_parallel_agents: KAPSIS_MAX_PARALLEL_AGENTS env > vm.max_parallel_agents YAML > 1
+    local max_parallel_agents=1
+    if [[ -n "${KAPSIS_MAX_PARALLEL_AGENTS:-}" ]] && [[ "${KAPSIS_MAX_PARALLEL_AGENTS}" =~ ^[0-9]+$ ]]; then
+        max_parallel_agents="$KAPSIS_MAX_PARALLEL_AGENTS"
+    elif [[ -n "$config_file" && -f "$config_file" ]] && command -v yq &>/dev/null; then
+        local cfg_agents
+        cfg_agents=$(yq -r '.vm.max_parallel_agents // ""' "$config_file" 2>/dev/null || echo "")
+        if [[ -n "$cfg_agents" && "$cfg_agents" =~ ^[0-9]+$ ]]; then
+            max_parallel_agents="$cfg_agents"
+        fi
+    fi
+
+    # Minimum recommended VM memory for the planned concurrency
+    local recommended_gb
+    recommended_gb=$(( base_gb + per_agent_gb * max_parallel_agents ))
+
+    # Read VM memory in MiB via `podman machine inspect` — gracefully skip on failure
+    local vm_mem_mb
+    vm_mem_mb=$(podman machine inspect "$machine" --format '{{.Resources.Memory}}' 2>/dev/null || echo "0")
+    if ! [[ "${vm_mem_mb:-0}" =~ ^[0-9]+$ ]] || (( vm_mem_mb == 0 )); then
+        log_debug "Could not read VM memory from 'podman machine inspect' — skipping memory advisor"
+        return 0
+    fi
+    local vm_mem_gb
+    vm_mem_gb=$(( vm_mem_mb / 1024 ))
+
+    # Read host total RAM (bytes → GB)
+    local host_mem_bytes host_mem_gb
+    host_mem_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo "0")
+    host_mem_gb=0
+    if [[ "${host_mem_bytes:-0}" =~ ^[0-9]+$ ]] && (( host_mem_bytes > 0 )); then
+        host_mem_gb=$(( host_mem_bytes / 1024 / 1024 / 1024 ))
+    fi
+
+    # Check 1: VM below recommended threshold for planned concurrency
+    if (( vm_mem_gb < recommended_gb )); then
+        local recommended_mb
+        recommended_mb=$(( recommended_gb * 1024 ))
+        preflight_warn "VM memory ${vm_mem_gb}GB < recommended ${recommended_gb}GB for ${max_parallel_agents} parallel agent(s)"
+        preflight_warn "  AVF virtio-fs cache race window widens under memory pressure (Apple FB16008360)"
+        preflight_warn "  To resize (requires VM restart — kills in-flight agents):"
+        preflight_warn "    podman machine stop ${machine} && podman machine set --memory ${recommended_mb} ${machine} && podman machine start ${machine}"
+        return 0
+    fi
+
+    # Check 2: VM consumes too much host RAM — jetsam amplifier risk
+    if (( host_mem_gb > 0 )); then
+        local vm_pct
+        vm_pct=$(( vm_mem_gb * 100 / host_mem_gb ))
+        if (( vm_pct > max_host_pct )); then
+            local safe_gb safe_mb
+            safe_gb=$(( host_mem_gb * max_host_pct / 100 ))
+            safe_mb=$(( safe_gb * 1024 ))
+            preflight_warn "VM memory ${vm_mem_gb}GB is ${vm_pct}% of host RAM ${host_mem_gb}GB (threshold: ${max_host_pct}%)"
+            preflight_warn "  High VM:host ratio makes the AVF helper the top jetsam candidate (Apple FB16008360)"
+            preflight_warn "  Recommended VM size: ${safe_gb}GB"
+            preflight_warn "    podman machine stop ${machine} && podman machine set --memory ${safe_mb} ${machine} && podman machine start ${machine}"
+            return 0
+        fi
+    fi
+
+    preflight_ok "VM memory OK (${vm_mem_gb}GB allocated, ${max_parallel_agents} parallel agent(s), threshold ${recommended_gb}GB)"
+    return 0
+}
+
+# Check macOS host memory pressure (Issue #377)
+#
+# Elevated swap usage widens the AVF virtio-fs cache-coherency race window
+# (Apple FB16008360), increasing mount_failure (exit_code=4) frequency.
+# Warning-only — does not block launch.
+check_host_memory_pressure() {
+    # macOS only
+    if ! is_macos; then
+        return 0
+    fi
+
+    local swap_warn_pct
+    swap_warn_pct="${KAPSIS_VM_SWAP_WARN_PCT:-${KAPSIS_DEFAULT_VM_SWAP_WARN_PCT}}"
+
+    log_info "Checking host memory pressure..."
+
+    # sysctl vm.swapusage: total = 4096.00M  used = 2048.00M  free = 2048.00M  (encrypted)
+    local swap_line
+    swap_line=$(sysctl vm.swapusage 2>/dev/null || echo "")
+    if [[ -z "$swap_line" ]]; then
+        log_debug "vm.swapusage not available — skipping memory pressure check"
+        return 0
+    fi
+
+    # BSD-awk: find "total = NNN.NNM" and "used = NNN.NNM", extract integer MB part
+    local swap_total_mb swap_used_mb
+    swap_total_mb=$(printf '%s' "$swap_line" | awk '{for(i=1;i<=NF;i++) if ($i=="total" && $(i+1)=="=") {split($(i+2),a,"."); print a[1]+0; exit}}')
+    swap_used_mb=$(printf '%s' "$swap_line" | awk '{for(i=1;i<=NF;i++) if ($i=="used" && $(i+1)=="=") {split($(i+2),a,"."); print a[1]+0; exit}}')
+
+    if ! [[ "${swap_total_mb:-0}" =~ ^[0-9]+$ ]] || ! [[ "${swap_used_mb:-0}" =~ ^[0-9]+$ ]]; then
+        log_debug "Could not parse vm.swapusage: '$swap_line'"
+        return 0
+    fi
+
+    if (( swap_total_mb == 0 )); then
+        preflight_ok "No swap configured — host memory pressure: low"
+        return 0
+    fi
+
+    local swap_pct
+    swap_pct=$(( swap_used_mb * 100 / swap_total_mb ))
+
+    if (( swap_pct >= swap_warn_pct )); then
+        preflight_warn "Host swap usage ${swap_pct}% (${swap_used_mb}MB/${swap_total_mb}MB)"
+        preflight_warn "  Elevated swap widens the AVF virtio-fs cache race window (Apple FB16008360)"
+        preflight_warn "  This increases mount_failure (exit_code=4) frequency"
+        preflight_warn "  Consider: close memory-heavy apps, or reduce Podman VM memory"
+    else
+        preflight_ok "Host memory pressure OK (swap ${swap_pct}% used)"
+    fi
+
+    return 0
+}
+
 preflight_check() {
     local project_path="${1:-.}"
     local target_branch="${2:-}"
@@ -462,6 +605,8 @@ preflight_check() {
 
     # Run all checks
     check_podman || true
+    check_podman_vm_memory "$agent_config" || true
+    check_host_memory_pressure || true
     check_disk_space || true
     check_images "$image_name" || true
     check_userns_compat "$agent_config" || true
