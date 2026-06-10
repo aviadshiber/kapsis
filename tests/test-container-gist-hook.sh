@@ -172,11 +172,16 @@ test_gist_hook_dispatch_creates_gist_file() {
             gist_cmd=\$(jq -r '.hooks.PostToolUse[0].hooks[0].command' /home/developer/.claude/settings.json)
 
             # Dispatch with a git-commit tool event (same event type used in the
-            # host-sourced integration test to prove gist content is correct)
-            KAPSIS_GIST_FILE=/home/developer/.kapsis/gist.txt \
-            KAPSIS_INJECT_GIST=true \
-            KAPSIS_STATUS_AGENT_ID=gist-dispatch-$$ \
-            printf '%s' '$tool_event' | bash \"\$gist_cmd\" >/dev/null 2>&1 || true
+            # host-sourced integration test to prove gist content is correct).
+            # The env assignments MUST prefix the hook side of the pipeline:
+            # in 'VAR=x cmd1 | cmd2' the prefix binds to cmd1 only, so placing
+            # them on printf would leave the hook without KAPSIS_GIST_FILE and
+            # it would write to the default /workspace path instead.
+            printf '%s' '$tool_event' | \
+                KAPSIS_GIST_FILE=/home/developer/.kapsis/gist.txt \
+                KAPSIS_INJECT_GIST=true \
+                KAPSIS_STATUS_AGENT_ID=gist-dispatch-$$ \
+                bash \"\$gist_cmd\" >/dev/null 2>&1 || true
 
             if [[ -f /home/developer/.kapsis/gist.txt ]]; then
                 echo 'GIST_CREATED'
