@@ -139,6 +139,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [validate, build-and-push]
     permissions:
+      contents: read      # job-level permissions reset unlisted scopes; checkout needs this
       packages: write     # push cosign signatures + SBOM attestations to GHCR
       id-token: write     # keyless OIDC signing via Sigstore Fulcio
     steps:
@@ -158,28 +159,34 @@ jobs:
       - name: Install syft
         run: |
           SYFT_VERSION="1.21.0"
+          # Keep the upstream filename — sha256sum -c resolves the file
+          # by the name recorded in the checksums line.
+          SYFT_TARBALL="syft_${SYFT_VERSION}_linux_amd64.tar.gz"
           curl -fsSL \
-            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_linux_amd64.tar.gz" \
-            -o syft.tar.gz
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/${SYFT_TARBALL}" \
+            -o "${SYFT_TARBALL}"
           curl -fsSL \
             "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_checksums.txt" \
             -o syft_checksums.txt
-          grep "syft_${SYFT_VERSION}_linux_amd64.tar.gz$" syft_checksums.txt | sha256sum -c -
-          tar -xzf syft.tar.gz syft
+          grep " ${SYFT_TARBALL}$" syft_checksums.txt | sha256sum -c -
+          tar -xzf "${SYFT_TARBALL}" syft
           sudo mv syft /usr/local/bin/syft
           syft version
 
       - name: Install grype
         run: |
           GRYPE_VERSION="0.88.0"
+          # Keep the upstream filename — sha256sum -c resolves the file
+          # by the name recorded in the checksums line.
+          GRYPE_TARBALL="grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
           curl -fsSL \
-            "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz" \
-            -o grype.tar.gz
+            "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/${GRYPE_TARBALL}" \
+            -o "${GRYPE_TARBALL}"
           curl -fsSL \
             "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_checksums.txt" \
             -o grype_checksums.txt
-          grep "grype_${GRYPE_VERSION}_linux_amd64.tar.gz$" grype_checksums.txt | sha256sum -c -
-          tar -xzf grype.tar.gz grype
+          grep " ${GRYPE_TARBALL}$" grype_checksums.txt | sha256sum -c -
+          tar -xzf "${GRYPE_TARBALL}" grype
           sudo mv grype /usr/local/bin/grype
           grype version
 
@@ -225,9 +232,12 @@ jobs:
             echo "✓ Attestation pushed"
 
             # Grype SBOM scan — informational; Trivy in security.yml owns blocking scans.
+            # --fail-on high makes grype exit non-zero on HIGH/CRITICAL findings
+            # (without it grype always exits 0), which the || turns into a
+            # warning annotation instead of a job failure.
             echo "Running Grype SBOM scan..."
-            grype "sbom:${SBOM_FILE}" --output table \
-              || echo "::warning::Grype found vulnerabilities in ${IMAGE} — review before shipping"
+            grype "sbom:${SBOM_FILE}" --output table --fail-on high \
+              || echo "::warning::Grype found HIGH/CRITICAL vulnerabilities (or the scan errored) in ${IMAGE} — review before shipping"
 
             echo ""
           done

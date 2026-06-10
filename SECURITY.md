@@ -198,12 +198,12 @@ Scope violations are logged to `~/.kapsis/audit/scope-violations.jsonl` for fore
 
 ### Container Image Verification
 
-All container images published since v2.23.0 are signed with [Sigstore cosign](https://docs.sigstore.dev/) keyless signing. Signatures are stored in the [Rekor](https://docs.sigstore.dev/rekor/overview/) transparency log and can be verified offline.
+Container images are signed with [Sigstore cosign](https://docs.sigstore.dev/) keyless signing (introduced after v2.33.0 — images from earlier releases are unsigned). Signatures are stored in the [Rekor](https://docs.sigstore.dev/rekor/overview/) transparency log and can be verified offline. Releases with signed images include a "Supply Chain Security" section in their release notes.
 
 **Install cosign**: https://docs.sigstore.dev/cosign/system_config/installation/
 
 ```bash
-# Verify image signature (replace VERSION with the release tag, e.g. 2.23.8)
+# Verify image signature (replace VERSION with the release tag)
 cosign verify \
   --certificate-identity-regexp '^https://github.com/aviadshiber/kapsis/.github/workflows/release\.yml@' \
   --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
