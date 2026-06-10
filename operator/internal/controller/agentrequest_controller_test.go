@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	stderrors "errors"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -31,6 +32,15 @@ import (
 
 	kapsisv1alpha1 "github.com/aviadshiber/kapsis/operator/api/v1alpha1"
 )
+
+// rejectingValidator is a stub RequestValidator that always rejects, used to
+// verify the reconciler's security gate sends the CR to Failed without creating
+// a Job. The real validation logic is covered in the webhook package tests.
+type rejectingValidator struct{ reason string }
+
+func (rv rejectingValidator) Validate(_ *kapsisv1alpha1.AgentRequest) error {
+	return stderrors.New(rv.reason)
+}
 
 var _ = Describe("AgentRequest Controller", func() {
 
@@ -144,6 +154,128 @@ var _ = Describe("AgentRequest Controller", func() {
 			sc := c.SecurityContext
 			Expect(sc).NotTo(BeNil())
 			Expect(sc.Capabilities.Drop).To(ContainElement(corev1.Capability("ALL")))
+		})
+	})
+
+	// ── Security validation rejection ────────────────────────────────────────────
+	Context("When a new AgentRequest is rejected by security validation", func() {
+		const resourceName = "test-rejected-cr"
+
+		ctx := context.Background()
+		nn := types.NamespacedName{Name: resourceName, Namespace: namespace}
+
+		BeforeEach(func() {
+			ar := newMinimalAR(resourceName)
+			err := k8sClient.Get(ctx, nn, &kapsisv1alpha1.AgentRequest{})
+			if err != nil && errors.IsNotFound(err) {
+				Expect(k8sClient.Create(ctx, ar)).To(Succeed())
+			}
+		})
+
+		AfterEach(func() {
+			ar := &kapsisv1alpha1.AgentRequest{}
+			if err := k8sClient.Get(ctx, nn, ar); err == nil {
+				Expect(k8sClient.Delete(ctx, ar)).To(Succeed())
+			}
+		})
+
+		It("should mark the CR Failed and create no Job", func() {
+			r := &AgentRequestReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				Validator: rejectingValidator{reason: "image not in allowlist"},
+			}
+
+			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero(), "rejected request is terminal, must not requeue")
+			Expect(result.Requeue).To(BeFalse())
+
+			By("verifying no Job was created")
+			job := &batchv1.Job{}
+			jobNN := types.NamespacedName{Name: resourceName + "-job", Namespace: namespace}
+			err = k8sClient.Get(ctx, jobNN, job)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "no Job should exist for a rejected request")
+
+			By("verifying CR status is Failed with the rejection reason")
+			updatedAR := &kapsisv1alpha1.AgentRequest{}
+			Expect(k8sClient.Get(ctx, nn, updatedAR)).To(Succeed())
+			Expect(updatedAR.Status.Phase).To(Equal(kapsisv1alpha1.PhaseFailed))
+			Expect(updatedAR.Status.Error).To(ContainSubstring("image not in allowlist"))
+		})
+	})
+
+	// ── Spec update bypass (a Job already exists) ────────────────────────────────
+	Context("When an existing AgentRequest with a Job becomes invalid via update", func() {
+		const resourceName = "test-update-rejected"
+
+		ctx := context.Background()
+		nn := types.NamespacedName{Name: resourceName, Namespace: namespace}
+		jobNN := types.NamespacedName{Name: resourceName + "-job", Namespace: namespace}
+
+		BeforeEach(func() {
+			ar := newMinimalAR(resourceName)
+			Expect(k8sClient.Create(ctx, ar)).To(Succeed())
+			ar.Status.Phase = kapsisv1alpha1.PhaseRunning
+			ar.Status.JobName = resourceName + "-job"
+			Expect(k8sClient.Status().Update(ctx, ar)).To(Succeed())
+
+			By("creating a running Job for the request")
+			job := &batchv1.Job{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      resourceName + "-job",
+					Namespace: namespace,
+					Labels: map[string]string{
+						LabelAgentType: "claude-cli",
+						LabelAgentID:   resourceName,
+						LabelManagedBy: ManagedByValue,
+					},
+				},
+				Spec: batchv1.JobSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							Containers:    []corev1.Container{{Name: "agent", Image: "test"}},
+							RestartPolicy: corev1.RestartPolicyNever,
+						},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, job)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			ar := &kapsisv1alpha1.AgentRequest{}
+			if err := k8sClient.Get(ctx, nn, ar); err == nil {
+				Expect(k8sClient.Delete(ctx, ar)).To(Succeed())
+			}
+			job := &batchv1.Job{}
+			if err := k8sClient.Get(ctx, jobNN, job); err == nil {
+				Expect(k8sClient.Delete(ctx, job)).To(Succeed())
+			}
+		})
+
+		It("should reject on reconcile and delete the running Job", func() {
+			r := &AgentRequestReconciler{
+				Client:    k8sClient,
+				Scheme:    k8sClient.Scheme(),
+				Validator: rejectingValidator{reason: "nestedContainers not permitted"},
+			}
+
+			result, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: nn})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.RequeueAfter).To(BeZero())
+			Expect(result.Requeue).To(BeFalse())
+
+			By("verifying the running Job was deleted")
+			job := &batchv1.Job{}
+			err = k8sClient.Get(ctx, jobNN, job)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "the now-forbidden Job must be deleted")
+
+			By("verifying CR status is Failed with the rejection reason")
+			updatedAR := &kapsisv1alpha1.AgentRequest{}
+			Expect(k8sClient.Get(ctx, nn, updatedAR)).To(Succeed())
+			Expect(updatedAR.Status.Phase).To(Equal(kapsisv1alpha1.PhaseFailed))
+			Expect(updatedAR.Status.Error).To(ContainSubstring("nestedContainers not permitted"))
 		})
 	})
 
