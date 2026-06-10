@@ -37,6 +37,7 @@ import (
 
 	kapsisv1alpha1 "github.com/aviadshiber/kapsis/operator/api/v1alpha1"
 	"github.com/aviadshiber/kapsis/operator/internal/controller"
+	kapsiswebhook "github.com/aviadshiber/kapsis/operator/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -178,13 +179,41 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Security invariants enforced by both the reconciler (always) and the
+	// admission webhook (when deployed). Configured from operator environment.
+	validator := kapsiswebhook.NewValidatorFromEnv()
+	setupLog.Info("Security validator configured",
+		"imageAllowlist", validator.ImageAllowlistPatterns,
+		"approvedServiceAccounts", validator.ApprovedServiceAccounts,
+		"nestedContainerNamespaces", validator.NestedContainerNamespaces)
+
 	if err := (&controller.AgentRequestReconciler{
 		Client:             mgr.GetClient(),
 		Scheme:             mgr.GetScheme(),
 		StatusSidecarImage: os.Getenv("KAPSIS_STATUS_SIDECAR_IMAGE"),
+		Validator:          validator,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "AgentRequest")
 		os.Exit(1)
+	}
+
+	// Register the admission webhook only when explicitly enabled. Registering it
+	// makes controller-runtime start the webhook server, which fails the whole
+	// manager when serving certs are absent — and the in-tree manifests
+	// (config/default, config/manager via scripts/k8s-deploy.sh) do not yet ship
+	// the cert-manager + config/webhook plumbing. The reconciler enforces the
+	// same invariants unconditionally, so the webhook is admission-time defense
+	// in depth for deployments that provision certs and the
+	// ValidatingWebhookConfiguration. Once that plumbing lands in-tree, this gate
+	// can move to the kubebuilder `!= "false"` convention.
+	if os.Getenv("ENABLE_WEBHOOKS") == "true" {
+		if err := validator.SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "AgentRequest")
+			os.Exit(1)
+		}
+		setupLog.Info("Admission webhook registered", "certPath", webhookCertPath)
+	} else {
+		setupLog.Info("Admission webhook NOT registered; reconciler-side validation remains active")
 	}
 	// +kubebuilder:scaffold:builder
 
