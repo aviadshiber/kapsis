@@ -416,6 +416,27 @@ CONTAINER_CMD+=(
 )
 ```
 
+#### 2.3.1 macOS Overlay Exception: SYS_ADMIN (Issue #376)
+
+On macOS, overlay-mode sandboxes mount the workspace with fuse-overlayfs inside the
+container (named-volume overlay — see `ARCHITECTURE.md`). Mounting a FUSE filesystem in a
+rootless container requires `--device /dev/fuse --cap-add SYS_ADMIN`; no narrower
+capability works. `SYS_ADMIN` is added **only** in this mode, and only inside the rootless
+user namespace (it is namespaced SYS_ADMIN, not host-root SYS_ADMIN), but it still widens
+the in-container attack surface (`mount(2)`, `pivot_root`, overlay tricks).
+
+The trade-off is therefore profile-gated (`resolve_overlay_volume_mode` in
+`scripts/lib/overlay-sandbox.sh`):
+
+| Profile | Behavior |
+|---------|----------|
+| `minimal` / `standard` | Named-volume overlay enabled; `SYS_ADMIN` added for fuse-overlayfs |
+| `strict` / `paranoid` | `SYS_ADMIN` refused — Kapsis warns and downgrades to kernel OverlayFS with `upper/`/`work/` on the virtio-fs share (`KAPSIS_OVERLAY_USE_VOLUME=false` equivalent) |
+
+Users can also opt out unconditionally with `KAPSIS_OVERLAY_USE_VOLUME=false`. Worktree
+mode (the recommended mode) never adds `SYS_ADMIN`. Linux is unaffected — kernel OverlayFS
+(`:O` mount) needs no extra capability.
+
 ### 2.4 Configuration Option
 
 Add to `CONFIG-REFERENCE.md`:

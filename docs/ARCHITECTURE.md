@@ -139,6 +139,25 @@ The original isolation method using fuse-overlayfs:
 
 **Auto-selected when:** No `--branch` flag OR project is not a git repository
 
+#### macOS Named-Volume Variant (Issue #376)
+
+On macOS, the overlay `upper/` and `work/` directories live in a per-agent Podman named
+volume (`kapsis-<agent-id>-overlay`) on the VM's native ext4 filesystem instead of the
+virtio-fs share. The project is bind-mounted read-only at `/lower`, the named volume at
+`/overlay`, and the container entrypoint merges them into `/workspace` with fuse-overlayfs —
+zero virtio-fs round-trips on overlay metadata, eliminating the AVF cache-coherency bug
+(Apple FB16008360, podman#23061) that caused sporadic `exit_code=4` mount failures.
+
+- Requires `--device /dev/fuse --cap-add SYS_ADMIN`; refused (with automatic fallback to
+  kernel OverlayFS on virtio-fs) under the `strict`/`paranoid` security profiles
+- Any stale volume with the same agent ID is removed at launch so each run starts with a
+  clean upper layer
+- After the container exits, `upper/` and `work/` are exported back to the host sandbox
+  directory through a staged, symlink-hardened tar extraction, so post-container scope
+  validation and change summaries work unchanged
+- Opt out with `KAPSIS_OVERLAY_USE_VOLUME=false`; Linux always uses kernel OverlayFS (`:O`)
+  directly
+
 ### Worktree Mode (New, Recommended)
 
 Uses git worktrees for simpler branch management with container security:

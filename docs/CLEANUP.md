@@ -108,14 +108,26 @@ cat ~/.kapsis/status/kapsis-products-1.json
 
 ### Build Cache Volumes
 
-Per-agent Maven and Gradle cache volumes. Cleaning these requires re-downloading dependencies on next run.
+Per-agent named volumes. Cleaning the build caches requires re-downloading dependencies on next run.
+
+| Volume | Contents | Platform |
+|--------|----------|----------|
+| `kapsis-<agent-id>-m2` | Maven repository cache | All |
+| `kapsis-<agent-id>-gradle` | Gradle cache | All |
+| `kapsis-<agent-id>-ge` | Gradle Enterprise cache | All |
+| `kapsis-<agent-id>-status` | Status volume backing `/kapsis-status` (Issue #276) | macOS only |
+| `kapsis-<agent-id>-overlay` | Overlay `upper/`+`work/` dirs on VM-native ext4 (Issue #376) | macOS only |
+
+All of these are removed automatically at session end unless `--keep-volumes` is used. The
+`-overlay` volume is additionally reset at the next launch with the same agent ID, so stale
+upper-layer content never leaks into a new session.
 
 ```bash
 # List Kapsis volumes
 podman volume ls | grep kapsis
 
 # Manual cleanup
-podman volume rm kapsis-1-m2 kapsis-1-gradle
+podman volume rm kapsis-1-m2 kapsis-1-gradle kapsis-1-overlay
 ```
 
 ## Podman VM Health (macOS)

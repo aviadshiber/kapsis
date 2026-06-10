@@ -2000,6 +2000,32 @@ KAPSIS_AUDIT_ENABLED=true ./scripts/launch-agent.sh ~/project --task "implement 
 
 ---
 
+## macOS Overlay Named Volume (Issue #376)
+
+On macOS, overlay-mode sandboxes keep the OverlayFS `upper/` and `work/` directories in a
+per-agent Podman named volume (`kapsis-<agent-id>-overlay`, VM-native ext4) instead of the
+virtio-fs share. This eliminates the AVF virtio-fs cache-coherency races that surface as
+`exit_code=4` / `error_type=mount_failure`. The project is mounted read-only at `/lower`
+and merged into `/workspace` by fuse-overlayfs inside the container; after the container
+exits, the volume's `upper/` and `work/` subtrees are exported back to the host sandbox
+directory (`sandbox.upper_dir_base`, default `~/.ai-sandboxes/<sandbox-id>/`; staged and
+symlink-hardened) so post-container inspection works unchanged. Linux always uses kernel
+OverlayFS directly and is unaffected.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_OVERLAY_USE_VOLUME` | `true` | macOS only. Set to `false` to opt out of the named-volume overlay and fall back to kernel OverlayFS with `upper/`/`work/` on the virtio-fs share |
+
+**Security note:** fuse-overlayfs requires `--device /dev/fuse --cap-add SYS_ADMIN` on the
+container. When `KAPSIS_SECURITY_PROFILE` is `strict` or `paranoid`, Kapsis refuses to add
+`SYS_ADMIN` and automatically downgrades to the kernel OverlayFS path with a warning (see
+[SECURITY-HARDENING.md](SECURITY-HARDENING.md)). The stale volume from any previous run with
+the same agent ID is removed at launch so each session starts with a clean upper layer; the
+volume is cleaned up at session end (kept with `--keep-volumes`, reclaimable via
+`kapsis-cleanup.sh --volumes`).
+
+---
+
 ## Cleanup
 
 For cleanup configuration and usage, see [CLEANUP.md](CLEANUP.md).
