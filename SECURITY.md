@@ -196,6 +196,37 @@ In overlay mode, path validation blocks HOME DIRECTORY modifications:
 
 Scope violations are logged to `~/.kapsis/audit/scope-violations.jsonl` for forensic analysis.
 
+### Container Image Verification
+
+All container images published since v2.23.0 are signed with [Sigstore cosign](https://docs.sigstore.dev/) keyless signing. Signatures are stored in the [Rekor](https://docs.sigstore.dev/rekor/overview/) transparency log and can be verified offline.
+
+**Install cosign**: https://docs.sigstore.dev/cosign/system_config/installation/
+
+```bash
+# Verify image signature (replace VERSION with the release tag, e.g. 2.23.8)
+cosign verify \
+  --certificate-identity-regexp '^https://github.com/aviadshiber/kapsis/.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  ghcr.io/aviadshiber/kapsis-sandbox:VERSION
+```
+
+SPDX Software Bill of Materials (SBOMs) are attached as in-toto attestations and are also available as downloadable files from each GitHub Release.
+
+```bash
+# Verify and extract the SBOM attestation from the registry
+cosign verify-attestation \
+  --certificate-identity-regexp '^https://github.com/aviadshiber/kapsis/.github/workflows/release\.yml@' \
+  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+  --type spdxjson \
+  ghcr.io/aviadshiber/kapsis-sandbox:VERSION \
+  | jq '.payload | @base64d | fromjson'
+
+# Or download the SBOM from the GitHub Release and scan with grype
+grype sbom:kapsis-sandbox-VERSION-sbom.spdx.json
+```
+
+A successful `cosign verify` prints the signing certificate details including the workflow ref — this confirms the image was built by the official release workflow, not a third party.
+
 ### Supply Chain Security
 
 Kapsis pins all dependencies to prevent supply chain attacks:
