@@ -10,6 +10,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -98,8 +99,8 @@ func makeGzipTar(files map[string][]byte) []byte {
 			panic(err)
 		}
 	}
-	tw.Close()  //nolint:errcheck
-	gw.Close()  //nolint:errcheck
+	tw.Close() //nolint:errcheck
+	gw.Close() //nolint:errcheck
 	return buf.Bytes()
 }
 
@@ -122,6 +123,7 @@ func TestInspect_success(t *testing.T) {
 			"Created": "2026-01-01T00:00:00Z",
 			"Image":   "kapsis-sandbox:latest",
 			"Config": map[string]any{
+				"Tty":    true,
 				"Labels": map[string]string{"kapsis.managed": "true"},
 				"Env":    []string{"SECRET=hunter2"},
 			},
@@ -147,6 +149,9 @@ func TestInspect_success(t *testing.T) {
 	}
 	if info.Pid != 42 {
 		t.Errorf("Pid: got %d", info.Pid)
+	}
+	if !info.Tty {
+		t.Error("Tty: got false, want true (Config.Tty should be surfaced)")
 	}
 	// Env must NOT appear in output — security.
 	raw, _ := json.Marshal(info)
@@ -711,6 +716,50 @@ func TestLogs_queryParamsPassedToServer(t *testing.T) {
 	}
 }
 
+func TestLogs_followCancelledContext(t *testing.T) {
+	frame := makeMuxFrame(1, []byte("streaming line\n"))
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write(frame) //nolint:errcheck
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		// Simulate follow mode: keep the stream open until the client goes away.
+		<-r.Context().Done()
+	})
+
+	c := newTestClient(t, handler)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	rc, err := c.Logs(ctx, "my-container", LogsOptions{Follow: true, Stdout: true})
+	if err != nil {
+		t.Fatalf("Logs: %v", err)
+	}
+	defer rc.Close() //nolint:errcheck
+
+	// Cancel (the Ctrl-C / SIGTERM / SIGHUP path in cmdLogs) once DemuxLogs
+	// is blocked reading the next frame header.
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	var out, errOut bytes.Buffer
+	err = DemuxLogs(rc, &out, &errOut)
+	if err == nil {
+		t.Fatal("expected an error after context cancellation, got nil")
+	}
+	// cmdLogs maps context.Canceled to exit 0 — the error chain must stay
+	// errors.Is-detectable through DemuxLogs' wrapping.
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("expected error wrapping context.Canceled, got: %v", err)
+	}
+	if out.String() != "streaming line\n" {
+		t.Errorf("frames delivered before cancellation should be written; got %q", out.String())
+	}
+}
+
 // ─── CopyFromContainer ────────────────────────────────────────────────────────
 
 func TestCopyFromContainer_singleFile(t *testing.T) {
@@ -775,6 +824,54 @@ func TestCopyFromContainer_nestedFiles(t *testing.T) {
 			t.Errorf("%q content: got %q, want %q", relPath, got, wantContent)
 		}
 	}
+
+	// Intermediate directories (no explicit tar entries) must be real
+	// directories the owner can traverse and write.
+	for _, dir := range []string{"a", "a/b"} {
+		info, err := os.Stat(filepath.Join(destDir, dir))
+		if err != nil {
+			t.Errorf("intermediate dir %q: %v", dir, err)
+			continue
+		}
+		if !info.IsDir() {
+			t.Errorf("intermediate path %q is not a directory", dir)
+		}
+		if info.Mode().Perm()&0o700 != 0o700 {
+			t.Errorf("intermediate dir %q mode %o lacks owner rwx", dir, info.Mode().Perm())
+		}
+	}
+}
+
+func TestCopyFromContainer_largerThanJSONCap(t *testing.T) {
+	// Regression test: the 16 MB cap that guards JSON responses must NOT be
+	// applied to cp tar streams — it used to silently truncate archives.
+	content := bytes.Repeat([]byte("x"), 17*1024*1024) // 17 MB > maxResponseBodyBytes
+	archive := makeTar(map[string][]byte{"big.bin": content})
+
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		w.Write(archive) //nolint:errcheck
+	})
+
+	c := newTestClient(t, handler)
+	ctx, cancel := ctx()
+	defer cancel()
+
+	destDir := t.TempDir()
+	if err := c.CopyFromContainer(ctx, "my-container", "/work/big.bin", destDir); err != nil {
+		t.Fatalf("CopyFromContainer >16MB: %v", err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(destDir, "big.bin"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if len(got) != len(content) {
+		t.Fatalf("size: got %d bytes, want %d (archive truncated?)", len(got), len(content))
+	}
+	if !bytes.Equal(got, content) {
+		t.Error("content mismatch in extracted >16MB file")
+	}
 }
 
 func TestCopyFromContainer_gzipCompressed(t *testing.T) {
@@ -828,7 +925,7 @@ func TestCopyFromContainer_zipSlipParentPath(t *testing.T) {
 		Size:     5,
 		Typeflag: tar.TypeReg,
 	}
-	tw.WriteHeader(hdr) //nolint:errcheck
+	tw.WriteHeader(hdr)       //nolint:errcheck
 	tw.Write([]byte("oops!")) //nolint:errcheck
 	tw.Close()                //nolint:errcheck
 
@@ -860,7 +957,7 @@ func TestCopyFromContainer_zipSlipAbsolutePath(t *testing.T) {
 		Size:     4,
 		Typeflag: tar.TypeReg,
 	}
-	tw.WriteHeader(hdr) //nolint:errcheck
+	tw.WriteHeader(hdr)      //nolint:errcheck
 	tw.Write([]byte("root")) //nolint:errcheck
 	tw.Close()               //nolint:errcheck
 
@@ -879,6 +976,161 @@ func TestCopyFromContainer_zipSlipAbsolutePath(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "absolute") {
 		t.Errorf("expected absolute-path error message, got: %v", err)
+	}
+}
+
+// ─── extractTar ───────────────────────────────────────────────────────────────
+
+func TestExtractTar_extractionLimitEnforced(t *testing.T) {
+	// Lower the cap so the test does not need a multi-GiB archive.
+	old := maxExtractBytes
+	maxExtractBytes = 1024
+	t.Cleanup(func() { maxExtractBytes = old })
+
+	t.Run("single oversized entry", func(t *testing.T) {
+		archive := makeTar(map[string][]byte{"big.bin": bytes.Repeat([]byte("x"), 4096)})
+		err := extractTar(bytes.NewReader(archive), t.TempDir(), io.Discard)
+		if err == nil {
+			t.Fatal("expected extraction-limit error, got nil")
+		}
+		if !strings.Contains(err.Error(), "extraction limit") {
+			t.Errorf("expected extraction-limit error, got: %v", err)
+		}
+	})
+
+	t.Run("cumulative across entries", func(t *testing.T) {
+		archive := makeTar(map[string][]byte{
+			"part1.bin": bytes.Repeat([]byte("x"), 600),
+			"part2.bin": bytes.Repeat([]byte("x"), 600),
+		})
+		err := extractTar(bytes.NewReader(archive), t.TempDir(), io.Discard)
+		if err == nil {
+			t.Fatal("expected cumulative extraction-limit error, got nil")
+		}
+		if !strings.Contains(err.Error(), "extraction limit") {
+			t.Errorf("expected extraction-limit error, got: %v", err)
+		}
+	})
+
+	t.Run("gzip bomb bounded post-decompression", func(t *testing.T) {
+		// 4 KiB of zeros compresses to a few bytes — the cap must apply to
+		// the decompressed payload, not the compressed response body.
+		archive := makeGzipTar(map[string][]byte{"bomb.bin": make([]byte, 4096)})
+		err := extractTar(bytes.NewReader(archive), t.TempDir(), io.Discard)
+		if err == nil {
+			t.Fatal("expected extraction-limit error for gzip bomb, got nil")
+		}
+		if !strings.Contains(err.Error(), "extraction limit") {
+			t.Errorf("expected extraction-limit error, got: %v", err)
+		}
+	})
+}
+
+func TestExtractTar_skipsUnsupportedEntriesWithWarning(t *testing.T) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	// Symlink pointing outside the destination — must not materialise.
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "evil-link",
+		Linkname: "/etc/passwd",
+		Typeflag: tar.TypeSymlink,
+		Mode:     0o777,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "hard-link",
+		Linkname: "kept.txt",
+		Typeflag: tar.TypeLink,
+		Mode:     0o644,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "kept.txt",
+		Size:     4,
+		Mode:     0o644,
+		Typeflag: tar.TypeReg,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tw.Write([]byte("data")) //nolint:errcheck
+	tw.Close()               //nolint:errcheck
+
+	destDir := t.TempDir()
+	var warnings bytes.Buffer
+	if err := extractTar(bytes.NewReader(buf.Bytes()), destDir, &warnings); err != nil {
+		t.Fatalf("extractTar: %v", err)
+	}
+
+	// Regular file is still extracted.
+	got, err := os.ReadFile(filepath.Join(destDir, "kept.txt"))
+	if err != nil || string(got) != "data" {
+		t.Errorf("kept.txt: got %q, err %v", got, err)
+	}
+	for _, name := range []string{"evil-link", "hard-link"} {
+		// Link entries must NOT materialise on disk (no write-through-link escape).
+		if _, err := os.Lstat(filepath.Join(destDir, name)); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%s should not exist on disk, Lstat err = %v", name, err)
+		}
+		// The skip must be loud, not silent.
+		if !strings.Contains(warnings.String(), name) {
+			t.Errorf("expected a warning mentioning %q, got: %q", name, warnings.String())
+		}
+	}
+}
+
+func TestExtractTar_preservesModes(t *testing.T) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "ro-dir/",
+		Mode:     0o555,
+		Typeflag: tar.TypeDir,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("read-only")
+	if err := tw.WriteHeader(&tar.Header{
+		Name:     "ro-dir/ro-file.txt",
+		Mode:     0o444,
+		Size:     int64(len(content)),
+		Typeflag: tar.TypeReg,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tw.Write(content) //nolint:errcheck
+	tw.Close()        //nolint:errcheck
+
+	destDir := t.TempDir()
+	// Restore owner-write before t.TempDir cleanup tries to remove the tree.
+	t.Cleanup(func() {
+		os.Chmod(filepath.Join(destDir, "ro-dir"), 0o755) //nolint:errcheck
+	})
+	if err := extractTar(bytes.NewReader(buf.Bytes()), destDir, io.Discard); err != nil {
+		t.Fatalf("extractTar: %v", err)
+	}
+
+	dirInfo, err := os.Stat(filepath.Join(destDir, "ro-dir"))
+	if err != nil {
+		t.Fatalf("Stat ro-dir: %v", err)
+	}
+	if dirInfo.Mode().Perm() != 0o555 {
+		t.Errorf("ro-dir mode: got %o, want 555 (must not gain owner-write)", dirInfo.Mode().Perm())
+	}
+	fileInfo, err := os.Stat(filepath.Join(destDir, "ro-dir", "ro-file.txt"))
+	if err != nil {
+		t.Fatalf("Stat ro-file.txt: %v", err)
+	}
+	if fileInfo.Mode().Perm() != 0o444 {
+		t.Errorf("ro-file.txt mode: got %o, want 444 (must not gain owner-write)", fileInfo.Mode().Perm())
+	}
+	got, err := os.ReadFile(filepath.Join(destDir, "ro-dir", "ro-file.txt"))
+	if err != nil {
+		t.Fatalf("ReadFile: %v", err)
+	}
+	if string(got) != string(content) {
+		t.Errorf("content: got %q, want %q", got, content)
 	}
 }
 

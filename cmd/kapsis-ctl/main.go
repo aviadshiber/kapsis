@@ -15,9 +15,9 @@
 //
 // Phase 2 adds container management subcommands:
 //
-//	stop [-t N] <name>        graceful SIGTERM→SIGKILL stop
-//	logs [-f] [-n N] <name>   stream container logs (stdout+stderr)
-//	cp <name>:<src> <dst>     copy files from container to host
+//	stop [-t N] <name>                    graceful SIGTERM→SIGKILL stop
+//	logs [-f] [-n N] [--since TS] <name>  stream container logs (stdout+stderr)
+//	cp <name>:<src> <dst-dir>             copy files from container to host
 //
 // See docs/K8S-BACKEND.md and issue #266 for the full strangler-fig roadmap.
 package main
@@ -28,6 +28,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"strings"
@@ -235,8 +236,16 @@ func cmdStop(client *podman.Client, args []string) int {
 	name := fs.Arg(0)
 	gracePeriod := *timeout
 
-	// Context must outlive the server-side grace period.
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(gracePeriod+15)*time.Second)
+	// The context must outlive the server-side grace period. Any negative -t
+	// means "use the server default" (10 s on libpod); clamp it for the
+	// deadline math so e.g. -t -100 cannot produce an already-expired
+	// context. The 30 s margin absorbs connection latency (notably the macOS
+	// socket forwarder).
+	serverGrace := gracePeriod
+	if serverGrace < 0 {
+		serverGrace = 10
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(serverGrace+30)*time.Second)
 	defer cancel()
 
 	err := client.Stop(ctx, name, gracePeriod)
@@ -252,11 +261,13 @@ func cmdStop(client *podman.Client, args []string) int {
 
 // cmdLogs implements `kapsis-ctl logs [-f] [-n N] [--since TS] <name>`.
 //
-// Streams log output from the container to stdout/stderr. For non-TTY
-// containers (the standard kapsis agent run) the stream is demultiplexed so
-// stdout frames go to stdout and stderr frames go to stderr. The -f flag
-// follows new output until the container exits or the process is interrupted
-// (Ctrl-C / SIGTERM).
+// Streams log output from the container to stdout/stderr. The container is
+// inspected first to learn whether it was started with a TTY: non-TTY
+// containers (the standard kapsis agent run) emit Docker's multiplexed frame
+// format, which is demultiplexed so stdout frames go to stdout and stderr
+// frames go to stderr; TTY containers emit raw bytes, which are copied to
+// stdout unmodified. The -f flag follows new output until the container exits
+// or the process is interrupted (Ctrl-C / SIGTERM / SIGHUP).
 //
 // Exit codes: 0=success, 1=error, 3=not found.
 func cmdLogs(client *podman.Client, args []string) int {
@@ -280,12 +291,30 @@ func cmdLogs(client *podman.Client, args []string) int {
 	var ctx context.Context
 	var cancel context.CancelFunc
 	if *follow {
-		// Cancel on Ctrl-C / SIGTERM so the HTTP connection is closed cleanly.
-		ctx, cancel = signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		// Cancel on Ctrl-C / SIGTERM / terminal hangup so the HTTP
+		// connection is closed cleanly.
+		ctx, cancel = signal.NotifyContext(context.Background(),
+			syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
 	} else {
-		ctx, cancel = context.WithTimeout(context.Background(), 30*time.Second)
+		// Generous deadline: full-history dumps of long-running agents can
+		// be large, and 30 s proved too tight for big -n values.
+		ctx, cancel = context.WithTimeout(context.Background(), 5*time.Minute)
 	}
 	defer cancel()
+
+	// Inspect first to learn whether the container has a TTY. TTY containers
+	// emit raw bytes; feeding them through the demultiplexer would interpret
+	// log content as frame headers and garble the output.
+	inspectCtx, inspectCancel := context.WithTimeout(ctx, 10*time.Second)
+	info, err := client.Inspect(inspectCtx, name)
+	inspectCancel()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "kapsis-ctl logs: %v\n", err)
+		if errors.Is(err, podman.ErrNotFound) {
+			return 3
+		}
+		return 1
+	}
 
 	opts := podman.LogsOptions{
 		Follow: *follow,
@@ -305,7 +334,12 @@ func cmdLogs(client *podman.Client, args []string) int {
 	}
 	defer rc.Close() //nolint:errcheck
 
-	if err := podman.DemuxLogs(rc, os.Stdout, os.Stderr); err != nil {
+	if info.Tty {
+		_, err = io.Copy(os.Stdout, rc)
+	} else {
+		err = podman.DemuxLogs(rc, os.Stdout, os.Stderr)
+	}
+	if err != nil {
 		// Context cancellation (Ctrl-C in follow mode) is not an error.
 		if errors.Is(err, context.Canceled) {
 			return 0
@@ -316,17 +350,19 @@ func cmdLogs(client *podman.Client, args []string) int {
 	return 0
 }
 
-// cmdCp implements `kapsis-ctl cp <name>:<container-path> <host-dest>`.
+// cmdCp implements `kapsis-ctl cp <name>:<container-path> <host-dest-dir>`.
 //
 // Extracts a file or directory from the named container and writes it under
-// the host destination path. Uses the Podman archive (tar) API — no SSH
-// required. Zip-slip protection is applied to all tar entries.
+// the host destination directory (unlike podman cp, the destination is always
+// treated as a directory and created if missing). Uses the Podman archive
+// (tar) API — no SSH required. Zip-slip protection is applied to all tar
+// entries.
 //
 // Exit codes: 0=success, 1=error, 3=not found.
 func cmdCp(client *podman.Client, args []string) int {
 	fs := flag.NewFlagSet("cp", flag.ContinueOnError)
 	fs.Usage = func() {
-		fmt.Fprintf(os.Stderr, "Usage: kapsis-ctl cp <name>:<container-path> <host-dest>\n")
+		fmt.Fprintf(os.Stderr, "Usage: kapsis-ctl cp <name>:<container-path> <host-dest-dir>\n")
 	}
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -374,18 +410,18 @@ Phase 1 — read-only queries:
   kapsis-ctl alive [-v] <name>          exit 0 if running, 1 if not
 
 Phase 2 — container management:
-  kapsis-ctl stop [-t N] <name>         graceful SIGTERM→SIGKILL stop
-  kapsis-ctl logs [-f] [-n N] <name>    stream stdout+stderr log output
-  kapsis-ctl cp <name>:<src> <dst>      copy files from container to host
+  kapsis-ctl stop [-t N] <name>                    graceful SIGTERM→SIGKILL stop
+  kapsis-ctl logs [-f] [-n N] [--since TS] <name>  stream stdout+stderr log output
+  kapsis-ctl cp <name>:<src> <dst-dir>             copy files from container into host dir
 
 Environment:
   KAPSIS_PODMAN_SOCKET   override Podman Unix socket path (auto-detected otherwise)
 
-Exit codes for 'inspect':  0=found  1=error  3=not found
+Exit codes for 'inspect':  0=found  1=error  2=usage error  3=not found
 Exit codes for 'alive':    0=running  1=stopped/missing  2=usage error
-Exit codes for 'stop':     0=stopped  1=error  3=not found
-Exit codes for 'logs':     0=success  1=error  3=not found
-Exit codes for 'cp':       0=success  1=error  3=not found
+Exit codes for 'stop':     0=stopped  1=error  2=usage error  3=not found
+Exit codes for 'logs':     0=success  1=error  2=usage error  3=not found
+Exit codes for 'cp':       0=success  1=error  2=usage error  3=not found
 
 `)
 }
