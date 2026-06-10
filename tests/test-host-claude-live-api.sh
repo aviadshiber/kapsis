@@ -18,7 +18,7 @@
 #
 # Skips gracefully when prerequisites are absent.
 #
-# Run: ./tests/test-e2e-claude-hooks.sh
+# Run: ./tests/test-host-claude-live-api.sh
 #===============================================================================
 
 set -euo pipefail

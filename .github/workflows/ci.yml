@@ -380,11 +380,11 @@ jobs:
       - name: Run integration tests against mock API
         timeout-minutes: 10
         run: |
-          chmod +x ./tests/test-integration-claude-hooks.sh
+          chmod +x ./tests/test-host-claude-mock-api.sh
           chmod +x ./tests/lib/*.sh 2>/dev/null || true
           chmod +x ./scripts/lib/*.sh
           chmod +x ./scripts/hooks/*.sh
-          bash ./tests/test-integration-claude-hooks.sh
+          bash ./tests/test-host-claude-mock-api.sh
         env:
           KAPSIS_TEST_QUIET: "0"
 
@@ -498,11 +498,11 @@ jobs:
           CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           CI: "true"
         run: |
-          chmod +x ./tests/test-e2e-claude-hooks.sh
+          chmod +x ./tests/test-host-claude-live-api.sh
           chmod +x ./tests/lib/*.sh 2>/dev/null || true
           chmod +x ./scripts/lib/*.sh
           chmod +x ./scripts/hooks/*.sh
-          bash ./tests/test-e2e-claude-hooks.sh
+          bash ./tests/test-host-claude-live-api.sh
 
   container-tests:
     name: Container Tests
