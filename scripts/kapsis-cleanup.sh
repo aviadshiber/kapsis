@@ -964,8 +964,10 @@ clean_snapshots() {
 
     for snap_dir in "$SNAPSHOTS_DIR"/*/; do
         [[ -d "$snap_dir" ]] || continue
-        # Security: skip symlinks to prevent following attacks (see clean_sandboxes).
-        [[ -L "$snap_dir" ]] && continue
+        # Security: skip symlinked entries to prevent following attacks (see
+        # clean_sandboxes). The glob above yields trailing-slash paths and
+        # [[ -L "path/" ]] follows the link (always false), so strip the slash.
+        [[ -L "${snap_dir%/}" ]] && continue
         local name
         name=$(basename "$snap_dir")
 

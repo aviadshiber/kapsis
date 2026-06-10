@@ -17,8 +17,12 @@
 #   7. --all ignores TTL and removes everything
 #   8. --snapshots-older-than overrides default TTL
 #   9. Symlinked top-level snapshots/ dir is refused
-#  10. Disk-pressure warning fires when threshold exceeded
-#  11. .disk-usage-cache is written after cleanup
+#  10. Symlinked per-entry dirs are skipped (guard must strip trailing slash)
+#  11. Disk-pressure warning fires when threshold exceeded
+#  12. .disk-usage-cache is written after cleanup
+#
+# Each functional test registers a RETURN trap for its tmpdirs so they are
+# reclaimed even when an assertion fails mid-test (PR #393 review).
 #
 # Category: validation (no container required)
 #===============================================================================
@@ -210,6 +214,8 @@ _run_check_disk_pressure() {
 test_stale_snapshot_removed_default_ttl() {
     local snap_dir
     snap_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-stale.XXXXXX")
+    # shellcheck disable=SC2064  # expand now: tmpdir must survive local scope
+    trap "rm -rf '$snap_dir'" RETURN
     _seed_snapshots "$snap_dir"
 
     _run_clean_snapshots "$snap_dir" "" "false" "false" >/dev/null
@@ -218,13 +224,13 @@ test_stale_snapshot_removed_default_ttl() {
         "Stale snapshot dir (30d old) should be removed under default 14-day TTL"
     assert_dir_exists "$snap_dir/agent-fresh" \
         "Fresh snapshot dir should be preserved"
-
-    rm -rf "$snap_dir"
 }
 
 test_dry_run_preserves_all_snapshots() {
     local snap_dir
     snap_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-dryrun.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$snap_dir'" RETURN
     _seed_snapshots "$snap_dir"
 
     _run_clean_snapshots "$snap_dir" "" "false" "true" >/dev/null
@@ -233,13 +239,13 @@ test_dry_run_preserves_all_snapshots() {
         "Dry-run must not delete stale snapshot"
     assert_dir_exists "$snap_dir/agent-fresh" \
         "Dry-run must not delete fresh snapshot"
-
-    rm -rf "$snap_dir"
 }
 
 test_all_removes_fresh_and_stale() {
     local snap_dir
     snap_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-all.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$snap_dir'" RETURN
     _seed_snapshots "$snap_dir"
 
     _run_clean_snapshots "$snap_dir" "" "true" "false" >/dev/null
@@ -248,13 +254,13 @@ test_all_removes_fresh_and_stale() {
         "--all should remove stale snapshot"
     assert_dir_not_exists "$snap_dir/agent-fresh" \
         "--all should remove fresh snapshot regardless of TTL"
-
-    rm -rf "$snap_dir"
 }
 
 test_older_than_override_shrinks_ttl() {
     local snap_dir
     snap_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-override.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$snap_dir'" RETURN
     mkdir -p "$snap_dir/agent-3day"
     echo "x" > "$snap_dir/agent-3day/marker"
     touch -d "3 days ago" "$snap_dir/agent-3day" 2>/dev/null \
@@ -264,14 +270,14 @@ test_older_than_override_shrinks_ttl() {
 
     assert_dir_not_exists "$snap_dir/agent-3day" \
         "--snapshots-older-than 1 should remove 3-day-old snapshot"
-
-    rm -rf "$snap_dir"
 }
 
 test_symlinked_top_dir_refused() {
     local snap_dir target_dir
     target_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-target.XXXXXX")
     snap_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-symlink.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$target_dir' '$snap_dir'" RETURN
     # Replace snap_dir with a symlink to target_dir
     rm -rf "$snap_dir"
     ln -s "$target_dir" "$snap_dir"
@@ -285,13 +291,43 @@ test_symlinked_top_dir_refused() {
         "Symlinked snapshots dir should be refused with a warning"
     assert_dir_exists "$target_dir/agent-victim" \
         "Victim dir behind symlink must not be deleted"
+}
 
-    rm -rf "$target_dir" "$snap_dir"
+# Regression for PR #393 review: the per-entry symlink guard must actually
+# fire. The glob yields trailing-slash paths and [[ -L "path/" ]] follows the
+# link (always false), so the guard tests with the slash stripped — otherwise
+# a symlinked entry is treated as an expired snapshot and listed for removal.
+test_symlinked_entry_skipped() {
+    local snap_dir victim_dir
+    snap_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-entrylink.XXXXXX")
+    victim_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-victim.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$snap_dir' '$victim_dir'" RETURN
+    echo "precious" > "$victim_dir/marker"
+    # Age the victim well past the TTL so only the symlink guard protects it.
+    touch -d "60 days ago" "$victim_dir" 2>/dev/null \
+        || touch -t "$(date -v-60d +%Y%m%d0000 2>/dev/null || date -d '60 days ago' +%Y%m%d0000)" "$victim_dir"
+    ln -s "$victim_dir" "$snap_dir/agent-link"
+
+    local output
+    output=$(_run_clean_snapshots "$snap_dir" "" "false" "false")
+
+    assert_contains "$output" "No expired snapshot directories to clean" \
+        "Symlinked entry must be skipped, not counted as a cleaned snapshot"
+    assert_file_exists "$victim_dir/marker" \
+        "Symlink target content must be untouched"
+    if [[ ! -L "$snap_dir/agent-link" ]]; then
+        _log_failure "Symlinked entry should remain in place" \
+            "Missing symlink: $snap_dir/agent-link"
+        return 1
+    fi
 }
 
 test_disk_pressure_writes_cache() {
     local fake_kapsis
     fake_kapsis=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-pressure.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$fake_kapsis'" RETURN
     echo "x" > "$fake_kapsis/marker"
 
     # 1 GB threshold — won't trigger the warning on a tiny tmpdir but the
@@ -307,34 +343,32 @@ test_disk_pressure_writes_cache() {
         ".disk-usage-cache should contain bytes field"
     assert_contains "$cache_content" '"at":' \
         ".disk-usage-cache should contain at (timestamp) field"
-
-    rm -rf "$fake_kapsis"
 }
 
 test_disk_pressure_zero_threshold_disables() {
     local fake_kapsis
     fake_kapsis=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-disabled.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$fake_kapsis'" RETURN
     echo "x" > "$fake_kapsis/marker"
 
     _run_check_disk_pressure "$fake_kapsis" "0" "false" >/dev/null
 
     assert_file_not_exists "$fake_kapsis/.disk-usage-cache" \
         "Threshold of 0 GB should disable the check entirely (no cache write, no warning)"
-
-    rm -rf "$fake_kapsis"
 }
 
 test_disk_pressure_skips_cache_in_dry_run() {
     local fake_kapsis
     fake_kapsis=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-dryrun-cache.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$fake_kapsis'" RETURN
     echo "x" > "$fake_kapsis/marker"
 
     _run_check_disk_pressure "$fake_kapsis" "1" "true" >/dev/null
 
     assert_file_not_exists "$fake_kapsis/.disk-usage-cache" \
         "Dry-run must not write .disk-usage-cache"
-
-    rm -rf "$fake_kapsis"
 }
 
 # Regression for PR #393 review: a non-numeric KAPSIS_DIR_WARN_SIZE_GB (e.g.
@@ -345,6 +379,8 @@ test_disk_pressure_skips_cache_in_dry_run() {
 test_disk_pressure_rejects_non_numeric_threshold() {
     local fake_kapsis
     fake_kapsis=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-389-nonnumeric.XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$fake_kapsis'" RETURN
     echo "x" > "$fake_kapsis/marker"
 
     local exit_code=0
@@ -357,8 +393,6 @@ test_disk_pressure_rejects_non_numeric_threshold() {
     }
     assert_file_not_exists "$fake_kapsis/.disk-usage-cache" \
         "Non-numeric threshold should short-circuit before cache write"
-
-    rm -rf "$fake_kapsis"
 }
 
 #===============================================================================
@@ -381,6 +415,7 @@ run_test test_dry_run_preserves_all_snapshots
 run_test test_all_removes_fresh_and_stale
 run_test test_older_than_override_shrinks_ttl
 run_test test_symlinked_top_dir_refused
+run_test test_symlinked_entry_skipped
 run_test test_disk_pressure_writes_cache
 run_test test_disk_pressure_zero_threshold_disables
 run_test test_disk_pressure_skips_cache_in_dry_run
