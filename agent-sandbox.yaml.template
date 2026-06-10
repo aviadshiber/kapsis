@@ -232,6 +232,8 @@ sandbox:
 # along with the exact `podman machine set --memory` command to fix it.
 # Override the formula constants via KAPSIS_VM_BASE_MEMORY_GB,
 # KAPSIS_VM_PER_AGENT_MEMORY_GB, and KAPSIS_VM_MAX_HOST_PCT environment variables.
+# The companion host swap-pressure gate is tuned via KAPSIS_VM_SWAP_WARN_PCT and
+# KAPSIS_VM_SWAP_FLOOR_MB. See docs/CONFIG-REFERENCE.md ("VM Memory Advisor").
 vm:
   # Number of agents you intend to run in parallel on this machine.
   # Single-agent setup: 1 (default, recommends 5GB VM)

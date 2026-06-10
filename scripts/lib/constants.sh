@@ -416,3 +416,9 @@ readonly KAPSIS_DEFAULT_VM_MAX_HOST_PCT=80
 # Swap usage above this threshold (percent of total swap) indicates elevated
 # host memory pressure — the main amplifier of the AVF virtio-fs bug class.
 readonly KAPSIS_DEFAULT_VM_SWAP_WARN_PCT=50
+
+# Ignore the swap-percentage signal while absolute swap usage is below this
+# floor (MB). macOS allocates small dynamic swapfiles even when memory
+# pressure is benign — a tiny swap file at a high used-percentage is noise,
+# not a thrashing host.
+readonly KAPSIS_DEFAULT_VM_SWAP_FLOOR_MB=512

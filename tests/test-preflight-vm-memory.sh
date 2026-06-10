@@ -7,9 +7,15 @@
 # - Is a no-op on Linux (no Podman VM to size)
 # - Warns when VM memory is below the recommended threshold
 # - Warns when VM:host RAM ratio exceeds the jetsam-amplifier threshold
+# - Emits BOTH warnings when both conditions hold (no early return)
+# - Compares in MiB end-to-end (no GiB truncation at the boundary)
 # - Includes the exact `podman machine set --memory` remediation command
 # - Respects KAPSIS_MAX_PARALLEL_AGENTS for threshold calculation
+# - Logs the resolved max_parallel_agents value and its source (env/config/default)
+# - Rejects non-numeric KAPSIS_VM_* overrides before arithmetic (injection guard)
 # - Warns when host swap usage is elevated (memory pressure gate)
+# - Parses vm.swapusage unit-aware (M suffix only, sub-MB rounds up) and
+#   applies an absolute floor before trusting the percentage signal
 # - Is wired into the main preflight_check() function
 #
 # Category: validation
@@ -108,6 +114,14 @@ test_constant_vm_swap_warn_pct_defined() {
     assert_not_empty "${KAPSIS_DEFAULT_VM_SWAP_WARN_PCT:-}" "VM swap warn pct constant must be set"
     assert_true "[[ '${KAPSIS_DEFAULT_VM_SWAP_WARN_PCT}' =~ ^[0-9]+$ ]]" "Must be a positive integer"
     assert_true "(( KAPSIS_DEFAULT_VM_SWAP_WARN_PCT <= 100 ))" "Must not exceed 100%"
+}
+
+test_constant_vm_swap_floor_mb_defined() {
+    log_test "KAPSIS_DEFAULT_VM_SWAP_FLOOR_MB is defined and numeric"
+
+    source "$CONSTANTS_SCRIPT"
+    assert_not_empty "${KAPSIS_DEFAULT_VM_SWAP_FLOOR_MB:-}" "VM swap floor constant must be set"
+    assert_true "[[ '${KAPSIS_DEFAULT_VM_SWAP_FLOOR_MB}' =~ ^[0-9]+$ ]]" "Must be a positive integer"
 }
 
 #===============================================================================
@@ -282,6 +296,151 @@ test_vm_memory_no_warn_when_sufficient() {
     assert_true "[[ $result -eq 0 ]]" "Should not warn when VM is adequately sized"
 }
 
+test_vm_memory_both_checks_warn_together() {
+    log_test "Undersized VM that is also oversized for the host emits BOTH warnings"
+
+    local mock_dir
+    # VM = 7 GB (7168 MiB); host = 8 GiB; 4 agents → threshold 14GB → Check 1 fires
+    # AND 7168/8192 = 87% > 80% → Check 2 fires. Neither may swallow the other.
+    mock_dir=$(make_mock_dir 7168 8589934592)
+
+    local result=0
+    (
+        load_preflight
+        is_macos() { return 0; }
+        PATH="$mock_dir:$PATH"
+        KAPSIS_MAX_PARALLEL_AGENTS=4
+
+        output=$(check_podman_vm_memory 2>&1 || true)
+        [[ "$output" == *"recommended 14336MB"* && "$output" == *"of host RAM"* ]]
+    ) || result=$?
+
+    rm -rf "$mock_dir"
+    assert_true "[[ $result -eq 0 ]]" "Both sizing and jetsam warnings must be emitted together"
+}
+
+test_vm_memory_mib_boundary_no_truncation() {
+    log_test "MiB-precision threshold: 5119 MiB warns, 5120 MiB does not (1-agent / 5GB)"
+
+    local mock_dir_low mock_dir_exact
+    mock_dir_low=$(make_mock_dir 5119 34359738368)
+    mock_dir_exact=$(make_mock_dir 5120 34359738368)
+
+    local result_low=0 result_exact=0
+
+    (
+        load_preflight
+        is_macos() { return 0; }
+        PATH="$mock_dir_low:$PATH"
+
+        _PREFLIGHT_ERRORS=0
+        _PREFLIGHT_WARNINGS=0
+        KAPSIS_MAX_PARALLEL_AGENTS=1
+        check_podman_vm_memory || true
+
+        [[ $_PREFLIGHT_WARNINGS -gt 0 ]]
+    ) || result_low=$?
+
+    (
+        load_preflight
+        is_macos() { return 0; }
+        PATH="$mock_dir_exact:$PATH"
+
+        _PREFLIGHT_ERRORS=0
+        _PREFLIGHT_WARNINGS=0
+        KAPSIS_MAX_PARALLEL_AGENTS=1
+        check_podman_vm_memory || true
+
+        [[ $_PREFLIGHT_WARNINGS -eq 0 ]]
+    ) || result_exact=$?
+
+    rm -rf "$mock_dir_low" "$mock_dir_exact"
+    assert_true "[[ $result_low -eq 0 ]]" "5119 MiB must warn against a 5120 MiB threshold"
+    assert_true "[[ $result_exact -eq 0 ]]" "5120 MiB must not warn against a 5120 MiB threshold"
+}
+
+test_vm_env_override_injection_guarded() {
+    log_test "Non-numeric KAPSIS_VM_* override is rejected before arithmetic (no injection)"
+
+    local mock_dir marker
+    # VM = 8 GB; host = 32 GB → with the DEFAULT base (2GB) nothing warns
+    mock_dir=$(make_mock_dir 8192 34359738368)
+    marker="$mock_dir/pwned"
+
+    local result=0
+    (
+        load_preflight
+        is_macos() { return 0; }
+        PATH="$mock_dir:$PATH"
+
+        # Hostile value: array subscript with command substitution — executes
+        # during bash arithmetic expansion unless regex-guarded first
+        export KAPSIS_VM_BASE_MEMORY_GB='x[$(touch '"$marker"')]'
+        unset KAPSIS_MAX_PARALLEL_AGENTS
+
+        _PREFLIGHT_ERRORS=0
+        _PREFLIGHT_WARNINGS=0
+        check_podman_vm_memory || true
+
+        [[ ! -f "$marker" && $_PREFLIGHT_WARNINGS -eq 0 && $_PREFLIGHT_ERRORS -eq 0 ]]
+    ) || result=$?
+
+    rm -rf "$mock_dir"
+    assert_true "[[ $result -eq 0 ]]" "Hostile override must not execute; default must be used"
+}
+
+test_vm_agents_source_logged_env() {
+    log_test "Resolved max_parallel_agents and its source are logged (env)"
+
+    local mock_dir
+    mock_dir=$(make_mock_dir 8192 34359738368)
+
+    local result=0
+    (
+        load_preflight
+        is_macos() { return 0; }
+        PATH="$mock_dir:$PATH"
+        KAPSIS_MAX_PARALLEL_AGENTS=2
+
+        output=$(check_podman_vm_memory 2>&1 || true)
+        [[ "$output" == *"source: env KAPSIS_MAX_PARALLEL_AGENTS"* ]]
+    ) || result=$?
+
+    rm -rf "$mock_dir"
+    assert_true "[[ $result -eq 0 ]]" "Resolution source 'env' must be logged"
+}
+
+test_vm_agents_source_logged_yaml() {
+    log_test "vm.max_parallel_agents from YAML is applied and its source logged"
+
+    if ! command -v yq &>/dev/null; then
+        echo "  (skipped: yq not installed)"
+        return 0
+    fi
+
+    local mock_dir cfg
+    # VM = 10 GB; YAML asks for 4 agents → threshold 14GB → the warning proves
+    # the YAML value (not the default of 1) drove the computation
+    mock_dir=$(make_mock_dir 10240 34359738368)
+    cfg="$mock_dir/agent-sandbox.yaml"
+    printf 'vm:\n  max_parallel_agents: 4\n' > "$cfg"
+
+    local result=0
+    (
+        load_preflight
+        is_macos() { return 0; }
+        PATH="$mock_dir:$PATH"
+        unset KAPSIS_MAX_PARALLEL_AGENTS
+
+        output=$(check_podman_vm_memory "$cfg" 2>&1 || true)
+        [[ "$output" == *"source: config vm.max_parallel_agents"* \
+            && "$output" == *"4 parallel agent(s)"* ]]
+    ) || result=$?
+
+    rm -rf "$mock_dir"
+    assert_true "[[ $result -eq 0 ]]" "YAML value must be applied and its source logged"
+}
+
 #===============================================================================
 # TESTS: Memory pressure (swap) gate
 #===============================================================================
@@ -361,6 +520,98 @@ test_host_memory_pressure_handles_no_swap() {
     assert_true "[[ $result -eq 0 ]]" "Should not warn when no swap is configured"
 }
 
+test_host_memory_pressure_fractional_mb_not_no_swap() {
+    log_test "Sub-MB swap (0.50M) is present-but-tiny, not 'No swap configured'"
+
+    local mock_dir
+    mock_dir=$(make_mock_dir 8192 34359738368 \
+        "vm.swapusage: total = 0.50M  used = 0.25M  free = 0.25M  (encrypted)")
+
+    local result=0
+    (
+        load_preflight
+        is_macos() { return 0; }
+        PATH="$mock_dir:$PATH"
+
+        output=$(check_host_memory_pressure 2>&1 || true)
+        # Rounds up to 1MB → swap IS configured; usage is below the floor
+        [[ "$output" != *"No swap configured"* \
+            && "$output" != *"Host swap usage"* \
+            && "$output" == *"below"*"floor"* ]]
+    ) || result=$?
+
+    rm -rf "$mock_dir"
+    assert_true "[[ $result -eq 0 ]]" "0.50M swap must hit the floor path, not the no-swap path"
+}
+
+test_host_memory_pressure_unknown_unit_skipped() {
+    log_test "Non-MB unit in vm.swapusage skips the check instead of mis-scaling"
+
+    local mock_dir
+    mock_dir=$(make_mock_dir 8192 34359738368 \
+        "vm.swapusage: total = 4.00G  used = 2.00G  free = 2.00G")
+
+    local result=0
+    (
+        load_preflight
+        is_macos() { return 0; }
+        PATH="$mock_dir:$PATH"
+
+        output=$(check_host_memory_pressure 2>&1 || true)
+        # The numbers cannot be trusted — no warning AND no verdict
+        [[ "$output" != *"Host swap usage"* \
+            && "$output" != *"Host memory pressure OK"* \
+            && "$output" != *"No swap configured"* ]]
+    ) || result=$?
+
+    rm -rf "$mock_dir"
+    assert_true "[[ $result -eq 0 ]]" "G-suffixed values must skip the check entirely"
+}
+
+test_host_memory_pressure_floor_suppresses_tiny_swap() {
+    log_test "High percentage of a tiny swap is suppressed by the absolute floor"
+
+    local mock_dir
+    # 400MB/600MB = 66% > 50% threshold, but 400MB < 512MB floor → no warning
+    mock_dir=$(make_mock_dir 8192 34359738368 \
+        "vm.swapusage: total = 600.00M  used = 400.00M  free = 200.00M")
+
+    local result=0
+    (
+        load_preflight
+        is_macos() { return 0; }
+        PATH="$mock_dir:$PATH"
+
+        output=$(check_host_memory_pressure 2>&1 || true)
+        [[ "$output" != *"Host swap usage"* && "$output" == *"below"*"floor"* ]]
+    ) || result=$?
+
+    rm -rf "$mock_dir"
+    assert_true "[[ $result -eq 0 ]]" "Sub-floor usage must not trigger the percentage warning"
+}
+
+test_host_memory_pressure_threshold_boundary_strict() {
+    log_test "Swap exactly at the warn threshold does not warn (strict > comparison)"
+
+    local mock_dir
+    # Exactly 50%: 2048/4096 — 'above which' semantics means the boundary is OK
+    mock_dir=$(make_mock_dir 8192 34359738368 \
+        "vm.swapusage: total = 4096.00M  used = 2048.00M  free = 2048.00M")
+
+    local result=0
+    (
+        load_preflight
+        is_macos() { return 0; }
+        PATH="$mock_dir:$PATH"
+
+        output=$(check_host_memory_pressure 2>&1 || true)
+        [[ "$output" != *"Host swap usage"* && "$output" == *"swap 50% used"* ]]
+    ) || result=$?
+
+    rm -rf "$mock_dir"
+    assert_true "[[ $result -eq 0 ]]" "Exactly-at-threshold swap must not warn"
+}
+
 test_vm_memory_handles_unknown_vm_gracefully() {
     log_test "check_podman_vm_memory is silent when VM memory cannot be read"
 
@@ -422,6 +673,7 @@ main() {
     run_test test_constant_vm_per_agent_memory_gb_defined
     run_test test_constant_vm_max_host_pct_defined
     run_test test_constant_vm_swap_warn_pct_defined
+    run_test test_constant_vm_swap_floor_mb_defined
 
     run_test test_vm_memory_check_noop_on_linux
     run_test test_host_memory_pressure_noop_on_linux
@@ -432,10 +684,19 @@ main() {
 
     run_test test_vm_memory_threshold_scales_with_agents
     run_test test_vm_memory_no_warn_when_sufficient
+    run_test test_vm_memory_both_checks_warn_together
+    run_test test_vm_memory_mib_boundary_no_truncation
+    run_test test_vm_env_override_injection_guarded
+    run_test test_vm_agents_source_logged_env
+    run_test test_vm_agents_source_logged_yaml
 
     run_test test_host_memory_pressure_warns_high_swap
     run_test test_host_memory_pressure_ok_low_swap
     run_test test_host_memory_pressure_handles_no_swap
+    run_test test_host_memory_pressure_fractional_mb_not_no_swap
+    run_test test_host_memory_pressure_unknown_unit_skipped
+    run_test test_host_memory_pressure_floor_suppresses_tiny_swap
+    run_test test_host_memory_pressure_threshold_boundary_strict
     run_test test_vm_memory_handles_unknown_vm_gracefully
 
     run_test test_vm_memory_check_wired_into_preflight
