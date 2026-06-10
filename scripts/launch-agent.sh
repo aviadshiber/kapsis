@@ -57,6 +57,9 @@ source "$SCRIPT_DIR/lib/status.sh"
 # Source progress display library
 source "$SCRIPT_DIR/lib/progress-display.sh"
 
+# Source launch-spec persistence library (writes ~/.kapsis/specs/<id>.md)
+source "$SCRIPT_DIR/lib/spec-store.sh"
+
 # Bash 3.2 compatible uppercase conversion
 to_upper() {
     echo "$1" | tr '[:lower:]' '[:upper:]'
@@ -75,6 +78,7 @@ generate_agent_id() {
         printf '%x' "$(( $(date +%s)$$ ))" | cut -c1-6
     fi
 }
+
 
 #===============================================================================
 # DEFAULT VALUES
@@ -120,9 +124,17 @@ source "$SCRIPT_DIR/lib/dns-pin.sh"
 source "$SCRIPT_DIR/lib/podman-health.sh"
 # shellcheck source=lib/vfkit-watchdog.sh
 source "$SCRIPT_DIR/lib/vfkit-watchdog.sh"
+# shellcheck source=lib/exec-channel-watchdog.sh
+source "$SCRIPT_DIR/lib/exec-channel-watchdog.sh"
 
 # Source host-side status volume sync (Issue #276) — no-op when KAPSIS_STATUS_VOLUME unset
 source "$SCRIPT_DIR/lib/status-sync.sh"
+
+# Source launch-phase serialization mutex (macOS AVF virtio-fs cache-coherency
+# bug workaround). Default-on for Darwin, no-op elsewhere; see launch-lock.sh
+# for design rationale and env-var knobs (KAPSIS_LAUNCH_LOCK_ENABLED,
+# KAPSIS_LAUNCH_LOCK_TIMEOUT, KAPSIS_LAUNCH_LOCK_POST_COOLDOWN).
+source "$SCRIPT_DIR/lib/launch-lock.sh"
 
 # Network isolation mode: none (isolated), filtered (DNS allowlist - default), open (unrestricted)
 NETWORK_MODE="${KAPSIS_NETWORK_MODE:-$KAPSIS_DEFAULT_NETWORK_MODE}"
@@ -556,6 +568,16 @@ validate_inputs() {
         exit 1
     fi
 
+    # Persist the resolved spec/task to a canonical per-agent location
+    # via the spec-store library. Source-agnostic — slack-bot, /dev, and
+    # interactive launches all land in the same place; consumers (dashboard,
+    # future debug tools) just read $(spec_store_path "$AGENT_ID").
+    if [[ -n "$SPEC_FILE" ]]; then
+        spec_store_write "$AGENT_ID" --spec "$SPEC_FILE" || true
+    elif [[ -n "$TASK_INLINE" ]]; then
+        spec_store_write "$AGENT_ID" --task "$TASK_INLINE" || true
+    fi
+
     # Validate git branch requirements
     if [[ -n "$BRANCH" || "$AUTO_BRANCH" == "true" ]]; then
         if [[ ! -d "$PROJECT_PATH/.git" ]]; then
@@ -766,6 +788,22 @@ parse_config() {
         # LLM gist upgrade layer (default: false — adds per-tool Haiku API call)
         GIST_LLM=$(yq -r '.agent.gist_llm // "false"' "$CONFIG_FILE")
         GIST_LLM_INTERVAL=$(yq -r '.agent.gist_llm_interval // "60"' "$CONFIG_FILE")
+        # Plugin hook injection (default: true for claude-cli, false otherwise).
+        # Kapsis bypasses Claude Code's native plugin loader; this flag tells the
+        # in-container inject-plugin-hooks.sh to merge plugin hooks into
+        # ~/.claude/settings.json so they actually fire.
+        case "$AGENT_CONFIG_TYPE" in
+            claude|claude-cli|claude-code)
+                INSTALL_PLUGINS=$(yq -r '.agent.install_plugins // "true"' "$CONFIG_FILE")
+                ;;
+            *)
+                INSTALL_PLUGINS=$(yq -r '.agent.install_plugins // "false"' "$CONFIG_FILE")
+                ;;
+        esac
+        # Optional whitelist: JSON-encoded array of plugin ids (e.g.
+        # ["foo@m","bar@m"]). Empty/unset = allow all host-enabled plugins.
+        # yq emits JSON for sequences via `-o=json` + `-I=0` (compact form).
+        PLUGIN_WHITELIST_JSON=$(yq -o=json -I=0 '.agent.plugin_whitelist // []' "$CONFIG_FILE" 2>/dev/null || echo '[]')
         RESOURCE_MEMORY=$(yq -r '.resources.memory // "8g"' "$CONFIG_FILE")
         RESOURCE_CPUS=$(yq -r '.resources.cpus // "4"' "$CONFIG_FILE")
         SANDBOX_UPPER_BASE=$(yq -r '.sandbox.upper_dir_base // "~/.ai-sandboxes"' "$CONFIG_FILE")
@@ -951,6 +989,21 @@ parse_config() {
 
         cfg_val=$(yq -r '.security.process.no_new_privileges // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
         [[ "$cfg_val" == "false" ]] && [[ -z "${KAPSIS_NO_NEW_PRIVILEGES:-}" ]] && export KAPSIS_NO_NEW_PRIVILEGES="false"
+
+        # User namespace mode (#361 — domain-UID workaround). Empty falls
+        # through to security.sh's autodetect (`keep-id` for low host UIDs,
+        # `keep-id:uid=1000,gid=1000` for high). Set KAPSIS_USERNS env to
+        # override per-invocation.
+        #
+        # The override guard checks KAPSIS_USERNS (not SECURITY_USERNS) on
+        # purpose — KAPSIS_USERNS is the user-facing override documented in
+        # the README, matching how every other security setting in this
+        # block guards on a KAPSIS_* var. SECURITY_USERNS is an internal
+        # plumbing variable owned by this parse path; users who export it
+        # directly are bypassing the documented contract and we don't
+        # honour it as an override.
+        cfg_val=$(yq -r '.security.userns // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ -n "$cfg_val" ]] && [[ -z "${KAPSIS_USERNS:-}" ]] && export SECURITY_USERNS="$cfg_val"
     else
         log_error "yq is required but not installed."
         log_error "Install yq: brew install yq (macOS) or sudo snap install yq (Linux)"
@@ -1268,6 +1321,14 @@ add_common_volume_mounts() {
         VOLUME_MOUNTS+=("-v" "${audit_dir}:${CONTAINER_AUDIT_PATH}")
     fi
 
+    # Conversation JSONL (post-mortem preservation — Issue #265)
+    # Mounted per-agent so conversation history survives container death (OOM,
+    # crash, rm -f). Bind mount outlives the container overlay the same way
+    # /kapsis-status does. TTL-based cleanup in kapsis-cleanup (default 7 days).
+    local conv_dir="${KAPSIS_CONVERSATIONS_DIR:-$HOME/.kapsis/conversations/${AGENT_ID}}"
+    ensure_dir "$conv_dir"
+    VOLUME_MOUNTS+=("-v" "${conv_dir}:${CONTAINER_CONVERSATIONS_PATH}")
+
     # Maven repository (isolated per agent)
     VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")
 
@@ -1384,6 +1445,101 @@ _snapshot_file() {
     fi
 }
 
+#-------------------------------------------------------------------------------
+# _path_has_unstattable_entries <host_path>
+#
+# Returns 0 if the subtree under <host_path> contains any AF_UNIX socket,
+# FIFO, or device entry — the entry classes that virtio-fs on macOS
+# returns from readdir() but errors on stat()/lstat() (issue #338).
+# Used by generate_filesystem_includes() to decide whether a directory
+# source needs pre-filter snapshotting before applying the :U mount
+# flag (which makes podman chown-walk the source via lstat).
+#
+# Uses `find ... -print -quit` so it returns after the first match —
+# fast even on large trees like ~/.claude/projects.
+#-------------------------------------------------------------------------------
+_path_has_unstattable_entries() {
+    local p="$1"
+    [[ -d "$p" ]] || return 1
+    [[ -n "$(find "$p" \( -type s -o -type p -o -type c -o -type b \) -print -quit 2>/dev/null)" ]]
+}
+
+#-------------------------------------------------------------------------------
+# _snapshot_dir_filtered <host_path> <relative_name>
+#
+# Snapshots a host directory tree to ${SNAPSHOT_DIR}/<relative_name>,
+# omitting AF_UNIX sockets / FIFOs / devices. Returns the snapshot path
+# on success, falls back to <host_path> (live mount) on failure with a
+# log_warn.
+#
+# Issue #338: when the resulting mount is given the :U flag, podman
+# walks the source via lstat() to chown it. AF_UNIX sockets visible
+# from readdir() on macOS virtio-fs return ENOENT from lstat(),
+# aborting the container-prepare phase before entrypoint runs. By
+# producing a socket-free snapshot here, the :U traversal succeeds.
+#
+# Mode bits are preserved via `cp -Rp` (BSD + GNU compatible). Sockets
+# / FIFOs / devices are pruned post-cp to defend against platform
+# variance in how cp handles them. The in-container atomic-copy
+# classifier (scripts/lib/atomic-copy.sh) remains as defense in depth.
+#-------------------------------------------------------------------------------
+_snapshot_dir_filtered() {
+    local host_path="$1"
+    local relative_name="$2"
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo "$host_path"
+        return 0
+    fi
+
+    local snapshot_path="${SNAPSHOT_DIR}/${relative_name}"
+
+    # Pre-clean to avoid stale-entry merge on re-runs / agent resume.
+    # cp -Rp src/. dst/ merges files into an existing dst, so entries
+    # deleted from the host between launches would persist in the
+    # snapshot and be visible to the new container.
+    rm -rf "$snapshot_path" 2>/dev/null || true
+
+    if ! mkdir -p "$snapshot_path" 2>/dev/null; then
+        log_warn "Snapshot dir mkdir failed for ${snapshot_path}, falling back to live mount"
+        echo "$host_path"
+        return 1
+    fi
+
+    # cp -Rp may warn and exit non-zero on socket entries but still
+    # copies all regular files / dirs / symlinks. Suppress the noise
+    # and post-prune to handle any platform variance.
+    cp -Rp "${host_path}/." "${snapshot_path}/" 2>/dev/null || true
+    find "$snapshot_path" \( -type s -o -type p -o -type c -o -type b \) -delete 2>/dev/null || true
+
+    # Harden the snapshot subtree AFTER cp -Rp (which would otherwise
+    # propagate the source dir's mode onto snapshot_path and undo any
+    # earlier chmod). Inner file modes are preserved by `-p` (so
+    # id_rsa stays 0600), but the ancestor SNAPSHOT_DIR is created by
+    # the caller with the default umask (typically 0755). chmod 0700
+    # here keeps the credential contents enumerable only by the
+    # current user even if the parent is loose.
+    chmod 0700 "$snapshot_path" 2>/dev/null || true
+
+    # Validate completeness via regular-file count parity. This subsumes
+    # an "is the snapshot empty?" check and catches:
+    #   - cp entirely failed (src=N, dst=0)
+    #   - cp partial failure / mid-copy ENOSPC (src=N, dst=K, K<N)
+    #   - source contained only sockets (src=0, dst=0 — match, no fallback;
+    #     an empty snapshot is still a valid socket-free :U source)
+    # Mirrors atomic-copy.sh's count-based guard (issues #328, #335).
+    local _src_count _dst_count
+    _src_count=$(find "$host_path" -type f 2>/dev/null | wc -l | tr -d ' \n')
+    _dst_count=$(find "$snapshot_path" -type f 2>/dev/null | wc -l | tr -d ' \n')
+    if [[ "$_src_count" != "$_dst_count" ]]; then
+        log_warn "Snapshot file count mismatch for ${host_path} (src=${_src_count} dst=${_dst_count}), falling back to live mount"
+        echo "$host_path"
+        return 1
+    fi
+
+    echo "$snapshot_path"
+}
+
 generate_filesystem_includes() {
     local staging_dir="/kapsis-staging"
     STAGED_CONFIGS=""
@@ -1423,16 +1579,52 @@ generate_filesystem_includes() {
                 relative_path="${expanded_path#"$HOME"/}"
                 staging_path="${staging_dir}/${relative_path}"
 
-                # Snapshot regular files to prevent torn reads (issue #164)
-                # Directories are left as-is — they use fuse-overlayfs CoW inside the container
+                # Snapshot regular files to prevent torn reads (issue #164).
+                # Issue #338: on macOS, also snapshot directories that contain
+                # AF_UNIX sockets / FIFOs / devices, since podman's :U flag
+                # (added below for the #328 fix) chowns the source recursively
+                # via lstat() — and virtio-fs returns ENOENT from lstat() on
+                # those entry types, aborting container-prepare. Other
+                # directories keep the live mount + fuse-overlayfs CoW path.
                 local mount_source="$expanded_path"
+                local _dir_snapshot_fallback=0
                 if [[ -f "$expanded_path" ]]; then
                     mount_source=$(_snapshot_file "$expanded_path" "$relative_path")
-                    log_debug "Snapshot: ${expanded_path} -> ${mount_source}"
+                    log_debug "Snapshot (file): ${expanded_path} -> ${mount_source}"
+                elif [[ -d "$expanded_path" ]] && is_macos && _path_has_unstattable_entries "$expanded_path"; then
+                    if mount_source=$(_snapshot_dir_filtered "$expanded_path" "$relative_path"); then
+                        log_debug "Snapshot (dir, socket-free): ${expanded_path} -> ${mount_source}"
+                    else
+                        # Fallback returned live host_path; mounting it with :U
+                        # would re-trip the chown-walk on virtio-fs ENOENT (the
+                        # bug this code prevents). Drop :U for THIS entry; the
+                        # in-container atomic-copy classifier (#336) handles
+                        # the remaining cp-stage socket failures.
+                        _dir_snapshot_fallback=1
+                        log_warn "Directory snapshot for ${expanded_path} fell back to live mount; :U dropped on this entry to avoid #338 chown-walk"
+                    fi
                 fi
 
-                # Mount to staging directory (read-only)
-                VOLUME_MOUNTS+=("-v" "${mount_source}:${staging_path}:ro")
+                # Mount to staging directory (read-only).
+                # Issue #328: on macOS, the host user's UID (typically 501) maps to
+                # UID 0 (root) inside the container's user namespace, while the
+                # container process runs as developer (UID 1000). Directories with
+                # mode 0700 (e.g., .ssh, .claude) owned by UID 0 are inaccessible
+                # to UID 1000 — both fuse-overlayfs and cp fail with EACCES.
+                # The :U flag creates an idmapped mount (kernel 5.12+, Podman 4.3+)
+                # that remaps file ownership to the container user so mode-0700 dirs
+                # appear owned by developer and become readable. :ro is preserved;
+                # the host filesystem is never modified.
+                # Issue #338: :U makes podman chown-walk the source via lstat(),
+                # which trips on virtio-fs ENOENT for AF_UNIX sockets. The
+                # directory-snapshot above produces a socket-free source for
+                # affected dirs so :U traversal succeeds. If the snapshot
+                # itself fell back to the live path, drop :U for that entry.
+                local _staging_mount_opts="ro"
+                if is_macos && [[ "$_dir_snapshot_fallback" -eq 0 ]]; then
+                    _staging_mount_opts="ro,U"
+                fi
+                VOLUME_MOUNTS+=("-v" "${mount_source}:${staging_path}:${_staging_mount_opts}")
                 log_debug "Staged for copy: ${mount_source} -> ${staging_path}"
 
                 # Track for entrypoint to copy
@@ -1783,8 +1975,15 @@ generate_env_vars() {
     ENV_VARS+=("-e" "KAPSIS_STATUS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_STATUS_BRANCH=${BRANCH:-}")
     ENV_VARS+=("-e" "KAPSIS_INJECT_GIST=${INJECT_GIST:-false}")
+    # Overlay mode: /workspace is read-only, so re-home the runtime gist file
+    # onto the always-writable /kapsis-status volume (issue #328).
+    if [[ "${SANDBOX_MODE}" == "overlay" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_GIST_FILE=/kapsis-status/gist.txt")
+    fi
     ENV_VARS+=("-e" "KAPSIS_GIST_LLM=${GIST_LLM:-false}")
     ENV_VARS+=("-e" "KAPSIS_GIST_LLM_INTERVAL=${GIST_LLM_INTERVAL:-60}")
+    ENV_VARS+=("-e" "KAPSIS_INSTALL_PLUGINS=${INSTALL_PLUGINS:-false}")
+    ENV_VARS+=("-e" "KAPSIS_PLUGIN_WHITELIST=${PLUGIN_WHITELIST_JSON:-[]}")
 
     # Audit environment variables
     if [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED}}" == "true" ]]; then
@@ -1843,7 +2042,7 @@ generate_env_vars() {
 
     # Attribution templates (commit trailer + PR description).
     # - Claude Code (claude-cli): inject-status-hooks.sh writes these into
-    #   ~/.claude/settings.local.json so Claude Code uses them natively.
+    #   ~/.claude/settings.json so Claude Code uses them natively.
     # - Other agents: entrypoint.sh and host-side post-container-git.sh read
     #   KAPSIS_ATTRIBUTION_COMMIT and append it to commit messages directly.
     # Empty string disables attribution (Claude Code honors this explicitly).
@@ -2389,6 +2588,16 @@ main() {
     # inside the container cannot forge a mount_failure exit.
     _VFKIT_FIRED_SENTINEL=""
 
+    # PID of exec-channel watchdog subshell (Issue #382). macOS-only; empty
+    # when disabled. Cleaned up in _cleanup_with_completion.
+    _EXEC_CHANNEL_WATCHDOG_PID=""
+
+    # Host-only sentinel path written by the exec-channel watchdog when
+    # `podman exec <container> true` hangs N consecutive times. Same trust
+    # model as _VFKIT_FIRED_SENTINEL: under $TMPDIR, host-private, NOT
+    # bind-mounted into the container.
+    _EXEC_HANG_FIRED_SENTINEL=""
+
     # Cleanup function that ensures completion message is shown
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
@@ -2418,6 +2627,19 @@ main() {
         if [[ -n "${_VFKIT_FIRED_SENTINEL:-}" ]]; then
             rm -f "$_VFKIT_FIRED_SENTINEL" 2>/dev/null || true
         fi
+        # Same shape as the vfkit watchdog teardown above. Killed before
+        # backend_cleanup so a stale watchdog cannot fire on a future agent
+        # after the container has already exited normally. `wait` drains the
+        # subshell so any in-flight `_status_write` finishes before this trap
+        # runs `status_complete` again.
+        if [[ -n "${_EXEC_CHANNEL_WATCHDOG_PID:-}" ]]; then
+            kill "$_EXEC_CHANNEL_WATCHDOG_PID" 2>/dev/null || true
+            wait "$_EXEC_CHANNEL_WATCHDOG_PID" 2>/dev/null || true
+            _EXEC_CHANNEL_WATCHDOG_PID=""
+        fi
+        if [[ -n "${_EXEC_HANG_FIRED_SENTINEL:-}" ]]; then
+            rm -f "$_EXEC_HANG_FIRED_SENTINEL" 2>/dev/null || true
+        fi
         # Stop host-side status volume sync and flush one final snapshot to
         # the host status dir so post-exit consumers see the definitive state
         # (Issue #276). No-op when KAPSIS_STATUS_VOLUME is unset.
@@ -2425,6 +2647,11 @@ main() {
             stop_status_sync "${AGENT_ID:-}" "$KAPSIS_STATUS_VOLUME" \
                 "${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}" 2>/dev/null || true
         fi
+        # Release the launch-phase lock if we still hold it on abnormal exit
+        # (the normal release happens right after setup_sandbox in main flow,
+        # but a crash between acquire and that release would leak the lock
+        # to the next agent's acquire-timeout). Idempotent.
+        launch_lock_release 2>/dev/null || true
         # Delegate backend-specific cleanup (secrets env file, inline spec, dns pin, etc.)
         backend_cleanup 2>/dev/null || true
         # Ensure status transitions to 'complete' on abnormal exit (Fix #168)
@@ -2508,7 +2735,7 @@ main() {
     if [[ -n "$BRANCH" ]] && [[ "$SANDBOX_MODE" != "overlay" ]] && [[ "$DRY_RUN" != "true" ]]; then
         log_timer_start "preflight"
         source "$SCRIPT_DIR/preflight-check.sh"
-        if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID"; then
+        if ! preflight_check "$PROJECT_PATH" "$BRANCH" "$SPEC_FILE" "$IMAGE_NAME" "$AGENT_ID" "$CONFIG_FILE"; then
             status_complete 1 "Pre-flight check failed"
             _STATUS_COMPLETE_SHOWN=true
             exit 1
@@ -2517,14 +2744,25 @@ main() {
         status_phase "initializing" 15 "Pre-flight check passed" || true
     fi
 
-    # Setup sandbox (worktree/overlay) — only for backends that support it
+    # Setup sandbox (worktree/overlay) — only for backends that support it.
+    #
+    # Wrapped with the host-scoped launch lock (macOS-only by default) so two
+    # agents don't enter the heavy metadata-I/O window simultaneously and
+    # trip the AVF virtio-fs cache-coherency bug — see launch-lock.sh. The
+    # post-cooldown happens inside launch_lock_release so the VM-side overlay
+    # mount of THIS agent's container settles before the next launch starts.
     if backend_supports "worktree" || backend_supports "overlay"; then
         log_timer_start "sandbox_setup"
+        if ! launch_lock_acquire; then
+            log_warn "Launch lock unavailable — proceeding without serialization (next agent may race)"
+        fi
         if ! setup_sandbox; then
+            launch_lock_release  # release before failing exit
             status_complete 1 "Sandbox setup failed (mode: ${SANDBOX_MODE:-unknown})"
             _STATUS_COMPLETE_SHOWN=true
             exit 1
         fi
+        launch_lock_release
         log_timer_end "sandbox_setup"
     else
         log_info "Backend '$BACKEND' handles sandbox setup in-cluster"
@@ -2682,6 +2920,15 @@ main() {
         rm -f "$_VFKIT_FIRED_SENTINEL" 2>/dev/null || true
         start_vfkit_watchdog "$AGENT_ID" "" "" "$_VFKIT_FIRED_SENTINEL" \
             || log_warn "vfkit watchdog failed to start — mount failure detection disabled for this session"
+
+        # exec-channel watchdog (Issue #382): catches the silent-wedge mode
+        # where vfkit is alive but `podman exec` hangs (the v2.24.0 vfkit
+        # watchdog cannot detect this). Same trust model as the vfkit
+        # sentinel — host-only path under $TMPDIR, never bind-mounted.
+        _EXEC_HANG_FIRED_SENTINEL="${TMPDIR:-/tmp}/kapsis-${AGENT_ID}.exec-hang-fired"
+        rm -f "$_EXEC_HANG_FIRED_SENTINEL" 2>/dev/null || true
+        start_exec_channel_watchdog "$AGENT_ID" "" "" "" "" "$_EXEC_HANG_FIRED_SENTINEL" \
+            || log_warn "exec-channel watchdog failed to start — silent-wedge detection disabled for this session"
     fi
 
     # Display progress header (shows sandbox ready status with timer)
@@ -2868,12 +3115,49 @@ main() {
         if [[ "$status_exit_vfkit" == "4" && "$status_err_vfkit" == "mount_failure" ]]; then
             log_warn "Mount failure confirmed by vfkit watchdog (host sentinel + status.json mount_failure) — overriding exit code from $EXIT_CODE to 4"
             EXIT_CODE=4
+            _KAPSIS_VFKIT_HANG_DETECTED=true
         else
             # Sentinel present but status.json doesn't agree — possible
             # status_complete failure inside the watchdog subshell. Still
             # safe to override because the sentinel is host-trusted.
             log_warn "Mount failure detected via vfkit watchdog host sentinel (status.json mismatch — disk full?) — overriding exit code from $EXIT_CODE to 4"
             EXIT_CODE=4
+            _KAPSIS_VFKIT_HANG_DETECTED=true
+        fi
+    fi
+
+    # Check for exec-channel watchdog hang (Issue #382). Same trust model
+    # as the vfkit override above: host-only sentinel is the authoritative
+    # signal; status.json's `error_type: exec_channel_hang` is defense in
+    # depth. Skipped if the vfkit watchdog already fired — both watchdogs
+    # share exit code 4, and `exec_channel_hang` would otherwise overwrite
+    # the more specific `mount_failure` error_type when both fire in close
+    # succession (e.g. vfkit dies while exec is already hung). We gate on
+    # the `_KAPSIS_VFKIT_HANG_DETECTED` boolean rather than the sentinel
+    # file because `_cleanup_with_completion` may delete the sentinel
+    # before this block runs (e.g. via an ERR/EXIT trap during a fatal
+    # error earlier in main), and a missing sentinel would otherwise let
+    # this block silently overwrite the vfkit watchdog's diagnosis.
+    if [[ "$EXIT_CODE" -ne 0 ]] \
+       && [[ -n "${_EXEC_HANG_FIRED_SENTINEL:-}" && -f "$_EXEC_HANG_FIRED_SENTINEL" ]] \
+       && [[ "${_KAPSIS_VFKIT_HANG_DETECTED:-false}" != "true" ]]; then
+        local _status_file_exec
+        _status_file_exec="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/kapsis-$(basename "$PROJECT_PATH")-${AGENT_ID}.json"
+        local status_exit_exec status_err_exec
+        status_exit_exec=$(status_get_exit_code 2>/dev/null || echo "")
+        status_err_exec=""
+        if [[ -f "$_status_file_exec" ]] \
+           && grep -Eq '"error_type":[[:space:]]*"exec_channel_hang"' "$_status_file_exec" 2>/dev/null; then
+            status_err_exec="exec_channel_hang"
+        fi
+        if [[ "$status_exit_exec" == "4" && "$status_err_exec" == "exec_channel_hang" ]]; then
+            log_warn "Exec-channel hang confirmed by host-side watchdog (sentinel + status.json exec_channel_hang) — overriding exit code from $EXIT_CODE to 4"
+            EXIT_CODE=4
+            _KAPSIS_EXEC_HANG_DETECTED=true
+        else
+            log_warn "Exec-channel hang detected via host sentinel (status.json mismatch — disk full?) — overriding exit code from $EXIT_CODE to 4"
+            EXIT_CODE=4
+            _KAPSIS_EXEC_HANG_DETECTED=true
         fi
     fi
 
@@ -2925,12 +3209,40 @@ main() {
     #   4 = Mount failure (virtio-fs drop)
     #   5 = Agent completed but process hung (stuck child process)
     #   6 = Commit failure (agent produced work but git commit failed)
-    if [[ "$EXIT_CODE" -eq 4 ]]; then
-        # Mount failure detected via sentinel (Issue #248)
+    # User-initiated kill (e.g. dashboard Kill button) drops a marker BEFORE
+    # `podman kill`, so the post-container handler can distinguish an intentional
+    # SIGTERM from a real mount failure / agent crash. SIGTERM tears down the
+    # container, which drops the virtio-fs mount and causes the entrypoint's
+    # mount probe to emit KAPSIS_MOUNT_FAILURE — without this check, every
+    # dashboard kill would be mis-classified as `mount_failure`.
+    local _kill_marker
+    _kill_marker="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/${AGENT_ID}.kill-requested"
+    if [[ -f "$_kill_marker" ]] && [[ "$EXIT_CODE" -ne 0 ]]; then
+        log_info "Kill marker present — agent was intentionally terminated (source: dashboard or equivalent)"
+        FINAL_EXIT_CODE=0
+        log_finalize 0
+        status_set_error_type "killed"
+        local kill_msg="Agent terminated by user request"
+        status_complete 0 "$kill_msg"
+        _STATUS_COMPLETE_SHOWN=true
+        display_complete 0 "" "$kill_msg"
+        _DISPLAY_COMPLETE_SHOWN=true
+        rm -f "$_kill_marker" 2>/dev/null || true
+    elif [[ "$EXIT_CODE" -eq 4 ]]; then
+        # Mount-class failure detected via sentinel (Issue #248 / #382).
+        # _KAPSIS_EXEC_HANG_DETECTED distinguishes the silent-wedge mode
+        # from a true virtio-fs drop so the user message and error_type
+        # reflect the actual diagnosis.
         FINAL_EXIT_CODE=4
         log_finalize 4
-        status_set_error_type "mount_failure"
-        local mount_error="Workspace mount lost (virtio-fs drop). Recovery: podman machine stop && podman machine start, then re-run."
+        local mount_error
+        if [[ "${_KAPSIS_EXEC_HANG_DETECTED:-false}" == "true" ]]; then
+            status_set_error_type "exec_channel_hang"
+            mount_error="Container exec channel wedged (podman daemon hang while vfkit alive). Recovery: podman machine stop && podman machine start, then re-run."
+        else
+            status_set_error_type "mount_failure"
+            mount_error="Workspace mount lost (virtio-fs drop). Recovery: podman machine stop && podman machine start, then re-run."
+        fi
         status_complete 4 "$mount_error"
         _STATUS_COMPLETE_SHOWN=true
         display_complete 4 "" "$mount_error"

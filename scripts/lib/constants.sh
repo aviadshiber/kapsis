@@ -157,7 +157,13 @@ readonly KAPSIS_GIT_EXCLUDE_PATTERNS="# Kapsis internal files
 # AI tool configuration directories (should stay local)
 .claude/
 .codex/
-.aider/"
+.aider/
+
+# Kapsis worktree-mode mount points (CONTAINER_GIT_PATH / CONTAINER_OBJECTS_PATH).
+# Anchored at the worktree root because these are bind-mounts at /workspace/.
+# Regression guard for products PR #102836 (committed entire object DB).
+/.git-safe/
+/.git-objects/"
 
 #===============================================================================
 # SECRET STORE INJECTION
@@ -331,6 +337,17 @@ readonly KAPSIS_DEFAULT_VFS_RECOVERY_RETRIES=2
 # Delay (seconds) between retries after auto-heal
 readonly KAPSIS_DEFAULT_VFS_RECOVERY_DELAY=3
 
+# Timeout (seconds) for the `podman exec <id> /bin/true` responsiveness probe
+# used by count_running_kapsis_containers to exclude wedged zombie containers
+# (Issue #348).
+readonly KAPSIS_DEFAULT_VFS_EXEC_PROBE_TIMEOUT=2
+
+# Timeout (seconds) for the best-effort `podman rm -f` invoked by the wedged-
+# container sweep in maybe_autoheal_podman_vm (Issue #348). On a truly wedged
+# container this will almost always hit the timeout — that's expected; the
+# subsequent VM restart + _kill_vfkit_zombie reaps it at the hypervisor layer.
+readonly KAPSIS_DEFAULT_VFS_RM_FORCE_TIMEOUT=5
+
 #===============================================================================
 # STATUS VOLUME (Issue #276)
 #
@@ -347,6 +364,21 @@ readonly KAPSIS_STATUS_VOLUME_SUFFIX="-status"
 # 5s matches the kapsis-status.sh --watch poll cadence; smaller values
 # increase Podman API call frequency (podman volume export on every tick).
 readonly KAPSIS_DEFAULT_STATUS_SYNC_INTERVAL=5
+
+#===============================================================================
+# CONVERSATION PERSISTENCE (Issue #265)
+#
+# Agent conversation JSONL is mounted from a per-agent host directory into the
+# container so it survives container death (OOM, crash, rm -f). Same pattern
+# as /kapsis-status — a bind-mount that outlives the container overlay.
+# Per-agent isolation: ~/.kapsis/conversations/<agent-id>/
+#===============================================================================
+
+# Container mount point for Claude Code conversation JSONL files
+readonly CONTAINER_CONVERSATIONS_PATH="/home/developer/.claude/conversations"
+
+# Default TTL (days) for conversation directory cleanup in kapsis-cleanup
+readonly KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS=7
 
 #===============================================================================
 # SLEEP PREVENTION (Issue #276)

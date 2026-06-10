@@ -491,13 +491,34 @@ RUN userdel -r ubuntu 2>/dev/null || true && \
     groupadd -g ${GROUP_ID} ${USERNAME} && \
     useradd -m -u ${USER_ID} -g ${GROUP_ID} -s /bin/bash ${USERNAME}
 
-# Create directories with correct ownership
+# Create directories with correct ownership.
+#
+# Issue #340: pre-create /home/${USERNAME}/.claude as developer-owned so the
+# conversations bind-mount (added in #322 at /home/developer/.claude/conversations)
+# doesn't cause podman to auto-create the parent .claude dir as root mode 1755
+# on macOS hosts with --userns=keep-id. The auto-created root-owned .claude
+# subsequently breaks atomic_copy_dir's rm-rf-and-mv replacement step in
+# setup_staged_config_overlays. Pre-creating the dir means podman finds it
+# already there and processes the conversations sub-mount without altering
+# parent ownership/mode.
 RUN mkdir -p /home/${USERNAME}/.m2/repository \
              /home/${USERNAME}/.gradle \
              /home/${USERNAME}/.m2/.gradle-enterprise \
+             /home/${USERNAME}/.claude \
              /home/${USERNAME}/go \
              /workspace && \
     chown -R ${USERNAME}:${USERNAME} /home/${USERNAME} /workspace
+
+# PR #380 follow-up: fuse-overlayfs upper/work base dirs must exist and be
+# developer-writable BEFORE entrypoint.sh runs as the developer user. Without
+# this, every staged config (.claude, .ssh, .gitconfig, …) silently falls back
+# to atomic_copy_dir — which then trips the bind-mount-busy bug for .claude
+# (the conversations sub-mount prevents rm -rf, mv nests tmp inside dst,
+# settings.json::enabledPlugins never reaches the container).
+# Reference: setup_staged_config_overlays in scripts/entrypoint.sh
+RUN mkdir -p /kapsis-upper /kapsis-work && \
+    chown ${USER_ID}:${GROUP_ID} /kapsis-upper /kapsis-work && \
+    chmod 0755 /kapsis-upper /kapsis-work
 
 #===============================================================================
 # KAPSIS SCRIPTS AND CONFIGURATION
@@ -519,6 +540,7 @@ COPY scripts/lib/inject-status-hooks.sh /opt/kapsis/lib/inject-status-hooks.sh
 COPY scripts/lib/filter-agent-config.sh /opt/kapsis/lib/filter-agent-config.sh
 COPY scripts/lib/inject-lsp-config.sh /opt/kapsis/lib/inject-lsp-config.sh
 COPY scripts/lib/rewrite-plugin-paths.sh /opt/kapsis/lib/rewrite-plugin-paths.sh
+COPY scripts/lib/inject-plugin-hooks.sh /opt/kapsis/lib/inject-plugin-hooks.sh
 COPY scripts/lib/liveness-monitor.sh /opt/kapsis/lib/liveness-monitor.sh
 COPY scripts/lib/dns-filter.sh /opt/kapsis/lib/dns-filter.sh
 COPY scripts/lib/git-remote-utils.sh /opt/kapsis/lib/git-remote-utils.sh
@@ -553,6 +575,31 @@ RUN chmod 755 /opt/kapsis/*.sh /opt/kapsis/kapsis-ss-inject /opt/kapsis/git-cred
     chmod 644 /opt/kapsis/maven/settings.xml /opt/kapsis/lib/progress-instructions.md && \
     ln -sf /opt/kapsis/kapsis-ss-inject /usr/local/bin/kapsis-ss-inject && \
     ln -sf /opt/kapsis/git-credential-keyring /usr/local/bin/git-credential-keyring
+
+# Build-time guard: fail the build if entrypoint.sh references a lib file that
+# wasn't COPYed into the image. Catches the failure mode where a new
+# scripts/lib/<x>.sh is added and entrypoint.sh starts sourcing it, but the
+# corresponding COPY line is forgotten — leading to silent log_debug "script
+# not found, skipping" no-ops at runtime (see commit 8d5eea8 for an instance
+# where inject-plugin-hooks.sh was added but not shipped).
+RUN set -e; \
+    missing=""; \
+    refs=$(grep -oE '\$KAPSIS_HOME/lib/[A-Za-z0-9_.-]+\.(sh|py|md)' /opt/kapsis/entrypoint.sh | sed 's|.*/lib/||' | sort -u || true); \
+    if [ -z "$refs" ]; then \
+        echo "ERROR: lib-completeness-check found zero \$KAPSIS_HOME/lib/ references in entrypoint.sh — guard would pass vacuously. Either entrypoint.sh is mangled or the reference pattern changed; update the guard regex." >&2; \
+        exit 1; \
+    fi; \
+    for f in $refs; do \
+        if [ ! -f "/opt/kapsis/lib/$f" ]; then \
+            missing="$missing $f"; \
+        fi; \
+    done; \
+    if [ -n "$missing" ]; then \
+        echo "ERROR: entrypoint.sh references missing /opt/kapsis/lib/ files:$missing" >&2; \
+        echo "Add corresponding 'COPY scripts/lib/<file> /opt/kapsis/lib/<file>' lines to Containerfile." >&2; \
+        exit 1; \
+    fi; \
+    echo "[lib-completeness-check] All entrypoint.sh /opt/kapsis/lib/ references present ($(echo "$refs" | wc -w | tr -d ' ') files)."
 
 #===============================================================================
 # ENVIRONMENT CONFIGURATION

@@ -366,12 +366,12 @@ test_inject_claude_creates_settings_if_missing() {
     source "$LIB_DIR/inject-status-hooks.sh"
     inject_claude_hooks >/dev/null 2>&1
 
-    # Verify settings.local.json was created
-    assert_file_exists "$TEST_HOME/.claude/settings.local.json" "settings.local.json should be created"
+    # Verify settings.json was created
+    assert_file_exists "$TEST_HOME/.claude/settings.json" "settings.json should be created"
 
     # Verify it contains our hooks
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$content" "PostToolUse" "Should contain PostToolUse hook"
     assert_contains "$content" "kapsis-status-hook.sh" "Should contain status hook"
     assert_contains "$content" "Stop" "Should contain Stop hook"
@@ -386,7 +386,7 @@ test_inject_claude_merges_with_existing() {
 
     # Create existing settings with user hooks
     mkdir -p "$TEST_HOME/.claude"
-    cat > "$TEST_HOME/.claude/settings.local.json" << 'EOF'
+    cat > "$TEST_HOME/.claude/settings.json" << 'EOF'
 {
   "hooks": {
     "PostToolUse": [{
@@ -403,13 +403,13 @@ EOF
 
     # Verify user hooks are preserved
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$content" "/user/custom-hook.sh" "User hook should be preserved"
     assert_contains "$content" "kapsis-status-hook.sh" "Kapsis hook should be added"
 
     # Count PostToolUse entries - should be 2 (user + kapsis)
     local hook_count
-    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "2" "$hook_count" "Should have 2 PostToolUse entries"
 
     cleanup_inject_test_env
@@ -426,11 +426,11 @@ test_inject_claude_idempotent() {
 
     # Verify hooks are not duplicated
     local hook_count
-    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "1" "$hook_count" "Should have exactly 1 PostToolUse entry after double injection"
 
     local stop_count
-    stop_count=$(jq '.hooks.Stop | length' "$TEST_HOME/.claude/settings.local.json")
+    stop_count=$(jq '.hooks.Stop | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "1" "$stop_count" "Should have exactly 1 Stop entry after double injection"
 
     cleanup_inject_test_env
@@ -449,21 +449,21 @@ test_inject_claude_with_gist_enabled() {
     inject_claude_hooks >/dev/null 2>&1
 
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
 
     # Gist hook must appear in settings
     assert_contains "$content" "kapsis-gist-hook.sh" "Gist hook should be injected when KAPSIS_INJECT_GIST=true"
 
     # Two PostToolUse entries: gist hook (first) + status hook (second)
     local hook_count
-    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "2" "$hook_count" "Should have 2 PostToolUse entries (gist + status)"
 
     # Gist hook must come before status hook so status reads the current gist.
     # Check ordering by comparing line positions in the serialized JSON.
     local gist_line status_line
-    gist_line=$(grep -n "kapsis-gist-hook.sh" "$TEST_HOME/.claude/settings.local.json" | head -1 | cut -d: -f1)
-    status_line=$(grep -n "kapsis-status-hook.sh" "$TEST_HOME/.claude/settings.local.json" | head -1 | cut -d: -f1)
+    gist_line=$(grep -n "kapsis-gist-hook.sh" "$TEST_HOME/.claude/settings.json" | head -1 | cut -d: -f1)
+    status_line=$(grep -n "kapsis-status-hook.sh" "$TEST_HOME/.claude/settings.json" | head -1 | cut -d: -f1)
     assert_true "[[ ${gist_line:-99} -lt ${status_line:-100} ]]" "Gist hook should appear before status hook in JSON"
 
     unset KAPSIS_INJECT_GIST
@@ -480,7 +480,7 @@ test_inject_claude_gist_disabled_when_hook_missing() {
     inject_claude_hooks >/dev/null 2>&1
 
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
 
     # Gist hook must NOT appear when the hook file is missing
     assert_not_contains "$content" "kapsis-gist-hook.sh" \
@@ -654,7 +654,7 @@ test_inject_skips_without_agent_id() {
     inject_kapsis_hooks "claude-cli" >/dev/null 2>&1
 
     # Verify no settings file was created
-    assert_false "[[ -f '$TEST_HOME/.claude/settings.local.json' ]]" "Should not create settings without agent ID"
+    assert_false "[[ -f '$TEST_HOME/.claude/settings.json' ]]" "Should not create settings without agent ID"
 
     cleanup_inject_test_env
 }
@@ -826,6 +826,106 @@ test_inject_gist_explicit_false() {
     assert_equals "# Project" "$content" "CLAUDE.md should be unchanged when gist explicitly false"
 
     rm -rf "$workspace"
+    cleanup_inject_test_env
+}
+
+test_inject_gist_overlay_mode_skipped() {
+    # Issue #328: in overlay mode the workspace is read-only by design, so
+    # inject_gist_instructions must skip all workspace writes (CLAUDE.md /
+    # AGENTS.md / .kapsis) cleanly — the agent gets gist guidance via the
+    # task-spec injection path instead.
+    setup_inject_test_env
+    export KAPSIS_STATUS_AGENT_ID="test-gist-overlay"
+    export KAPSIS_INJECT_GIST="true"
+    export KAPSIS_SANDBOX_MODE="overlay"
+
+    local workspace
+    workspace=$(mktemp -d)
+    export KAPSIS_WORKSPACE="$workspace"
+    echo "# Project" > "$workspace/CLAUDE.md"
+    echo "# Agents" > "$workspace/AGENTS.md"
+
+    source "$LIB_DIR/inject-status-hooks.sh"
+    local exit_code
+    inject_gist_instructions >/dev/null 2>&1
+    exit_code=$?
+
+    assert_equals "0" "$exit_code" "Should exit 0 in overlay mode (graceful skip)"
+    assert_equals "# Project" "$(cat "$workspace/CLAUDE.md")" "CLAUDE.md must be unchanged in overlay mode"
+    assert_equals "# Agents" "$(cat "$workspace/AGENTS.md")" "AGENTS.md must be unchanged in overlay mode"
+    assert_true "[[ ! -d '$workspace/.kapsis' ]]" ".kapsis directory must not be created in overlay mode"
+
+    unset KAPSIS_SANDBOX_MODE
+    rm -rf "$workspace"
+    cleanup_inject_test_env
+}
+
+test_render_gist_instructions_substitutes_path() {
+    # Issue #328: render_gist_instructions replaces @@KAPSIS_GIST_FILE@@ with
+    # the live $KAPSIS_GIST_FILE so overlay-mode agents see /kapsis-status/...
+    # while worktree-mode agents see /workspace/.kapsis/...
+    setup_inject_test_env
+    source "$LIB_DIR/inject-status-hooks.sh"
+
+    local rendered
+    rendered=$(KAPSIS_GIST_FILE="/kapsis-status/gist.txt" render_gist_instructions)
+    assert_contains "$rendered" "/kapsis-status/gist.txt" "Overlay path should be substituted"
+    assert_not_contains "$rendered" "@@KAPSIS_GIST_FILE@@" "Placeholder must be fully replaced"
+
+    rendered=$(KAPSIS_GIST_FILE="/workspace/.kapsis/gist.txt" render_gist_instructions)
+    assert_contains "$rendered" "/workspace/.kapsis/gist.txt" "Worktree path should be substituted"
+
+    cleanup_inject_test_env
+}
+
+test_status_read_gist_accepts_kapsis_status_volume() {
+    # Issue #328: status_read_gist_file() must accept paths under
+    # /kapsis-status/ (overlay mode) in addition to /workspace/.kapsis/
+    # (worktree mode), while still rejecting traversal attempts.
+    setup_inject_test_env
+    # shellcheck source=/dev/null
+    source "$LIB_DIR/status.sh"
+
+    local before="${_KAPSIS_GIST:-}"
+    status_read_gist_file "/etc/passwd" >/dev/null 2>&1 || true
+    assert_equals "$before" "${_KAPSIS_GIST:-}" "Non-allowed path must not update gist state"
+
+    status_read_gist_file "/kapsis-status/../etc/passwd" >/dev/null 2>&1 || true
+    assert_equals "$before" "${_KAPSIS_GIST:-}" "Traversal must still be rejected"
+
+    # Positive acceptance: a real file under /kapsis-status/ must be read and
+    # update _KAPSIS_GIST. Skip gracefully if the test environment can't create
+    # /kapsis-status/ (non-root host, no sudo) — exercised in container CI.
+    if mkdir -p /kapsis-status 2>/dev/null && [[ -w /kapsis-status ]]; then
+        local gist_file="/kapsis-status/gist-test-$$.txt"
+        echo "exploring authentication flow" > "$gist_file"
+        # Reset rate-limit state and re-read
+        _KAPSIS_GIST_LAST_READ=""
+        _KAPSIS_GIST_LAST_MTIME=""
+        status_read_gist_file "$gist_file" >/dev/null 2>&1 || true
+        assert_contains "${_KAPSIS_GIST:-}" "authentication" \
+            "Real file under /kapsis-status/ must be accepted and read"
+        rm -f "$gist_file"
+    fi
+
+    cleanup_inject_test_env
+}
+
+test_render_gist_instructions_escapes_special_chars() {
+    # Issue #328 review feedback: awk gsub() treats `&` and `\` specially in
+    # the replacement string. Verify paths containing them substitute
+    # literally (defensive — production paths never contain these).
+    setup_inject_test_env
+    source "$LIB_DIR/inject-status-hooks.sh"
+
+    local rendered
+    rendered=$(KAPSIS_GIST_FILE='/tmp/has&amp/gist.txt' render_gist_instructions)
+    assert_contains "$rendered" "/tmp/has&amp/gist.txt" "& must be substituted literally"
+    assert_not_contains "$rendered" "@@KAPSIS_GIST_FILE@@" "Placeholder must be fully replaced"
+
+    rendered=$(KAPSIS_GIST_FILE='/tmp/back\slash/gist.txt' render_gist_instructions)
+    assert_contains "$rendered" '/tmp/back\slash/gist.txt' "Backslash must be substituted literally"
+
     cleanup_inject_test_env
 }
 
@@ -1198,7 +1298,7 @@ test_gist_hook_skips_when_inject_gist_false() {
 }
 
 #===============================================================================
-# Test: Gist Hook Injection into settings.local.json
+# Test: Gist Hook Injection into settings.json
 #===============================================================================
 
 test_inject_gist_hook_injected_when_enabled() {
@@ -1214,11 +1314,11 @@ test_inject_gist_hook_injected_when_enabled() {
     inject_claude_hooks >/dev/null 2>&1
 
     local hook_count
-    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "2" "$hook_count" "Should have 2 PostToolUse entries (status + gist) when KAPSIS_INJECT_GIST=true"
 
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
     assert_contains "$content" "kapsis-gist-hook.sh" "settings should contain gist hook path"
 
     cleanup_inject_test_env
@@ -1233,11 +1333,11 @@ test_inject_gist_hook_not_injected_when_disabled() {
     inject_claude_hooks >/dev/null 2>&1
 
     local hook_count
-    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.local.json")
+    hook_count=$(jq '.hooks.PostToolUse | length' "$TEST_HOME/.claude/settings.json")
     assert_equals "1" "$hook_count" "Should have 1 PostToolUse entry (status only) when KAPSIS_INJECT_GIST not set"
 
     local content
-    content=$(cat "$TEST_HOME/.claude/settings.local.json")
+    content=$(cat "$TEST_HOME/.claude/settings.json")
     assert_not_contains "$content" "kapsis-gist-hook.sh" "settings should not contain gist hook when disabled"
 
     cleanup_inject_test_env
@@ -1519,6 +1619,10 @@ run_tests() {
     run_test test_inject_gist_no_markdown_files
     run_test test_inject_gist_explicit_false
     run_test test_inject_gist_readonly_workspace
+    run_test test_inject_gist_overlay_mode_skipped
+    run_test test_render_gist_instructions_substitutes_path
+    run_test test_render_gist_instructions_escapes_special_chars
+    run_test test_status_read_gist_accepts_kapsis_status_volume
 
     log_info "=== Agent Type Inference ==="
     run_test test_agent_type_inference_from_image_name

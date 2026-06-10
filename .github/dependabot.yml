@@ -24,6 +24,25 @@ updates:
         patterns:
           - "*"
 
+  # npm CI tooling — tracks @anthropic-ai/claude-code version pin used in
+  # integration-tests and e2e-tests jobs.  Requires a package.json in the
+  # .github/ directory listing the pin as a devDependency.
+  - package-ecosystem: "npm"
+    directory: "/.github"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "UTC"
+    commit-message:
+      prefix: "ci(deps)"
+    labels:
+      - "dependencies"
+      - "ci"
+    reviewers:
+      - "aviadshiber"
+    open-pull-requests-limit: 3
+
   # Container/Docker dependencies (if Containerfile has versioned images)
   - package-ecosystem: "docker"
     directory: "/"

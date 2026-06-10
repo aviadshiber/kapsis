@@ -69,6 +69,7 @@ kapsis/
 │   │   ├── progress-monitor.sh # Progress tracking
 │   │   ├── inject-status-hooks.sh # Status hook injection
 │   │   ├── inject-lsp-config.sh   # LSP configuration injection
+│   │   ├── inject-plugin-hooks.sh # Plugin hook injection (Claude Code plugins)
 │   │   ├── build-config.sh     # Build configuration parser
 │   │   ├── atomic-copy.sh      # Atomic file copy operations
 │   │   ├── audit.sh            # Audit trail recording
@@ -104,16 +105,29 @@ kapsis/
 ├── docs/                       # Extended documentation (15 guides + designs/)
 │   ├── designs/                # Design documents (agent-profiles-architecture.md)
 │   └── *.md                    # Reference guides (see Documentation Map below)
+├── cmd/
+│   └── kapsis-ctl/             # Host-side Podman query binary (Phase 1, issue #266)
+│       ├── go.mod              # Separate module — stdlib-only, no operator deps
+│       ├── main.go             # Entry point + subcommand dispatch
+│       └── podman/             # libpod REST API client + types + validation
 ├── operator/                   # K8s operator (Go, kubebuilder)
 │   ├── api/v1alpha1/           # AgentRequest CRD types
 │   ├── internal/controller/    # Reconciliation logic (pod builder, network policy, status bridge)
 │   ├── config/                 # Kustomize manifests, CRD, RBAC
 │   └── test/                   # E2E tests and utilities
+├── dashboard/                  # Local web dashboard (Bun + TypeScript, single binary)
+│   ├── server/                 # Bun.serve() HTTP/SSE; consumes ~/.kapsis/ state
+│   │   ├── src/store/          # Status, audit, logs, conversations, disk, health readers
+│   │   ├── src/control/        # kill / cleanup wrappers + dashboard audit writer
+│   │   └── tests/              # bun:test
+│   └── ui/                     # Vite + React + TypeScript SPA (embedded into the binary)
+├── bin/                        # Built binaries (git-ignored); produced by `make build-ctl`
 ├── maven/                      # Maven config (isolated-settings.xml for in-container builds)
 ├── assets/                     # Static artifacts (logos, etc.)
 ├── security/                   # AppArmor & seccomp profiles
 ├── packaging/                  # Debian, Homebrew, RPM packages
 ├── .github/workflows/          # CI/CD (ci, auto-release, release, security, packages, deploy-pages, sync-homebrew-tap)
+├── Makefile                    # Top-level targets: build-ctl, test-ctl, vet-ctl, all-ctl
 ├── Containerfile               # Multi-stage container image definition
 ├── setup.sh                    # Initial system setup & dependency validation
 ├── quick-start.sh              # Simplified one-line agent launcher
@@ -144,8 +158,10 @@ kapsis/
 | Security vulnerability scan | `docs/SECURITY-VULNERABILITY-SCAN.md` |
 | Agent profiles design | `docs/designs/agent-profiles-architecture.md` |
 | Agent profiles | `configs/agents/*.yaml` |
+| Plugin hook injection | `docs/PLUGINS.md` |
 | Security policy | `SECURITY.md` |
 | AI agent guidelines | `AGENTS.md` |
+| Dashboard | `docs/DASHBOARD.md` |
 
 ## Quick Commands
 
@@ -168,6 +184,12 @@ kapsis/
 ./scripts/kapsis-status.sh                   # Show running agents
 ./scripts/kapsis-status.sh --json            # Machine-readable status
 ./scripts/kapsis-cleanup.sh                  # Reclaim disk space
+
+# Dashboard (local web UI)
+cd dashboard && bun install
+bun run dev                                  # parallel server + Vite dev (proxy → 127.0.0.1:7777)
+bun run compile                              # single-binary release → dashboard/bin/kapsis-dashboard
+./dashboard/bin/kapsis-dashboard --open      # start + open browser; token printed to stdout
 
 # Audit
 ./scripts/audit-report.sh                    # Generate audit report
@@ -220,6 +242,9 @@ Status is written as JSON to `~/.kapsis/status/`.
 
 | File | Purpose |
 |------|---------|
+| `cmd/kapsis-ctl/` | **Phase 1 only — dev/operator tool, not packaged yet.** Build with `make build-ctl`. MUST NOT be installed inside container images (see issue #266 for Phase 2/3 roadmap). |
+| `cmd/kapsis-ctl/podman/client.go` | libpod REST API client — socket discovery, validation, Inspect/List/Alive |
+| `Makefile` | Top-level build targets for `kapsis-ctl` (`build-ctl`, `test-ctl`, `vet-ctl`) |
 | `scripts/launch-agent.sh` | Main entry point — orchestrates config, image, worktree, container |
 | `scripts/entrypoint.sh` | Container startup — SDKMAN, NVM, Maven settings, credential injection |
 | `scripts/worktree-manager.sh` | Git worktree isolation — creates sanitized git views for containers |
@@ -240,6 +265,7 @@ Status is written as JSON to `~/.kapsis/status/`.
 | `scripts/lib/podman-health.sh` | Podman VM health probe & auto-heal (macOS pre-launch mount check) |
 | `scripts/lib/status-sync.sh` | Mirrors per-agent named volumes to `~/.kapsis/status/` (macOS) |
 | `scripts/lib/inject-lsp-config.sh` | LSP config injection — editor integration inside containers |
+| `scripts/lib/inject-plugin-hooks.sh` | Plugin hook injection — merges Claude Code plugin hooks into settings.json |
 | `scripts/lib/rewrite-plugin-paths.sh` | Plugin path rewriting — adjusts paths for container mounts |
 | `scripts/lib/ssh-config-compat.sh` | SSH config portability — normalizes SSH config across environments |
 | `scripts/backends/podman.sh` | Podman backend — local container execution |
@@ -349,6 +375,41 @@ shellcheck scripts/**/*.sh tests/*.sh
 | `backend-rust` | Rust development with Cargo |
 | `ml-python` | Python ML/AI libraries |
 | `full-stack` | Everything combined (~2.1GB) |
+
+## Dashboard Sync Rule
+
+**Whenever a user-facing feature is added, changed, or removed in Kapsis, the dashboard (`dashboard/`) must be updated in the same PR to reflect it.**
+
+A "user-facing feature" includes:
+- New CLI flags or commands (e.g., `launch-agent.sh`, `kapsis-cleanup.sh`)
+- New status fields in `scripts/lib/status.sh` (the dashboard's primary data source)
+- New audit event types in `scripts/lib/audit.sh`
+- New error types or exit codes
+- New configuration options surfaced in `agent-sandbox.yaml`
+- New container resources (volumes, mounts, named directories) that affect disk usage
+
+The PR should either:
+1. Extend `dashboard/server/` to read/expose the new data, and `dashboard/ui/` to render it, or
+2. Open a follow-up GitHub issue tagged `dashboard-sync` if the surface change is large enough to warrant a separate PR.
+
+The TypeScript mirror of the status schema lives at `dashboard/server/src/types.ts` (`AgentStatus` interface) — keep it in lockstep with `scripts/lib/status.sh`. CI enforces this via `.github/workflows/dashboard-sync.yml`.
+
+## Release Artifact Rule
+
+**Whenever a new user-facing binary, CLI script, or release artifact is added, ALL FOUR distribution surfaces must be updated in the same PR.** Missing one means users on that platform silently lose the feature.
+
+The four surfaces:
+
+1. **`.github/workflows/release.yml`** — if the artifact needs to be built or downloaded for the GitHub Release, add a build job (gated by `validate`) and append the file to the `files:` list of the `softprops/action-gh-release` step. Include it in `checksums.sha256`. Add a section to the release notes block describing how to download/use it.
+2. **`packaging/homebrew/kapsis.rb`** — add either (a) a `bin/<name>` wrapper to the wrapper-script hash in `install` (for shell scripts shipped in the source tarball), or (b) an `on_macos`/`on_linux` + `on_arm`/`on_intel` `resource` block (for per-platform binaries downloaded from release assets). Add an `assert_predicate` to the `test` block that runs `<name> --version` (or another no-side-effect smoke check) — this is what catches the regression upfront.
+3. **`packaging/rpm/kapsis.spec`** — add an `install -m 755 …` line under "Install executable scripts" (for shell scripts) or copy the binary from the staged location, add the corresponding `cat > %{buildroot}%{_bindir}/<name> << 'EOF' … EOF` wrapper, and list `%{_bindir}/<name>` in the `%files` section.
+4. **`packaging/debian/debian/rules`** — add the matching `install -m 755 …` line under "Install main executable scripts" plus the `echo '#!/bin/bash' > … kapsis/usr/bin/<name>` wrapper block. For per-platform binaries staged from CI, also update `debian/install` if needed.
+
+Also update any CI workflow that builds the artifact (e.g., `.github/workflows/dashboard-build.yml`-style helper jobs) AND `.github/workflows/release.yml`'s `update-packages` job if the formula/spec contains version-locked URLs or sha256s that need to be patched after the release is cut (look for `RELEASE_VERSION_MARKER_START` / `DASHBOARD_*_MARKER_START` markers as the pattern to follow).
+
+Marker naming convention: `<ARTIFACT>_<TARGET>_MARKER_START` / `_END`, where the prefix is **artifact-specific** (not universal) and the target transformation is lowercase-hyphenated → uppercase-underscored via `tr '[:lower:]-' '[:upper:]_'`. Examples: for the `kapsis-dashboard` artifact, `darwin-arm64` becomes `DASHBOARD_DARWIN_ARM64_MARKER_START` / `_END`. For a hypothetical future `my-new-tool` artifact, the same target would become `MY_NEW_TOOL_DARWIN_ARM64_MARKER_START` / `_END`. Only the target portion is mechanically transformed; the prefix is yours to choose per artifact.
+
+For shell scripts, prefer adding them to `scripts/` so the existing `cp -r scripts ...` step in release.yml automatically picks them up for the source tarball — no release.yml change needed beyond the wrapper plumbing.
 
 ## Things to Avoid
 

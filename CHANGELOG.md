@@ -6,14 +6,115 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [2.25.5] - 2026-05-11
+## [2.28.9] - 2026-05-17
 
 ### Fixed
-- Restore set -e guards dropped during #318/#317 conflict resolution
+- Harden e2e-tests — env+permissions+harden-runner+pinned deps (#359)
+
+## [2.28.11] - 2026-05-17
+
+### Fixed
+- Harden #361 follow-up — env validation, regex tightening, expanded preflight + tests (#365)
+- Harden #361 follow-up — env validation, regex tightening, expanded preflight + tests (#364)
+- Resolve --userns via env > yaml > autodetect; fix #361 (#362)
+
+## [2.28.12] - 2026-05-18
+
+### Changed
+- Add timeout-minutes to prevent hung jobs (#353)
+- Add timeout-minutes to unit-tests and integration-tests jobs (#354)
+
+## [2.29.1] - 2026-05-18
+
+### Changed
+- Bump vite from 5.4.21 to 8.0.13 in /dashboard/ui in the npm_and_yarn group across 1 directory (#371)
+
+## [2.31.2] - 2026-05-18
+
+### Fixed
+- Move dashboard-artifact download AFTER Checkout to survive its clean (#378)
+
+## [2.31.3] - 2026-05-19
+
+### Changed
+- Bump the github-actions group with 5 updates (#379)
+
+### Fixed
+- Ship inject-plugin-hooks.sh in container + build-time guard against future drift (#380)
+
+## [2.32.0] - 2026-05-24
+
+### Added
+- Host-side podman exec channel watchdog (#382) (#383)
+
+### Fixed
+- Exclude .git-safe and .git-objects from commits (#385)
+
+## [2.33.0] - 2026-05-28
+
+### Added
+- Kapsis-ctl Phase 1 — read-only Podman container queries via libpod REST API (issue #266) (#347)
+
+### Changed
+- Bump the github-actions group across 1 directory with 3 updates (#388)
+- Fix state pollution causing --quick failures for integration hook tests (#367)
+- Add job timeouts, pin claude-code version, harden yq supply-chain (#355, #356) (#384)
+
+### Fixed
+- Disable Go module cache for stdlib-only kapsis-ctl (#392)
 
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
+
+### Fixed
+- Skip write probe in overlay mode — read-only by design (#341) (#345)
+- Pre-create /home/developer/.claude as developer-owned (#340) (#346)
+
+
+### Fixed
+- Skip write probe in overlay mode — workspace is read-only by design (#341) (#342)
+
+
+### Fixed
+- Pre-filter directory snapshots on macOS to keep :U safe (#338) (#339)
+
+
+### Fixed
+- Add :U mount flag + post-staging chmod for macOS UID mismatch (#328) (#333)
+
+
+### Fixed
+- Broaden benign-stderr classifier + chmod restrictive dst (#335) (#336)
+
+
+### Fixed
+- Tolerate benign cp stderr from unstattable readdir entries (#328 root cause) (#334)
+
+
+### Fixed
+- Harden HOME-side CoW + atomic-copy fallback (#328 followup) (#332)
+
+
+### Added
+- Persist agent JSONL via shared host volume (Issue #265) (#322)
+
+
+### Added
+- Inject Claude Code plugin hooks into settings.local.json (#327)
+
+
+### Changed
+- Bump the github-actions group with 2 updates (#324)
+
+
+### Added
+- Inject Claude Code plugin hooks into settings.local.json (#326)
+
+
+### Fixed
+- Restore set -e guards dropped during #318/#317 conflict resolution
+
 
 ### Fixed
 - Guard critical unguarded function calls (closes #261) (#317)
@@ -904,7 +1005,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.25.5...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.33.0...HEAD
+[2.33.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.33.0
+[2.32.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.32.0
+[2.31.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.31.3
+[2.31.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.31.2
+[2.29.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.29.1
+[2.28.12]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.12
+[2.28.11]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.11
+[2.28.9]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.9
+[2.28.7]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.7
+[2.28.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.6
+[2.28.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.5
+[2.28.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.4
+[2.28.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.3
+[2.28.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.2
+[2.28.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.1
+[2.28.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.28.0
+[2.27.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.27.0
+[2.26.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.26.1
+[2.26.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.26.0
 [2.25.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.5
 [2.25.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.3
 [2.25.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.25.2

@@ -512,6 +512,20 @@ assert_false() {
     fi
 }
 
+# assert_not_empty <text> <message>
+# Checks that text is non-empty
+assert_not_empty() {
+    local text="$1"
+    local message="${2:-Text should not be empty}"
+
+    if [[ -n "$text" ]]; then
+        return 0
+    else
+        _log_failure "$message" "Text was empty"
+        return 1
+    fi
+}
+
 # assert_matches <text> <regex_pattern> <message>
 # Checks if text matches a regex pattern (extended regex)
 # Example: assert_matches "$output" "[a-f0-9]{6}" "Should contain 6-char hex"
@@ -1153,6 +1167,35 @@ check_overlay_rw_support() {
     fi
 }
 
+# skip_if_not_mikefarah_yq
+# Skips the test if the installed yq is not mikefarah/yq v4.
+# The Debian/Ubuntu `apt install yq` package is a Python wrapper with incompatible
+# syntax (.key, yq eval, --inplace).  Tests that rely on mikefarah-specific features
+# must call this guard so they skip gracefully on developer machines that have the
+# wrong yq, rather than failing with cryptic assertion errors.
+skip_if_not_mikefarah_yq() {
+    if ! command -v yq &>/dev/null; then
+        log_skip "yq not installed (need mikefarah/yq v4+)"
+        return 1
+    fi
+    # mikefarah/yq identifies itself via --version; Python yq does not mention it
+    if yq --version 2>&1 | grep -qi 'mikefarah'; then
+        return 0
+    fi
+    # Fallback: probe the --inplace flag on a temp file — the capability that
+    # Python yq lacks and that inject_codex_hooks / k8s tests depend on.
+    local _tmp_yq
+    _tmp_yq=$(mktemp --suffix=.yaml 2>/dev/null || mktemp)
+    printf 'x: 1\n' > "$_tmp_yq"
+    if yq eval --inplace '.x = 2' "$_tmp_yq" 2>/dev/null; then
+        rm -f "$_tmp_yq"
+        return 0
+    fi
+    rm -f "$_tmp_yq"
+    log_skip "yq does not support 'eval --inplace' (need mikefarah/yq v4+, not the Debian Python wrapper)"
+    return 1
+}
+
 # skip_if_no_overlay_rw
 # Checks for overlay support. If not available, enables fuse-overlayfs for true CoW.
 skip_if_no_overlay_rw() {
@@ -1370,28 +1413,12 @@ assert_sanitized_git_secure() {
 }
 
 # has_mikefarah_yq
-# Silent predicate — returns 0 if mikefarah/yq v4 is available, 1 otherwise.
+# Silent counterpart of skip_if_not_mikefarah_yq — returns 0 if mikefarah/yq v4
+# is available, 1 otherwise, without emitting any [SKIP] output.
 # Use this for feature-detection branching (if/else dispatch) where you want
 # to fall back to a python3 alternative rather than skip the test entirely.
 has_mikefarah_yq() {
-    command -v yq &>/dev/null && yq --version 2>&1 | grep -q 'mikefarah'
-}
-
-# skip_if_not_mikefarah_yq
-# Skips the current test when mikefarah/yq is not available.
-# Expressions like `select(kind == "seq")` and `yq eval '.'` are mikefarah/yq v4
-# syntax; they fail silently or produce errors with the Python yq wrapper (which
-# uses jq under the hood and does not expose the `kind` builtin).
-skip_if_not_mikefarah_yq() {
-    if ! command -v yq &>/dev/null; then
-        log_skip "yq not available"
-        return 1
-    fi
-    if ! yq --version 2>&1 | grep -q 'mikefarah'; then
-        log_skip "mikefarah/yq required (Python yq wrapper detected)"
-        return 1
-    fi
-    return 0
+    command -v yq &>/dev/null && yq --version 2>&1 | grep -qi 'mikefarah'
 }
 
 # skip_if_root

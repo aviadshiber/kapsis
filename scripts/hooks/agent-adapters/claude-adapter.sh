@@ -92,7 +92,7 @@ get_claude_hook_types() {
 
 # Get Claude Code hook configuration path
 get_claude_config_path() {
-    echo "${HOME}/.claude/settings.local.json"
+    echo "${HOME}/.claude/settings.json"
 }
 
 # Generate Claude Code hook configuration JSON

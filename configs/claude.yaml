@@ -3,7 +3,10 @@
 
 agent:
   # Claude Code with spec file input
-  command: "claude --dangerously-skip-permissions -p \"$(cat /task-spec.md)\""
+  # KAPSIS_INJECTED_TASK_SPEC is set by entrypoint.sh when status injection
+  # appends progress/gist guidance to a writable copy of the task spec. Falls
+  # back to the read-only /task-spec.md mount when no injection happened.
+  command: "claude --dangerously-skip-permissions -p \"$(cat \"${KAPSIS_INJECTED_TASK_SPEC:-/task-spec.md}\")\""
   workdir: /workspace
 
 filesystem:
@@ -112,7 +115,7 @@ git:
 
   # Attribution block appended to commits and PR descriptions.
   # Placeholders: {version}, {agent_id}, {branch}, {worktree}
-  # For Claude Code, these values are injected into ~/.claude/settings.local.json
+  # For Claude Code, these values are injected into ~/.claude/settings.json
   # as Claude's native `attribution.commit` / `attribution.pr` — Claude itself
   # writes them on its commits. For other agents, Kapsis appends them to commit
   # messages directly. Empty string ("") disables that attribution. Omit the

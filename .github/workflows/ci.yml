@@ -26,11 +26,16 @@ jobs:
   changes:
     name: Detect Changes
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       scripts: ${{ steps.determine.outputs.scripts }}
       container: ${{ steps.determine.outputs.container }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          # Need >1 ref to compare against HEAD's first parent for the
+          # per-push dashboard-only override below.
+          fetch-depth: 2
       - uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d  # v4.0.1
         id: filter
         if: github.event_name != 'schedule'
@@ -49,22 +54,76 @@ jobs:
               - 'scripts/build-image.sh'
               - 'scripts/lib/**'
               - '.github/workflows/ci.yml'
+      # If the PUSH's delta (HEAD~1..HEAD) is entirely under dashboard/ or
+      # dashboard CI workflows, override the cumulative paths-filter result.
+      # A long-running dashboard PR may legitimately have touched scripts/
+      # in earlier commits, but a followup commit that only edits dashboard/
+      # files has zero effect on the container or kapsis scripts and should
+      # not re-run the 11-minute container test job.
+      - name: Detect dashboard-only push
+        id: dashboard-only
+        if: github.event_name != 'schedule'
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -e
+          # `github.event.before` exists on push events; for pull_request
+          # we use the SECOND parent of the merge commit (the
+          # feature-branch-side parent).
+          if [[ -n "$BEFORE_SHA" && "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]]; then
+            PREV="$BEFORE_SHA"
+          elif [[ "$EVENT_NAME" == "pull_request" ]]; then
+            PREV=$(git rev-parse 'HEAD^2' 2>/dev/null || echo "")
+          else
+            PREV=$(git rev-parse 'HEAD~1' 2>/dev/null || echo "")
+          fi
+          if [[ -z "$PREV" ]]; then
+            echo "dashboard_only=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Could not determine previous commit — running full CI"
+            exit 0
+          fi
+          CHANGED=$(git diff --name-only "$PREV" "$HEAD_SHA" 2>/dev/null || true)
+          if [[ -z "$CHANGED" ]]; then
+            echo "dashboard_only=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          NON_DASHBOARD=$(printf '%s\n' "$CHANGED" | grep -vE '^(dashboard/|\.github/workflows/dashboard-)' || true)
+          if [[ -z "$NON_DASHBOARD" ]]; then
+            echo "dashboard_only=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Push touches only dashboard/ — skipping script/container/integration/e2e tests"
+          else
+            echo "dashboard_only=false" >> "$GITHUB_OUTPUT"
+          fi
       - name: Determine test scope
         id: determine
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DASHBOARD_ONLY: ${{ steps.dashboard-only.outputs.dashboard_only }}
+          SCRIPTS_FILTER: ${{ steps.filter.outputs.scripts }}
+          CONTAINER_FILTER: ${{ steps.filter.outputs.container }}
         run: |
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
+          if [[ "$EVENT_NAME" == "schedule" ]]; then
             # Scheduled run: always run all tests regardless of what changed
             echo "scripts=true" >> "$GITHUB_OUTPUT"
             echo "container=true" >> "$GITHUB_OUTPUT"
+          elif [[ "$DASHBOARD_ONLY" == "true" ]]; then
+            # Push touches only dashboard/ — script/container tests have
+            # no signal here. dashboard-build.yml runs the dashboard-specific
+            # tests for this push independently.
+            echo "scripts=false" >> "$GITHUB_OUTPUT"
+            echo "container=false" >> "$GITHUB_OUTPUT"
           else
-            echo "scripts=${{ steps.filter.outputs.scripts }}" >> "$GITHUB_OUTPUT"
-            echo "container=${{ steps.filter.outputs.container }}" >> "$GITHUB_OUTPUT"
+            echo "scripts=$SCRIPTS_FILTER" >> "$GITHUB_OUTPUT"
+            echo "container=$CONTAINER_FILTER" >> "$GITHUB_OUTPUT"
           fi
 
   # All test jobs run in parallel after change detection
   lint:
     name: ShellCheck Lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
     steps:
@@ -112,6 +171,7 @@ jobs:
   verify-pinning:
     name: Verify Supply Chain Pinning
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
     steps:
@@ -211,6 +271,7 @@ jobs:
   config-validation:
     name: Config Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
     steps:
@@ -221,8 +282,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y jq yamllint
-          # Install yq for YAML parsing
-          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          # Install yq for YAML parsing (pinned version with checksum — matches unit-tests / container-tests)
+          YQ_VERSION="v4.52.5"
+          YQ_SHA256="75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9"
+          sudo wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64"
+          echo "${YQ_SHA256}  /usr/local/bin/yq" | sha256sum -c -
           sudo chmod +x /usr/local/bin/yq
 
       - name: Validate YAML configs
@@ -234,11 +298,22 @@ jobs:
           # Run config verifier with pattern matching tests
           ./scripts/lib/config-verifier.sh --all --test
 
-  quick-tests:
-    name: Quick Tests
+      - name: Assert claude-code pin consistent (package.json vs ci.yml)
+        run: |
+          pkg_version=$(jq -r '.devDependencies["@anthropic-ai/claude-code"]' .github/package.json)
+          ci_count=$(grep -cF "npm install -g @anthropic-ai/claude-code@${pkg_version}" .github/workflows/ci.yml || echo "0")
+          if [[ "$ci_count" -ne 2 ]]; then
+            echo "::error::ci.yml claude-code pins (${ci_count}/2) don't match .github/package.json (${pkg_version}). Bump integration-tests, e2e-tests, and package.json in lockstep."
+            exit 1
+          fi
+          echo "✓ claude-code pin consistent: ${pkg_version} (2/2 ci.yml occurrences match)"
+
+  unit-tests:
+    name: Unit Tests
     runs-on: ubuntu-latest
     needs: changes
     if: needs.changes.outputs.scripts == 'true'
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
@@ -271,14 +346,168 @@ jobs:
           chmod +x ./scripts/*.sh
           chmod +x ./scripts/lib/*.sh 2>/dev/null || true
 
-          # Run quick tests (no container required)
+          # Run unit tests (no container required)
           ./tests/run-all-tests.sh --quick
         env:
           KAPSIS_TEST_QUIET: "0"
 
+  integration-tests:
+    name: Integration Tests (mock API)
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.scripts == 'true'
+    timeout-minutes: 15
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q jq
+          # Node.js 20.x is pre-installed on ubuntu-latest runners
+          # Pinned version — keep in sync with e2e-tests (line ~465).
+          # Bump both together; a floating @latest breaks CI silently when
+          # Anthropic ships a hook-schema or CLI-flag change (#355).
+          npm install -g @anthropic-ai/claude-code@2.1.143
+
+      - name: Configure git (required by Claude Code)
+        run: |
+          git config --global user.email "ci@kapsis.test"
+          git config --global user.name "Kapsis CI"
+          git config --global commit.gpgsign false
+
+      - name: Run integration tests against mock API
+        timeout-minutes: 10
+        run: |
+          chmod +x ./tests/test-integration-claude-hooks.sh
+          chmod +x ./tests/lib/*.sh 2>/dev/null || true
+          chmod +x ./scripts/lib/*.sh
+          chmod +x ./scripts/hooks/*.sh
+          bash ./tests/test-integration-claude-hooks.sh
+        env:
+          KAPSIS_TEST_QUIET: "0"
+
+  e2e-tests:
+    name: E2E Tests (live API)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # SECURITY layers (defence in depth — each one independently blocks a class
+    # of attack):
+    #
+    #   1. Trigger gate. Never run on pull_request events; only post-merge
+    #      pushes to main/master and scheduled runs ever see the secret.
+    #
+    #   2. Environment gate (`environment: e2e-live-api`). Configured in
+    #      repo settings → Environments. Store CLAUDE_CODE_OAUTH_TOKEN there
+    #      (NOT as a repo secret) and pin "Deployment branches" to main/master
+    #      only. A future workflow-file edit that drops the trigger gate still
+    #      cannot reach the secret without matching the environment's branch
+    #      policy. See: https://docs.github.com/actions/deployment/targeting-different-environments/using-environments-for-deployment
+    #
+    #   3. GITHUB_TOKEN scope. `permissions: {}` denies all GitHub API scopes;
+    #      this job has no need to read/write the repo via the implicit token.
+    #
+    #   4. Egress firewall (step-security/harden-runner). eBPF-level block on
+    #      all outbound DNS/network except the listed endpoints. Stops a
+    #      compromised npm dependency from POSTing the OAuth token off-box.
+    #
+    #   5. checkout with persist-credentials: false. Prevents writing
+    #      GITHUB_TOKEN into .git/config where a later step could read it.
+    #
+    #   6. Pinned dependency version (npm @anthropic-ai/claude-code@2.1.143
+    #      instead of @latest). A malicious version published to npm cannot
+    #      auto-flow into the job without an explicit bump in this file.
+    #
+    #   7. Token-presence gate (`steps.oauth.outputs.has_token`). Skips
+    #      cleanly when the env secret isn't configured (e.g. on a fork or
+    #      a fresh setup). See PR #358 for why this lives in a step, not in
+    #      the job-level if:.
+    #
+    # Failing e2e does NOT block the ci-success gate (optional check).
+    #
+    # TODO(maintainer): migrate from a static CLAUDE_CODE_OAUTH_TOKEN to
+    # Anthropic Workload Identity Federation with GitHub OIDC. That removes
+    # the static-secret class entirely — federation rule on Anthropic Console
+    # pinned to `repo:aviadshiber/kapsis:ref:refs/heads/main` issues a
+    # 1-hour OAT at run-time. Doc:
+    # https://platform.claude.com/docs/en/manage-claude/wif-providers/github-actions
+    needs: [unit-tests, integration-tests]
+    if: github.event_name != 'pull_request'
+    environment: e2e-live-api
+    permissions: {}
+    steps:
+      - name: Harden runner — block egress except API endpoints
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: block
+          # If any allowed domain is wrong, switch egress-policy to `audit` to
+          # surface the actual outbound calls in the job log, then narrow.
+          allowed-endpoints: >
+            api.anthropic.com:443
+            api.github.com:443
+            github.com:443
+            objects.githubusercontent.com:443
+            codeload.github.com:443
+            registry.npmjs.org:443
+            archive.ubuntu.com:80
+            security.ubuntu.com:80
+            azure.archive.ubuntu.com:80
+
+      - name: Check OAuth token availability
+        id: oauth
+        # The `secrets` context is NOT allowed in job-level `if:` (the workflow
+        # file is rejected at parse time). The token-presence check therefore
+        # lives in this step — `env:` CAN reference secrets — and every later
+        # step gates on `steps.oauth.outputs.has_token`. See PR #358.
+        env:
+          HAS_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+        run: |
+          if [[ "$HAS_TOKEN" == "true" ]]; then
+            echo "has_token=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_token=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::CLAUDE_CODE_OAUTH_TOKEN not configured — E2E tests skipped"
+          fi
+
+      - name: Checkout code
+        if: steps.oauth.outputs.has_token == 'true'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        with:
+          persist-credentials: false
+
+      - name: Install dependencies
+        if: steps.oauth.outputs.has_token == 'true'
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q jq
+          # Pinned version (not @latest) — auto-flow of a malicious release
+          # blocked. Bump deliberately when upgrading; bumps go through PR review.
+          npm install -g @anthropic-ai/claude-code@2.1.143
+
+      - name: Configure git (required by Claude Code)
+        if: steps.oauth.outputs.has_token == 'true'
+        run: |
+          git config --global user.email "ci@kapsis.test"
+          git config --global user.name "Kapsis CI"
+          git config --global commit.gpgsign false
+
+      - name: Run E2E tests against live API
+        if: steps.oauth.outputs.has_token == 'true'
+        env:
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          CI: "true"
+        run: |
+          chmod +x ./tests/test-e2e-claude-hooks.sh
+          chmod +x ./tests/lib/*.sh 2>/dev/null || true
+          chmod +x ./scripts/lib/*.sh
+          chmod +x ./scripts/hooks/*.sh
+          bash ./tests/test-e2e-claude-hooks.sh
+
   container-tests:
     name: Container Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 90
     needs: changes
     # Only run if container-related files changed (Containerfile, entrypoint, build scripts, libs)
     if: needs.changes.outputs.container == 'true'
@@ -388,15 +617,59 @@ jobs:
           # Use 'open' network mode in CI - 'filtered' requires dnsmasq which can't run in CI containers
           KAPSIS_NETWORK_MODE: "open"
 
+  # Build and test the kapsis-ctl Go binary (issue #266)
+  go-build:
+    name: kapsis-ctl Build & Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
+        with:
+          go-version-file: cmd/kapsis-ctl/go.mod
+          # No go.sum — stdlib-only module. setup-go@v6 hard-fails the cache
+          # restore step when go.sum is missing, cancelling the CI run and the
+          # downstream Auto Release workflow. Re-enable once a go.sum exists.
+          cache: false
+
+      - name: vet
+        working-directory: cmd/kapsis-ctl
+        run: go vet ./...
+
+      - name: test
+        working-directory: cmd/kapsis-ctl
+        run: go test ./...
+
+      - name: build
+        working-directory: cmd/kapsis-ctl
+        run: go build -trimpath -ldflags="-s -w" -o ../../bin/kapsis-ctl .
+
+      - name: smoke-test help
+        run: ./bin/kapsis-ctl --help
+
   # Summary job that all required checks depend on
   ci-success:
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [changes, lint, verify-pinning, config-validation, quick-tests, container-tests]
+    timeout-minutes: 5
+    needs: [changes, lint, verify-pinning, config-validation, unit-tests, integration-tests, e2e-tests, container-tests, go-build]
     if: always()
     steps:
       - name: Check all jobs passed
         run: |
+          # If any upstream job was cancelled this run was superseded by a new
+          # push (cancel-in-progress fired).  Treat as neutral — the next run
+          # will validate the updated commit.  Only genuine failures (result ==
+          # 'failure') should block the gate.
+          if [[ "${{ contains(needs.*.result, 'cancelled') }}" == "true" ]]; then
+            echo "One or more jobs were cancelled — run superseded by a newer push."
+            echo "Exiting 0; the replacement run will validate the new commit."
+            exit 0
+          fi
+
           failed=0
           check() {
             local name="$1" result="$2" required="$3"
@@ -413,16 +686,22 @@ jobs:
           scripts_changed="${{ needs.changes.outputs.scripts }}"
           container_changed="${{ needs.changes.outputs.container }}"
 
+          # go-build runs on every push (no path gate) — always required so
+          # the kapsis-ctl binary never silently breaks on docs-only PRs.
+          check "go-build" "${{ needs.go-build.result }}" "true"
+
           if [[ "$scripts_changed" != "true" ]]; then
             echo "No script changes detected — CI tests skipped (docs/assets only)"
             exit 0
           fi
 
-          check "lint"              "${{ needs.lint.result }}"              "true"
-          check "verify-pinning"    "${{ needs.verify-pinning.result }}"    "true"
-          check "config-validation" "${{ needs.config-validation.result }}" "true"
-          check "quick-tests"       "${{ needs.quick-tests.result }}"       "true"
-          check "container-tests"   "${{ needs.container-tests.result }}"   "$container_changed"
+          check "lint"               "${{ needs.lint.result }}"               "true"
+          check "verify-pinning"     "${{ needs.verify-pinning.result }}"     "true"
+          check "config-validation"  "${{ needs.config-validation.result }}"  "true"
+          check "unit-tests"         "${{ needs.unit-tests.result }}"         "true"
+          check "integration-tests"  "${{ needs.integration-tests.result }}"  "true"
+          check "e2e-tests"          "${{ needs.e2e-tests.result }}"          "false"
+          check "container-tests"    "${{ needs.container-tests.result }}"    "$container_changed"
 
           if [[ $failed -eq 1 ]]; then
             exit 1

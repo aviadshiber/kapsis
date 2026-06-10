@@ -11,9 +11,9 @@ class Kapsis < Formula
 
   # Stable release - automatically updated by CI on each release
   # RELEASE_VERSION_MARKER_START - Do not remove, used by CI
-  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.25.5.tar.gz"
-  sha256 "8f16a846fdc080d12754775f3001d96d92ef6f4d6dd4ab34e41747ff15c972cf"
-  version "2.25.5"
+  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.33.0.tar.gz"
+  sha256 "74a082a5b0ac6088d6890752a46fca7812eddb318ccb53eec5a1a90da9565c8a"
+  version "2.33.0"
   # RELEASE_VERSION_MARKER_END
 
   # Homebrew livecheck - detects new releases automatically
@@ -31,6 +31,57 @@ class Kapsis < Formula
   # Podman is the container runtime - required but not a Homebrew dependency
   # Users must install it separately (brew install podman on macOS)
 
+  # Per-platform kapsis-dashboard binaries.
+  #
+  # These resources reference release assets produced by the
+  # `compile-dashboard` job in .github/workflows/release.yml. The CI
+  # `Update Homebrew formula` step patches each block's url + sha256
+  # after the release is created (it sha256sums the local artifact
+  # uploaded by compile-dashboard, NOT the published release URL, to
+  # close the TOCTOU window). The marker comments are load-bearing —
+  # do not remove or change their wording.
+  #
+  # Placeholder sha256 = 64 zeros. `brew audit` will reject this until
+  # CI patches it; that is intentional — `brew install` against an
+  # un-patched formula must fail loudly rather than silently install
+  # nothing.
+  on_macos do
+    on_arm do
+      # DASHBOARD_DARWIN_ARM64_MARKER_START
+      resource "kapsis-dashboard" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.33.0/kapsis-dashboard-darwin-arm64"
+        sha256 "0864f890055a7029b84137c6216a311f5bfa490634c42abc914d26282d15138c"
+      end
+      # DASHBOARD_DARWIN_ARM64_MARKER_END
+    end
+    on_intel do
+      # DASHBOARD_DARWIN_X64_MARKER_START
+      resource "kapsis-dashboard" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.33.0/kapsis-dashboard-darwin-x64"
+        sha256 "98d9778347c12168337e34363c4c50e19a469bf3f598978b373e64e458417010"
+      end
+      # DASHBOARD_DARWIN_X64_MARKER_END
+    end
+  end
+  on_linux do
+    on_arm do
+      # DASHBOARD_LINUX_ARM64_MARKER_START
+      resource "kapsis-dashboard" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.33.0/kapsis-dashboard-linux-arm64"
+        sha256 "ce0c20f9e39f865e62a533d7f368889135dcd6f27dad95ad7002875d5fb39d5c"
+      end
+      # DASHBOARD_LINUX_ARM64_MARKER_END
+    end
+    on_intel do
+      # DASHBOARD_LINUX_X64_MARKER_START
+      resource "kapsis-dashboard" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.33.0/kapsis-dashboard-linux-x64"
+        sha256 "cb4de4a564a3aa987bad69d5f3ce51e8db09c9a194e440043a2a857da12f5482"
+      end
+      # DASHBOARD_LINUX_X64_MARKER_END
+    end
+  end
+
   def install
     # Install everything to libexec, then create wrappers
     libexec.install Dir["*"]
@@ -44,6 +95,7 @@ class Kapsis < Formula
       scripts/worktree-manager.sh
       scripts/kapsis-cleanup.sh
       scripts/kapsis-status.sh
+      scripts/kapsis-recovery-action.sh
       scripts/lib/logging.sh
       scripts/lib/status.sh
       scripts/lib/constants.sh
@@ -58,6 +110,7 @@ class Kapsis < Formula
       "kapsis-build" => "scripts/build-image.sh",
       "kapsis-cleanup" => "scripts/kapsis-cleanup.sh",
       "kapsis-status" => "scripts/kapsis-status.sh",
+      "kapsis-recovery-action" => "scripts/kapsis-recovery-action.sh",
       "kapsis-setup" => "setup.sh",
       "kapsis-quick" => "quick-start.sh",
     }.each do |cmd, script|
@@ -71,6 +124,22 @@ class Kapsis < Formula
         exec "#{libexec}/#{script}" "$@"
       EOS
     end
+
+    # Install the kapsis-dashboard binary from the per-platform release
+    # asset selected by the on_macos/on_linux + on_arm/on_intel resource
+    # blocks above. The asset is downloaded by Homebrew (sha256-verified
+    # against the formula) at install time.
+    resource("kapsis-dashboard").stage do
+      bin_dir = libexec/"dashboard/bin"
+      bin_dir.mkpath
+      # The staged file has the per-target suffix (e.g. kapsis-dashboard-darwin-arm64);
+      # rename to the generic name the bin symlink expects.
+      staged = Dir["kapsis-dashboard-*"].first
+      odie "kapsis-dashboard resource downloaded but no binary found" unless staged
+      cp staged, bin_dir/"kapsis-dashboard"
+      chmod 0755, bin_dir/"kapsis-dashboard"
+    end
+    bin.install_symlink libexec/"dashboard/bin/kapsis-dashboard"
   end
 
   def caveats
@@ -115,5 +184,24 @@ class Kapsis < Formula
       assert_predicate libexec/script, :executable?,
         "#{script} should be executable"
     end
+
+    # Verify kapsis-dashboard binary was installed and is runnable.
+    assert_predicate bin/"kapsis-dashboard", :exist?,
+      "kapsis-dashboard binary should be installed"
+    assert_predicate bin/"kapsis-dashboard", :executable?,
+      "kapsis-dashboard binary should be executable"
+    # --version is the only flag that exits 0 without binding a port.
+    # Pass explicit exit code 0 so any non-zero exit produces a clear
+    # failure instead of an opaque pattern-match miss.
+    assert_match(/\d+\.\d+\.\d+/,
+      shell_output("#{bin}/kapsis-dashboard --version", 0))
+
+    # Verify kapsis-recovery-action wrapper is installed and its --help
+    # smoke check works. Catches the same packaging-skip class of bug
+    # the dashboard test above is designed to catch (see #372).
+    assert_predicate bin/"kapsis-recovery-action", :exist?,
+      "kapsis-recovery-action wrapper should be installed"
+    assert_match "Usage:",
+      shell_output("#{bin}/kapsis-recovery-action --help 2>&1", 0)
   end
 end

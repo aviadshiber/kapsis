@@ -316,6 +316,88 @@ EOF
         "Must flag invalid boolean"
 }
 
+test_launch_userns_accepts_known_good_values() {
+    log_test "validate_launch_config: security.userns accepts keep-id, keep-id:uid=N,gid=N, auto, host (#361)"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    for val in "keep-id" "keep-id:uid=1000,gid=1000" "keep-id:uid=99999,gid=99999" "auto" "host"; do
+        cat > "$fixture" <<EOF
+agent:
+  command: claude
+security:
+  userns: $val
+EOF
+        run_verifier "$fixture"
+        assert_equals 0 "$CAPTURED_EXIT_CODE" \
+            "Expected exit 0 for security.userns: $val"
+        assert_contains "$CAPTURED_STDOUT" "Valid security.userns: $val" \
+            "Expected validator to PASS for $val"
+    done
+}
+
+test_launch_userns_rejects_unknown_value() {
+    log_test "validate_launch_config: security.userns rejects arbitrary strings"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+security:
+  userns: private
+EOF
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "Unknown userns value must exit 1"
+    assert_contains "$CAPTURED_STDOUT" "Invalid security.userns: private" \
+        "Validator must name the offending value"
+}
+
+test_launch_userns_rejects_uid_below_1000() {
+    log_test "validate_launch_config: security.userns rejects keep-id:uid=0,gid=0 (privilege uplift)"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    # uid=0 maps container root to host UID — explicitly forbidden.
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+security:
+  userns: keep-id:uid=0,gid=0
+EOF
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "uid=0 mapping must be rejected"
+
+    # uid=999 (below the 1000 floor for non-system accounts) — also rejected.
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+security:
+  userns: keep-id:uid=999,gid=999
+EOF
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "uid<1000 must be rejected"
+}
+
+test_launch_userns_rejects_typo_keepid() {
+    log_test "validate_launch_config: security.userns rejects 'keepid' (missing dash)"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+security:
+  userns: keepid
+EOF
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "Misspelled 'keepid' must be rejected"
+}
+
 test_launch_lsp_missing_command_fails() {
     log_test "validate_launch_config: lsp_servers.<name>.command is required"
     setup_fixture_dir
@@ -577,6 +659,10 @@ main() {
     run_test test_launch_bad_auto_push_fails
     run_test test_launch_lsp_missing_command_fails
     run_test test_launch_liveness_timeout_below_minimum_fails
+    run_test test_launch_userns_accepts_known_good_values
+    run_test test_launch_userns_rejects_unknown_value
+    run_test test_launch_userns_rejects_uid_below_1000
+    run_test test_launch_userns_rejects_typo_keepid
 
     # validate_network_config
     run_test test_network_valid_filtered_passes

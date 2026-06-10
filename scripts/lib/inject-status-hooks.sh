@@ -6,12 +6,16 @@
 # the host configuration.
 #
 # Supported agents:
-#   - Claude Code: ~/.claude/settings.local.json (JSON, merged by Claude)
+#   - Claude Code: ~/.claude/settings.json (JSON, merged by Claude)
 #   - Codex CLI: ~/.codex/config.yaml (YAML, merged hooks section)
 #   - Gemini CLI: ~/.gemini/hooks/*.sh (Shell scripts in hooks directory)
 #
 # Usage: Called automatically by entrypoint.sh for supported agents
 #        Or call directly: ./inject-status-hooks.sh [agent-type]
+#        Or render the gist preamble standalone (used by entrypoint.sh to
+#        append it onto the injected task spec in overlay mode):
+#          ./inject-status-hooks.sh --render-gist-instructions
+#        Honours $KAPSIS_GIST_FILE for placeholder substitution.
 #
 # Environment:
 #   KAPSIS_STATUS_AGENT_ID - Required: Agent ID for status tracking
@@ -48,7 +52,7 @@ STOP_HOOK="${KAPSIS_HOOK_DIR}/kapsis-stop-hook.sh"
 
 inject_claude_hooks() {
     local settings_dir="${HOME}/.claude"
-    local settings_local="${settings_dir}/settings.local.json"
+    local settings_local="${settings_dir}/settings.json"
 
     # Ensure directory exists
     mkdir -p "$settings_dir"
@@ -56,7 +60,8 @@ inject_claude_hooks() {
     # Create base file if missing
     if [[ ! -f "$settings_local" ]]; then
         echo '{}' > "$settings_local"
-        log_debug "Created empty settings.local.json"
+        chmod 600 "$settings_local"
+        log_debug "Created empty settings.json"
     fi
 
     # Check if jq is available
@@ -274,10 +279,52 @@ EOF
 # Gist Instructions (All Agents)
 #===============================================================================
 
+#-------------------------------------------------------------------------------
+# Render the gist-instructions.md template with the live $KAPSIS_GIST_FILE
+# value substituted for the @@KAPSIS_GIST_FILE@@ placeholder. Prints the
+# rendered text to stdout. Shared between workspace-side injection (CLAUDE.md /
+# AGENTS.md) and task-spec injection (overlay mode).
+#-------------------------------------------------------------------------------
+render_gist_instructions() {
+    local template="${1:-${KAPSIS_LIB:-/opt/kapsis/lib}/gist-instructions.md}"
+    local gist_file="${KAPSIS_GIST_FILE:-/workspace/.kapsis/gist.txt}"
+
+    if [[ ! -f "$template" ]]; then
+        return 1
+    fi
+
+    # Use index()-based splitting rather than gsub() so neither the path nor
+    # the placeholder is parsed for special characters (gsub's replacement
+    # parser would consume `&` and `\`; awk's `-v` would consume `\s`, `\n`,
+    # ...). Pass the path via ENVIRON to skip -v's escape processing too.
+    # Today the only callers set paths like /kapsis-status/gist.txt — this
+    # keeps the helper safe for any future caller without an escape audit.
+    KAPSIS_GIST_FILE_RENDER="$gist_file" awk '
+        BEGIN { gf = ENVIRON["KAPSIS_GIST_FILE_RENDER"]; needle = "@@KAPSIS_GIST_FILE@@"; nlen = length(needle) }
+        {
+            out = ""; line = $0
+            while ((pos = index(line, needle)) > 0) {
+                out = out substr(line, 1, pos - 1) gf
+                line = substr(line, pos + nlen)
+            }
+            print out line
+        }
+    ' "$template"
+}
+
 inject_gist_instructions() {
     # Requires opt-in via config (default: false for safe rollout)
     if [[ "${KAPSIS_INJECT_GIST:-false}" != "true" ]]; then
         log_debug "Gist injection disabled (set agent.inject_gist: true to enable)"
+        return 0
+    fi
+
+    # In overlay mode the workspace is read-only by design. Skip workspace-side
+    # writes entirely; the agent gets gist guidance via the injected task spec
+    # (see inject_progress_instructions in entrypoint.sh). Mirrors the existing
+    # overlay short-circuit pattern.
+    if [[ "${KAPSIS_SANDBOX_MODE:-}" == "overlay" ]]; then
+        log_info "Skipping gist instructions injection (overlay mode — read-only workspace)"
         return 0
     fi
 
@@ -301,16 +348,23 @@ inject_gist_instructions() {
 
     local marker="Kapsis Activity Gist"
     local injected=false
+    local rendered
+    rendered=$(render_gist_instructions "$gist_instructions") || {
+        log_warn "Failed to render gist instructions -- skipping"
+        return 0
+    }
 
     # Append to CLAUDE.md if it exists (for Claude Code)
     local claude_md="${workspace}/CLAUDE.md"
     if [[ -f "$claude_md" ]]; then
-        if ! grep -q "$marker" "$claude_md" 2>/dev/null; then
+        if [[ ! -w "$claude_md" ]]; then
+            log_warn "$claude_md is not writable -- skipping gist append"
+        elif ! grep -q "$marker" "$claude_md" 2>/dev/null; then
             {
                 echo ""
                 echo "---"
                 echo ""
-                cat "$gist_instructions"
+                echo "$rendered"
             } >> "$claude_md"
             log_debug "Gist instructions appended to $claude_md"
             injected=true
@@ -320,12 +374,14 @@ inject_gist_instructions() {
     # Append to AGENTS.md if it exists (for Gemini CLI, Codex CLI)
     local agents_md="${workspace}/AGENTS.md"
     if [[ -f "$agents_md" ]]; then
-        if ! grep -q "$marker" "$agents_md" 2>/dev/null; then
+        if [[ ! -w "$agents_md" ]]; then
+            log_warn "$agents_md is not writable -- skipping gist append"
+        elif ! grep -q "$marker" "$agents_md" 2>/dev/null; then
             {
                 echo ""
                 echo "---"
                 echo ""
-                cat "$gist_instructions"
+                echo "$rendered"
             } >> "$agents_md"
             log_debug "Gist instructions appended to $agents_md"
             injected=true
@@ -335,9 +391,12 @@ inject_gist_instructions() {
     # Always create .kapsis/README.md as fallback for agents that explore workspace
     local kapsis_readme="${kapsis_dir}/README.md"
     if [[ ! -f "$kapsis_readme" ]]; then
-        cp "$gist_instructions" "$kapsis_readme"
-        log_debug "Gist instructions placed in $kapsis_readme"
-        injected=true
+        if printf '%s\n' "$rendered" > "$kapsis_readme" 2>/dev/null; then
+            log_debug "Gist instructions placed in $kapsis_readme"
+            injected=true
+        else
+            log_warn "Could not write $kapsis_readme -- skipping"
+        fi
     fi
 
     if [[ "$injected" == "true" ]]; then
@@ -390,5 +449,13 @@ inject_kapsis_hooks() {
 
 # Run if executed directly (not sourced)
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    inject_kapsis_hooks "$@"
+    case "${1:-}" in
+        --render-gist-instructions)
+            shift
+            render_gist_instructions "$@"
+            ;;
+        *)
+            inject_kapsis_hooks "$@"
+            ;;
+    esac
 fi

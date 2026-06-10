@@ -607,8 +607,35 @@ setup_staged_config_overlays() {
 
     log_info "Setting up CoW overlays for staged configs..."
 
-    # Create base directories for upper and work layers
-    mkdir -p "$upper_base" "$work_base" 2>/dev/null || true
+    # Issue #328: HOME must be writable for either the fuse-overlayfs mount
+    # or the atomic_copy fallback to succeed. If it isn't, every staged config
+    # fails identically with a cryptic "cp failed" warning. Detect it once
+    # up front and tell the operator what to look at.
+    #
+    # Review finding #3: downstream auth/credential paths need to know the
+    # configs were skipped so they can fail with a clear "auth will not work"
+    # message rather than a cryptic "key not found". Export a state flag and
+    # write a structured sentinel to /kapsis-status so kapsis-status.sh can
+    # surface it. Still return 0 — the entrypoint continues so the agent can
+    # report the auth-skipped state cleanly, but no caller mistakes the
+    # absence of staged configs for a successful install.
+    if [[ ! -w "$HOME" ]]; then
+        log_warn "KAPSIS-AUTH-WARNING: HOME ($HOME) is not writable — staged configs cannot be installed"
+        log_warn "Likely causes: read-only root filesystem (security profile=paranoid), missing chown on container HOME, or a broken bind-mount over HOME"
+        log_warn "Downstream agents that need credentials (.ssh, .claude, .config/...) WILL fail to authenticate"
+        export KAPSIS_STAGED_CONFIGS_SKIPPED=1
+        if [[ -d /kapsis-status ]] && [[ -w /kapsis-status ]]; then
+            printf 'HOME_NOT_WRITABLE\n' > /kapsis-status/staged-configs-skipped 2>/dev/null || true
+        fi
+        return 0
+    fi
+
+    # Issue #328: upper/work layers live on the container writable layer
+    # (not under HOME). Surface mkdir errors instead of swallowing them so a
+    # broken root layer fails loudly rather than cascading into every overlay.
+    if ! mkdir -p "$upper_base" "$work_base" 2>/dev/null; then
+        log_warn "Failed to create overlay state dirs ($upper_base, $work_base) — falling back to copy for every entry"
+    fi
 
     # Split comma-separated list
     IFS=',' read -ra configs <<< "$KAPSIS_STAGED_CONFIGS"
@@ -624,19 +651,44 @@ setup_staged_config_overlays() {
             continue
         fi
 
-        # Create directories
-        mkdir -p "$upper" "$work" "$(dirname "$dst")" 2>/dev/null || true
+        # Create directories. PR #380 follow-up: surface mkdir failures so a
+        # regression (e.g. missing Containerfile RUN that creates /kapsis-upper
+        # as developer-owned) is loud instead of silently falling through to
+        # the atomic-copy path on every staged config.
+        local _mk_err
+        _mk_err=$(mkdir -p "$upper" "$work" "$(dirname "$dst")" 2>&1) || \
+            log_warn "Failed to mkdir overlay dirs for ${relative_path}: ${_mk_err} — overlay will fail, falling back to copy"
 
         if [[ -d "$src" ]]; then
             # Directory: create overlay mount
             mkdir -p "$dst" 2>/dev/null || true
 
-            if fuse-overlayfs -o "lowerdir=${src},upperdir=${upper},workdir=${work}" "$dst" 2>/dev/null; then
+            # Issue #328: capture fuse-overlayfs stderr so failures are
+            # debuggable. Previously redirected to /dev/null, which forced
+            # users to bisect from a generic "Overlay failed" warning.
+            local _overlay_stderr _overlay_rc
+            _overlay_stderr=$(fuse-overlayfs -o "lowerdir=${src},upperdir=${upper},workdir=${work}" "$dst" 2>&1) && _overlay_rc=0 || _overlay_rc=$?
+
+            if [[ $_overlay_rc -eq 0 ]]; then
                 log_debug "CoW overlay: ${relative_path}"
             else
                 # Fallback: atomic copy with validation (fixes race condition #151)
-                log_warn "Overlay failed for ${relative_path}, falling back to atomic copy"
+                if [[ -n "$_overlay_stderr" ]]; then
+                    log_warn "Overlay failed for ${relative_path} (rc=${_overlay_rc}): ${_overlay_stderr}"
+                else
+                    log_warn "Overlay failed for ${relative_path} (rc=${_overlay_rc}, no stderr)"
+                fi
+                log_warn "Falling back to atomic copy for ${relative_path}"
                 atomic_copy_dir "$src" "$dst" || log_warn "Atomic copy validation failed for dir: ${relative_path}"
+                # Issue #328: ensure every file in the staged dir is user-writable
+                # after any copy path (socket-file errors cause cp to exit 1 but
+                # still land all regular files with their original mode bits).
+                # Downstream writers (inject-lsp-config.sh, filter-agent-config.sh)
+                # need to modify files like settings.json; atomic_copy_dir
+                # preserves source perms via -p which can leave them mode 0444.
+                if [[ -d "$dst" ]]; then
+                    find "$dst" -type f -exec chmod u+rw {} + 2>/dev/null || true
+                fi
             fi
         else
             # File: atomic copy with validation (fixes race condition #151)
@@ -1177,6 +1229,27 @@ gemini-cli|Gemini CLI"
         # Agent supports hooks - install them
         display_name="${hook_entry#*|}"
         install_agent_hooks "$agent_type" "$display_name"
+
+        # Plugin hook injection (Claude Code only, opt-in via KAPSIS_INSTALL_PLUGINS).
+        # Must run AFTER install_agent_hooks so Kapsis's status/gist hooks sit
+        # BEFORE plugin hooks in PostToolUse — the kapsis-status-hook reads
+        # /workspace/.kapsis/gist.txt to populate the status JSON, so plugin
+        # hooks that mutate gist.txt should run after status hook has read it.
+        case "$agent_type" in
+            claude|claude-cli|claude-code)
+                if [[ "${KAPSIS_INSTALL_PLUGINS:-false}" == "true" ]]; then
+                    install_plugin_hooks
+                fi
+                ;;
+        esac
+
+        # Overlay mode: workspace-side gist surfacing (CLAUDE.md / AGENTS.md
+        # appends) is skipped because /workspace is read-only. Surface the
+        # gist & progress instructions via the injected task spec instead
+        # so the agent still gets the guidance in-band (issue #328).
+        if [[ "${KAPSIS_SANDBOX_MODE:-}" == "overlay" ]]; then
+            inject_progress_instructions
+        fi
     elif [[ " $python_agents " == *" $agent_type "* ]]; then
         # Python agent - status.py library available
         log_info "Python agent - status.py library available for direct integration"
@@ -1193,7 +1266,7 @@ gemini-cli|Gemini CLI"
 #
 # Installs Kapsis status tracking hooks for supported agents.
 # Uses inject-status-hooks.sh which handles:
-#   - Claude Code: JSON merge into ~/.claude/settings.local.json
+#   - Claude Code: JSON merge into ~/.claude/settings.json
 #   - Codex CLI: YAML merge into ~/.codex/config.yaml
 #   - Gemini CLI: Shell scripts in ~/.gemini/hooks/
 #
@@ -1228,6 +1301,30 @@ install_agent_hooks() {
 # removed in favor of the data-driven lookup in setup_status_tracking().
 # Add new agents by updating the hook_agents variable there.
 
+# Plugin hook installation (Claude Code only). Merges user-installed Claude
+# Code plugin hooks into the same ~/.claude/settings.json that
+# install_agent_hooks just wrote — so Kapsis (status/gist) hooks AND plugin
+# hooks (e.g. deeperdive-java-linter) both fire on agent tool calls.
+#
+# This is necessary because Kapsis bypasses Claude Code's native plugin loader.
+install_plugin_hooks() {
+    local inject_script="$KAPSIS_HOME/lib/inject-plugin-hooks.sh"
+
+    if [[ ! -f "$inject_script" ]]; then
+        log_debug "Plugin hook injection script not found — skipping"
+        return 0
+    fi
+
+    log_info "Installing Claude Code plugin hooks..."
+    # shellcheck source=lib/inject-plugin-hooks.sh
+    if source "$inject_script" && inject_plugin_hooks; then
+        return 0
+    else
+        log_warn "Plugin hook injection failed (non-fatal — agent will run without plugin hooks)"
+        return 1
+    fi
+}
+
 # Start background progress monitor for agents without hook support
 start_progress_monitor() {
     local monitor_script="$KAPSIS_HOME/lib/progress-monitor.sh"
@@ -1249,7 +1346,17 @@ start_progress_monitor() {
     log_debug "Progress monitor started (PID: $PROGRESS_MONITOR_PID)"
 }
 
-# Inject progress reporting instructions into task spec
+# Inject progress reporting instructions into task spec.
+#
+# Worktree mode: writes to /workspace/.kapsis/task-spec-with-progress.md
+#                (workspace is writable).
+# Overlay  mode: writes to /kapsis-status/task-spec-with-progress.md
+#                (workspace is read-only; /kapsis-status is the writable
+#                status volume — see issue #328).
+#
+# When KAPSIS_INJECT_GIST=true, gist instructions are appended to the same
+# injected spec so the agent learns both how to report progress and how to
+# update its activity gist via $KAPSIS_GIST_FILE.
 inject_progress_instructions() {
     local task_spec="/task-spec.md"
     local instructions="$KAPSIS_HOME/lib/progress-instructions.md"
@@ -1264,28 +1371,57 @@ inject_progress_instructions() {
         return 0
     fi
 
-    # Skip progress injection in overlay mode — workspace is read-only (kapsis#204)
+    local kapsis_dir
     if [[ "${KAPSIS_SANDBOX_MODE:-}" == "overlay" ]]; then
-        log_info "Skipping progress injection (overlay mode — read-only workspace)"
-        return 0
-    fi
-
-    log_info "Injecting progress reporting instructions..."
-
-    local kapsis_dir="/workspace/.kapsis"
-    if ! mkdir -p "$kapsis_dir" 2>/dev/null; then
-        log_warn "Could not create /workspace/.kapsis — skipping progress injection"
-        return 0
+        kapsis_dir="/kapsis-status"
+        log_info "Injecting progress reporting instructions (overlay mode → $kapsis_dir)..."
+    else
+        kapsis_dir="/workspace/.kapsis"
+        log_info "Injecting progress reporting instructions..."
+        if ! mkdir -p "$kapsis_dir" 2>/dev/null; then
+            log_warn "Could not create $kapsis_dir — skipping progress injection"
+            return 0
+        fi
     fi
 
     # Append instructions to task spec (copy to writable location first)
     local injected_spec="$kapsis_dir/task-spec-with-progress.md"
-    {
+    local write_err
+    write_err=$(mktemp)
+    if ! {
         cat "$task_spec"
         echo ""
         echo ""
         cat "$instructions"
-    } > "$injected_spec"
+    } > "$injected_spec" 2>"$write_err"; then
+        log_warn "Could not write $injected_spec — skipping progress injection: $(tr '\n' ' ' <"$write_err")"
+        rm -f "$write_err"
+        return 0
+    fi
+    rm -f "$write_err"
+
+    # If gist tracking is enabled, render gist instructions with the live
+    # $KAPSIS_GIST_FILE path substituted and append onto the same spec. This is
+    # the in-band channel that tells the agent the gist path in overlay mode,
+    # since CLAUDE.md / AGENTS.md appends are skipped there.
+    if [[ "${KAPSIS_INJECT_GIST:-false}" == "true" ]]; then
+        local inject_script="$KAPSIS_HOME/lib/inject-status-hooks.sh"
+        local rendered_gist append_err
+        if [[ -x "$inject_script" ]]; then
+            if rendered_gist=$("$inject_script" --render-gist-instructions 2>/dev/null); then
+                append_err=$(mktemp)
+                if ! {
+                    echo ""
+                    echo "---"
+                    echo ""
+                    echo "$rendered_gist"
+                } >> "$injected_spec" 2>"$append_err"; then
+                    log_warn "Could not append gist instructions to $injected_spec: $(tr '\n' ' ' <"$append_err")"
+                fi
+                rm -f "$append_err"
+            fi
+        fi
+    fi
 
     # Export path to injected spec
     export KAPSIS_INJECTED_TASK_SPEC="$injected_spec"
@@ -1553,9 +1689,15 @@ validate_workspace_mount() {
 # the agent command. On macOS virtio-fs can degrade during that window too.
 #
 # This probe runs immediately before exec and uses `timeout` so a hung virtio-
-# fs transport cannot freeze the container. A write probe is required (not
-# just stat) because the failure mode in #276 is that bash's `>` redirect open
-# fails even when stat succeeds on the parent dir.
+# fs transport cannot freeze the container. In worktree mode a write probe is
+# required (not just stat) because the failure mode in #276 is that bash's `>`
+# redirect open fails even when stat succeeds on the parent dir; /workspace is
+# read-write so the probe has signal. In overlay mode the workspace is
+# intentionally read-only (Issue #341): agent writes target $HOME and
+# /kapsis-status instead, so a write probe on /workspace always returns EROFS
+# regardless of mount health — only the stat probe runs. If KAPSIS_SANDBOX_MODE
+# is unset or empty the write probe runs (worktree behavior), which is the safe
+# default for callers that do not export the variable.
 #
 # On failure, emits the same KAPSIS_MOUNT_FAILURE: sentinel to stderr that the
 # liveness monitor uses (scripts/lib/liveness-monitor.sh:613), so the existing
@@ -1612,9 +1754,35 @@ probe_mount_readiness() {
         return 1
     fi
 
-    # Write probe: the real failure mode is that bash cannot open files for
-    # output redirect. Verify that the agent will be able to create files
-    # under the workspace before we exec into it.
+    # Issue #341: in overlay mode the workspace is read-only by design — the
+    # agent's writes go to the host-side upperdir (via :O,upperdir=,workdir=),
+    # to $HOME for staged-config CoW overlays (.claude, .ssh, …), and to
+    # /kapsis-status for task progress. The agent never writes to /workspace
+    # directly. A write probe here would always fail with EROFS regardless of
+    # mount health, masking the stat probe above and producing false-positive
+    # mount failures (exit 4) for every overlay-mode launch on macOS where
+    # podman 5.x mounts ":O,upperdir=,workdir=" as ro under --userns=keep-id.
+    # The mid-run liveness-monitor follows the same mode-aware pattern — see
+    # scripts/lib/liveness-monitor.sh::_mount_check_probe (uses stat + ls -A
+    # for both modes, only adds a git sentinel check in worktree mode).
+    # Mirrors the existing overlay short-circuit in
+    # scripts/lib/inject-status-hooks.sh::inject_gist_instructions.
+    #
+    # Normalise the mode string: lowercase and strip whitespace so "Overlay",
+    # " overlay", and future overlay-family names match. Unset/empty is treated
+    # as worktree (write probe runs) — safe default for callers that do not
+    # export KAPSIS_SANDBOX_MODE.
+    local _probe_mode="${KAPSIS_SANDBOX_MODE:-}"
+    _probe_mode="${_probe_mode,,}"                    # bash lowercase
+    _probe_mode="${_probe_mode//[[:space:]]/}"        # strip whitespace
+    if [[ "$_probe_mode" == "overlay" ]]; then
+        log_debug "Pre-agent mount readiness probe: stat passed; skipping write probe in overlay mode (read-only by design)"
+        return 0
+    fi
+
+    # Write probe (worktree mode): the real failure mode is that bash cannot
+    # open files for output redirect. Verify that the agent will be able to
+    # create files under the workspace before we exec into it.
     # Use mktemp for an unpredictable filename; fall back to PID-suffix on
     # systems where mktemp is unavailable inside the container (extremely rare).
     local probe_file
@@ -1666,7 +1834,7 @@ main() {
     setup_staged_config_overlays
 
     # Whitelist Claude agent config (hooks and MCP servers) based on YAML config
-    # Must happen after CoW (files writable) and before hook injection (settings.local.json)
+    # Must happen after CoW (files writable) and before hook injection (settings.json)
     local filter_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/filter-agent-config.sh"
     if [[ -f "$filter_lib" ]]; then
         source "$filter_lib"
@@ -1683,7 +1851,7 @@ main() {
 
     # Inject LSP server configuration based on YAML config
     # Must happen after CoW (files writable) and after filtering (clean slate)
-    # but before hook injection (both write to settings.local.json)
+    # but before hook injection (both write to settings.json)
     local lsp_lib="${KAPSIS_HOME:-/opt/kapsis}/lib/inject-lsp-config.sh"
     if [[ -f "$lsp_lib" ]]; then
         source "$lsp_lib"
