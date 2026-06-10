@@ -68,6 +68,13 @@ spec:
         #   value: kapsis-agent
         # - name: KAPSIS_NESTED_CONTAINER_NAMESPACES # namespaces allowed to use nestedContainers
         #   value: kapsis-privileged
+        #
+        # Opt-in admission webhook (defense in depth; the reconciler always
+        # enforces the invariants above). Requires serving certs mounted into the
+        # pod and a ValidatingWebhookConfiguration (config/webhook + cert-manager)
+        # — without them the manager fails to start.
+        # - name: ENABLE_WEBHOOKS
+        #   value: "true"
         ports: []
         securityContext:
           readOnlyRootFilesystem: true

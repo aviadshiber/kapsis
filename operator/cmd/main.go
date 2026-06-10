@@ -197,11 +197,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Register the admission webhook unless explicitly disabled. The reconciler
-	// already enforces the same invariants, so this is admission-time defense in
-	// depth; it requires the ValidatingWebhookConfiguration + serving certs to be
-	// deployed (see config/webhook + cert-manager) to take effect.
-	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+	// Register the admission webhook only when explicitly enabled. Registering it
+	// makes controller-runtime start the webhook server, which fails the whole
+	// manager when serving certs are absent — and the in-tree manifests
+	// (config/default, config/manager via scripts/k8s-deploy.sh) do not yet ship
+	// the cert-manager + config/webhook plumbing. The reconciler enforces the
+	// same invariants unconditionally, so the webhook is admission-time defense
+	// in depth for deployments that provision certs and the
+	// ValidatingWebhookConfiguration. Once that plumbing lands in-tree, this gate
+	// can move to the kubebuilder `!= "false"` convention.
+	if os.Getenv("ENABLE_WEBHOOKS") == "true" {
 		if err := validator.SetupWebhookWithManager(mgr); err != nil {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "AgentRequest")
 			os.Exit(1)
