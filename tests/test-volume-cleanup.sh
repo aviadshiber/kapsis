@@ -119,8 +119,10 @@ test_clean_images_function_exists() {
 test_cleanup_keep_volumes_documented() {
     log_test "Testing --keep-volumes is documented in usage"
 
+    # Extract the usage() function body instead of a fixed head -N line count,
+    # which silently broke whenever the file header above usage() grew.
     local usage_output
-    usage_output=$(head -250 "$LAUNCH_SCRIPT")
+    usage_output=$(sed -n '/^usage()/,/^}/p' "$LAUNCH_SCRIPT")
 
     assert_contains "$usage_output" "--keep-volumes" "Usage should document --keep-volumes flag"
 }
