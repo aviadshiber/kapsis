@@ -211,6 +211,9 @@ func main() {
 			setupLog.Error(err, "Failed to create webhook", "webhook", "AgentRequest")
 			os.Exit(1)
 		}
+		setupLog.Info("Admission webhook registered", "certPath", webhookCertPath)
+	} else {
+		setupLog.Info("Admission webhook NOT registered; reconciler-side validation remains active")
 	}
 	// +kubebuilder:scaffold:builder
 

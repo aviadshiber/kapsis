@@ -53,6 +53,11 @@ func TestSplitEnvList(t *testing.T) {
 		{" a , b ,c ", []string{"a", "b", "c"}},
 		{"a b\tc\nd", []string{"a", "b", "c", "d"}},
 		{",,a,,", []string{"a"}},
+		// CRLF-formatted env values must not leave a trailing \r.
+		{"a,b\r\nc", []string{"a", "b", "c"}},
+		{"kapsis-agent\r", []string{"kapsis-agent"}},
+		// Duplicates are removed, order preserved.
+		{"a,b,a,c,b", []string{"a", "b", "c"}},
 	}
 	for _, tc := range cases {
 		got := splitEnvList(tc.in)
@@ -71,8 +76,8 @@ func TestNewValidatorFromEnv_Defaults(t *testing.T) {
 	if !reflect.DeepEqual(v.ImageAllowlistPatterns, []string{defaultImageAllowlistPrefix}) {
 		t.Errorf("expected default image allowlist [%q], got %v", defaultImageAllowlistPrefix, v.ImageAllowlistPatterns)
 	}
-	if len(v.ApprovedServiceAccounts) != 0 {
-		t.Errorf("expected no approved service accounts (validator defaults internally), got %v", v.ApprovedServiceAccounts)
+	if !reflect.DeepEqual(v.ApprovedServiceAccounts, []string{defaultApprovedServiceAccount}) {
+		t.Errorf("expected default approved service accounts [%q], got %v", defaultApprovedServiceAccount, v.ApprovedServiceAccounts)
 	}
 	if len(v.NestedContainerNamespaces) != 0 {
 		t.Errorf("expected no approved nested-container namespaces (forbidden by default), got %v", v.NestedContainerNamespaces)
@@ -238,6 +243,31 @@ func TestValidateConfigMount_ProtectedPath_Rejected(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected validation error for protected mount path /etc/foo")
+	}
+}
+
+func TestValidateConfigMount_RelativePath_Rejected(t *testing.T) {
+	v := &AgentRequestValidator{
+		ImageAllowlistPatterns: []string{"ghcr.io/aviadshiber/kapsis/"},
+	}
+	ar := minimalAR()
+	// A relative path would be cleaned to "etc/shadow" (no leading slash) and slip
+	// past every absolute-prefix protected-path check; it must be rejected outright.
+	ar.Spec.Environment = &kapsisv1alpha1.EnvironmentSpec{
+		ConfigMounts: []kapsisv1alpha1.ConfigMount{
+			{Name: "my-cm", MountPath: "etc/shadow"},
+		},
+	}
+	errs := v.validate(ar)
+	found := false
+	for _, e := range errs {
+		if e.Field == "spec.environment.configMounts[0].mountPath" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("expected validation error for relative mount path etc/shadow")
 	}
 }
 
