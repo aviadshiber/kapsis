@@ -57,6 +57,17 @@ spec:
         # Optional: override the status sidecar image.
         # - name: KAPSIS_STATUS_SIDECAR_IMAGE
         #   value: ghcr.io/aviadshiber/kapsis/status-sidecar:latest
+        #
+        # Security validation (enforced by the reconciler always, and by the
+        # admission webhook when deployed). Defaults: images restricted to
+        # ghcr.io/aviadshiber/kapsis/, serviceAccountName must be kapsis-agent,
+        # and nestedContainers=true is forbidden in every namespace. Override:
+        # - name: KAPSIS_IMAGE_ALLOWLIST            # comma/space-separated image prefixes
+        #   value: ghcr.io/aviadshiber/kapsis/,ghcr.io/my-org/kapsis/
+        # - name: KAPSIS_APPROVED_SERVICE_ACCOUNTS  # comma/space-separated SA names
+        #   value: kapsis-agent
+        # - name: KAPSIS_NESTED_CONTAINER_NAMESPACES # namespaces allowed to use nestedContainers
+        #   value: kapsis-privileged
         ports: []
         securityContext:
           readOnlyRootFilesystem: true

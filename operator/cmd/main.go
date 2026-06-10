@@ -37,6 +37,7 @@ import (
 
 	kapsisv1alpha1 "github.com/aviadshiber/kapsis/operator/api/v1alpha1"
 	"github.com/aviadshiber/kapsis/operator/internal/controller"
+	kapsiswebhook "github.com/aviadshiber/kapsis/operator/internal/webhook"
 	// +kubebuilder:scaffold:imports
 )
 
@@ -178,13 +179,33 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Security invariants enforced by both the reconciler (always) and the
+	// admission webhook (when deployed). Configured from operator environment.
+	validator := kapsiswebhook.NewValidatorFromEnv()
+	setupLog.Info("Security validator configured",
+		"imageAllowlist", validator.ImageAllowlistPatterns,
+		"approvedServiceAccounts", validator.ApprovedServiceAccounts,
+		"nestedContainerNamespaces", validator.NestedContainerNamespaces)
+
 	if err := (&controller.AgentRequestReconciler{
 		Client:             mgr.GetClient(),
 		Scheme:             mgr.GetScheme(),
 		StatusSidecarImage: os.Getenv("KAPSIS_STATUS_SIDECAR_IMAGE"),
+		Validator:          validator,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "Failed to create controller", "controller", "AgentRequest")
 		os.Exit(1)
+	}
+
+	// Register the admission webhook unless explicitly disabled. The reconciler
+	// already enforces the same invariants, so this is admission-time defense in
+	// depth; it requires the ValidatingWebhookConfiguration + serving certs to be
+	// deployed (see config/webhook + cert-manager) to take effect.
+	if os.Getenv("ENABLE_WEBHOOKS") != "false" {
+		if err := validator.SetupWebhookWithManager(mgr); err != nil {
+			setupLog.Error(err, "Failed to create webhook", "webhook", "AgentRequest")
+			os.Exit(1)
+		}
 	}
 	// +kubebuilder:scaffold:builder
 

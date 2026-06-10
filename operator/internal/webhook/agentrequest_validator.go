@@ -27,6 +27,7 @@ package webhook
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -36,6 +37,28 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 
 	kapsisv1alpha1 "github.com/aviadshiber/kapsis/operator/api/v1alpha1"
+)
+
+// Environment variables that configure the security invariants. They are read by
+// both the admission webhook and the reconciler (defense-in-depth) via
+// NewValidatorFromEnv so a single source of truth drives enforcement.
+const (
+	// EnvImageAllowlist is a comma/whitespace-separated list of allowed image
+	// prefixes. Defaults to the project's own registry when unset.
+	EnvImageAllowlist = "KAPSIS_IMAGE_ALLOWLIST"
+	// EnvApprovedServiceAccounts is a comma/whitespace-separated list of allowed
+	// serviceAccountName values. Defaults to {"kapsis-agent"} when unset.
+	EnvApprovedServiceAccounts = "KAPSIS_APPROVED_SERVICE_ACCOUNTS"
+	// EnvNestedContainerNamespaces is a comma/whitespace-separated list of
+	// namespaces where nestedContainers=true is permitted. When unset,
+	// nestedContainers is forbidden everywhere (safe default).
+	EnvNestedContainerNamespaces = "KAPSIS_NESTED_CONTAINER_NAMESPACES"
+
+	// defaultImageAllowlistPrefix restricts agent images to the project's own
+	// registry by default. Operators that run agents from other registries must
+	// set KAPSIS_IMAGE_ALLOWLIST explicitly. This is intentionally narrow rather
+	// than fail-open so a missing config cannot silently allow arbitrary images.
+	defaultImageAllowlistPrefix = "ghcr.io/aviadshiber/kapsis/"
 )
 
 var webhookLog = logf.Log.WithName("agentrequest-webhook")
@@ -71,6 +94,45 @@ var protectedMountPaths = []string{
 	"/tmp/",
 	"/dev/",
 	"/var/lib/",
+}
+
+// NewValidatorFromEnv builds an AgentRequestValidator from operator environment
+// variables. It is used both to register the admission webhook and to enforce the
+// same invariants inside the reconciler (defense-in-depth), so a single config
+// source drives both paths. Unset values fall back to safe defaults: the project
+// registry for images, {"kapsis-agent"} for service accounts, and no approved
+// namespaces for nestedContainers (which forbids it everywhere).
+func NewValidatorFromEnv() *AgentRequestValidator {
+	images := splitEnvList(os.Getenv(EnvImageAllowlist))
+	if len(images) == 0 {
+		images = []string{defaultImageAllowlistPrefix}
+	}
+	return &AgentRequestValidator{
+		ImageAllowlistPatterns:    images,
+		ApprovedServiceAccounts:   splitEnvList(os.Getenv(EnvApprovedServiceAccounts)),
+		NestedContainerNamespaces: splitEnvList(os.Getenv(EnvNestedContainerNamespaces)),
+	}
+}
+
+// splitEnvList splits a comma/whitespace-separated env value into trimmed,
+// non-empty entries.
+func splitEnvList(raw string) []string {
+	var out []string
+	for _, part := range strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ' ' || r == '\t' || r == '\n'
+	}) {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Validate runs all security invariants and returns an aggregated error, or nil
+// when the request is acceptable. It is the exported entry point shared by the
+// admission webhook and the reconciler.
+func (v *AgentRequestValidator) Validate(ar *kapsisv1alpha1.AgentRequest) error {
+	return v.validate(ar).ToAggregate()
 }
 
 //+kubebuilder:webhook:path=/validate-kapsis-aviadshiber-github-io-v1alpha1-agentrequest,mutating=false,failurePolicy=fail,sideEffects=None,groups=kapsis.aviadshiber.github.io,resources=agentrequests,verbs=create;update,versions=v1alpha1,name=vagentrequest.kb.io,admissionReviewVersions=v1

@@ -17,6 +17,7 @@ limitations under the License.
 package webhook
 
 import (
+	"reflect"
 	"testing"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -37,6 +38,81 @@ func minimalAR() *kapsisv1alpha1.AgentRequest {
 				Image: "ghcr.io/aviadshiber/kapsis/claude-cli:latest",
 			},
 		},
+	}
+}
+
+func TestSplitEnvList(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"  ", nil},
+		{"a", []string{"a"}},
+		{"a,b,c", []string{"a", "b", "c"}},
+		{" a , b ,c ", []string{"a", "b", "c"}},
+		{"a b\tc\nd", []string{"a", "b", "c", "d"}},
+		{",,a,,", []string{"a"}},
+	}
+	for _, tc := range cases {
+		got := splitEnvList(tc.in)
+		if !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("splitEnvList(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestNewValidatorFromEnv_Defaults(t *testing.T) {
+	t.Setenv(EnvImageAllowlist, "")
+	t.Setenv(EnvApprovedServiceAccounts, "")
+	t.Setenv(EnvNestedContainerNamespaces, "")
+
+	v := NewValidatorFromEnv()
+	if !reflect.DeepEqual(v.ImageAllowlistPatterns, []string{defaultImageAllowlistPrefix}) {
+		t.Errorf("expected default image allowlist [%q], got %v", defaultImageAllowlistPrefix, v.ImageAllowlistPatterns)
+	}
+	if len(v.ApprovedServiceAccounts) != 0 {
+		t.Errorf("expected no approved service accounts (validator defaults internally), got %v", v.ApprovedServiceAccounts)
+	}
+	if len(v.NestedContainerNamespaces) != 0 {
+		t.Errorf("expected no approved nested-container namespaces (forbidden by default), got %v", v.NestedContainerNamespaces)
+	}
+
+	// With the default config, a request that enables nestedContainers must be rejected.
+	ar := minimalAR()
+	ar.Spec.Security = &kapsisv1alpha1.SecuritySpec{NestedContainers: true}
+	if err := v.Validate(ar); err == nil {
+		t.Error("expected nestedContainers=true to be rejected under default (no approved namespaces)")
+	}
+}
+
+func TestNewValidatorFromEnv_Configured(t *testing.T) {
+	t.Setenv(EnvImageAllowlist, "ghcr.io/myorg/, docker.io/myorg/")
+	t.Setenv(EnvApprovedServiceAccounts, "kapsis-agent,custom-sa")
+	t.Setenv(EnvNestedContainerNamespaces, "trusted-ns")
+
+	v := NewValidatorFromEnv()
+	if !reflect.DeepEqual(v.ImageAllowlistPatterns, []string{"ghcr.io/myorg/", "docker.io/myorg/"}) {
+		t.Errorf("unexpected image allowlist: %v", v.ImageAllowlistPatterns)
+	}
+	if !reflect.DeepEqual(v.ApprovedServiceAccounts, []string{"kapsis-agent", "custom-sa"}) {
+		t.Errorf("unexpected approved service accounts: %v", v.ApprovedServiceAccounts)
+	}
+	if !reflect.DeepEqual(v.NestedContainerNamespaces, []string{"trusted-ns"}) {
+		t.Errorf("unexpected nested-container namespaces: %v", v.NestedContainerNamespaces)
+	}
+}
+
+func TestValidate_ExportedWrapper(t *testing.T) {
+	v := &AgentRequestValidator{ImageAllowlistPatterns: []string{"ghcr.io/aviadshiber/kapsis/"}}
+	if err := v.Validate(minimalAR()); err != nil {
+		t.Errorf("expected valid request to pass Validate, got: %v", err)
+	}
+
+	bad := minimalAR()
+	bad.Spec.Agent.Image = "evil.example.com/backdoor:latest"
+	if err := v.Validate(bad); err == nil {
+		t.Error("expected disallowed image to be rejected by Validate")
 	}
 }
 

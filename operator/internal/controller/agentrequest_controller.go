@@ -44,6 +44,16 @@ const (
 	watchdogRequeue = 5 * time.Minute
 )
 
+// RequestValidator enforces the security invariants that cannot be expressed as
+// CRD validation markers (image allowlist, approved service accounts,
+// nestedContainers namespace gating, reserved env vars, protected mount paths,
+// open-network opt-in). The same implementation backs the admission webhook; the
+// reconciler also calls it so the invariants hold even when the webhook is not
+// deployed (defense-in-depth). Validate returns nil when the request is allowed.
+type RequestValidator interface {
+	Validate(ar *kapsisv1alpha1.AgentRequest) error
+}
+
 // AgentRequestReconciler reconciles an AgentRequest object by creating and
 // monitoring a batch/v1 Job that runs the requested agent, then bridging Job
 // and Pod status back to the CR status subresource.
@@ -55,6 +65,11 @@ type AgentRequestReconciler struct {
 	// Defaults to DefaultStatusSidecarImage if empty.
 	// Set via KAPSIS_STATUS_SIDECAR_IMAGE environment variable in the operator Deployment.
 	StatusSidecarImage string
+
+	// Validator enforces security invariants before a Job is created. When nil
+	// (e.g. in unit tests that opt out), validation is skipped. In production it
+	// is always set from operator environment via webhook.NewValidatorFromEnv.
+	Validator RequestValidator
 }
 
 // +kubebuilder:rbac:groups=kapsis.aviadshiber.github.io,resources=agentrequests,verbs=get;list;watch;create;update;patch;delete
@@ -112,6 +127,28 @@ func (r *AgentRequestReconciler) Reconcile(ctx context.Context, req ctrl.Request
 // exists, creates the agent Job, and transitions to Initializing.
 func (r *AgentRequestReconciler) reconcilePending(ctx context.Context, ar *kapsisv1alpha1.AgentRequest) (ctrl.Result, error) {
 	log := logf.FromContext(ctx)
+
+	// Enforce security invariants before doing anything else. This mirrors the
+	// admission webhook so a malformed or malicious request (arbitrary image,
+	// privileged nestedContainers, reserved env overrides, etc.) is rejected even
+	// when the webhook is not deployed. On failure the CR goes terminal-Failed and
+	// no Job is ever created.
+	if r.Validator != nil {
+		if err := r.Validator.Validate(ar); err != nil {
+			log.Info("AgentRequest rejected by security validation", "error", err.Error())
+			nn := types.NamespacedName{Name: ar.Name, Namespace: ar.Namespace}
+			msg := err.Error()
+			if uErr := r.updateStatusWithRetry(ctx, nn, func(fresh *kapsisv1alpha1.AgentRequest) {
+				fresh.Status.Phase = kapsisv1alpha1.PhaseFailed
+				fresh.Status.Error = msg
+				fresh.Status.Message = "Rejected by security validation"
+			}); uErr != nil {
+				return ctrl.Result{}, fmt.Errorf("updating status to Failed after validation rejection: %w", uErr)
+			}
+			// Terminal: do not requeue. The user must fix and resubmit.
+			return ctrl.Result{}, nil
+		}
+	}
 
 	// Ensure the namespace-level NetworkPolicy exists (idempotent: create or skip).
 	if ShouldCreateNetworkPolicy(ar) {
