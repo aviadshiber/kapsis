@@ -32,8 +32,6 @@ _setup() {
     PROJECT_PATH="$_TEST_PROJECT"
     AGENT_ID="$_TEST_AGENT_ID"
     SANDBOX_UPPER_BASE="$_TEST_SANDBOX_BASE"
-    DRY_RUN="false"
-    SANDBOX_MODE="overlay"
     OVERLAY_VOLUME=""
     SANDBOX_DIR=""
     UPPER_DIR=""
