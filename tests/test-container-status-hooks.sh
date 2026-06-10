@@ -48,13 +48,30 @@ test_inject_status_hooks_lib_executable() {
 
     setup_container_test "status-hooks-exec"
 
+    # Three-state markers so the failure diagnostic distinguishes a lib that
+    # was never COPY'd (LIB_MISSING) from one that lost its executable bit
+    # (LIB_PRESENT_NOT_EXECUTABLE). Markers are deliberately non-overlapping:
+    # assert_contains is substring-based, so EXECUTABLE/NOT_EXECUTABLE-style
+    # markers would make the success assertion match the failure output too.
     local output
-    output=$(run_in_container "test -x /opt/kapsis/lib/inject-status-hooks.sh && echo EXECUTABLE || echo NOT_EXECUTABLE")
+    output=$(run_in_container "
+        if [[ -x /opt/kapsis/lib/inject-status-hooks.sh ]]; then
+            echo LIB_EXECUTABLE
+        elif [[ -e /opt/kapsis/lib/inject-status-hooks.sh ]]; then
+            echo LIB_PRESENT_NOT_EXECUTABLE
+        else
+            echo LIB_MISSING
+        fi
+    ")
 
     cleanup_container_test
 
-    assert_contains "$output" "EXECUTABLE" \
+    assert_contains "$output" "LIB_EXECUTABLE" \
         "inject-status-hooks.sh must be executable — covered by the Containerfile chmod 755 step"
+    assert_not_contains "$output" "LIB_PRESENT_NOT_EXECUTABLE" \
+        "inject-status-hooks.sh exists but is not executable — the Containerfile chmod 755 step was lost"
+    assert_not_contains "$output" "LIB_MISSING" \
+        "inject-status-hooks.sh is missing entirely — Containerfile needs a COPY line for it"
 }
 
 test_inject_claude_hooks_function_callable() {
@@ -132,6 +149,72 @@ test_inject_claude_hooks_produces_container_paths() {
         "Stop hook must be present in settings.json"
 }
 
+# The path-string assertions above are necessary but not sufficient: those
+# strings are hardcoded via `jq --arg` in inject-status-hooks.sh and would land
+# in settings.json even if the hook scripts themselves were never COPY'd into
+# the image. Close the gap by reading every hook command back out of
+# settings.json — exactly as Claude Code would — and asserting each resolved
+# path is an executable file inside the container. Removing either
+# `COPY scripts/hooks/kapsis-status-hook.sh` or
+# `COPY scripts/hooks/kapsis-stop-hook.sh` from the Containerfile fails here.
+# Mirrors test_gist_hook_command_is_executable_in_container in
+# test-container-gist-hook.sh.
+test_injected_hook_commands_are_executable_in_container() {
+    log_test "Testing hook commands in settings.json resolve to executable files in container"
+
+    setup_container_test "status-hooks-cmd-exec"
+
+    local fixture_root
+    fixture_root=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-status-hooks-exec-XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$fixture_root'" RETURN
+
+    mkdir -p "$fixture_root/.claude"
+    chmod -R a+rwX "$fixture_root"
+
+    local container_output exit_code=0
+    container_output=$(podman run --rm \
+        --name "$CONTAINER_TEST_ID" \
+        --userns=keep-id \
+        --security-opt label=disable \
+        -v "$fixture_root/.claude:/home/developer/.claude:rw" \
+        -e CI="${CI:-true}" \
+        -e KAPSIS_NETWORK_MODE="${KAPSIS_NETWORK_MODE:-open}" \
+        -e KAPSIS_AGENT_TYPE=claude-cli \
+        -e KAPSIS_STATUS_AGENT_ID="container-test-$$" \
+        -e HOME=/home/developer \
+        "$KAPSIS_TEST_IMAGE" \
+        bash -c '
+            set -e
+            source /opt/kapsis/lib/logging.sh
+            source /opt/kapsis/lib/inject-status-hooks.sh
+            inject_claude_hooks
+            jq -r "(.hooks.PostToolUse[].hooks[].command), (.hooks.Stop[].hooks[].command)" \
+                /home/developer/.claude/settings.json | while IFS= read -r hook_cmd; do
+                if [[ -x "$hook_cmd" ]]; then
+                    echo "HOOK_CMD_EXECUTABLE: $hook_cmd"
+                elif [[ -e "$hook_cmd" ]]; then
+                    echo "HOOK_CMD_PRESENT_NOT_EXECUTABLE: $hook_cmd"
+                else
+                    echo "HOOK_CMD_MISSING: $hook_cmd"
+                fi
+            done
+        ' 2>&1) || exit_code=$?
+
+    cleanup_container_test
+
+    assert_exit_code 0 "$exit_code" \
+        "Container script should complete without error (container output: $container_output)"
+    assert_contains "$container_output" "HOOK_CMD_EXECUTABLE: /opt/kapsis/hooks/kapsis-status-hook.sh" \
+        "Status hook command read back from settings.json must be an executable file — Containerfile needs the kapsis-status-hook.sh COPY"
+    assert_contains "$container_output" "HOOK_CMD_EXECUTABLE: /opt/kapsis/hooks/kapsis-stop-hook.sh" \
+        "Stop hook command read back from settings.json must be an executable file — Containerfile needs the kapsis-stop-hook.sh COPY"
+    assert_not_contains "$container_output" "HOOK_CMD_MISSING" \
+        "Every hook command injected into settings.json must exist inside the image"
+    assert_not_contains "$container_output" "HOOK_CMD_PRESENT_NOT_EXECUTABLE" \
+        "Every hook command injected into settings.json must have chmod +x inside the image"
+}
+
 # Regression guard for issue #351: inject_claude_hooks must write to settings.json
 # and must never create settings.local.json (Claude Code ignores .local.json at
 # user scope — hooks placed there silently never fire).
@@ -204,6 +287,7 @@ main() {
 
     # End-to-end: injection produces correct paths + regression guards
     run_test test_inject_claude_hooks_produces_container_paths
+    run_test test_injected_hook_commands_are_executable_in_container
     run_test test_inject_claude_hooks_no_settings_local_json
 
     cleanup_test_project

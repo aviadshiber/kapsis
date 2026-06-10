@@ -177,17 +177,21 @@ test_gist_hook_dispatch_creates_gist_file() {
             # in 'VAR=x cmd1 | cmd2' the prefix binds to cmd1 only, so placing
             # them on printf would leave the hook without KAPSIS_GIST_FILE and
             # it would write to the default /workspace path instead.
-            printf '%s' '$tool_event' | \
+            # Capture the dispatch exit code and output for diagnostics instead
+            # of discarding them — the gist.txt existence check below remains
+            # the real assertion (hooks may exit non-zero on benign events).
+            hook_rc=0
+            hook_output=\$(printf '%s' '$tool_event' | \
                 KAPSIS_GIST_FILE=/home/developer/.kapsis/gist.txt \
                 KAPSIS_INJECT_GIST=true \
                 KAPSIS_STATUS_AGENT_ID=gist-dispatch-$$ \
-                bash \"\$gist_cmd\" >/dev/null 2>&1 || true
+                bash \"\$gist_cmd\" 2>&1) || hook_rc=\$?
 
             if [[ -f /home/developer/.kapsis/gist.txt ]]; then
                 echo 'GIST_CREATED'
                 cat /home/developer/.kapsis/gist.txt
             else
-                echo 'GIST_NOT_CREATED'
+                echo \"GIST_NOT_CREATED (dispatch rc=\$hook_rc, output: \$hook_output)\"
             fi
         " 2>&1) || exit_code=$?
 
