@@ -7,17 +7,23 @@
 # debugging workflow ("read the transcript when an agent hangs") has
 # something to read.
 #
+# These tests exercise the REAL production functions from
+# scripts/lib/transcript.sh (transcript_save, transcript_save_partial,
+# transcript_strip_ansi) — not local re-implementations — plus a wiring test
+# that launch-agent.sh actually sources the library and invokes both entry
+# points. Reverting the launch-agent.sh integration turns these tests red.
+#
 # Tests:
-#   - Constants defined and sane (TTL, path, max bytes)
-#   - Transcript write: ANSI stripped, header present, content correct
+#   - Constants defined and sane (TTL, container path)
+#   - Wiring: launch-agent.sh sources lib/transcript.sh and calls
+#     transcript_save (normal path) + transcript_save_partial (trap path)
+#   - Transcript write: header present, content correct
+#   - Transcript write: ANSI/OSC/CR sequences stripped (BSD-portable filter)
 #   - Transcript write: 50 MB hard cap keeps the tail, not the head
-#   - Transcript write: skipped gracefully when conv dir absent
-#   - Transcript write: no-op when output buffer is empty
+#   - Transcript write: skipped gracefully when conv dir absent/empty buffer
+#   - Interrupt path: partial transcript written, existing one not overwritten
 #   - Cleanup: get_dir_mtime used (not get_file_mtime) so TTL fires
-#   - Cleanup: conversation dir removed after TTL expires
-#   - Cleanup: fresh directory preserved under TTL
-#   - Interrupt path: transcript written by _cleanup_with_completion
-#     before buffer deletion (partial / interrupted case)
+#   - Cleanup: stale dir age exceeds TTL; fresh dir age does not
 #===============================================================================
 
 set -euo pipefail
@@ -27,63 +33,8 @@ source "$SCRIPT_DIR/lib/test-framework.sh"
 
 source "$KAPSIS_ROOT/scripts/lib/constants.sh"
 source "$KAPSIS_ROOT/scripts/lib/compat.sh"
-
-# ---------------------------------------------------------------------------
-# Helpers — simulate the transcript-save logic from launch-agent.sh so tests
-# are deterministic without spinning up a full container.
-# ---------------------------------------------------------------------------
-
-# Mirrors the inline transcript-save block added to run_agent() in launch-agent.sh.
-# Args: <conv_dir> <container_output_file> <exit_code> [<max_bytes>]
-_simulate_transcript_save() {
-    local conv_dir="$1"
-    local container_output="$2"
-    local exit_code="${3:-0}"
-    local max_bytes="${4:-$((50 * 1024 * 1024))}"
-
-    if [[ ! -d "$conv_dir" ]] || [[ ! -f "$container_output" ]] || [[ ! -s "$container_output" ]]; then
-        return 0
-    fi
-
-    local transcript_path="${conv_dir}/transcript.txt"
-    local actual_bytes
-    actual_bytes=$(wc -c < "$container_output" 2>/dev/null || echo 0)
-    {
-        printf '# kapsis-transcript agent=%s exit=%s at=%s\n' \
-            "test-agent" "${exit_code}" "2026-01-01T00:00:00Z"
-        if (( actual_bytes > max_bytes )); then
-            printf '# TRUNCATED: %d bytes total; showing last %d bytes\n' \
-                "$actual_bytes" "$max_bytes"
-            tail -c "$max_bytes" "$container_output"
-        else
-            cat "$container_output"
-        fi
-    } | sed 's/\x1b\[[0-9;]*m//g' > "$transcript_path" 2>/dev/null || true
-}
-
-# Mirrors the partial-save block in _cleanup_with_completion.
-# Args: <conv_dir> <container_output_file> [<agent_id>]
-_simulate_cleanup_transcript_save() {
-    local conv_dir="$1"
-    local container_output="$2"
-    local agent_id="${3:-unknown}"
-
-    if [[ ! -s "$container_output" ]]; then
-        return 0
-    fi
-    if [[ ! -d "$conv_dir" ]]; then
-        return 0
-    fi
-
-    local trap_ts="${conv_dir}/transcript.txt"
-    if [[ ! -f "$trap_ts" ]]; then
-        {
-            printf '# kapsis-transcript (interrupted) agent=%s at=%s\n' \
-                "$agent_id" "2026-01-01T00:00:00Z"
-            cat "$container_output"
-        } | sed 's/\x1b\[[0-9;]*m//g' > "$trap_ts" 2>/dev/null || true
-    fi
-}
+# Production code under test
+source "$KAPSIS_ROOT/scripts/lib/transcript.sh"
 
 #===============================================================================
 # TEST CASES
@@ -112,8 +63,33 @@ test_container_conversations_path_constant() {
         "CONTAINER_CONVERSATIONS_PATH should be the standard claude conversations path"
 }
 
+test_launch_agent_wired_to_transcript_lib() {
+    log_test "launch-agent.sh sources lib/transcript.sh and calls both save functions"
+
+    local launch_agent="$KAPSIS_ROOT/scripts/launch-agent.sh"
+    if ! grep -q 'lib/transcript\.sh' "$launch_agent"; then
+        log_fail "launch-agent.sh must source lib/transcript.sh"
+        return 1
+    fi
+    # Normal path: full transcript saved from the container output buffer
+    if ! grep -Eq '^[[:space:]]*transcript_save[[:space:]]' "$launch_agent"; then
+        log_fail "launch-agent.sh must call transcript_save (normal path)"
+        return 1
+    fi
+    # Trap path: partial transcript saved on abnormal exit
+    if ! grep -Eq '^[[:space:]]*transcript_save_partial[[:space:]]' "$launch_agent"; then
+        log_fail "launch-agent.sh must call transcript_save_partial (trap path)"
+        return 1
+    fi
+    # The resolved conversations dir must be cached where the mount is set up
+    if ! grep -q 'KAPSIS_CONVERSATIONS_DIR_RESOLVED=' "$launch_agent"; then
+        log_fail "launch-agent.sh must cache KAPSIS_CONVERSATIONS_DIR_RESOLVED at mount setup"
+        return 1
+    fi
+}
+
 test_transcript_written_to_conv_dir() {
-    log_test "Transcript file is created in conversations dir after simulated run"
+    log_test "Transcript file is created in conversations dir by transcript_save"
 
     local tmpdir
     tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-conv-test-XXXXXX")
@@ -126,7 +102,7 @@ test_transcript_written_to_conv_dir() {
     local buf="${tmpdir}/container_output"
     printf 'agent output line 1\nagent output line 2\n' > "$buf"
 
-    _simulate_transcript_save "$conv_dir" "$buf" "0"
+    transcript_save "$conv_dir" "$buf" "test-agent" "0"
 
     if [[ ! -f "${conv_dir}/transcript.txt" ]]; then
         log_fail "transcript.txt should exist after save"
@@ -156,11 +132,11 @@ test_transcript_header_present() {
     local buf="${tmpdir}/buf"
     echo "hello" > "$buf"
 
-    _simulate_transcript_save "$conv_dir" "$buf" "1"
+    transcript_save "$conv_dir" "$buf" "hdr-agent" "1"
 
     local first_line
     first_line=$(head -1 "${conv_dir}/transcript.txt")
-    if [[ "$first_line" != "# kapsis-transcript agent="* ]]; then
+    if [[ "$first_line" != "# kapsis-transcript agent=hdr-agent"* ]]; then
         log_fail "First line should be kapsis-transcript header, got: $first_line"
         return 1
     fi
@@ -171,7 +147,7 @@ test_transcript_header_present() {
 }
 
 test_transcript_ansi_stripped() {
-    log_test "ANSI escape codes are stripped from transcript"
+    log_test "ANSI escape codes are stripped from transcript by transcript_save"
 
     local tmpdir
     tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-conv-ansi-XXXXXX")
@@ -183,16 +159,61 @@ test_transcript_ansi_stripped() {
     local buf="${tmpdir}/buf"
     printf '\x1b[32mGREEN TEXT\x1b[0m normal text\n' > "$buf"
 
-    _simulate_transcript_save "$conv_dir" "$buf" "0"
+    transcript_save "$conv_dir" "$buf" "ansi-agent" "0"
 
     local content
     content=$(cat "${conv_dir}/transcript.txt")
-    if [[ "$content" == *$'\x1b['* ]]; then
+    if [[ "$content" == *$'\x1b'* ]]; then
         log_fail "Transcript should have ANSI codes stripped"
         return 1
     fi
     if [[ "$content" != *"GREEN TEXT"* ]]; then
         log_fail "Transcript should still contain the visible text after stripping"
+        return 1
+    fi
+}
+
+test_strip_ansi_handles_osc_csi_and_cr() {
+    log_test "transcript_strip_ansi strips OSC titles/hyperlinks, non-SGR CSI, and CR redraws"
+
+    local out
+    # OSC window title (BEL-terminated) + OSC-8 hyperlink
+    out=$(printf '\x1b]0;window title\x07visible\x1b]8;;https://example.com\x07link\x1b]8;;\x07\n' \
+        | transcript_strip_ansi)
+    if [[ "$out" == *$'\x1b'* ]] || [[ "$out" == *"window title"* ]] \
+        || [[ "$out" == *"example.com"* ]]; then
+        log_fail "OSC sequences should be removed entirely, got: $out"
+        return 1
+    fi
+    if [[ "$out" != *"visible"* ]] || [[ "$out" != *"link"* ]]; then
+        log_fail "Visible text around OSC sequences must survive, got: $out"
+        return 1
+    fi
+
+    # Non-SGR CSI: erase display/line, cursor home, bracketed paste markers
+    out=$(printf '\x1b[2J\x1b[H\x1b[?2004hcontent\x1b[?2004l\x1b[1K end\n' \
+        | transcript_strip_ansi)
+    if [[ "$out" != "content end" ]]; then
+        log_fail "Non-SGR CSI sequences should be removed, got: $out"
+        return 1
+    fi
+
+    # CR progress redraws become separate lines; CRLF collapses to LF
+    out=$(printf 'progress 10%%\rprogress 100%%\r\ndone\r\n' | transcript_strip_ansi)
+    if [[ "$out" == *$'\r'* ]]; then
+        log_fail "No carriage returns should remain, got: $(printf '%q' "$out")"
+        return 1
+    fi
+    if [[ "$out" != *"progress 10%"* ]] || [[ "$out" != *"progress 100%"* ]] \
+        || [[ "$out" != *"done"* ]]; then
+        log_fail "All redraw frames should be preserved as lines, got: $out"
+        return 1
+    fi
+
+    # Binary bytes must pass through without aborting the pipeline (LC_ALL=C)
+    out=$(printf 'bin:\x80\xff:ok\n' | transcript_strip_ansi)
+    if [[ "$out" != *"bin:"* ]] || [[ "$out" != *":ok"* ]]; then
+        log_fail "Binary bytes must not abort the strip pipeline, got: $out"
         return 1
     fi
 }
@@ -217,7 +238,7 @@ test_transcript_truncation_keeps_tail() {
     printf 'TAILMARKER' >> "$buf"
 
     local cap=$((100 * 1024))
-    _simulate_transcript_save "$conv_dir" "$buf" "0" "$cap"
+    transcript_save "$conv_dir" "$buf" "trunc-agent" "0" "$cap"
 
     local content
     content=$(cat "${conv_dir}/transcript.txt")
@@ -248,9 +269,13 @@ test_transcript_skipped_when_conv_dir_absent() {
 
     # conv_dir does NOT exist — save should be a no-op, not an error
     local exit_code=0
-    _simulate_transcript_save "${tmpdir}/nonexistent-conv" "$buf" "0" || exit_code=$?
-
+    transcript_save "${tmpdir}/nonexistent-conv" "$buf" "absent-agent" "0" || exit_code=$?
     assert_equals "0" "$exit_code" "Transcript save should not fail when conv dir is absent"
+
+    # Empty conv_dir argument (trap before mount setup) — also a no-op
+    exit_code=0
+    transcript_save_partial "" "$buf" "absent-agent" || exit_code=$?
+    assert_equals "0" "$exit_code" "Partial save should not fail when conv dir is empty"
 }
 
 test_transcript_skipped_when_buffer_empty() {
@@ -267,7 +292,7 @@ test_transcript_skipped_when_buffer_empty() {
     # Create an empty (zero-byte) file
     : > "$buf"
 
-    _simulate_transcript_save "$conv_dir" "$buf" "0"
+    transcript_save "$conv_dir" "$buf" "empty-agent" "0"
 
     if [[ -f "${conv_dir}/transcript.txt" ]]; then
         log_fail "transcript.txt should NOT be created when buffer is empty"
@@ -276,7 +301,7 @@ test_transcript_skipped_when_buffer_empty() {
 }
 
 test_interrupt_path_saves_transcript() {
-    log_test "_cleanup_with_completion saves partial transcript before buffer deletion"
+    log_test "transcript_save_partial saves partial transcript before buffer deletion"
 
     local tmpdir
     tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-conv-int-XXXXXX")
@@ -289,7 +314,7 @@ test_interrupt_path_saves_transcript() {
     echo "partial work done" > "$buf"
 
     # Simulate the interrupt path (normal save NOT called first)
-    _simulate_cleanup_transcript_save "$conv_dir" "$buf" "int-agent"
+    transcript_save_partial "$conv_dir" "$buf" "int-agent"
 
     if [[ ! -f "${conv_dir}/transcript.txt" ]]; then
         log_fail "Interrupt path should create transcript.txt"
@@ -301,6 +326,10 @@ test_interrupt_path_saves_transcript() {
         log_fail "Interrupt transcript should contain 'interrupted' marker"
         return 1
     fi
+    if [[ "$content" != *"int-agent"* ]]; then
+        log_fail "Interrupt transcript header should contain the agent id"
+        return 1
+    fi
     if [[ "$content" != *"partial work done"* ]]; then
         log_fail "Interrupt transcript should contain captured output"
         return 1
@@ -308,7 +337,7 @@ test_interrupt_path_saves_transcript() {
 }
 
 test_interrupt_path_does_not_overwrite_existing_transcript() {
-    log_test "_cleanup_with_completion skips write when transcript.txt already exists"
+    log_test "transcript_save_partial skips write when transcript.txt already exists"
 
     local tmpdir
     tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-conv-noow-XXXXXX")
@@ -322,7 +351,7 @@ test_interrupt_path_does_not_overwrite_existing_transcript() {
     local buf="${tmpdir}/buf"
     echo "interrupt output" > "$buf"
 
-    _simulate_cleanup_transcript_save "$conv_dir" "$buf" "noow-agent"
+    transcript_save_partial "$conv_dir" "$buf" "noow-agent"
 
     local content
     content=$(cat "${conv_dir}/transcript.txt")
@@ -431,9 +460,11 @@ main() {
 
     run_test test_ttl_constant_exists_and_is_numeric
     run_test test_container_conversations_path_constant
+    run_test test_launch_agent_wired_to_transcript_lib
     run_test test_transcript_written_to_conv_dir
     run_test test_transcript_header_present
     run_test test_transcript_ansi_stripped
+    run_test test_strip_ansi_handles_osc_csi_and_cr
     run_test test_transcript_truncation_keeps_tail
     run_test test_transcript_skipped_when_conv_dir_absent
     run_test test_transcript_skipped_when_buffer_empty
