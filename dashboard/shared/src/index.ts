@@ -42,6 +42,8 @@ export interface AgentStatus {
   commit_status: "success" | "failed" | "uncommitted" | "no_changes" | null;
   commit_sha: string | null;
   uncommitted_files: number;
+  /** Files with Kapsis-injected blocks stripped before commit (Issue #391). Absent in pre-#391 status files. */
+  stripped_injections?: number;
   heartbeat_at: string | null;
   error_type:
     | "agent_failure"

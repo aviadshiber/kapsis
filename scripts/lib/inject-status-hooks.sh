@@ -36,6 +36,20 @@ else
     log_success() { echo "[OK] $*"; }
 fi
 
+# Source shared constants if available (provides KAPSIS_GIST_MARKER_BEGIN/END,
+# the single source of truth shared with scripts/post-container-git.sh).
+if [[ -f "${KAPSIS_LIB:-/opt/kapsis/lib}/constants.sh" ]]; then
+    # shellcheck source=constants.sh
+    source "${KAPSIS_LIB:-/opt/kapsis/lib}/constants.sh"
+fi
+# Fallback when constants.sh is unavailable — must match scripts/lib/constants.sh.
+# Deliberately NOT readonly: a later `source constants.sh` (which uses readonly)
+# must be able to take ownership without a "readonly variable" error.
+if [[ -z "${KAPSIS_GIST_MARKER_BEGIN:-}" ]]; then
+    KAPSIS_GIST_MARKER_BEGIN="<!-- KAPSIS_GIST_BEGIN -->"
+    KAPSIS_GIST_MARKER_END="<!-- KAPSIS_GIST_END -->"
+fi
+
 #===============================================================================
 # Configuration
 #===============================================================================
@@ -346,7 +360,6 @@ inject_gist_instructions() {
 
     log_info "Injecting gist instructions (workspace: $workspace)"
 
-    local marker="Kapsis Activity Gist"
     local injected=false
     local rendered
     rendered=$(render_gist_instructions "$gist_instructions") || {
@@ -357,18 +370,20 @@ inject_gist_instructions() {
     # Append to CLAUDE.md if it exists (for Claude Code)
     # Wrapped in HTML-comment sentinels so post-container-git.sh can strip the
     # block before committing — keeping gist instructions session-local (#391).
+    # Idempotency is keyed on the sentinel marker (not the rendered prose), so
+    # user content that merely mentions the gist never suppresses injection.
     local claude_md="${workspace}/CLAUDE.md"
     if [[ -f "$claude_md" ]]; then
         if [[ ! -w "$claude_md" ]]; then
             log_warn "$claude_md is not writable -- skipping gist append"
-        elif ! grep -q "$marker" "$claude_md" 2>/dev/null; then
+        elif ! grep -qF "$KAPSIS_GIST_MARKER_BEGIN" "$claude_md" 2>/dev/null; then
             {
                 echo ""
-                echo "<!-- KAPSIS_GIST_BEGIN -->"
+                echo "$KAPSIS_GIST_MARKER_BEGIN"
                 echo ""
                 echo "$rendered"
                 echo ""
-                echo "<!-- KAPSIS_GIST_END -->"
+                echo "$KAPSIS_GIST_MARKER_END"
             } >> "$claude_md"
             log_debug "Gist instructions appended to $claude_md"
             injected=true
@@ -380,14 +395,14 @@ inject_gist_instructions() {
     if [[ -f "$agents_md" ]]; then
         if [[ ! -w "$agents_md" ]]; then
             log_warn "$agents_md is not writable -- skipping gist append"
-        elif ! grep -q "$marker" "$agents_md" 2>/dev/null; then
+        elif ! grep -qF "$KAPSIS_GIST_MARKER_BEGIN" "$agents_md" 2>/dev/null; then
             {
                 echo ""
-                echo "<!-- KAPSIS_GIST_BEGIN -->"
+                echo "$KAPSIS_GIST_MARKER_BEGIN"
                 echo ""
                 echo "$rendered"
                 echo ""
-                echo "<!-- KAPSIS_GIST_END -->"
+                echo "$KAPSIS_GIST_MARKER_END"
             } >> "$agents_md"
             log_debug "Gist instructions appended to $agents_md"
             injected=true

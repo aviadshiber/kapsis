@@ -175,6 +175,11 @@ function OverviewTab({ status, health }: { status: AgentStatus; health: AgentHea
         <div className="sub">
           commit: <code>{status.commit_sha?.slice(0, 8) ?? "—"}</code> ({status.commit_status ?? "n/a"})
           <br />push: {status.push_status ?? "n/a"}
+          {(status.stripped_injections ?? 0) > 0 && (
+            <>
+              <br />stripped injections: {status.stripped_injections} file(s)
+            </>
+          )}
         </div>
       </div>
       <div className="card">
