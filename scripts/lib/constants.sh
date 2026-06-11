@@ -385,6 +385,17 @@ readonly CONTAINER_CONVERSATIONS_PATH="/home/developer/.claude/conversations"
 # Default TTL (days) for conversation directory cleanup in kapsis-cleanup
 readonly KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS=7
 
+# Default TTL (days) for snapshot directory cleanup in kapsis-cleanup (issue #389).
+# Snapshots are per-agent staging copies of filesystem.include host files (issue
+# #164). They are deleted by backend_cleanup() on a clean agent exit, but hung
+# agents / hard kills / system crashes leak them. Each is ~2-3 GB on a Java
+# monorepo, so leakage is rapid.
+readonly KAPSIS_DEFAULT_SNAPSHOTS_TTL_DAYS=14
+
+# Warn when total size of $KAPSIS_DIR exceeds this many GB (issue #389).
+# Threshold is checked at the end of kapsis-cleanup runs. Set to 0 to disable.
+readonly KAPSIS_DEFAULT_DIR_WARN_SIZE_GB=50
+
 #===============================================================================
 # SLEEP PREVENTION (Issue #276)
 #
