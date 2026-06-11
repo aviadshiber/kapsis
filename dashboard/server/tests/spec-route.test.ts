@@ -36,7 +36,7 @@ async function spawnHarness(opts: { injectedSuffix?: string | null; volumeMountp
   const paths = {
     status: join(root, "status"), audit: join(root, "audit"), logs: join(root, "logs"),
     conversations: join(root, "conversations"), worktrees: join(root, "worktrees"),
-    sandboxes: join(root, "sandboxes"), sanitizedGit: join(root, "sanitized-git"), specs: join(root, "specs"),
+    sandboxes: join(root, "sandboxes"), sanitizedGit: join(root, "sanitized-git"), snapshots: join(root, "snapshots"), specs: join(root, "specs"),
     dashboardAudit: join(root, "audit", "dashboard.jsonl"),
   };
   const status = new StatusStore(paths.status); await status.init();
@@ -128,7 +128,7 @@ describe("GET /api/v1/agents/:id/spec — end-to-end with on-disk fixtures", () 
     const paths = {
       status: join(root, "status"), audit: join(root, "audit"), logs: join(root, "logs"),
       conversations: join(root, "conversations"), worktrees: join(root, "worktrees"),
-      sandboxes: join(root, "sandboxes"), sanitizedGit: join(root, "sanitized-git"), specs: join(root, "specs"),
+      sandboxes: join(root, "sandboxes"), sanitizedGit: join(root, "sanitized-git"), snapshots: join(root, "snapshots"), specs: join(root, "specs"),
       dashboardAudit: join(root, "audit", "dashboard.jsonl"),
     };
     // Seed the worktree spec file before SpecStore is created.
