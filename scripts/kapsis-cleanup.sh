@@ -50,6 +50,7 @@ SANDBOX_DIR="${KAPSIS_SANDBOX_DIR:-$HOME/.ai-sandboxes}"
 SANITIZED_GIT_DIR="${KAPSIS_SANITIZED_GIT_DIR:-$KAPSIS_DIR/sanitized-git}"
 AUDIT_DIR="${KAPSIS_AUDIT_DIR:-$KAPSIS_DIR/audit}"
 CONVERSATIONS_DIR="${KAPSIS_CONVERSATIONS_BASE_DIR:-$KAPSIS_DIR/conversations}"
+SNAPSHOTS_DIR="${KAPSIS_SNAPSHOTS_DIR:-$KAPSIS_DIR/snapshots}"
 
 # Options
 DRY_RUN=false
@@ -60,7 +61,9 @@ CLEAN_IMAGES=false
 CLEAN_BRANCHES=false
 CLEAN_VM_HEALTH=false
 CLEAN_WORKTREES=false
+CLEAN_SNAPSHOTS=false
 CLEAN_REPAIR=false
+SNAPSHOTS_TTL_OVERRIDE=""
 
 # Module-level corruption tracking (set by clean_containers when store errors detected)
 STORE_CORRUPTED=false
@@ -102,6 +105,10 @@ OPTIONS:
     --ssh-cache         Clear cached SSH host keys from keychain
     --branches          Clean stale agent branches (requires --project)
     --worktrees         Clean git worktrees (included by default, explicit for scripting)
+    --snapshots         Clean per-agent snapshot dirs in ~/.kapsis/snapshots/
+                        (included by default; explicit form for scripting)
+    --snapshots-older-than <days>
+                        Override default 14-day TTL when cleaning snapshots
     --vm-health         Check Podman VM health (inode %, disk %, journal size)
                         Warns at 70% inodes, auto-cleans images at 90%
     --repair            Repair corrupted Podman container store
@@ -117,6 +124,8 @@ WHAT GETS CLEANED:
     Sanitized git   Temporary git dirs in ~/.kapsis/sanitized-git/
     Audit files     Old audit trail files in ~/.kapsis/audit/ (TTL-based or --all)
     Conversations   Old agent conversation dirs in ~/.kapsis/conversations/ (7-day TTL or --all)
+    Snapshots       Per-agent filesystem-include staging dirs in ~/.kapsis/snapshots/
+                    (14-day TTL or --all; see issue #389)
     Containers      Stopped kapsis-* containers (with --containers)
     Volumes         Build cache volumes (with --volumes)
     Images          Kapsis container images (with --images or --all)
@@ -925,6 +934,140 @@ clean_conversations() {
     fi
 }
 
+# Clean per-agent snapshot directories (Issue #389)
+# Snapshots are per-agent staging copies of filesystem.include host files (Issue
+# #164). backend_cleanup() removes them on a clean exit, but hung agents /
+# crashes / hard kills leak them and the directory grows unbounded
+# (incident: 109 GB / 852 dirs / 87 days that broke Slack-bot dispatch).
+# Removes directories older than KAPSIS_DEFAULT_SNAPSHOTS_TTL_DAYS (default 14).
+# In --all mode removes everything regardless of age.
+clean_snapshots() {
+    section "Snapshot Directories"
+
+    if [[ ! -d "$SNAPSHOTS_DIR" ]]; then
+        echo "  No snapshots directory found"
+        return
+    fi
+
+    # Refuse to traverse a symlinked top-level dir (see clean_worktrees).
+    if [[ -L "$SNAPSHOTS_DIR" ]]; then
+        echo -e "  ${YELLOW}Snapshots dir is a symlink; refusing to clean${NC}"
+        return
+    fi
+
+    local count=0
+    local total_size=0
+    local ttl_days="${SNAPSHOTS_TTL_OVERRIDE:-${KAPSIS_SNAPSHOTS_TTL_DAYS:-${KAPSIS_DEFAULT_SNAPSHOTS_TTL_DAYS:-14}}}"
+    local now
+    now=$(date +%s)
+    local ttl_seconds=$((ttl_days * 86400))
+
+    for snap_dir in "$SNAPSHOTS_DIR"/*/; do
+        [[ -d "$snap_dir" ]] || continue
+        # Security: skip symlinked entries to prevent following attacks (see
+        # clean_sandboxes). The glob above yields trailing-slash paths and
+        # [[ -L "path/" ]] follows the link (always false), so strip the slash.
+        [[ -L "${snap_dir%/}" ]] && continue
+        local name
+        name=$(basename "$snap_dir")
+
+        # Apply project/agent filter when set
+        if [[ -n "$PROJECT_FILTER" ]] && [[ "$name" != *"${PROJECT_FILTER}"* ]]; then
+            continue
+        fi
+        if [[ -n "$AGENT_FILTER" ]] && [[ "$name" != *"${AGENT_FILTER}"* ]]; then
+            continue
+        fi
+
+        # In --all mode clean everything; otherwise only expire past TTL.
+        # Use get_dir_mtime (not get_file_mtime) — snapshot entries are
+        # directories, and get_file_mtime returns empty for non-files.
+        if [[ "$CLEAN_ALL" != "true" ]]; then
+            local mtime
+            mtime=$(get_dir_mtime "$snap_dir" 2>/dev/null) || continue
+            [[ -z "$mtime" ]] && continue
+            local age=$((now - mtime))
+            if [[ "$age" -le "$ttl_seconds" ]]; then
+                continue
+            fi
+        fi
+
+        local size
+        size=$(get_dir_size "$snap_dir")
+        local size_human
+        size_human=$(format_size "$size")
+
+        if [[ "$DRY_RUN" == "true" ]]; then
+            print_item "snapshot" "$name" "$size_human"
+        else
+            rm -rf "$snap_dir"
+            print_item "snapshot" "$name" "$size_human"
+        fi
+
+        ((total_size += size)) || true
+        ((count++)) || true
+    done
+
+    if (( count == 0 )); then
+        echo "  No expired snapshot directories to clean"
+    else
+        echo -e "  ${BOLD}Total: $count snapshot directories ($(format_size $total_size))${NC}"
+        ((TOTAL_SIZE_FREED += total_size)) || true
+        ((ITEMS_CLEANED += count)) || true
+    fi
+}
+
+# Post-cleanup disk-pressure warning (Issue #389)
+# After cleanup runs, measure $KAPSIS_DIR total size and warn if it exceeds
+# KAPSIS_DEFAULT_DIR_WARN_SIZE_GB. Also writes the measurement to
+# $KAPSIS_DIR/.disk-usage-cache so external tools (preflight, dashboard) can
+# read recent state without re-scanning. Cache is not written in dry-run mode.
+check_disk_pressure() {
+    [[ -d "$KAPSIS_DIR" ]] || return 0
+
+    local threshold_gb="${KAPSIS_DIR_WARN_SIZE_GB:-${KAPSIS_DEFAULT_DIR_WARN_SIZE_GB:-50}}"
+    # 0 disables the check entirely.
+    [[ "$threshold_gb" -eq 0 ]] 2>/dev/null && return 0
+    # Reject non-numeric values (e.g. "50g") so the arithmetic below doesn't
+    # abort kapsis-cleanup with no diagnostic — see review on PR #393.
+    [[ "$threshold_gb" =~ ^[0-9]+$ ]] || return 0
+
+    local bytes
+    bytes=$(get_dir_size "$KAPSIS_DIR")
+    [[ "$bytes" =~ ^[0-9]+$ ]] || return 0
+
+    local threshold_bytes=$((threshold_gb * 1073741824))
+    local now
+    now=$(date +%s)
+
+    if [[ "$DRY_RUN" != "true" ]]; then
+        # Best-effort cache write — failures are non-fatal.
+        printf '{"bytes":%s,"at":%s,"threshold_gb":%s}\n' "$bytes" "$now" "$threshold_gb" \
+            > "$KAPSIS_DIR/.disk-usage-cache" 2>/dev/null || true
+    fi
+
+    if (( bytes >= threshold_bytes )); then
+        echo
+        echo -e "${YELLOW}${BOLD}=== Disk Pressure Warning ===${NC}"
+        echo -e "  ${YELLOW}$KAPSIS_DIR is $(format_size "$bytes") (threshold: ${threshold_gb} GB)${NC}"
+        echo
+        echo -e "  ${BOLD}Top subdirectories:${NC}"
+        # Top 3 subdirs by size — printed via `du` so we get one shot.
+        local timeout_cmd
+        timeout_cmd=$(_du_timeout_cmd)
+        # shellcheck disable=SC2086
+        $timeout_cmd du -sh "$KAPSIS_DIR"/* 2>/dev/null \
+            | sort -rh 2>/dev/null \
+            | head -3 \
+            | sed 's/^/    /' || true
+        echo
+        echo -e "  ${CYAN}Suggested remediation:${NC}"
+        echo -e "    kapsis-cleanup --all --force          # snapshots, worktrees, sandboxes, images"
+        echo -e "    kapsis-cleanup --volumes --force      # also drop Maven/Gradle caches"
+        echo -e "  See: docs/CLEANUP.md (Issue #389)"
+    fi
+}
+
 # Clean SSH cache
 clean_ssh_cache() {
     section "SSH Host Key Cache"
@@ -1446,6 +1589,21 @@ main() {
                 explicit_action_requested=true
                 shift
                 ;;
+            --snapshots)
+                CLEAN_SNAPSHOTS=true
+                explicit_action_requested=true
+                shift
+                ;;
+            --snapshots-older-than)
+                if [[ -z "${2:-}" ]] || ! [[ "$2" =~ ^[0-9]+$ ]]; then
+                    log_error "--snapshots-older-than requires a non-negative integer (days)"
+                    exit 1
+                fi
+                SNAPSHOTS_TTL_OVERRIDE="$2"
+                CLEAN_SNAPSHOTS=true
+                explicit_action_requested=true
+                shift 2
+                ;;
             --vm-health)
                 CLEAN_VM_HEALTH=true
                 explicit_action_requested=true
@@ -1503,10 +1661,16 @@ main() {
         clean_sanitized_git
         clean_audit
         clean_conversations
-    elif [[ "$CLEAN_WORKTREES" == "true" ]]; then
-        # Selective: `--worktrees` alone -- run only clean_worktrees.
+        clean_snapshots
+    else
+        # Selective: run only what was explicitly requested.
         # Skipped when --all (already handled by the default block above).
-        clean_worktrees
+        if [[ "$CLEAN_WORKTREES" == "true" ]]; then
+            clean_worktrees
+        fi
+        if [[ "$CLEAN_SNAPSHOTS" == "true" ]]; then
+            clean_snapshots
+        fi
     fi
 
     if [[ "$clean_containers_flag" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
@@ -1547,6 +1711,11 @@ main() {
 
     # Summary
     print_summary
+
+    # Issue #389: warn if ~/.kapsis/ remains above the size threshold even
+    # after cleanup, so a leak fails loudly here instead of silently breaking
+    # mktemp later. Runs last so the warning is the last thing on screen.
+    check_disk_pressure
 
     exit 0
 }

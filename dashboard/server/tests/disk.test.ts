@@ -25,7 +25,7 @@ describe("DiskUsageStore", () => {
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "kd-disk-"));
-    for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git"]) {
+    for (const d of ["status", "audit", "logs", "conversations", "worktrees", "sandboxes", "sanitized-git", "snapshots"]) {
       await mkdir(join(root, d));
     }
     await writeFile(join(root, "status", "kapsis-p-a.json"), "{}");
@@ -38,6 +38,7 @@ describe("DiskUsageStore", () => {
       worktrees: join(root, "worktrees"),
       sandboxes: join(root, "sandboxes"),
       sanitizedGit: join(root, "sanitized-git"),
+      snapshots: join(root, "snapshots"),
       specs: join(root, "specs"),
       dashboardAudit: join(root, "audit", "dashboard.jsonl"),
     });

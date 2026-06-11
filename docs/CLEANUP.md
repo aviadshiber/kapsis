@@ -32,6 +32,8 @@ Reclaim disk space and clean up artifacts after agent work.
 | `--logs` | Clean log files older than 7 days |
 | `--ssh-cache` | Clear cached SSH host keys from keychain |
 | `--branches` | Clean stale agent branches (requires `--project`) |
+| `--snapshots` | Clean per-agent snapshot dirs in `~/.kapsis/snapshots/` (included by default; explicit form for scripting) |
+| `--snapshots-older-than <days>` | Override the default 14-day TTL when cleaning snapshots |
 | `--vm-health` | Check Podman VM health: inode %, disk %, journal size (**macOS only**) |
 | `--force`, `-f` | Skip confirmation prompts |
 | `--help`, `-h` | Show help message |
@@ -69,6 +71,7 @@ Reclaim disk space and clean up artifacts after agent work.
 | **Sandboxes** | `~/.ai-sandboxes/` | Default |
 | **Status files** | `~/.kapsis/status/` | Default (completed only) |
 | **Sanitized git** | `~/.kapsis/sanitized-git/` | Default |
+| **Snapshots** | `~/.kapsis/snapshots/` | Default (14-day TTL or `--all`) |
 | **Containers** | Podman | `--all` or `--containers` |
 | **Images** | Podman | `--all` or `--images` |
 | **Volumes** | Podman | `--volumes` only |
@@ -118,6 +121,26 @@ podman volume ls | grep kapsis
 # Manual cleanup
 podman volume rm kapsis-1-m2 kapsis-1-gradle
 ```
+
+### Snapshots
+
+Per-agent staging copies of host files listed in `filesystem.include` (`~/.claude/`, `~/.ssh/`, `~/.gitconfig`, etc.) — created so the container reads race-free copies during launch (Issue #164). The directory is removed by `backend_cleanup()` on a clean agent exit, but hung agents, hard kills, and system crashes leak them.
+
+```bash
+# List snapshot directories
+ls -la ~/.kapsis/snapshots/
+
+# Manual cleanup of one agent's snapshot
+rm -rf ~/.kapsis/snapshots/<agent-id>
+```
+
+Default TTL is 14 days. Override with `--snapshots-older-than <days>` or the `KAPSIS_SNAPSHOTS_TTL_DAYS` environment variable. Tracked under issue #389 (where an unmanaged 109 GB / 852-dir accumulation filled disk to 98% and silently broke agent dispatch).
+
+## Disk Pressure Warning
+
+After every `kapsis-cleanup` run, the total size of `~/.kapsis/` is measured and compared against a configurable threshold (default 50 GB). If the threshold is exceeded, a warning prints with the top three subdirectories by size and remediation hints. The measurement is also written to `~/.kapsis/.disk-usage-cache` for downstream consumers (dashboard, preflight checks) to read without re-scanning.
+
+Set `KAPSIS_DIR_WARN_SIZE_GB=0` to disable. The threshold is intentionally well below the 127 GB that broke the reported install (issue #389) but high enough that healthy installs won't trip it on weekly cron runs.
 
 ## Podman VM Health (macOS)
 
@@ -342,6 +365,9 @@ podman volume rm kapsis-1-m2
 | `KAPSIS_STATUS_DIR` | `~/.kapsis/status` | Status file directory |
 | `KAPSIS_LOG_DIR` | `~/.kapsis/logs` | Log file directory |
 | `KAPSIS_SANDBOX_DIR` | `~/.ai-sandboxes` | Overlay upper directories |
+| `KAPSIS_SNAPSHOTS_DIR` | `~/.kapsis/snapshots` | Per-agent filesystem-include staging |
+| `KAPSIS_SNAPSHOTS_TTL_DAYS` | `14` | Snapshot retention before cleanup deletes |
+| `KAPSIS_DIR_WARN_SIZE_GB` | `50` | Warn when `~/.kapsis/` exceeds this size (set `0` to disable) |
 
 ### VM Health (macOS)
 
