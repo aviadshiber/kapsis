@@ -513,29 +513,27 @@ EOF
 test_status_json_includes_stage_field() {
     log_test "status.sh writes stage field when KAPSIS_STATUS_STAGE is set"
 
-    local tmp_status_dir
-    tmp_status_dir=$(mktemp -d)
-    trap "rm -rf '$tmp_status_dir'" RETURN
-
-    # Override status dir and enable stage tracking
-    local orig_dir="${KAPSIS_STATUS_DIR:-${HOME}/.kapsis/status}"
-    KAPSIS_STATUS_DIR="$tmp_status_dir"
     KAPSIS_STATUS_ENABLED=true
-    export KAPSIS_STATUS_STAGE="research"
+    export KAPSIS_STATUS_STAGE="sw-test-stage"
     _KAPSIS_STATUS_INITIALIZED=false
 
-    # Re-initialize state
-    status_init "testproj" "test123" "main" "worktree" ""
+    # Use a unique project+agent combo to avoid collisions with other tests
+    status_init "sw-testproj" "sw123" "main" "worktree" ""
 
-    local status_file="${tmp_status_dir}/kapsis-testproj-test123.json"
+    # Use status_get_file() to resolve the actual path (handles /kapsis-status override)
+    local status_file
+    status_file=$(status_get_file)
+
     assert_file_exists "$status_file" "Status file should be created"
 
     local stage_value
     stage_value=$(python3 -c "import json; d=json.load(open('$status_file')); print(d.get('stage','__missing__'))" 2>/dev/null)
-    assert_equals "research" "$stage_value" "Status JSON should contain stage=research"
+    assert_equals "sw-test-stage" "$stage_value" "Status JSON should contain stage field"
+
+    # Clean up the file we created (best-effort)
+    rm -f "$status_file" 2>/dev/null || true
 
     # Restore
-    KAPSIS_STATUS_DIR="$orig_dir"
     unset KAPSIS_STATUS_STAGE
     _KAPSIS_STATUS_INITIALIZED=false
 }
