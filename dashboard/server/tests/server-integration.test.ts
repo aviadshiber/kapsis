@@ -46,6 +46,7 @@ async function spawnHarness(opts: { readOnly?: boolean } = {}): Promise<Harness>
     worktrees: join(root, "worktrees"),
     sandboxes: join(root, "sandboxes"),
     sanitizedGit: join(root, "sanitized-git"),
+    snapshots: join(root, "snapshots"),
     specs: join(root, "specs"),
     dashboardAudit: join(root, "audit", "dashboard.jsonl"),
   };
@@ -264,6 +265,7 @@ describe("server integration", () => {
       worktrees: join(seedRoot, "worktrees"),
       sandboxes: join(seedRoot, "sandboxes"),
       sanitizedGit: join(seedRoot, "sanitized-git"),
+      snapshots: join(seedRoot, "snapshots"),
       specs: join(seedRoot, "specs"),
       dashboardAudit: join(seedRoot, "audit", "dashboard.jsonl"),
     };
@@ -370,6 +372,7 @@ describe("server integration", () => {
       worktrees: join(root, "worktrees"),
       sandboxes: join(root, "sandboxes"),
       sanitizedGit: join(root, "sanitized-git"),
+      snapshots: join(root, "snapshots"),
     specs: join(root, "specs"),
       dashboardAudit: join(root, "audit", "dashboard.jsonl"),
     };

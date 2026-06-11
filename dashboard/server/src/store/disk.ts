@@ -126,6 +126,7 @@ export class DiskUsageStore {
       ["worktrees", this.paths.worktrees],
       ["sandboxes", this.paths.sandboxes],
       ["sanitized-git", this.paths.sanitizedGit],
+      ["snapshots", this.paths.snapshots],
     ];
     const results = await Promise.all(dirs.map(async ([cat, dir]) => {
       const { bytes, items } = await dirSize(dir);
