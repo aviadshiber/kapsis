@@ -177,6 +177,17 @@ function OverviewTab({ status, health }: { status: AgentStatus; health: AgentHea
           <br />push: {status.push_status ?? "n/a"}
         </div>
       </div>
+      {status.stage && (
+        <div className="card">
+          <h3>Workflow Stage</h3>
+          <div className="value" style={{ fontSize: 14 }}>
+            <code style={{ background: "var(--bg2)", padding: "2px 6px", borderRadius: 4 }}>
+              {status.stage}
+            </code>
+          </div>
+          <div className="sub">Privilege-separated stage (Issue #85)</div>
+        </div>
+      )}
       <div className="card">
         <h3>Worktree</h3>
         <div className="sub" style={{ fontFamily: "var(--mono)", wordBreak: "break-all" }}>{status.worktree_path ?? "—"}</div>

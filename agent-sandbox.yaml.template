@@ -329,6 +329,77 @@ ssh:
     # - git.company.com  # Enterprise host (run add-host first!)
 
 #===============================================================================
+# STAGED WORKFLOWS — Privilege Separation (Issue #85)
+#
+# Decomposes an agent run into stages where no single stage has all three of
+# the "Lethal Trifecta" risk factors simultaneously:
+#   1. Sensitive Data  — credentials, source code
+#   2. Untrusted Content — web responses, external APIs
+#   3. External Comms  — outbound network access
+#
+# Usage:
+#   # Run a specific stage only (orchestration loop manages all stages):
+#   ./scripts/launch-agent.sh ~/project --stage research --task "find APIs"
+#
+#   # Run the full workflow (all stages with approval gates):
+#   ./scripts/workflow-orchestrator.sh ~/project --workflow ./agent-sandbox.yaml
+#===============================================================================
+workflow:
+  # Stages are executed in order by workflow-orchestrator.sh.
+  # Each stage is launched as an independent container with its own isolation posture.
+  stages:
+    - name: research
+      description: "Gather information — unrestricted web, no credentials"
+      # Lethal Trifecta: has Untrusted Content + External Comms (NOT Sensitive Data)
+      network_mode: filtered       # allow internet (AI APIs, search engines)
+      security_profile: minimal    # lightweight — no sensitive data to protect
+      credentials: []              # no secrets injected into this container
+      # Extra hosts to allow beyond the default allowlist (e.g. search APIs):
+      # network_allowlist_override:
+      #   - api.serper.dev
+      #   - serpapi.com
+
+    - name: implementation
+      description: "Modify code — air-gapped, full credential access"
+      # Lethal Trifecta: has Sensitive Data only (NOT Untrusted Content, NOT External Comms)
+      network_mode: none           # complete network isolation
+      security_profile: strict     # highest hardening — seccomp + noexec /tmp
+      # Restrict to only the credentials this stage actually needs:
+      # credentials:
+      #   - SSH_KEY
+      #   - KAPSIS_MAVEN_PASSWORD
+      # Empty = no filtering (all keychain entries pass through)
+      credentials: []
+
+    - name: publish
+      description: "Push changes — git + GitHub only, no source secrets"
+      # Lethal Trifecta: has External Comms only (NOT Sensitive Data, NOT Untrusted Content)
+      network_mode: filtered       # allow git push + GitHub API only
+      security_profile: standard
+      credentials:
+        - GITHUB_TOKEN             # only need push credentials here
+      network_allowlist_override:
+        - github.com
+        - api.github.com
+
+  # Approval gates control whether the workflow may advance between stages.
+  approval:
+    # Policies to auto-approve transitions without human intervention:
+    #   small_changes  — <5 files changed, <100 lines (safe for routine tasks)
+    #   docs_only      — only *.md / *.txt / *.rst files changed
+    #   tests_only     — only test files changed
+    #   always         — never require human approval (CI pipelines)
+    auto_approve:
+      - policy: small_changes
+
+    # Set to true to always require a human to approve every stage transition.
+    # When running interactively, a TTY prompt is shown. In CI, use kapsis-approve.sh.
+    require_manual: false
+
+    # Optional: path to a custom gate script. Must exit 0=approve, 1=deny, 2=defer-to-human.
+    # gate_script: ""
+
+#===============================================================================
 # CONTAINER IMAGE
 #===============================================================================
 image:
