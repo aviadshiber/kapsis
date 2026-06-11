@@ -60,6 +60,9 @@ const AgentRow = memo(function AgentRow({ status: a, onSelect }: RowProps) {
       <td style={{ color: "var(--fg-muted)" }}>{new Date(a.started_at).toLocaleString()}</td>
       <td>{duration(a)}</td>
       <td style={{ color: "var(--fg-muted)" }}>{a.branch ?? "—"}</td>
+      <td style={{ color: "var(--fg-muted)" }}>
+        {a.stage ? <code style={{ fontSize: 11, opacity: 0.85 }}>{a.stage}</code> : "—"}
+      </td>
     </tr>
   );
 });
@@ -140,6 +143,7 @@ export function AgentList({ onSelect }: Props) {
             <th>Started</th>
             <th>Duration</th>
             <th>Branch</th>
+            <th>Stage</th>
           </tr>
         </thead>
         <tbody>

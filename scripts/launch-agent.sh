@@ -98,6 +98,7 @@ FORCE_CLEAN=false      # Fix #1: Force remove existing worktree
 KEEP_WORKTREE="${KAPSIS_KEEP_WORKTREE:-false}"  # Fix #169: Preserve worktree after completion
 KEEP_VOLUMES="${KAPSIS_KEEP_VOLUMES:-false}"  # Fix #191: Preserve build cache volumes after completion
 CLI_CO_AUTHORS=()  # Co-authors added via --co-author CLI flag (merged with config)
+STAGE_NAME=""  # Issue #85: stage name for privilege-separated workflows
 INTERACTIVE=false
 DRY_RUN=false
 # Use KAPSIS_IMAGE env var if set (for CI), otherwise default
@@ -256,6 +257,11 @@ Options:
                         filtered (default, DNS allowlist), open (unrestricted)
   --security-profile <profile>
                         Security hardening: minimal, standard (default), strict, paranoid
+  --stage <name>        Privilege-separated stage (Issue #85): research, implementation,
+                        publish, or any custom stage defined in workflow.stages config.
+                        Overrides network_mode, security_profile, and credentials
+                        per stage to prevent the "Lethal Trifecta" (Sensitive Data +
+                        Untrusted Content + External Comms in the same container).
   --co-author "Name <email>"
                         Add a git Co-authored-by trailer (repeatable; merges with config)
   -h, --help            Show this help message
@@ -483,6 +489,10 @@ parse_args() {
                 ;;
             --security-profile)
                 export KAPSIS_SECURITY_PROFILE="$2"
+                shift 2
+                ;;
+            --stage)
+                STAGE_NAME="$2"
                 shift 2
                 ;;
             --co-author)
@@ -2710,6 +2720,19 @@ main() {
         exit 1
     fi
     parse_config
+
+    # Issue #85: apply stage-specific isolation overrides when --stage is provided
+    if [[ -n "$STAGE_NAME" ]]; then
+        source "$SCRIPT_DIR/lib/staged-workflows.sh"
+        stage_load_config "$CONFIG_FILE"
+        ENV_KEYCHAIN=$(stage_apply_config "$STAGE_NAME" "${ENV_KEYCHAIN:-}")
+        # Expose stage name inside the container
+        export KAPSIS_CURRENT_STAGE="$STAGE_NAME"
+        # Propagate to status tracking
+        export KAPSIS_STATUS_STAGE="$STAGE_NAME"
+        log_info "Stage isolation active: '$STAGE_NAME' (network=$NETWORK_MODE, security=$KAPSIS_SECURITY_PROFILE)"
+    fi
+
     validate_agent_command "$AGENT_COMMAND"
     log_timer_end "config"
     status_phase "initializing" 10 "Configuration loaded" || true

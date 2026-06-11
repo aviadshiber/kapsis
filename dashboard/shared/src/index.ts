@@ -16,6 +16,8 @@ export interface AgentStatus {
   project: string;
   branch: string | null;
   sandbox_mode: "overlay" | "worktree" | string;
+  /** Issue #85: current privilege-separated stage (research / implementation / publish / custom) */
+  stage: string | null;
   phase:
     | "initializing"
     | "preparing"

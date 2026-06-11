@@ -393,3 +393,35 @@ readonly KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS=7
 
 # Prevent macOS from sleeping while an agent is running
 readonly KAPSIS_DEFAULT_PREVENT_SLEEP=true
+
+#===============================================================================
+# STAGED WORKFLOWS (Issue #85)
+#
+# Phase 4 privilege separation — each stage has at most two of the Lethal Trifecta:
+#   1. Sensitive Data  2. Untrusted Content  3. External Comms
+#===============================================================================
+
+# Directory for stage handoff files (~/.kapsis/handoffs/<agent-id>-<stage>.json)
+readonly KAPSIS_HANDOFFS_DIR="${HOME}/.kapsis/handoffs"
+
+# Directory for workflow state files (~/.kapsis/workflows/<workflow-id>/state.json)
+readonly KAPSIS_WORKFLOWS_DIR="${HOME}/.kapsis/workflows"
+
+# Threshold for 'small_changes' auto-approve policy
+readonly KAPSIS_APPROVAL_SMALL_FILES_THRESHOLD=5
+readonly KAPSIS_APPROVAL_SMALL_LINES_THRESHOLD=100
+
+# Built-in stage names (users may define custom stages in YAML)
+readonly KAPSIS_BUILTIN_STAGE_RESEARCH="research"
+readonly KAPSIS_BUILTIN_STAGE_IMPLEMENTATION="implementation"
+readonly KAPSIS_BUILTIN_STAGE_PUBLISH="publish"
+
+# Default network modes per built-in stage
+readonly KAPSIS_STAGE_RESEARCH_NETWORK="filtered"
+readonly KAPSIS_STAGE_IMPLEMENTATION_NETWORK="none"
+readonly KAPSIS_STAGE_PUBLISH_NETWORK="filtered"
+
+# Default security profiles per built-in stage
+readonly KAPSIS_STAGE_RESEARCH_SECURITY="minimal"
+readonly KAPSIS_STAGE_IMPLEMENTATION_SECURITY="strict"
+readonly KAPSIS_STAGE_PUBLISH_SECURITY="standard"

@@ -78,6 +78,10 @@ _KAPSIS_HEARTBEAT_AT=""             # Last heartbeat timestamp from liveness mon
 # Populated for ALL non-zero exits so callers have one field to branch on
 _KAPSIS_ERROR_TYPE=""
 
+# Stage name for privilege-separated workflows (Issue #85)
+# Set via KAPSIS_STATUS_STAGE env var from launch-agent.sh when --stage is used
+_KAPSIS_STAGE_NAME="${KAPSIS_STATUS_STAGE:-}"
+
 # Gist rate limiting state (reduce I/O on frequent PostToolUse calls)
 _KAPSIS_GIST_LAST_READ=""        # Epoch timestamp of last gist read
 _KAPSIS_GIST_LAST_MTIME=""       # Last known file mtime
@@ -614,6 +618,12 @@ _status_write() {
     local error_type_json="null"
     [[ -n "$_KAPSIS_ERROR_TYPE" ]] && error_type_json="\"$_KAPSIS_ERROR_TYPE\""
 
+    # Stage field (Issue #85: privilege-separated workflows)
+    local stage_json="null"
+    # Re-read env var on every write so late-set values (from --stage flag) are captured
+    local current_stage="${KAPSIS_STATUS_STAGE:-${_KAPSIS_STAGE_NAME:-}}"
+    [[ -n "$current_stage" ]] && stage_json="\"$current_stage\""
+
     # Build JSON (using heredoc for readability)
     local json
     json=$(cat << EOF
@@ -623,6 +633,7 @@ _status_write() {
   "project": "${_KAPSIS_STATUS_PROJECT}",
   "branch": ${branch_json},
   "sandbox_mode": "${_KAPSIS_STATUS_SANDBOX_MODE}",
+  "stage": ${stage_json},
   "phase": "${phase}",
   "progress": ${progress},
   "message": "${escaped_message}",
