@@ -63,6 +63,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Disable Go module cache for stdlib-only kapsis-ctl (#392)
 
+## [2.33.1] - 2026-06-10
+
+### Fixed
+- Enforce AgentRequest security invariants in reconciler (#401)
+
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
@@ -1005,7 +1010,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.33.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.33.1...HEAD
+[2.33.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.33.1
 [2.33.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.33.0
 [2.32.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.32.0
 [2.31.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.31.3
