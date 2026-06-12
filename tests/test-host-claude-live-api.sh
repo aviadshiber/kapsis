@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
 #===============================================================================
-# E2E test: Claude Code reads settings.json and dispatches Kapsis hooks
+# Tier 1 (host) test: Claude Code reads settings.json and dispatches Kapsis hooks
 #
-# Unlike the integration tests (test-integration-gist-hook.sh,
-# test-integration-all-hooks.sh) which invoke hook scripts directly, this test
-# starts a real Claude Code process and verifies that Claude Code itself reads
-# hooks from settings.json and dispatches them during a live agent session.
+# Unlike the container tests (test-container-status-hooks.sh,
+# test-container-gist-hook.sh) which verify injection correctness inside the
+# image, this test starts a real Claude Code process and verifies that Claude
+# Code itself reads hooks from settings.json and dispatches them during a live
+# agent session. It sources inject scripts from the host source tree.
+#
+# Renamed from test-e2e-claude-hooks.sh — the old name implied container/runtime
+# coverage that this test does not provide. This test remains the only one that
+# exercises the real Claude Code process with live API credentials.
 #
 # Prerequisites:
 #   CLAUDE_CODE_OAUTH_TOKEN — must be set (add to GitHub Secrets for CI)
@@ -13,7 +18,7 @@
 #
 # Skips gracefully when prerequisites are absent.
 #
-# Run: ./tests/test-e2e-claude-hooks.sh
+# Run: ./tests/test-host-claude-live-api.sh
 #===============================================================================
 
 set -euo pipefail

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #===============================================================================
-# Integration test: gist hook fires when invoked via settings.json (#351)
+# Tier 1 (host) test: gist hook fires when invoked via settings.json (#351)
 #
 # Regression guard for issue #351: inject-status-hooks.sh was writing hooks to
 # ~/.claude/settings.local.json, which Claude Code ignores at user scope. At
@@ -12,10 +12,16 @@
 #   3. Dispatching the gist hook (as Claude Code would on PostToolUse) writes
 #      gist.txt — the behavior that was silently broken before the fix
 #
-# Note: hooks are invoked directly (not via Claude Code). For tests that run
-# a real Claude Code process see test-e2e-claude-hooks.sh.
+# Sources inject scripts from the host source tree (fast, no container).
+# Renamed from test-integration-gist-hook.sh. Container-based counterpart that
+# exercises these same scripts from inside the packaged image lives in
+# test-container-gist-hook.sh; that test catches Containerfile COPY regressions
+# that this host-sourced test cannot detect.
 #
-# Run: ./tests/test-integration-gist-hook.sh
+# Note: hooks are invoked directly (not via Claude Code). For tests that run
+# a real Claude Code process see test-host-claude-live-api.sh.
+#
+# Run: ./tests/test-host-inject-gist-hook.sh
 #===============================================================================
 
 set -euo pipefail
