@@ -172,6 +172,7 @@ test_no_cross_contamination_on_git() {
         cd /workspace
         git config user.email 'agent1@test.com'
         git config user.name 'Agent 1'
+        git config commit.gpgsign false
         echo 'agent1 change' > agent1.txt
         git add agent1.txt
         git commit -m 'Agent 1 commit'
