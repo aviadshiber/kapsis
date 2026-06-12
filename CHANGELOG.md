@@ -82,6 +82,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Fix quick-test failures in non-CI local environments (#307)
 
+## [2.34.2] - 2026-06-12
+
+### Changed
+- Add real-image hook tests + rename misleading e2e/integration labels (#381) (#396)
+
 ## [Unreleased]
 
 ## [2.1.1] - 2026-02-02
@@ -1024,7 +1029,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.34.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.34.2...HEAD
+[2.34.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.34.2
 [2.34.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.34.1
 [2.34.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.34.0
 [2.33.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.33.1
