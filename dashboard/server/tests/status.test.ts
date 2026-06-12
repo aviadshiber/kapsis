@@ -68,8 +68,9 @@ describe("StatusStore", () => {
     store.onChange((s) => { if (s) seen.push(s.agent_id); });
     await writeFile(join(dir, "kapsis-demo-new001.json"), fixture({ agent_id: "new001" }));
     // fs.watch on macOS can take several seconds to deliver the first event
-    // under test load. Generous deadline to keep the test reliable.
-    for (let i = 0; i < 80 && !seen.includes("new001"); i++) await Bun.sleep(50);
+    // under test load (observed >4s on busy CI runners). Generous deadline
+    // plus an explicit test timeout to keep the test reliable.
+    for (let i = 0; i < 240 && !seen.includes("new001"); i++) await Bun.sleep(50);
     expect(seen).toContain("new001");
-  });
+  }, 20000);
 });
