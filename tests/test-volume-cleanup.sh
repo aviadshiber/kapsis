@@ -120,7 +120,9 @@ test_cleanup_keep_volumes_documented() {
     log_test "Testing --keep-volumes is documented in usage"
 
     local usage_output
-    usage_output=$(head -250 "$LAUNCH_SCRIPT")
+    # Extract the usage() heredoc body rather than a fixed line count —
+    # insertions above the usage block must not break this test.
+    usage_output=$(awk '/^usage\(\) \{/,/^\}/' "$LAUNCH_SCRIPT")
 
     assert_contains "$usage_output" "--keep-volumes" "Usage should document --keep-volumes flag"
 }

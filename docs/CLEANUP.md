@@ -77,6 +77,7 @@ Reclaim disk space and clean up artifacts after agent work.
 | **Volumes** | Podman | `--volumes` only |
 | **Logs** | `~/.kapsis/logs/` | `--all` or `--logs` |
 | **Audit files** | `~/.kapsis/audit/` | `--all` (TTL-based) |
+| **Conversations** | `~/.kapsis/conversations/` | Default (TTL-based; default 7 days via `KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS`) |
 | **SSH cache** | System keychain | `--ssh-cache` |
 
 ### Worktrees
