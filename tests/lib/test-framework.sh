@@ -1411,3 +1411,25 @@ assert_sanitized_git_secure() {
 
     return 0
 }
+
+# has_mikefarah_yq
+# Silent counterpart of skip_if_not_mikefarah_yq — returns 0 if mikefarah/yq v4
+# is available, 1 otherwise, without emitting any [SKIP] output.
+# Use this for feature-detection branching (if/else dispatch) where you want
+# to fall back to a python3 alternative rather than skip the test entirely.
+has_mikefarah_yq() {
+    command -v yq &>/dev/null && yq --version 2>&1 | grep -qi 'mikefarah'
+}
+
+# skip_if_root
+# Skips the current test when running as the root user.
+# Tests that rely on file-permission restrictions (chmod 000) to simulate
+# failure paths are meaningless under root because the kernel ignores DAC
+# permission bits for UID 0.
+skip_if_root() {
+    if [[ "$(id -u)" -eq 0 ]]; then
+        log_skip "Running as root — file-permission tests are not meaningful"
+        return 1
+    fi
+    return 0
+}
