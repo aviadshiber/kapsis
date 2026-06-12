@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # test-overlay-volume-sandbox.sh — Unit tests for Issue #376
 #
-# Verifies that on macOS, the overlay sandbox uses a Podman named volume
-# (VM-native ext4) for upper/work dirs instead of the virtio-fs share,
-# and that Linux keeps the existing kernel OverlayFS path unchanged.
+# Verifies that on macOS, the overlay sandbox keeps upper/work in a Podman
+# named volume (VM-native ext4) and mounts the project with the SAME
+# podman-side `:O,upperdir=...,workdir=...` mechanism the Linux path uses —
+# upperdir/workdir pointing at the volume's VM-side mountpoint. The agent
+# container gets ZERO additional capabilities or devices (PR #397 rework:
+# no --cap-add SYS_ADMIN, no --device /dev/fuse, no in-container
+# fuse-overlayfs), so the mode is available under every security profile.
 #
 # Host-tier tests: source the production library scripts/lib/overlay-sandbox.sh
 # directly (no body duplication — PR #397 review finding 3), with logging,
-# is_macos, and podman stubbed.  No container is launched.  Container-tier
-# coverage (actual fuse-overlayfs mount inside a kapsis-sandbox image) requires
-# Podman + the built image and is deferred to a separate PR.
+# is_macos, and podman stubbed.  No container is launched.  The one behavior
+# that cannot be verified here is the VM-side interpretation of the volume
+# mountpoint inside the :O option string — that needs a single real-macOS
+# smoke run (see docs/ARCHITECTURE.md).
 #
 # Category: validation
 set -euo pipefail
@@ -28,6 +33,14 @@ source "$SCRIPT_DIR/lib/test-framework.sh"
 _TEST_SANDBOX_BASE="/tmp/kapsis-overlay-test-$$"
 _TEST_PROJECT="/tmp/kapsis-overlay-project-$$"
 _TEST_AGENT_ID="ovltest$$"
+# Deterministic VM-side mountpoint base used by the podman stub below.
+_TEST_VOL_BASE="/test-vm/volumes"
+
+# Call log lives in a FILE (not a variable): the production lib invokes
+# podman inside command substitutions, and variable mutations made in those
+# subshells would be lost.
+_PODMAN_CALLS_FILE="/tmp/kapsis-overlay-test-calls-$$.log"
+_podman_calls() { cat "$_PODMAN_CALLS_FILE" 2>/dev/null || true; }
 
 # shellcheck disable=SC2034  # globals consumed by the sourced production lib
 _setup() {
@@ -35,26 +48,30 @@ _setup() {
     PROJECT_PATH="$_TEST_PROJECT"
     AGENT_ID="$_TEST_AGENT_ID"
     SANDBOX_UPPER_BASE="$_TEST_SANDBOX_BASE"
+    IMAGE_NAME="kapsis-test-image:latest"
     OVERLAY_VOLUME=""
+    OVERLAY_VOLUME_MOUNTPOINT=""
     SANDBOX_DIR=""
     UPPER_DIR=""
     WORK_DIR=""
     VOLUME_MOUNTS=()
-    _PODMAN_CALLS=""
+    : > "$_PODMAN_CALLS_FILE"
     _PODMAN_VOLUME_EXISTS_RC=1
 }
 
 _teardown() {
     rm -rf "$_TEST_PROJECT" "$_TEST_SANDBOX_BASE" 2>/dev/null || true
     OVERLAY_VOLUME=""
+    OVERLAY_VOLUME_MOUNTPOINT=""
     SANDBOX_DIR=""
     UPPER_DIR=""
     WORK_DIR=""
     VOLUME_MOUNTS=()
-    _PODMAN_CALLS=""
+    rm -f "$_PODMAN_CALLS_FILE" 2>/dev/null || true
     _PODMAN_VOLUME_EXISTS_RC=1
     unset KAPSIS_OVERLAY_USE_VOLUME 2>/dev/null || true
     unset KAPSIS_SECURITY_PROFILE 2>/dev/null || true
+    unset DRY_RUN 2>/dev/null || true
 }
 
 # Logging stubs — silence output from sourced functions during unit tests
@@ -69,15 +86,18 @@ log_error()   { :; }
 _IS_MACOS_OVERRIDE="false"
 is_macos() { [[ "$_IS_MACOS_OVERRIDE" == "true" ]]; }
 
-# podman stub — records invocations; `volume exists` rc is test-controlled.
-_PODMAN_CALLS=""
+# podman stub — records invocations to the call file (subshell-safe);
+# `volume exists` rc is test-controlled; `volume inspect` returns a
+# deterministic VM-side mountpoint.
 _PODMAN_VOLUME_EXISTS_RC=1
 podman() {
-    _PODMAN_CALLS+="podman $*"$'\n'
+    printf 'podman %s\n' "$*" >> "$_PODMAN_CALLS_FILE"
     case "${1:-} ${2:-}" in
-        "volume exists") return "$_PODMAN_VOLUME_EXISTS_RC" ;;
-        "volume rm")     return 0 ;;
-        "volume export") return 1 ;;  # overridden per-test where needed
+        "volume exists")  return "$_PODMAN_VOLUME_EXISTS_RC" ;;
+        "volume rm")      return 0 ;;
+        "volume create")  return 0 ;;
+        "volume inspect") echo "${_TEST_VOL_BASE}/${3}/_data"; return 0 ;;
+        "volume export")  return 1 ;;  # overridden per-test where needed
     esac
     return 0
 }
@@ -106,7 +126,7 @@ test_macos_overlay_volume_name() {
 }
 
 test_macos_sandbox_dir_created_upper_work_absent() {
-    log_test "macOS: SANDBOX_DIR created as export target; upper/ and work/ NOT pre-created"
+    log_test "macOS: SANDBOX_DIR created as export target; upper/ and work/ NOT pre-created on host"
     _setup
     _IS_MACOS_OVERRIDE="true"
 
@@ -122,32 +142,25 @@ test_macos_sandbox_dir_created_upper_work_absent() {
     _teardown
 }
 
-test_macos_volume_mounts_use_lower_and_overlay() {
-    log_test "macOS: volume mounts use /lower:ro and named /overlay, not :O overlay"
+test_macos_mountpoint_resolved_from_volume() {
+    log_test "macOS: OVERLAY_VOLUME_MOUNTPOINT resolved via podman volume inspect"
     _setup
     _IS_MACOS_OVERRIDE="true"
 
     setup_overlay_sandbox
-    generate_overlay_project_mounts
 
-    local mounts="${VOLUME_MOUNTS[*]}"
-
-    assert_contains "$mounts" "/lower:ro" \
-        "project must be bind-mounted read-only as /lower"
-    assert_contains "$mounts" "/overlay" \
-        "named overlay volume must appear in mounts"
-    assert_not_contains "$mounts" ":O," \
-        "kernel OverlayFS :O option must NOT be used on macOS named-volume path"
-    assert_not_contains "$mounts" "upperdir=" \
-        "host-side upperdir= option must NOT appear in mounts"
-    assert_not_contains "$mounts" "workdir=" \
-        "host-side workdir= option must NOT appear in mounts"
+    assert_equals "${_TEST_VOL_BASE}/kapsis-${_TEST_AGENT_ID}-overlay/_data" \
+        "$OVERLAY_VOLUME_MOUNTPOINT" \
+        "mountpoint must come from podman volume inspect --format '{{.Mountpoint}}'"
+    assert_contains "$(_podman_calls)" \
+        "podman volume inspect kapsis-${_TEST_AGENT_ID}-overlay --format {{.Mountpoint}}" \
+        "volume inspect must be invoked to resolve the VM-side mountpoint"
 
     _teardown
 }
 
-test_macos_workspace_not_directly_mounted() {
-    log_test "macOS: /workspace is NOT directly bind-mounted (entrypoint handles it via fuse-overlayfs)"
+test_macos_mounts_use_podman_overlay_on_volume() {
+    log_test "macOS: project mounted :O with upperdir/workdir under the volume's VM mountpoint"
     _setup
     _IS_MACOS_OVERRIDE="true"
 
@@ -155,8 +168,14 @@ test_macos_workspace_not_directly_mounted() {
     generate_overlay_project_mounts
 
     local mounts="${VOLUME_MOUNTS[*]}"
-    assert_not_contains "$mounts" ":/workspace" \
-        "/workspace must not appear in volume mounts — set up by entrypoint fuse-overlayfs"
+    local volmount="${_TEST_VOL_BASE}/kapsis-${_TEST_AGENT_ID}-overlay/_data"
+
+    assert_contains "$mounts" "${_TEST_PROJECT}:/workspace:O,upperdir=${volmount}/upper,workdir=${volmount}/work" \
+        "project must be mounted :O with upperdir/workdir on the named volume's VM mountpoint"
+    assert_not_contains "$mounts" ":/lower" \
+        "legacy /lower read-only mount must be gone — podman assembles the overlay itself"
+    assert_not_contains "$mounts" ":/overlay" \
+        "the named volume must NOT be mounted into the agent container"
 
     _teardown
 }
@@ -165,6 +184,7 @@ test_macos_opt_out_uses_host_dirs() {
     log_test "macOS: KAPSIS_OVERLAY_USE_VOLUME=false falls back to host upper/work dirs"
     _setup
     _IS_MACOS_OVERRIDE="true"
+    # shellcheck disable=SC2034  # consumed by the sourced production lib
     KAPSIS_OVERLAY_USE_VOLUME="false"
     UPPER_DIR="${_TEST_SANDBOX_BASE}/upper"
     WORK_DIR="${_TEST_SANDBOX_BASE}/work"
@@ -172,16 +192,34 @@ test_macos_opt_out_uses_host_dirs() {
     generate_overlay_project_mounts
 
     local mounts="${VOLUME_MOUNTS[*]}"
-    assert_contains "$mounts" ":O," \
-        "opt-out must fall back to kernel OverlayFS :O mount"
-    assert_contains "$mounts" "upperdir=" \
-        "opt-out must pass host-side upperdir="
+    assert_contains "$mounts" ":O,upperdir=${_TEST_SANDBOX_BASE}/upper" \
+        "opt-out must fall back to kernel OverlayFS with host-side upperdir"
+    assert_not_contains "$mounts" "$_TEST_VOL_BASE" \
+        "opt-out must not reference any named-volume mountpoint"
+
+    _teardown
+}
+
+test_macos_dry_run_skips_podman() {
+    log_test "macOS: dry-run issues no podman calls and uses a placeholder mountpoint"
+    _setup
+    _IS_MACOS_OVERRIDE="true"
+    # shellcheck disable=SC2034  # consumed by the sourced production lib
+    DRY_RUN="true"
+
+    setup_overlay_sandbox
+    generate_overlay_project_mounts
+
+    assert_equals "" "$(_podman_calls)" \
+        "dry-run must not create/inspect volumes or run helper containers"
+    assert_contains "${VOLUME_MOUNTS[*]}" ":O,upperdir=/dry-run/volumes/${OVERLAY_VOLUME}/_data/upper" \
+        "dry-run must render the :O mount with the placeholder mountpoint"
 
     _teardown
 }
 
 #===============================================================================
-# Test cases — stale volume reset (PR #397 review finding 1)
+# Test cases — volume preparation (stale reset + upper/work pre-creation)
 #===============================================================================
 
 test_macos_stale_volume_removed_before_launch() {
@@ -192,64 +230,122 @@ test_macos_stale_volume_removed_before_launch() {
 
     setup_overlay_sandbox
 
-    assert_contains "$_PODMAN_CALLS" "podman volume rm --force kapsis-${_TEST_AGENT_ID}-overlay" \
+    local calls
+    calls="$(_podman_calls)"
+    assert_contains "$calls" "podman volume rm --force kapsis-${_TEST_AGENT_ID}-overlay" \
         "stale overlay volume must be removed so the new run starts with a clean upper layer"
+    # The reset must happen BEFORE the upper/work pre-creation helper runs.
+    assert_contains "${calls%%run --rm*}" "volume rm --force" \
+        "stale volume reset must precede the upper/work pre-creation container"
 
     _teardown
 }
 
 test_macos_no_stale_volume_no_rm() {
-    log_test "macOS: no pre-existing overlay volume — no volume rm issued"
+    log_test "macOS: no pre-existing overlay volume — no volume rm; volume created fresh"
     _setup
     _IS_MACOS_OVERRIDE="true"
     _PODMAN_VOLUME_EXISTS_RC=1  # volume does not exist
 
     setup_overlay_sandbox
 
-    assert_not_contains "$_PODMAN_CALLS" "volume rm" \
+    assert_not_contains "$(_podman_calls)" "volume rm" \
         "volume rm must not run when no stale volume exists"
+    assert_contains "$(_podman_calls)" "podman volume create kapsis-${_TEST_AGENT_ID}-overlay" \
+        "volume must be created explicitly — it is no longer auto-created by a -v volume mount"
 
     _teardown
 }
 
-#===============================================================================
-# Test cases — security profile gate (PR #397 review finding 5)
-#===============================================================================
-
-test_strict_profile_downgrades_to_kernel_overlay() {
-    log_test "macOS: strict profile refuses SYS_ADMIN — downgrades to kernel OverlayFS"
+test_macos_upper_work_precreated_in_volume() {
+    log_test "macOS: upper/ and work/ pre-created inside the volume by a throwaway container"
     _setup
     _IS_MACOS_OVERRIDE="true"
-    KAPSIS_SECURITY_PROFILE="strict"
 
     setup_overlay_sandbox
 
-    assert_equals "false" "$KAPSIS_OVERLAY_USE_VOLUME" \
-        "strict profile must force KAPSIS_OVERLAY_USE_VOLUME=false"
-    assert_equals "" "$OVERLAY_VOLUME" \
-        "OVERLAY_VOLUME must stay empty under strict profile"
-    assert_dir_exists "$UPPER_DIR" \
-        "downgrade must create host UPPER_DIR (kernel OverlayFS fallback)"
-    assert_false "overlay_volume_mode_enabled" \
-        "overlay_volume_mode_enabled must report false after downgrade"
+    assert_contains "$(_podman_calls)" "mkdir -p /v/upper /v/work" \
+        "podman does not MkdirAll custom upperdir/workdir — they must be pre-created"
+    assert_contains "$(_podman_calls)" "-v kapsis-${_TEST_AGENT_ID}-overlay:/v" \
+        "pre-creation helper must mount the overlay volume"
+    assert_contains "$(_podman_calls)" "--entrypoint sh" \
+        "helper must bypass the image entrypoint (podman-health.sh probe pattern)"
+    assert_contains "$(_podman_calls)" "--cap-drop=ALL" \
+        "helper container must itself run fully cap-dropped"
+    assert_contains "$(_podman_calls)" "kapsis-test-image:latest" \
+        "helper must reuse the already-present sandbox image (IMAGE_NAME)"
 
     _teardown
 }
 
-test_paranoid_profile_downgrades_to_kernel_overlay() {
-    log_test "macOS: paranoid profile refuses SYS_ADMIN — downgrades to kernel OverlayFS"
+test_macos_volume_prep_failure_returns_mount_failure() {
+    log_test "macOS: helper-container failure bubbles up as KAPSIS_EXIT_MOUNT_FAILURE (4)"
     _setup
     _IS_MACOS_OVERRIDE="true"
+    # Override stub: the mkdir helper run fails.
+    podman() {
+        printf 'podman %s\n' "$*" >> "$_PODMAN_CALLS_FILE"
+        case "${1:-} ${2:-}" in
+            "volume exists")  return 1 ;;
+            "volume create")  return 0 ;;
+            "volume inspect") echo "${_TEST_VOL_BASE}/${3}/_data"; return 0 ;;
+            "run --rm")       return 125 ;;
+        esac
+        return 0
+    }
+
+    local rc=0
+    setup_overlay_sandbox || rc=$?
+    assert_equals "${KAPSIS_EXIT_MOUNT_FAILURE:-4}" "$rc" \
+        "volume preparation failure must surface through the mount_failure path (exit 4)"
+
+    _restore_podman_stub
+    _teardown
+}
+
+#===============================================================================
+# Test cases — security profiles (PR #397 rework: no capability needed,
+# so the named-volume overlay stays enabled under EVERY profile)
+#===============================================================================
+
+test_strict_profile_keeps_volume_mode() {
+    log_test "macOS: strict profile keeps the named-volume overlay (no SYS_ADMIN involved)"
+    _setup
+    _IS_MACOS_OVERRIDE="true"
+    # shellcheck disable=SC2034  # consumed by the sourced production lib
+    KAPSIS_SECURITY_PROFILE="strict"
+
+    setup_overlay_sandbox
+    generate_overlay_project_mounts
+
+    assert_equals "kapsis-${_TEST_AGENT_ID}-overlay" "$OVERLAY_VOLUME" \
+        "strict profile must NOT downgrade — the podman-side overlay needs no capability"
+    assert_true "overlay_volume_mode_enabled" \
+        "overlay_volume_mode_enabled must stay true under strict profile"
+    assert_true "[[ \"\${KAPSIS_OVERLAY_USE_VOLUME:-true}\" == \"true\" ]]" \
+        "KAPSIS_OVERLAY_USE_VOLUME must not be mutated to false under strict profile"
+    assert_contains "${VOLUME_MOUNTS[*]}" ":O,upperdir=${_TEST_VOL_BASE}/" \
+        "strict profile must mount via the volume-backed :O overlay"
+
+    _teardown
+}
+
+test_paranoid_profile_keeps_volume_mode() {
+    log_test "macOS: paranoid profile keeps the named-volume overlay (no SYS_ADMIN involved)"
+    _setup
+    _IS_MACOS_OVERRIDE="true"
+    # shellcheck disable=SC2034  # consumed by the sourced production lib
     KAPSIS_SECURITY_PROFILE="paranoid"
 
     setup_overlay_sandbox
     generate_overlay_project_mounts
 
-    local mounts="${VOLUME_MOUNTS[*]}"
-    assert_contains "$mounts" ":O," \
-        "paranoid profile must use the kernel OverlayFS mount, never the named volume"
-    assert_not_contains "$mounts" "/overlay" \
-        "named overlay volume must NOT be mounted under paranoid profile"
+    assert_true "overlay_volume_mode_enabled" \
+        "overlay_volume_mode_enabled must stay true under paranoid profile"
+    assert_contains "${VOLUME_MOUNTS[*]}" ":O,upperdir=${_TEST_VOL_BASE}/" \
+        "paranoid profile must mount via the volume-backed :O overlay"
+    assert_not_contains "${VOLUME_MOUNTS[*]}" ":/overlay" \
+        "the named volume must not be mounted into the container under any profile"
 
     _teardown
 }
@@ -271,6 +367,17 @@ test_standard_profile_keeps_volume_mode() {
     _teardown
 }
 
+test_no_extra_capabilities_in_launch_sources() {
+    log_test "no --cap-add SYS_ADMIN / --device /dev/fuse / fuse env left in the overlay launch path"
+
+    assert_false "grep -q 'SYS_ADMIN' '$KAPSIS_ROOT/scripts/launch-agent.sh' '$KAPSIS_ROOT/scripts/lib/overlay-sandbox.sh'" \
+        "SYS_ADMIN must not appear anywhere in launch-agent.sh or overlay-sandbox.sh"
+    assert_false "grep -q '/dev/fuse' '$KAPSIS_ROOT/scripts/launch-agent.sh' '$KAPSIS_ROOT/scripts/lib/overlay-sandbox.sh'" \
+        "/dev/fuse must not appear anywhere in launch-agent.sh or overlay-sandbox.sh"
+    assert_false "grep -q 'KAPSIS_USE_FUSE_OVERLAY' '$KAPSIS_ROOT/scripts/launch-agent.sh' '$KAPSIS_ROOT/scripts/lib/overlay-sandbox.sh'" \
+        "the KAPSIS_USE_FUSE_OVERLAY env signal must no longer be emitted by the launcher"
+}
+
 #===============================================================================
 # Test cases — Linux path unchanged
 #===============================================================================
@@ -288,6 +395,8 @@ test_linux_creates_host_upper_and_work() {
         "WORK_DIR must exist on Linux (host-side overlay work)"
     assert_equals "" "$OVERLAY_VOLUME" \
         "OVERLAY_VOLUME must be empty on Linux"
+    assert_equals "" "$(_podman_calls)" \
+        "no podman volume operations may run on Linux"
 
     _teardown
 }
@@ -301,12 +410,12 @@ test_linux_volume_mounts_use_kernel_overlay() {
     generate_overlay_project_mounts
 
     local mounts="${VOLUME_MOUNTS[*]}"
-    assert_contains "$mounts" ":O," \
-        "Linux must use kernel OverlayFS :O option"
-    assert_contains "$mounts" "upperdir=" \
-        "Linux must pass upperdir= host path"
+    assert_contains "$mounts" ":O,upperdir=${UPPER_DIR},workdir=${WORK_DIR}" \
+        "Linux must use kernel OverlayFS :O with host-side upperdir/workdir"
     assert_not_contains "$mounts" ":/lower:ro" \
         "Linux must NOT use /lower read-only mount"
+    assert_not_contains "$mounts" "$_TEST_VOL_BASE" \
+        "Linux must not reference any named-volume mountpoint"
 
     _teardown
 }
@@ -353,11 +462,12 @@ test_export_overlay_volume_to_host_extracts_upper_and_work() {
     echo "changed" > "$fixture/upper/src/main.txt"
     ln -s "/etc/shadow" "$fixture/upper/evil-link"
     podman() {
-        _PODMAN_CALLS+="podman $*"$'\n'
-        if [[ "${1:-} ${2:-}" == "volume export" ]]; then
-            tar -cf - -C "$fixture" upper work
-            return 0
-        fi
+        printf 'podman %s\n' "$*" >> "$_PODMAN_CALLS_FILE"
+        case "${1:-} ${2:-}" in
+            "volume exists")  return 1 ;;
+            "volume inspect") echo "${_TEST_VOL_BASE}/${3}/_data"; return 0 ;;
+            "volume export")  tar -cf - -C "$fixture" upper work; return 0 ;;
+        esac
         return 0
     }
 
@@ -373,16 +483,7 @@ test_export_overlay_volume_to_host_extracts_upper_and_work() {
     assert_false "compgen -G '$SANDBOX_DIR/.export-staging-*' >/dev/null" \
         "staging dir must be cleaned up after export"
 
-    # Restore the recording stub for subsequent tests
-    podman() {
-        _PODMAN_CALLS+="podman $*"$'\n'
-        case "${1:-} ${2:-}" in
-            "volume exists") return "$_PODMAN_VOLUME_EXISTS_RC" ;;
-            "volume rm")     return 0 ;;
-            "volume export") return 1 ;;
-        esac
-        return 0
-    }
+    _restore_podman_stub
     _teardown
 }
 
@@ -394,10 +495,25 @@ test_export_noop_when_volume_mode_disabled() {
 
     export_overlay_volume_to_host
 
-    assert_not_contains "$_PODMAN_CALLS" "volume export" \
+    assert_not_contains "$(_podman_calls)" "volume export" \
         "podman volume export must not run outside the macOS named-volume path"
 
     _teardown
+}
+
+# Restores the default recording podman stub after per-test overrides.
+_restore_podman_stub() {
+    podman() {
+        printf 'podman %s\n' "$*" >> "$_PODMAN_CALLS_FILE"
+        case "${1:-} ${2:-}" in
+            "volume exists")  return "$_PODMAN_VOLUME_EXISTS_RC" ;;
+            "volume rm")      return 0 ;;
+            "volume create")  return 0 ;;
+            "volume inspect") echo "${_TEST_VOL_BASE}/${3}/_data"; return 0 ;;
+            "volume export")  return 1 ;;
+        esac
+        return 0
+    }
 }
 
 #===============================================================================
@@ -425,14 +541,18 @@ main() {
 
     run_test test_macos_overlay_volume_name
     run_test test_macos_sandbox_dir_created_upper_work_absent
-    run_test test_macos_volume_mounts_use_lower_and_overlay
-    run_test test_macos_workspace_not_directly_mounted
+    run_test test_macos_mountpoint_resolved_from_volume
+    run_test test_macos_mounts_use_podman_overlay_on_volume
     run_test test_macos_opt_out_uses_host_dirs
+    run_test test_macos_dry_run_skips_podman
     run_test test_macos_stale_volume_removed_before_launch
     run_test test_macos_no_stale_volume_no_rm
-    run_test test_strict_profile_downgrades_to_kernel_overlay
-    run_test test_paranoid_profile_downgrades_to_kernel_overlay
+    run_test test_macos_upper_work_precreated_in_volume
+    run_test test_macos_volume_prep_failure_returns_mount_failure
+    run_test test_strict_profile_keeps_volume_mode
+    run_test test_paranoid_profile_keeps_volume_mode
     run_test test_standard_profile_keeps_volume_mode
+    run_test test_no_extra_capabilities_in_launch_sources
     run_test test_linux_creates_host_upper_and_work
     run_test test_linux_volume_mounts_use_kernel_overlay
     run_test test_sanitize_strips_escaping_symlinks_keeps_safe_ones

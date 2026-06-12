@@ -5,8 +5,14 @@
 # On macOS the AVF virtio-fs cache-coherency bug (Apple FB16008360,
 # podman#23061) corrupts kernel-OverlayFS metadata when upper/work live on the
 # virtio-fs share. This library moves them into a per-agent Podman named
-# volume (VM-native ext4) mounted at /overlay, merged with the read-only
-# project mount at /lower by entrypoint.sh's setup_fuse_overlay().
+# volume (VM-native ext4) and lets the Podman runtime assemble the overlay
+# itself: the project is mounted with the SAME `:O,upperdir=...,workdir=...`
+# mechanism the Linux path already uses, except upperdir/workdir point at the
+# volume's VM-side mountpoint (`podman volume inspect --format
+# '{{.Mountpoint}}'`). The overlay is constructed server-side in the VM's
+# rootless namespace, so the agent container needs ZERO additional
+# capabilities or devices — no cap-add, no FUSE device, no in-container
+# fuse-overlayfs (PR #397 rework).
 #
 # Sourced by launch-agent.sh (production) and by
 # tests/test-overlay-volume-sandbox.sh (unit tests, with logging/is_macos/
@@ -14,20 +20,18 @@
 #
 # Public API (operates on launch-agent.sh globals):
 #   overlay_volume_mode_enabled     — predicate: named-volume overlay active?
-#   resolve_overlay_volume_mode     — downgrade to kernel OverlayFS when the
-#                                     security profile forbids SYS_ADMIN
 #   setup_overlay_sandbox           — compute paths, reset stale volume,
-#                                     create host dirs
-#   generate_overlay_project_mounts — append project/overlay mounts to
+#                                     prepare the volume / create host dirs
+#   generate_overlay_project_mounts — append the project :O mount to
 #                                     VOLUME_MOUNTS
 #   export_overlay_volume_to_host   — hardened post-container volume → host
 #                                     extraction
 #
 # Globals read:    PROJECT_PATH, AGENT_ID, SANDBOX_UPPER_BASE, DRY_RUN,
-#                  KAPSIS_OVERLAY_USE_VOLUME, KAPSIS_SECURITY_PROFILE,
-#                  KAPSIS_OVERLAY_VOLUME_SUFFIX
+#                  KAPSIS_OVERLAY_USE_VOLUME, KAPSIS_OVERLAY_VOLUME_SUFFIX,
+#                  IMAGE_NAME, KAPSIS_EXIT_MOUNT_FAILURE
 # Globals written: SANDBOX_ID, SANDBOX_DIR, UPPER_DIR, WORK_DIR,
-#                  OVERLAY_VOLUME, VOLUME_MOUNTS, KAPSIS_OVERLAY_USE_VOLUME
+#                  OVERLAY_VOLUME, OVERLAY_VOLUME_MOUNTPOINT, VOLUME_MOUNTS
 #===============================================================================
 
 [[ -n "${_KAPSIS_OVERLAY_SANDBOX_LOADED:-}" ]] && return 0
@@ -45,40 +49,13 @@ declare -f ensure_dir  &>/dev/null || ensure_dir()  { mkdir -p "$1"; }
 #-------------------------------------------------------------------------------
 # overlay_volume_mode_enabled
 #
-# True when the macOS named-volume fuse-overlayfs path is active. Callers must
-# run resolve_overlay_volume_mode (via setup_overlay_sandbox) first so the
-# security-profile downgrade is reflected.
+# True when the macOS named-volume overlay path is active. The overlay is
+# assembled by the Podman runtime inside the VM (`:O,upperdir=...`), so this
+# mode adds no capabilities and is available under every security profile —
+# including strict/paranoid (PR #397 rework).
 #-------------------------------------------------------------------------------
 overlay_volume_mode_enabled() {
     is_macos && [[ "${KAPSIS_OVERLAY_USE_VOLUME:-true}" == "true" ]]
-}
-
-#-------------------------------------------------------------------------------
-# resolve_overlay_volume_mode
-#
-# fuse-overlayfs inside the rootless container requires `--cap-add SYS_ADMIN`,
-# which contradicts the strict/paranoid security profile contract (PR #397
-# review finding 5). When such a profile is active, downgrade to the kernel
-# OverlayFS path (upper/work on virtio-fs) instead of silently re-adding the
-# broadest Linux capability. The launch-lock serialization from PR #375 still
-# mitigates the AVF race on that path.
-#
-# Mutates KAPSIS_OVERLAY_USE_VOLUME so every later check in the same process
-# (mount generation, env vars, container command) stays consistent.
-#-------------------------------------------------------------------------------
-resolve_overlay_volume_mode() {
-    if ! is_macos || [[ "${KAPSIS_OVERLAY_USE_VOLUME:-true}" != "true" ]]; then
-        return 0
-    fi
-
-    case "${KAPSIS_SECURITY_PROFILE:-standard}" in
-        strict|paranoid)
-            log_warn "Security profile '${KAPSIS_SECURITY_PROFILE}' forbids the SYS_ADMIN capability required by the named-volume overlay (fuse-overlayfs)"
-            log_warn "Falling back to kernel OverlayFS on virtio-fs — use KAPSIS_SECURITY_PROFILE=standard to re-enable the named-volume overlay (Issue #376)"
-            KAPSIS_OVERLAY_USE_VOLUME="false"
-            ;;
-    esac
-    return 0
 }
 
 #-------------------------------------------------------------------------------
@@ -87,7 +64,7 @@ resolve_overlay_volume_mode() {
 # Named volumes survive `podman run --rm` — they are only removed by
 # cleanup_agent_volumes at session end. A previous run that crashed before
 # cleanup, or one launched with --keep-volumes, leaves upper/work content
-# that would pollute this run's fuse-overlayfs upper layer and surface as
+# that would pollute this run's overlay upper layer and surface as
 # phantom changes in the post-container diff (PR #397 review finding 1).
 # Always start from a clean volume.
 #-------------------------------------------------------------------------------
@@ -103,11 +80,59 @@ _reset_stale_overlay_volume() {
 }
 
 #-------------------------------------------------------------------------------
+# _prepare_overlay_volume <volume_name>
+#
+# Creates the named volume, resolves its VM-side mountpoint into
+# OVERLAY_VOLUME_MOUNTPOINT, and pre-creates the upper/ and work/ dirs inside
+# it. Podman does NOT MkdirAll custom upperdir/workdir paths — they must exist
+# before the `:O,upperdir=...,workdir=...` mount is processed, so a throwaway
+# helper container creates them (same hardened probe-container pattern as
+# scripts/lib/podman-health.sh; --entrypoint bypasses the image entrypoint).
+#
+# Returns non-zero on failure — callers route this into the mount_failure
+# path (exit 4) because it means Podman VM storage is unusable.
+#-------------------------------------------------------------------------------
+_prepare_overlay_volume() {
+    local volume_name="$1"
+
+    if ! podman volume exists "$volume_name" 2>/dev/null; then
+        if ! podman volume create "$volume_name" >/dev/null 2>&1; then
+            log_error "Failed to create overlay volume: $volume_name"
+            return 1
+        fi
+    fi
+
+    OVERLAY_VOLUME_MOUNTPOINT=$(podman volume inspect "$volume_name" --format '{{.Mountpoint}}' 2>/dev/null) \
+        || OVERLAY_VOLUME_MOUNTPOINT=""
+    if [[ -z "$OVERLAY_VOLUME_MOUNTPOINT" ]]; then
+        log_error "Failed to resolve VM mountpoint of overlay volume $volume_name (podman volume inspect)"
+        return 1
+    fi
+
+    local helper_image="${IMAGE_NAME:-kapsis-sandbox:latest}"
+    local mkdir_err=""
+    if ! mkdir_err=$(podman run --rm \
+            --cap-drop=ALL --security-opt=no-new-privileges \
+            --read-only --network=none \
+            --entrypoint sh \
+            -v "${volume_name}:/v" \
+            "$helper_image" \
+            -c 'mkdir -p /v/upper /v/work' 2>&1); then
+        log_error "Failed to pre-create upper/work in overlay volume $volume_name: ${mkdir_err:-unknown error}"
+        return 1
+    fi
+
+    log_debug "Overlay volume ready: $volume_name (VM mountpoint: $OVERLAY_VOLUME_MOUNTPOINT)"
+    return 0
+}
+
+#-------------------------------------------------------------------------------
 # setup_overlay_sandbox
 #
 # Computes SANDBOX_ID/SANDBOX_DIR/UPPER_DIR/WORK_DIR and prepares either the
 # named-volume path (macOS) or the host upper/work dirs (Linux, or macOS with
-# KAPSIS_OVERLAY_USE_VOLUME=false).
+# KAPSIS_OVERLAY_USE_VOLUME=false). Returns KAPSIS_EXIT_MOUNT_FAILURE (4)
+# when the overlay volume cannot be prepared.
 #-------------------------------------------------------------------------------
 setup_overlay_sandbox() {
     local project_name
@@ -119,9 +144,6 @@ setup_overlay_sandbox() {
 
     log_info "Setting up overlay sandbox: $SANDBOX_ID"
 
-    # Security-profile gate must run before the mode is first consulted.
-    resolve_overlay_volume_mode
-
     if overlay_volume_mode_enabled; then
         # Issue #376: on macOS move overlay upper/work off the virtio-fs share onto
         # VM-native ext4 via a Podman named volume.  SANDBOX_DIR is still created on
@@ -129,10 +151,19 @@ setup_overlay_sandbox() {
         OVERLAY_VOLUME="kapsis-${AGENT_ID}${KAPSIS_OVERLAY_VOLUME_SUFFIX:--overlay}"
         ensure_dir "$SANDBOX_DIR"
         if [[ "${DRY_RUN:-false}" == "true" ]]; then
+            # Placeholder mountpoint — the volume is never created in dry-run,
+            # so the printed :O mount shows a recognizable stand-in path.
+            OVERLAY_VOLUME_MOUNTPOINT="/dry-run/volumes/${OVERLAY_VOLUME}/_data"
             log_info "  [DRY-RUN] Would create overlay volume: $OVERLAY_VOLUME"
+            log_info "  [DRY-RUN] Would pre-create upper/ and work/ inside the volume"
         else
             _reset_stale_overlay_volume "$OVERLAY_VOLUME"
+            if ! _prepare_overlay_volume "$OVERLAY_VOLUME"; then
+                log_error "Overlay volume preparation failed — Podman VM storage is not usable (Issue #376)"
+                return "${KAPSIS_EXIT_MOUNT_FAILURE:-4}"
+            fi
             log_info "  Overlay volume (VM-native ext4): $OVERLAY_VOLUME"
+            log_info "  Overlay upper/work (VM mountpoint): $OVERLAY_VOLUME_MOUNTPOINT"
             log_info "  Export target: $SANDBOX_DIR"
         fi
     else
@@ -151,20 +182,22 @@ setup_overlay_sandbox() {
 #-------------------------------------------------------------------------------
 # generate_overlay_project_mounts
 #
-# Appends the project mount(s) for overlay mode to VOLUME_MOUNTS. Common
+# Appends the project mount for overlay mode to VOLUME_MOUNTS. Common
 # mounts (status, caches, spec, SSH) are appended separately by the caller.
+#
+# Both branches use the SAME `:O` mechanism — the Podman runtime assembles
+# the kernel OverlayFS mount itself, so the container needs no capabilities.
+# The only difference is where upperdir/workdir live:
+#   - macOS named-volume mode: inside the per-agent volume (VM-native ext4),
+#     addressed via the volume's VM-side mountpoint. The option string is
+#     interpreted server-side in the VM, where that path is valid.
+#   - Linux / opt-out: on the host filesystem (ext4 on Linux, virtio-fs on
+#     macOS with KAPSIS_OVERLAY_USE_VOLUME=false).
 #-------------------------------------------------------------------------------
 generate_overlay_project_mounts() {
     if overlay_volume_mode_enabled; then
-        # Issue #376: fuse-overlayfs mode — upper/work in VM-native named volume.
-        # Project is mounted read-only as /lower; entrypoint.sh's setup_fuse_overlay()
-        # merges it with the named volume's /overlay/upper into /workspace via
-        # fuse-overlayfs (userspace, no virtio-fs round-trips on metadata).
-        VOLUME_MOUNTS+=("-v" "${PROJECT_PATH}:/lower:ro")
-        VOLUME_MOUNTS+=("-v" "${OVERLAY_VOLUME}:/overlay")
+        VOLUME_MOUNTS+=("-v" "${PROJECT_PATH}:/workspace:O,upperdir=${OVERLAY_VOLUME_MOUNTPOINT}/upper,workdir=${OVERLAY_VOLUME_MOUNTPOINT}/work")
     else
-        # Linux / macOS with KAPSIS_OVERLAY_USE_VOLUME=false: kernel OverlayFS.
-        # upper/work live on the host filesystem (ext4 on Linux, virtio-fs on macOS).
         VOLUME_MOUNTS+=("-v" "${PROJECT_PATH}:/workspace:O,upperdir=${UPPER_DIR},workdir=${WORK_DIR}")
     fi
 }
@@ -224,8 +257,8 @@ _overlay_symlink_escapes() {
 # compromised agent can plant a symlink like `upper/x -> /Users/me/.ssh` in
 # the volume; anything later writing through the extracted link would escape
 # SANDBOX_DIR. Device/fifo/socket nodes are never legitimate workspace
-# content (fuse-overlayfs whiteouts cannot be re-created by unprivileged tar
-# anyway) and are dropped outright.
+# content (kernel-overlay whiteouts are char 0:0 device nodes that
+# unprivileged tar cannot re-create anyway) and are dropped outright.
 #-------------------------------------------------------------------------------
 _sanitize_overlay_export() {
     local root="$1"

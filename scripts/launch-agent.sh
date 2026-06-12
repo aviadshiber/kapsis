@@ -20,7 +20,7 @@
 #   --interactive         Force interactive shell mode
 #   --dry-run             Show what would be executed without running
 #   --worktree-mode       Force worktree mode (git worktrees, simpler cleanup)
-#   --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
+#   --overlay-mode        Force overlay mode (CoW overlay, legacy)
 #   --network-mode <mode> Network isolation: none, filtered (default), open
 #   --security-profile <profile> Security: minimal, standard (default), strict, paranoid
 #
@@ -108,6 +108,8 @@ IMAGE_NAME="${KAPSIS_IMAGE:-kapsis-sandbox:latest}"
 SANDBOX_MODE=""  # auto-detect, worktree, or overlay
 # shellcheck disable=SC2034  # consumed by lib/overlay-sandbox.sh
 OVERLAY_VOLUME=""  # named volume for overlay upper/work on macOS (Issue #376)
+# shellcheck disable=SC2034  # consumed by lib/overlay-sandbox.sh
+OVERLAY_VOLUME_MOUNTPOINT=""  # VM-side mountpoint of OVERLAY_VOLUME (Issue #376)
 WORKTREE_PATH=""
 SANITIZED_GIT_PATH=""
 OBJECTS_PATH=""
@@ -136,7 +138,8 @@ source "$SCRIPT_DIR/lib/exec-channel-watchdog.sh"
 source "$SCRIPT_DIR/lib/status-sync.sh"
 
 # Source overlay sandbox setup + named-volume export (Issue #376) — macOS
-# named-volume fuse-overlayfs path; Linux keeps kernel OverlayFS untouched
+# named-volume overlay (podman-side :O,upperdir on VM-native ext4); Linux
+# keeps kernel OverlayFS on host dirs untouched
 # shellcheck source=lib/overlay-sandbox.sh
 source "$SCRIPT_DIR/lib/overlay-sandbox.sh"
 
@@ -261,7 +264,7 @@ Options:
   --dry-run             Show what would be executed without running
   --image <name>        Container image to use (e.g., kapsis-claude-cli:latest)
   --worktree-mode       Force worktree mode (requires git repo + branch)
-  --overlay-mode        Force overlay mode (fuse-overlayfs, legacy)
+  --overlay-mode        Force overlay mode (CoW overlay, legacy)
   --network-mode <mode> Network isolation: none (isolated),
                         filtered (default, DNS allowlist), open (unrestricted)
   --security-profile <profile>
@@ -1385,8 +1388,9 @@ generate_volume_mounts_worktree() {
 generate_volume_mounts_overlay() {
     VOLUME_MOUNTS=()
 
-    # Project mount(s): named-volume fuse-overlayfs on macOS, kernel OverlayFS
-    # otherwise — see lib/overlay-sandbox.sh (Issue #376)
+    # Project mount: podman-side :O overlay — upperdir/workdir on the named
+    # volume's VM mountpoint (macOS) or on host dirs (Linux / opt-out); see
+    # lib/overlay-sandbox.sh (Issue #376)
     generate_overlay_project_mounts
 
     # Add common mounts (status, caches, spec, filesystem includes, SSH)
@@ -2062,10 +2066,6 @@ generate_env_vars() {
         ENV_VARS+=("-e" "KAPSIS_WORKTREE_MODE=true")
     else
         ENV_VARS+=("-e" "KAPSIS_SANDBOX_DIR=${SANDBOX_DIR}")
-        # Issue #376: signal entrypoint to mount fuse-overlayfs from /lower → /workspace
-        if overlay_volume_mode_enabled; then
-            ENV_VARS+=("-e" "KAPSIS_USE_FUSE_OVERLAY=true")
-        fi
     fi
 
     if [[ -n "$BRANCH" ]]; then
@@ -2389,15 +2389,11 @@ build_container_command() {
     mapfile -t security_args < <(generate_security_args "$AGENT_NAME" "$RESOURCE_MEMORY" "$RESOURCE_CPUS")
     CONTAINER_CMD+=("${security_args[@]}")
 
-    # Issue #376: fuse-overlayfs (macOS overlay mode) needs /dev/fuse and SYS_ADMIN
-    # so the container can mount a FUSE filesystem inside the unprivileged runtime.
-    # Gated by KAPSIS_OVERLAY_USE_VOLUME (user opt-out) and — via
-    # resolve_overlay_volume_mode in setup_overlay_sandbox — by the security
-    # profile: strict/paranoid never get SYS_ADMIN added back (PR #397 review).
-    if [[ "$SANDBOX_MODE" == "overlay" ]] && overlay_volume_mode_enabled; then
-        CONTAINER_CMD+=("--device" "/dev/fuse")
-        CONTAINER_CMD+=("--cap-add" "SYS_ADMIN")
-    fi
+    # Issue #376 / PR #397 rework: the macOS named-volume overlay is assembled
+    # by the Podman runtime inside the VM (`:O,upperdir=...` on the volume's
+    # mountpoint — see lib/overlay-sandbox.sh), exactly like the Linux `:O`
+    # path. No capability or device is added for it: the cap-drop contract of
+    # every security profile stays intact in all sandbox modes.
 
     # Network isolation mode
     case "$NETWORK_MODE" in
@@ -2780,8 +2776,20 @@ main() {
         if ! launch_lock_acquire; then
             log_warn "Launch lock unavailable — proceeding without serialization (next agent may race)"
         fi
-        if ! setup_sandbox; then
+        local _sandbox_rc=0
+        setup_sandbox || _sandbox_rc=$?
+        if [[ "$_sandbox_rc" -ne 0 ]]; then
             launch_lock_release  # release before failing exit
+            if [[ "$_sandbox_rc" -eq "$KAPSIS_EXIT_MOUNT_FAILURE" ]]; then
+                # Overlay volume preparation failed (Issue #376) — Podman VM
+                # storage is unusable, same class as the pre-launch virtio-fs
+                # probe refusal: retriable infra, not an agent bug.
+                status_set_error_type "mount_failure"
+                status_complete "$KAPSIS_EXIT_MOUNT_FAILURE" \
+                    "Overlay volume preparation failed (Issue #376). Recovery: podman machine stop && podman machine start, then re-run."
+                _STATUS_COMPLETE_SHOWN=true
+                exit "$KAPSIS_EXIT_MOUNT_FAILURE"
+            fi
             status_complete 1 "Sandbox setup failed (mode: ${SANDBOX_MODE:-unknown})"
             _STATUS_COMPLETE_SHOWN=true
             exit 1

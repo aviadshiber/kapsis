@@ -416,26 +416,25 @@ CONTAINER_CMD+=(
 )
 ```
 
-#### 2.3.1 macOS Overlay Exception: SYS_ADMIN (Issue #376)
+#### 2.3.1 macOS Named-Volume Overlay: No Extra Capabilities (Issue #376)
 
-On macOS, overlay-mode sandboxes mount the workspace with fuse-overlayfs inside the
-container (named-volume overlay — see `ARCHITECTURE.md`). Mounting a FUSE filesystem in a
-rootless container requires `--device /dev/fuse --cap-add SYS_ADMIN`; no narrower
-capability works. `SYS_ADMIN` is added **only** in this mode, and only inside the rootless
-user namespace (it is namespaced SYS_ADMIN, not host-root SYS_ADMIN), but it still widens
-the in-container attack surface (`mount(2)`, `pivot_root`, overlay tricks).
+On macOS, overlay-mode sandboxes keep the OverlayFS `upper/`/`work/` directories in a
+per-agent Podman named volume (VM-native ext4) and mount the project with the **same
+`:O,upperdir=...,workdir=...` mechanism the Linux path uses** — the option string points
+at the volume's VM-side mountpoint, and the Podman runtime assembles the kernel overlay
+inside the VM's rootless namespace before the container starts.
 
-The trade-off is therefore profile-gated (`resolve_overlay_volume_mode` in
-`scripts/lib/overlay-sandbox.sh`):
+Because the mount is performed by the runtime — never by code inside the agent container —
+this mode adds **no capabilities and no devices**: no `--cap-add SYS_ADMIN`, no
+`--device /dev/fuse`, no in-container `mount(2)` ability. The capability-drop contract of
+every security profile stays fully intact, and the CVE-2022-0185-class attack surface of
+letting sandboxed code drive filesystem mounts simply does not exist here.
 
-| Profile | Behavior |
-|---------|----------|
-| `minimal` / `standard` | Named-volume overlay enabled; `SYS_ADMIN` added for fuse-overlayfs |
-| `strict` / `paranoid` | `SYS_ADMIN` refused — Kapsis warns and downgrades to kernel OverlayFS with `upper/`/`work/` on the virtio-fs share (`KAPSIS_OVERLAY_USE_VOLUME=false` equivalent) |
-
-Users can also opt out unconditionally with `KAPSIS_OVERLAY_USE_VOLUME=false`. Worktree
-mode (the recommended mode) never adds `SYS_ADMIN`. Linux is unaffected — kernel OverlayFS
-(`:O` mount) needs no extra capability.
+Consequently the named-volume overlay is available under **all** security profiles,
+including `strict` and `paranoid` — there is no profile gate and no downgrade path. Users
+can still opt out with `KAPSIS_OVERLAY_USE_VOLUME=false` (falls back to kernel OverlayFS
+with `upper/`/`work/` on the virtio-fs share). Worktree mode (the recommended mode) and
+Linux are unaffected.
 
 ### 2.4 Configuration Option
 
