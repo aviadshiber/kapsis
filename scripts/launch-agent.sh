@@ -60,6 +60,9 @@ source "$SCRIPT_DIR/lib/progress-display.sh"
 # Source launch-spec persistence library (writes ~/.kapsis/specs/<id>.md)
 source "$SCRIPT_DIR/lib/spec-store.sh"
 
+# Source conversation transcript persistence library (Issue #390)
+source "$SCRIPT_DIR/lib/transcript.sh"
+
 # Bash 3.2 compatible uppercase conversion
 to_upper() {
     echo "$1" | tr '[:lower:]' '[:upper:]'
@@ -1328,6 +1331,10 @@ add_common_volume_mounts() {
     local conv_dir="${KAPSIS_CONVERSATIONS_DIR:-$HOME/.kapsis/conversations/${AGENT_ID}}"
     ensure_dir "$conv_dir"
     VOLUME_MOUNTS+=("-v" "${conv_dir}:${CONTAINER_CONVERSATIONS_PATH}")
+    # Cache the resolved path so the transcript-save sites (normal path and
+    # _cleanup_with_completion trap) use the exact directory that was mounted
+    # instead of re-deriving it (Issue #390).
+    KAPSIS_CONVERSATIONS_DIR_RESOLVED="$conv_dir"
 
     # Maven repository (isolated per agent)
     VOLUME_MOUNTS+=("-v" "kapsis-${AGENT_ID}-m2:/home/developer/.m2/repository")
@@ -2573,6 +2580,11 @@ main() {
     # Track temp file for cleanup on signal (set later when container runs)
     _CONTAINER_OUTPUT_TMP=""
 
+    # Conversations dir actually mounted into the container; set by
+    # add_common_volume_mounts during setup_sandbox. Empty until then —
+    # the transcript-save sites no-op on empty (Issue #390).
+    KAPSIS_CONVERSATIONS_DIR_RESOLVED=""
+
     # PID of caffeinate background process (macOS sleep prevention, Issue #276).
     # Set after caffeinate is started; cleared after it is killed.
     _CAFFEINATE_PID=""
@@ -2602,6 +2614,14 @@ main() {
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
     _cleanup_with_completion() {
         local exit_code=$?
+        # Save partial transcript on abnormal exit before deleting the buffer
+        # (Issue #390). The normal path in main() saves the full transcript
+        # before rm; this trap catches SIGTERM / early-error exits where that
+        # code never ran. Uses the conversations dir resolved at mount-setup
+        # time — when setup never got that far there is nothing to save, and
+        # transcript_save_partial no-ops on the empty path.
+        transcript_save_partial "${KAPSIS_CONVERSATIONS_DIR_RESOLVED:-}" \
+            "${_CONTAINER_OUTPUT_TMP:-}" "${AGENT_ID:-unknown}"
         # Clean up temp files if they exist
         [[ -n "$_CONTAINER_OUTPUT_TMP" ]] && rm -f "$_CONTAINER_OUTPUT_TMP"
         # Stop macOS sleep prevention if active (Issue #276).
@@ -3160,6 +3180,15 @@ main() {
             _KAPSIS_EXEC_HANG_DETECTED=true
         fi
     fi
+
+    # Persist conversation transcript before discarding the buffer (Issue #390).
+    # The full container stdout+stderr is already captured in $container_output
+    # by backend_run/tee. Copy it to conversations/<agent-id>/transcript.txt so
+    # the post-mortem debugging workflow ("read the transcript when an agent
+    # hangs") actually has something to read. Capped (default 50 MB, tail kept
+    # — the agent's own output is at the end; the head is bootstrap noise).
+    transcript_save "${KAPSIS_CONVERSATIONS_DIR_RESOLVED:-}" "$container_output" \
+        "$AGENT_ID" "$EXIT_CODE"
 
     rm -f "$container_output"
     # Update status to post_processing (Fix #3: don't report "completed" until commit verified)

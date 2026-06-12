@@ -107,7 +107,9 @@ describe("reaper", () => {
         return;
       }
       expect(ok).toBe(true);
-    });
+      // podman's first invocation on a fresh CI runner can exceed bun's 5s
+      // default test timeout while it initializes storage.
+    }, 30000);
 
     it("returns false when podman is not on PATH", async () => {
       process.env.PATH = "/nonexistent";
