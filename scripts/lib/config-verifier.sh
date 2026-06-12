@@ -390,6 +390,9 @@ validate_launch_config() {
     # Validate liveness if present
     validate_liveness_config "$config_file"
 
+    # Validate vm if present (Issue #377)
+    validate_vm_config "$config_file"
+
     return 0
 }
 
@@ -665,6 +668,47 @@ validate_liveness_config() {
             log_warn "liveness.check_interval ($interval) is greater than timeout ($timeout) — may miss hangs"
         fi
     fi
+
+    return 0
+}
+
+#===============================================================================
+# VM Config Validation (Issue #377)
+#===============================================================================
+
+validate_vm_config() {
+    local config_file="$1"
+
+    # Check if vm section exists
+    local vm_present
+    vm_present=$(yq -r '.vm // "null"' "$config_file" 2>/dev/null)
+    if [[ "$vm_present" == "null" ]]; then
+        return 0  # No vm section, nothing to validate
+    fi
+
+    log_info "Validating vm config in: $config_file"
+
+    # max_parallel_agents: positive integer >= 1
+    local agents
+    agents=$(yq -r '.vm.max_parallel_agents // "null"' "$config_file" 2>/dev/null)
+    if [[ "$agents" != "null" ]]; then
+        if [[ "$agents" =~ ^[1-9][0-9]*$ ]]; then
+            log_pass "Valid vm.max_parallel_agents: $agents"
+        else
+            log_error "Invalid vm.max_parallel_agents: $agents (must be a positive integer >= 1)"
+        fi
+    fi
+
+    # Unknown keys are almost certainly typos — the preflight advisor silently
+    # falls back to 1 parallel agent when the key it expects is absent
+    local known_keys=" max_parallel_agents "
+    local key
+    while IFS= read -r key; do
+        [[ -z "$key" ]] && continue
+        if [[ "$known_keys" != *" $key "* ]]; then
+            log_warn "Unknown key vm.${key} (known keys: max_parallel_agents)"
+        fi
+    done < <(yq -r '.vm | keys | .[]' "$config_file" 2>/dev/null || true)
 
     return 0
 }

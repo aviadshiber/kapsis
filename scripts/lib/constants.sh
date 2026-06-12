@@ -437,3 +437,32 @@ readonly KAPSIS_DEFAULT_DIR_WARN_SIZE_GB=50
 
 # Prevent macOS from sleeping while an agent is running
 readonly KAPSIS_DEFAULT_PREVENT_SLEEP=true
+
+#===============================================================================
+# VM MEMORY SIZING (Issue #377)
+#
+# Preflight advisor thresholds for macOS Podman VM memory sizing.
+# When the VM is under-allocated the AVF virtio-fs cache-coherency race window
+# (Apple FB16008360) widens, increasing mount_failure (exit_code=4) frequency.
+# Override each constant via the corresponding KAPSIS_VM_* environment variable.
+#===============================================================================
+
+# VM base memory overhead (GB) — VM OS + Podman daemon + fuse-overlayfs baseline
+readonly KAPSIS_DEFAULT_VM_BASE_MEMORY_GB=2
+
+# Additional memory per parallel agent (GB) — covers agent process + toolchain heap
+readonly KAPSIS_DEFAULT_VM_PER_AGENT_MEMORY_GB=3
+
+# Maximum VM:host RAM ratio (percent) above which the AVF helper becomes jetsam's
+# primary target, amplifying the virtio-fs cache race window.
+readonly KAPSIS_DEFAULT_VM_MAX_HOST_PCT=80
+
+# Swap usage above this threshold (percent of total swap) indicates elevated
+# host memory pressure — the main amplifier of the AVF virtio-fs bug class.
+readonly KAPSIS_DEFAULT_VM_SWAP_WARN_PCT=50
+
+# Ignore the swap-percentage signal while absolute swap usage is below this
+# floor (MB). macOS allocates small dynamic swapfiles even when memory
+# pressure is benign — a tiny swap file at a high used-percentage is noise,
+# not a thrashing host.
+readonly KAPSIS_DEFAULT_VM_SWAP_FLOOR_MB=512
