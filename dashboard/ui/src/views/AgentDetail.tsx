@@ -303,7 +303,7 @@ function ConversationTab({ agentId }: { agentId: string }) {
   if (data.empty) {
     return (
       <div className="banner">
-        No conversation transcript captured for this agent. Kapsis provisions the directory but only populates it when the agent CLI (Claude Code / Codex) is configured to write transcripts there.
+        No conversation transcript captured for this agent yet. Kapsis writes transcript.txt (the captured container output) here when the agent session ends — an empty directory usually means the agent is still running or produced no output.
       </div>
     );
   }
