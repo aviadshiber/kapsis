@@ -44,7 +44,9 @@ The git workflow enables AI agents to push changes to branches for PR-based revi
 │  │ PHASE 4: AGENT EXITS → POST-EXIT GIT OPERATIONS                     │   │
 │  │                                                                     │   │
 │  │   if changes exist:                                                 │   │
-│  │       git add -A                                                    │   │
+│  │       strip Kapsis-injected blocks from CLAUDE.md / AGENTS.md       │   │
+│  │       git add (explicit paths; git add -A fallback)                 │   │
+│  │       unstage excluded + ephemeral files (commit-exclude patterns)  │   │
 │  │       git commit -m "feat: {task_summary}"                          │   │
 │  │       if --push specified:                                          │   │
 │  │           git push origin feature/DEV-123 --set-upstream            │   │
@@ -83,6 +85,34 @@ The git workflow enables AI agents to push changes to branches for PR-based revi
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+## Infrastructure Artifact Filtering (Issue #391)
+
+During container setup Kapsis writes a few files into the workspace to support the session. The post-exit pipeline removes these before anything is committed so they never land on the user's branch.
+
+### CLAUDE.md / AGENTS.md gist instructions
+
+`inject_gist_instructions()` appends a block of progress instructions to `CLAUDE.md` / `AGENTS.md`, bracketed by HTML-comment sentinels (invisible in rendered Markdown):
+
+```
+<!-- KAPSIS_GIST_BEGIN -->
+... gist instructions ...
+<!-- KAPSIS_GIST_END -->
+```
+
+Before staging, `strip_kapsis_injections()` in `post-container-git.sh` removes every sentinel-bracketed block. Content outside the markers is preserved verbatim, including any changes the agent made elsewhere in the file. Unbalanced markers (a `BEGIN` without `END`) leave the file unchanged with a warning.
+
+A legacy fallback strips pre-#391 blocks that used a bare `---` separator — only when the layout is unambiguous (no user content follows the block).
+
+### `.claude/settings.json`
+
+Mutated in-session by LSP/plugin hook injection. Added to `KAPSIS_DEFAULT_COMMIT_EXCLUDE` so it is unstaged before commit. Override with `KAPSIS_COMMIT_EXCLUDE` or extend with `KAPSIS_EXTRA_COMMIT_EXCLUDE`.
+
+### Maven plugin backups (`.mvn/*.bak2`, etc.)
+
+`KAPSIS_DEFAULT_EPHEMERAL_PATTERNS` includes `**/*.bak` and `**/.mvn/*.bak*`. These match `.mvn/extensions.xml.bak2` (and similar numbered suffixes) without over-matching names like `README.bakery.md`.
+
+The count of files that had injections stripped is reported in `status.json` as `stripped_injections` and shown in the dashboard.
 
 ## SSH Host Key Setup
 

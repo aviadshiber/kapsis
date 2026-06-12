@@ -42,6 +42,8 @@ export interface AgentStatus {
   commit_status: "success" | "failed" | "uncommitted" | "no_changes" | null;
   commit_sha: string | null;
   uncommitted_files: number;
+  /** Number of files that had Kapsis-injected gist blocks stripped before commit (Issue #391). */
+  stripped_injections?: number;
   heartbeat_at: string | null;
   error_type:
     | "agent_failure"

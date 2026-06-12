@@ -58,17 +58,156 @@ _pattern_to_regex() {
         # Directory-prefix: **/__pycache__/ matches src/__pycache__/foo.pyc
         local dir_name="${p#\*\*/}"
         dir_name="${dir_name%/}"
-        # Escape literal dots so they don't match any character in grep -E
+        # Escape dots; convert single glob * to [^/]* (no path-separator crossing)
         local escaped_dir="${dir_name//./\\.}"
+        escaped_dir="${escaped_dir//\*/[^/]*}"
         echo "(^|/)${escaped_dir}/"
     elif [[ "$p" == "**/"* ]]; then
         local base="${p#\*\*/}"
         local escaped_base="${base//./\\.}"
+        escaped_base="${escaped_base//\*/[^/]*}"
         echo "(^|/)${escaped_base}$"
     else
         local escaped_p="${p//./\\.}"
+        escaped_p="${escaped_p//\*/[^/]*}"
         echo "^${escaped_p}$"
     fi
+}
+
+#===============================================================================
+# STRIP KAPSIS INFRASTRUCTURE INJECTIONS (Issue #391)
+#
+# Removes Kapsis-injected gist-instruction blocks from CLAUDE.md and AGENTS.md
+# before staging so they never land on the user's branch.
+#
+# Handles two formats:
+#   Sentinel (current, ≥#391): block wrapped in KAPSIS_GIST_MARKER_BEGIN /
+#     KAPSIS_GIST_MARKER_END HTML comments (from constants.sh). Only the
+#     bracketed block is removed; all other content is preserved verbatim.
+#     Unbalanced markers (BEGIN without END) leave the file unchanged and log
+#     a warning so the user can investigate rather than getting a truncated file.
+#   Legacy (pre-#391): block appended with a bare "---" separator followed by
+#     the KAPSIS_GIST_LEGACY_HEADING. Only stripped when the heading appears
+#     after the last H1 in the file (unambiguous layout); ambiguous layouts are
+#     warned and skipped.
+#
+# On success, calls status_set_stripped_injections() with the count of files
+# that were modified.
+#
+# Returns: 0 always (strip failures are warnings, not fatal)
+#===============================================================================
+strip_kapsis_injections() {
+    local worktree_path="$1"
+
+    local begin_marker="${KAPSIS_GIST_MARKER_BEGIN:-<!-- KAPSIS_GIST_BEGIN -->}"
+    local end_marker="${KAPSIS_GIST_MARKER_END:-<!-- KAPSIS_GIST_END -->}"
+    local legacy_heading="${KAPSIS_GIST_LEGACY_HEADING:-# Kapsis Activity Gist}"
+
+    local stripped_count=0
+    local candidates=("CLAUDE.md" "AGENTS.md")
+
+    for fname in "${candidates[@]}"; do
+        local fpath="${worktree_path}/${fname}"
+        [[ -f "$fpath" ]] || continue
+        [[ -r "$fpath" && -w "$fpath" ]] || continue
+
+        local original
+        original=$(cat "$fpath")
+
+        # --- Sentinel format ---
+        if grep -qF "$begin_marker" "$fpath" 2>/dev/null; then
+            # Verify the closing marker also exists before touching the file
+            if ! grep -qF "$end_marker" "$fpath" 2>/dev/null; then
+                log_warn "strip_kapsis_injections: $fname has BEGIN sentinel but no END — skipping (manual cleanup needed)"
+                continue
+            fi
+
+            # Use awk to remove every BEGIN…END block (handles CRLF via gsub)
+            local stripped
+            stripped=$(awk -v begin="$begin_marker" -v end="$end_marker" '
+                BEGIN { inside=0 }
+                {
+                    # Normalise CRLF
+                    gsub(/\r$/, "")
+                    line = $0
+                    # Trim trailing whitespace for marker comparison only
+                    trimmed = line
+                    gsub(/[[:space:]]+$/, "", trimmed)
+                    if (trimmed == begin) { inside=1; next }
+                    if (inside && trimmed == end) { inside=0; next }
+                    if (!inside) print line
+                }
+            ' "$fpath")
+
+            # Also strip any blank line immediately before the first sentinel
+            # (inject_gist_instructions prefixes an empty line for visual spacing)
+            stripped=$(printf '%s' "$stripped" | sed -E 's/[[:space:]]+$//')
+            # Remove trailing blank lines that preceded the sentinel
+            stripped=$(printf '%s\n' "$stripped" | awk 'NR==1{p=$0;next}{print p; p=$0} END{printf "%s",p}' | sed -E '/^[[:space:]]*$/d' | awk 'NF{found=1} found{print}' | tac | awk 'NF{found=1} found{print}' | tac)
+
+            if [[ "$stripped" != "$original" ]]; then
+                printf '%s\n' "$stripped" > "$fpath"
+                log_info "strip_kapsis_injections: stripped sentinel block from $fname"
+                (( stripped_count++ )) || true
+            fi
+            continue
+        fi
+
+        # --- Legacy format (pre-#391): "---\n# Kapsis Activity Gist" at EOF ---
+        if grep -qF "$legacy_heading" "$fpath" 2>/dev/null; then
+            # Count H1 headings after the legacy heading position
+            local heading_line
+            heading_line=$(grep -n "^${legacy_heading}" "$fpath" 2>/dev/null | tail -1 | cut -d: -f1)
+            if [[ -z "$heading_line" ]]; then
+                continue
+            fi
+            # Check for any H1 heading AFTER the legacy heading — ambiguous layout
+            local total_lines
+            total_lines=$(wc -l < "$fpath" | tr -d ' ')
+            local after_count
+            after_count=$(awk -v start="$heading_line" 'NR > start && /^# / {count++} END {print count+0}' "$fpath")
+            if [[ "$after_count" -gt 0 ]]; then
+                log_warn "strip_kapsis_injections: $fname has ambiguous legacy gist block (user content after it) — skipping (manual cleanup needed)"
+                continue
+            fi
+
+            # Find the "---" separator line immediately before the heading
+            local sep_line=$(( heading_line - 1 ))
+            # Walk back past any blank lines
+            while [[ "$sep_line" -gt 0 ]]; do
+                local sep_content
+                sep_content=$(sed -n "${sep_line}p" "$fpath" | tr -d '\r')
+                if [[ "$sep_content" == "---" ]]; then
+                    break
+                elif [[ -z "${sep_content// /}" ]]; then
+                    (( sep_line-- )) || true
+                else
+                    sep_line=0  # no separator found
+                    break
+                fi
+            done
+
+            if [[ "$sep_line" -le 0 ]]; then
+                log_debug "strip_kapsis_injections: $fname has legacy heading but no preceding --- separator — skipping"
+                continue
+            fi
+
+            # Strip from the separator line to EOF, then trim trailing whitespace
+            local stripped
+            stripped=$(head -n $(( sep_line - 1 )) "$fpath" | sed -E 's/[[:space:]]+$//')
+            printf '%s\n' "$stripped" > "$fpath"
+            log_info "strip_kapsis_injections: stripped legacy gist block from $fname (separator at line $sep_line)"
+            (( stripped_count++ )) || true
+        fi
+    done
+
+    if [[ $stripped_count -gt 0 ]]; then
+        status_set_stripped_injections "$stripped_count" || true
+        log_success "strip_kapsis_injections: cleaned $stripped_count file(s)"
+    else
+        log_debug "strip_kapsis_injections: no Kapsis injection blocks found"
+    fi
+    return 0
 }
 
 #===============================================================================
@@ -187,8 +326,12 @@ validate_staged_files() {
     fi
 
     # Check for files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
-    # This prevents committing files like .gitignore that were modified by Kapsis
+    # KAPSIS_COMMIT_EXCLUDE replaces the default list wholesale.
+    # KAPSIS_EXTRA_COMMIT_EXCLUDE appends to the defaults without redeclaring them.
     local exclude_patterns="${KAPSIS_COMMIT_EXCLUDE:-$KAPSIS_DEFAULT_COMMIT_EXCLUDE}"
+    if [[ -n "${KAPSIS_EXTRA_COMMIT_EXCLUDE:-}" ]]; then
+        exclude_patterns+=$'\n'"${KAPSIS_EXTRA_COMMIT_EXCLUDE}"
+    fi
     if [[ -n "$exclude_patterns" ]] && [[ -n "$staged_files" ]]; then
         while IFS= read -r pattern; do
             [[ -z "$pattern" ]] && continue
@@ -356,6 +499,10 @@ commit_changes() {
     # Note: git read-tree HEAD for cache-tree rebuild is handled by
     # sync_index_from_container(). The duplicate here was removed in
     # #211 — it caused index inconsistency on large monorepos.
+
+    # Strip Kapsis-injected gist blocks from CLAUDE.md / AGENTS.md before staging
+    # so they never land on the user's branch (Issue #391).
+    strip_kapsis_injections "$worktree_path" || true
 
     # Stage changes: prefer explicit paths (targeted), fallback to git add -A (#211)
     # Uses cut -c4- to strip the 2-char status + space prefix from porcelain output,

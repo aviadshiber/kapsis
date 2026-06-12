@@ -1480,23 +1480,37 @@ Kapsis automatically prevents certain files from being committed. This addresses
 ### How It Works
 
 1. **Internal patterns** use `$GIT_DIR/info/exclude` (never committed, fully transparent)
-2. **Commit-time filtering** unstages files matching `KAPSIS_COMMIT_EXCLUDE` patterns before commit
+2. **Injection strip** removes Kapsis-injected gist blocks from `CLAUDE.md`/`AGENTS.md` before staging (Issue #391; see [GIT-WORKFLOW.md](GIT-WORKFLOW.md#infrastructure-artifact-filtering-issue-391))
+3. **Commit-time filtering** unstages files matching `KAPSIS_COMMIT_EXCLUDE` patterns before commit
 
 ### Default Excluded Patterns
 
 These files are automatically unstaged before commit:
 - `.gitignore` / `**/.gitignore` - Git ignore files
 - `.gitattributes` / `**/.gitattributes` - Git attributes files
+- `.claude/settings.json` / `**/.claude/settings.json` - Claude Code settings mutated by Kapsis LSP/plugin injection (Issue #391)
+
+### Ephemeral Artifact Patterns (non-overridable)
+
+Build/test artifacts unconditionally filtered from every sandbox commit:
+- `**/__pycache__/`, `**/.pytest_cache/` - Python caches
+- `.coverage` / `**/.coverage` - Coverage data
+- `**/*.bak` - Backup files (exact `.bak` suffix; `README.bakery.md` is NOT filtered)
+- `**/.mvn/*.bak*` - Maven plugin backups (`.bak2`, `.bak10`, …) inside `.mvn/` (Issue #391)
 
 ### Configuration
 
 **Via environment variable:**
 
 ```bash
-# Custom patterns (newline-separated)
+# Replace the default list wholesale (newline-separated)
 export KAPSIS_COMMIT_EXCLUDE=".gitignore
 **/.gitignore
 .env.local"
+
+# Or APPEND patterns without redeclaring the defaults
+export KAPSIS_EXTRA_COMMIT_EXCLUDE="**/*.secret
+deploy/credentials.yaml"
 
 ./scripts/launch-agent.sh ~/project --task "implement feature"
 ```
