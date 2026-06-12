@@ -52,10 +52,14 @@ readonly CONTAINER_STATUS_PATH="/kapsis-status"
 
 # Default patterns for files that should never be committed by Kapsis
 # These are typically config files that the sandbox may modify but shouldn't commit
+# Issue #391: .claude/settings.json is mutated by LSP/plugin injection during the
+# session; committing it would pollute the user's branch with agent-session config.
 readonly KAPSIS_DEFAULT_COMMIT_EXCLUDE=".gitignore
 **/.gitignore
 .gitattributes
-**/.gitattributes"
+**/.gitattributes
+.claude/settings.json
+**/.claude/settings.json"
 
 #===============================================================================
 # PUSH TIMEOUT (Issue #227)
@@ -82,7 +86,29 @@ readonly KAPSIS_DEFAULT_PUSH_TIMEOUT=60
 readonly KAPSIS_DEFAULT_EPHEMERAL_PATTERNS="**/__pycache__/
 **/.pytest_cache/
 .coverage
-**/.coverage"
+**/.coverage
+**/*.bak
+**/.mvn/*.bak*"
+
+#===============================================================================
+# GIST INJECTION SENTINELS (Issue #391)
+#
+# inject_gist_instructions() (scripts/lib/inject-status-hooks.sh) brackets the
+# block it appends to CLAUDE.md / AGENTS.md with these HTML-comment markers.
+# The markers are invisible in rendered Markdown. On the host, before staging,
+# strip_kapsis_injections() (scripts/post-container-git.sh) removes every
+# sentinel-bracketed block so gist instructions never land on user commits.
+#
+# Single source of truth — both files source this one. The marker text must
+# stay free of ERE metacharacters so the strip can use it verbatim in regexes.
+#===============================================================================
+
+readonly KAPSIS_GIST_MARKER_BEGIN="<!-- KAPSIS_GIST_BEGIN -->"
+readonly KAPSIS_GIST_MARKER_END="<!-- KAPSIS_GIST_END -->"
+
+# First heading of the legacy (pre-#391) gist block — used to detect and strip
+# older installs that used a bare "---" separator with no sentinel markers.
+readonly KAPSIS_GIST_LEGACY_HEADING="# Kapsis Activity Gist"
 
 #===============================================================================
 # NETWORK ISOLATION

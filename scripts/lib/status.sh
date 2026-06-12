@@ -67,6 +67,9 @@ _KAPSIS_COMMIT_SHA=""            # SHA of committed changes
 _KAPSIS_UNCOMMITTED_FILES=0      # Count of uncommitted files remaining
 _KAPSIS_PRE_COMMIT_SHA=""        # SHA before commit (to verify HEAD moved)
 
+# Kapsis injection strip state (Issue #391)
+_KAPSIS_STRIPPED_INJECTIONS=0    # Files with Kapsis-injected blocks stripped pre-commit
+
 # Agent gist state (agent-provided summary of current activity)
 _KAPSIS_GIST=""                  # Current gist message from agent
 _KAPSIS_GIST_UPDATED_AT=""       # When gist was last updated
@@ -433,6 +436,14 @@ status_set_error_type() {
     _KAPSIS_ERROR_TYPE="${1:-}"
 }
 
+# Record how many files had Kapsis-injected blocks stripped before commit.
+# Called by strip_kapsis_injections() in post-container-git.sh (Issue #391).
+# Arguments:
+#   $1 - Count of files stripped
+status_set_stripped_injections() {
+    _KAPSIS_STRIPPED_INJECTIONS="${1:-0}"
+}
+
 # =============================================================================
 # Agent Gist (Activity Summary)
 # =============================================================================
@@ -595,6 +606,9 @@ _status_write() {
 
     local uncommitted_files_json="${_KAPSIS_UNCOMMITTED_FILES:-0}"
 
+    # Kapsis injection strip field (Issue #391)
+    local stripped_injections_json="${_KAPSIS_STRIPPED_INJECTIONS:-0}"
+
     # Agent gist fields
     local gist_json="null"
     local gist_updated_at_json="null"
@@ -641,6 +655,7 @@ _status_write() {
   "commit_status": ${commit_status_json},
   "commit_sha": ${commit_sha_json},
   "uncommitted_files": ${uncommitted_files_json},
+  "stripped_injections": ${stripped_injections_json},
   "heartbeat_at": ${heartbeat_json},
   "error_type": ${error_type_json}
 }
