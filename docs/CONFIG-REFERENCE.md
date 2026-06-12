@@ -982,6 +982,49 @@ podman machine start
 # Re-run the agent
 ```
 
+## VM Memory Advisor (macOS)
+
+Preflight advisor for Podman VM memory sizing (Issue #377). macOS VM memory is set once at `podman machine init` and never revisited — an under-sized VM (or one consuming most of the host RAM) widens the AVF virtio-fs cache-coherency race window (Apple FB16008360) and increases `mount_failure` (exit code 4) frequency. Two warning-only checks run during preflight; neither blocks launch:
+
+1. **Sizing check** — warns when VM memory is below `base + per_agent × max_parallel_agents` (defaults: 2GB + 3GB × agents) and prints the exact `podman machine set --memory` remediation command
+2. **Jetsam check** — warns when the VM exceeds `KAPSIS_VM_MAX_HOST_PCT` (default 80%) of host RAM, which makes the AVF helper the top jetsam eviction candidate
+
+Both checks run independently — a VM can be simultaneously under-sized for the planned concurrency and over-sized for the host, and both warnings are reported together.
+
+A companion **host memory-pressure gate** warns when swap usage exceeds `KAPSIS_VM_SWAP_WARN_PCT` (default 50%) of total swap **and** absolute usage is at least `KAPSIS_VM_SWAP_FLOOR_MB` (default 512MB) — the floor prevents false positives from macOS's small dynamic swapfiles. On Linux both checks are silent no-ops (native Podman, no VM to size).
+
+### Configuration
+
+```yaml
+vm:
+  # Number of agents you intend to run in parallel on this machine (default: 1).
+  # Drives the recommended VM size: 2GB base + 3GB per agent.
+  max_parallel_agents: 1
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_MAX_PARALLEL_AGENTS` | — | Overrides `vm.max_parallel_agents` (env wins over YAML) |
+| `KAPSIS_VM_BASE_MEMORY_GB` | `2` | VM OS + Podman daemon baseline (GB) |
+| `KAPSIS_VM_PER_AGENT_MEMORY_GB` | `3` | Memory budget per parallel agent (GB) |
+| `KAPSIS_VM_MAX_HOST_PCT` | `80` | VM:host RAM percentage above which the jetsam warning fires |
+| `KAPSIS_VM_SWAP_WARN_PCT` | `50` | Swap-used percentage above which the pressure warning fires |
+| `KAPSIS_VM_SWAP_FLOOR_MB` | `512` | Absolute swap-used floor (MB); below it the percentage signal is ignored |
+
+Non-numeric values in these overrides are ignored with a logged warning and the built-in default is used. The Podman machine to inspect follows `KAPSIS_PODMAN_MACHINE` (see `docs/ARCHITECTURE.md`).
+
+### Remediation
+
+```bash
+podman machine stop podman-machine-default && \
+  podman machine set --memory 5120 podman-machine-default && \
+  podman machine start podman-machine-default
+```
+
+Resizing requires a VM restart, which kills in-flight agents — the preflight warning prints this command rather than auto-applying it.
+
 ## Example Configurations
 
 ### Minimal Configuration
