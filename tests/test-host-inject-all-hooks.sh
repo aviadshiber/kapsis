@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #===============================================================================
-# Integration tests: all injectable hooks fire correctly via settings.json
+# Tier 1 (host) test: all injectable hooks fire correctly via settings.json
 #
 # Covers every hook and settings injection path that Kapsis writes into
 # ~/.claude/settings.json inside a container:
@@ -14,17 +14,19 @@
 #       - PostToolUse: user-installed plugin commands
 #
 # Each test:
-#   1. Runs the real injection script(s)
+#   1. Sources the real injection script from the host source tree (fast, no container)
 #   2. Reads the resulting command / config from settings.json (as Claude Code
 #      does when loading its settings file)
 #   3. Executes or inspects it to verify end-to-end correctness
 #
-# Note: hooks are invoked directly (not via Claude Code). For tests that run
-# a real Claude Code process see test-e2e-claude-hooks.sh.
+# Renamed from test-integration-all-hooks.sh. Container-based counterpart that
+# exercises these same injectors from inside the packaged image lives in
+# test-container-all-hooks.sh; that test catches Containerfile COPY regressions
+# that this host-sourced test cannot detect.
 #
 # All tests are quick / no-container — suitable for QUICK_TESTS and CI.
 #
-# Run: ./tests/test-integration-all-hooks.sh
+# Run: ./tests/test-host-inject-all-hooks.sh
 #===============================================================================
 
 set -euo pipefail

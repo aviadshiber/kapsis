@@ -242,13 +242,13 @@ test_snapshot_file_preserves_permissions() {
 
 test_snapshot_file_fallback_on_failure() {
     log_test "_snapshot_file: falls back to original path when cp fails"
+
     # chmod 000 has no effect when running as root — the test would always
     # succeed in reading the file, making the fallback path unreachable.
-    # Documented in PR #307; skip rather than produce a false pass or hard fail.
-    if [[ "$(id -u)" == "0" ]]; then
-        log_skip "test_snapshot_file_fallback_on_failure: running as root — chmod 000 has no effect, skipping"
+    if ! skip_if_root; then
         return 0
     fi
+
     reset_snapshot_state
     _init_snapshot_dir
 

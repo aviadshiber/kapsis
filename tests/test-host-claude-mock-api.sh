@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #===============================================================================
-# Integration test: Claude Code dispatches Kapsis hooks via settings.json
-#                   (mock Anthropic API — no real credentials needed)
+# Tier 1 (host) test: Claude Code dispatches Kapsis hooks via settings.json
+#                     (mock Anthropic API — no real credentials needed)
 #
 # Starts a local mock API server that speaks the Anthropic streaming protocol
 # and returns a predictable Bash tool call. Claude Code executes the tool, which
@@ -12,13 +12,18 @@
 # It is therefore runnable in any CI environment after `npm install -g
 # @anthropic-ai/claude-code`.
 #
+# Sources inject scripts from the host source tree (fast, no container). Renamed
+# from test-integration-claude-hooks.sh. For tests that verify the Claude CLI
+# with real API credentials see test-host-claude-live-api.sh. For tests that
+# verify hook injection inside the container image see test-container-status-hooks.sh.
+#
 # Prerequisites:
 #   claude CLI  — must be installed (npm install -g @anthropic-ai/claude-code)
 #   python3     — standard library only, no pip deps
 #
 # Skips gracefully when prerequisites are absent.
 #
-# Run: ./tests/test-integration-claude-hooks.sh
+# Run: ./tests/test-host-claude-mock-api.sh
 #===============================================================================
 
 set -euo pipefail
