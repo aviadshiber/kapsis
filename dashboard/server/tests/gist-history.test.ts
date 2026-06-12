@@ -182,14 +182,16 @@ describe("GistHistoryStore.init from StatusStore", () => {
     await writeFile(path, JSON.stringify(statusFixture({
       agent_id: "qqq111", project: "demo", gist: "First", gist_updated_at: ISO(),
     })));
-    // Wait for debounce + watch + propagate.
-    for (let i = 0; i < 100; i++) {
+    // Wait for debounce + watch + propagate. fs.watch delivery on macOS can
+    // exceed bun's 5s default test timeout under CI load, so poll longer and
+    // give the test an explicit timeout.
+    for (let i = 0; i < 240; i++) {
       if (h.get("qqq111").length > 0) break;
       await Bun.sleep(50);
     }
     expect(h.get("qqq111").map((e) => e.gist)).toEqual(["First"]);
     h.close();
-  });
+  }, 20000);
 });
 
 describe("GistHistoryStore SSE publication", () => {
