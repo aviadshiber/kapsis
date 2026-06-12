@@ -102,7 +102,7 @@ kapsis/
 ├── tests/                      # 95 test files using tests/lib/test-framework.sh
 │   ├── run-all-tests.sh        # Test runner with category filtering
 │   └── test-*.sh               # Individual test scripts
-├── docs/                       # Extended documentation (15 guides + designs/)
+├── docs/                       # Extended documentation (18 guides + designs/)
 │   ├── designs/                # Design documents (agent-profiles-architecture.md)
 │   └── *.md                    # Reference guides (see Documentation Map below)
 ├── cmd/
@@ -153,6 +153,7 @@ kapsis/
 | Installation | `docs/INSTALL.md` |
 | Initial setup | `docs/SETUP.md` |
 | Logging & testing | `CONTRIBUTING.md` |
+| Testing guide (test tiers & conventions) | `docs/TESTING.md` |
 | Cleanup operations | `docs/CLEANUP.md` |
 | Test coverage analysis | `docs/TEST-COVERAGE-ANALYSIS.md` |
 | Security vulnerability scan | `docs/SECURITY-VULNERABILITY-SCAN.md` |

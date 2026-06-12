@@ -191,6 +191,7 @@ test_sync_index_cache_tree_rebuild() {
     git init -q
     git config user.email "test@test.com"
     git config user.name "Test"
+    git config commit.gpgsign false
     echo "content" > file.txt
     git add file.txt
     git commit -q -m "init"

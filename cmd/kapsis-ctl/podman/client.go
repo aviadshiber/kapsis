@@ -2,11 +2,15 @@
 
 // Package podman provides a minimal HTTP client for the Podman libpod REST API
 // over a Unix socket. It is intentionally stdlib-only and covers only the
-// read-only container query operations needed by Phase 1 of kapsis-ctl.
+// container query and management operations needed by kapsis-ctl.
 package podman
 
 import (
+	"archive/tar"
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,13 +29,26 @@ import (
 const apiVersion = "v5.0.0"
 
 // maxResponseBodyBytes caps response reads to guard against a runaway/malicious
-// Podman API sending an unbounded body that could OOM the host.
+// Podman API sending an unbounded body that could OOM the host. It applies to
+// JSON responses (inspect, list) and error bodies — NOT to the cp tar stream,
+// which is bounded by maxExtractBytes instead.
 const maxResponseBodyBytes = 16 * 1024 * 1024 // 16 MB
+
+// maxExtractBytes caps the total payload bytes extractTar writes to disk.
+// The cap is enforced on decompressed entry payloads, so it also bounds gzip
+// decompression bombs (a small compressed body cannot expand without limit).
+// Declared as a variable so tests can lower it.
+var maxExtractBytes int64 = 10 << 30 // 10 GiB
 
 // ErrNotFound is returned by Inspect (and transitively by Alive) when the
 // named container does not exist. Use errors.Is to distinguish it from other
 // errors such as a broken socket connection.
 var ErrNotFound = errors.New("container not found")
+
+// ErrAlreadyStopped is returned by Stop when the container was not running
+// (Podman returns HTTP 304 Not Modified). Callers should usually treat this as
+// success.
+var ErrAlreadyStopped = errors.New("container already stopped")
 
 // nameRE validates container names: alphanumeric, dash, dot, underscore, max 253 chars.
 // This prevents path traversal and HTTP request smuggling when the name is
@@ -62,6 +79,7 @@ type ContainerInfo struct {
 	Pid     int               `json:"pid,omitempty"`
 	Created string            `json:"created"`
 	Image   string            `json:"image"`
+	Tty     bool              `json:"tty"`
 	Labels  map[string]string `json:"labels,omitempty"`
 }
 
@@ -218,6 +236,20 @@ func ValidateFilters(filters map[string][]string) error {
 	return nil
 }
 
+// validateContainerPath rejects paths that contain null bytes or line-ending
+// characters, which would corrupt the URL query parameter.
+func validateContainerPath(p string) error {
+	if p == "" {
+		return fmt.Errorf("container path is empty")
+	}
+	for _, c := range p {
+		if c == '\x00' || c == '\r' || c == '\n' {
+			return fmt.Errorf("container path %q contains invalid character (%U)", p, c)
+		}
+	}
+	return nil
+}
+
 // Inspect returns normalised information about a single container.
 // Returns ErrNotFound (wrapped) when the container does not exist.
 func (c *Client) Inspect(ctx context.Context, name string) (*ContainerInfo, error) {
@@ -249,6 +281,7 @@ func (c *Client) Inspect(ctx context.Context, name string) (*ContainerInfo, erro
 		Created string `json:"Created"`
 		Image   string `json:"Image"`
 		Config  struct {
+			Tty    bool              `json:"Tty"`
 			Labels map[string]string `json:"Labels"`
 			// Env intentionally omitted — may contain API keys and tokens.
 		} `json:"Config"`
@@ -264,6 +297,7 @@ func (c *Client) Inspect(ctx context.Context, name string) (*ContainerInfo, erro
 		Pid:     raw.State.Pid,
 		Created: raw.Created,
 		Image:   raw.Image,
+		Tty:     raw.Config.Tty,
 		Labels:  raw.Config.Labels,
 	}, nil
 }
@@ -348,10 +382,311 @@ func (c *Client) Alive(ctx context.Context, name string) (bool, error) {
 	return aliveStates[info.State], nil
 }
 
-func (c *Client) get(ctx context.Context, rawURL string) (*http.Response, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
+// Stop gracefully stops the named container. Podman sends SIGTERM and waits
+// up to timeout seconds before sending SIGKILL — the server handles the
+// escalation. Pass timeout < 0 to use the server default (10 s).
+//
+// Returns nil on success (204 Stopped). Returns ErrAlreadyStopped when the
+// container was not running (304 Not Modified); callers should usually treat
+// this as success. Returns ErrNotFound (wrapped) when no container with that
+// name exists.
+func (c *Client) Stop(ctx context.Context, name string, timeout int) error {
+	if err := ValidateName(name); err != nil {
+		return err
+	}
+	u := fmt.Sprintf("%s/containers/%s/stop", c.baseURL, url.PathEscape(name))
+	if timeout >= 0 {
+		u += fmt.Sprintf("?t=%d", timeout)
+	}
+	resp, err := c.doRequest(ctx, http.MethodPost, u)
 	if err != nil {
-		return nil, fmt.Errorf("building request for %s: %w", rawURL, err)
+		return fmt.Errorf("stop %s: %w", name, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	switch resp.StatusCode {
+	case http.StatusNoContent: // 204 — stopped
+		return nil
+	case http.StatusNotModified: // 304 — already stopped
+		return ErrAlreadyStopped
+	case http.StatusNotFound: // 404
+		return fmt.Errorf("%w: %s", ErrNotFound, name)
+	default:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("podman stop returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+}
+
+// LogsOptions controls which log content is returned by Logs.
+type LogsOptions struct {
+	Follow bool   // stream new lines until the container exits
+	Stdout bool   // include stdout frames
+	Stderr bool   // include stderr frames
+	Tail   int    // last N lines; 0 = all
+	Since  string // RFC3339 timestamp or relative duration (e.g. "5m"); empty = beginning
+}
+
+// Logs returns an io.ReadCloser that streams log content from the container.
+//
+// For non-TTY containers the stream uses Docker's multiplexed-frame format:
+// each frame is prefixed with an 8-byte header —
+// [stream_type(1B)][pad(3B)][size(4B big-endian)] — followed by the payload.
+// stream_type 1 = stdout, 2 = stderr. Use DemuxLogs to route frames by stream.
+//
+// For TTY containers (launched with --tty) the stream is raw bytes; all output
+// goes to a single stream without framing. The standard kapsis agent run does
+// not use --tty, so multiplexed format is the common case.
+//
+// The caller must close the returned ReadCloser.
+func (c *Client) Logs(ctx context.Context, name string, opts LogsOptions) (io.ReadCloser, error) {
+	if err := ValidateName(name); err != nil {
+		return nil, err
+	}
+	params := url.Values{}
+	if opts.Follow {
+		params.Set("follow", "true")
+	}
+	if opts.Stdout {
+		params.Set("stdout", "true")
+	}
+	if opts.Stderr {
+		params.Set("stderr", "true")
+	}
+	if opts.Tail > 0 {
+		params.Set("tail", fmt.Sprintf("%d", opts.Tail))
+	}
+	if opts.Since != "" {
+		params.Set("since", opts.Since)
+	}
+	u := fmt.Sprintf("%s/containers/%s/logs", c.baseURL, url.PathEscape(name))
+	if len(params) > 0 {
+		u += "?" + params.Encode()
+	}
+	resp, err := c.doRequest(ctx, http.MethodGet, u)
+	if err != nil {
+		return nil, fmt.Errorf("logs %s: %w", name, err)
+	}
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return resp.Body, nil
+	case http.StatusNotFound:
+		resp.Body.Close() //nolint:errcheck
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, name)
+	default:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		resp.Body.Close() //nolint:errcheck
+		return nil, fmt.Errorf("podman logs returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+}
+
+// DemuxLogs reads Docker's multiplexed log stream from r and routes stdout
+// frames (stream_type=1) to out and stderr frames (stream_type=2) to errOut.
+// Frames with other stream types are silently discarded. Returns nil on clean
+// EOF; a truncated frame header is also treated as EOF.
+//
+// This format is used by non-TTY containers. For TTY containers (raw bytes),
+// the caller should copy r directly to out.
+func DemuxLogs(r io.Reader, out, errOut io.Writer) error {
+	hdr := make([]byte, 8)
+	for {
+		if _, err := io.ReadFull(r, hdr); err != nil {
+			// errors.Is rather than == so a wrapping intermediary (gzip,
+			// HTTP body decoder) cannot defeat the clean-EOF detection.
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				return nil
+			}
+			return fmt.Errorf("reading log frame header: %w", err)
+		}
+		streamType := hdr[0]
+		frameSize := binary.BigEndian.Uint32(hdr[4:8])
+
+		var dst io.Writer
+		switch streamType {
+		case 1:
+			dst = out
+		case 2:
+			dst = errOut
+		default:
+			dst = io.Discard
+		}
+		if _, err := io.Copy(dst, io.LimitReader(r, int64(frameSize))); err != nil {
+			return fmt.Errorf("reading log frame payload: %w", err)
+		}
+	}
+}
+
+// CopyFromContainer extracts the file or directory at containerPath from the
+// named container and writes it under hostDest. Podman returns a tar archive
+// (raw or gzip-compressed); regular files and directories are extracted with
+// their original permission bits (setuid/setgid/sticky are never restored).
+// Unsupported entry types (symlinks, hardlinks, devices, FIFOs) are skipped
+// with a warning on stderr. Parent directories in hostDest are created as
+// needed.
+//
+// Security: extracted paths are validated to prevent zip-slip attacks.
+// Absolute tar entry paths and entries that resolve outside hostDest are
+// rejected. Total extracted payload bytes are capped post-decompression
+// (maxExtractBytes) to bound runaway streams and decompression bombs.
+func (c *Client) CopyFromContainer(ctx context.Context, name, containerPath, hostDest string) error {
+	if err := ValidateName(name); err != nil {
+		return err
+	}
+	if err := validateContainerPath(containerPath); err != nil {
+		return err
+	}
+	u := fmt.Sprintf("%s/containers/%s/archive?path=%s",
+		c.baseURL,
+		url.PathEscape(name),
+		url.QueryEscape(containerPath),
+	)
+	resp, err := c.doRequest(ctx, http.MethodGet, u)
+	if err != nil {
+		return fmt.Errorf("cp %s:%s: %w", name, containerPath, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return fmt.Errorf("%w: %s", ErrNotFound, name)
+	default:
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+		return fmt.Errorf("podman archive returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
+	}
+	// No LimitReader here: a tar stream of a large directory may legitimately
+	// exceed the 16 MB JSON cap, and a pre-decompression cap would not bound
+	// gzip bombs anyway. extractTar enforces maxExtractBytes on the
+	// decompressed payload instead.
+	return extractTar(resp.Body, hostDest, os.Stderr)
+}
+
+// extractTar unpacks a tar archive (raw or gzip-compressed) under destDir,
+// creating destDir if it does not exist. Unsupported entry types (symlinks,
+// hardlinks, devices, FIFOs) are skipped with a warning written to warnW so
+// the caller knows the copy is incomplete.
+//
+// Modes: files are created 0o600 and directories 0o700 during extraction so
+// the extractor can always write into what it just created, then os.Chmod
+// restores the archive's permission bits (masked to 0o777). Directory modes
+// are applied after all entries are extracted — a read-only directory entry
+// must not prevent extraction of the files inside it.
+func extractTar(r io.Reader, destDir string, warnW io.Writer) error {
+	if err := os.MkdirAll(destDir, 0o750); err != nil {
+		return fmt.Errorf("creating destination directory: %w", err)
+	}
+
+	// Peek at the first two bytes to detect gzip magic (0x1f 0x8b).
+	buf := make([]byte, 2)
+	n, err := io.ReadFull(r, buf)
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return fmt.Errorf("reading archive header: %w", err)
+	}
+	combined := io.MultiReader(bytes.NewReader(buf[:n]), r)
+
+	var tr *tar.Reader
+	if n == 2 && buf[0] == 0x1f && buf[1] == 0x8b {
+		gr, err := gzip.NewReader(combined)
+		if err != nil {
+			return fmt.Errorf("decompressing archive: %w", err)
+		}
+		defer gr.Close() //nolint:errcheck
+		tr = tar.NewReader(gr)
+	} else {
+		tr = tar.NewReader(combined)
+	}
+
+	destDir = filepath.Clean(destDir)
+	prefix := destDir + string(os.PathSeparator)
+
+	// Directory modes are restored after the loop (see doc comment); chmod in
+	// reverse encounter order so children — which tar lists after their
+	// parents — are restored before a parent potentially loses search/write
+	// permission.
+	type dirMode struct {
+		path string
+		mode os.FileMode
+	}
+	var dirModes []dirMode
+	var written int64 // total payload bytes written, checked against maxExtractBytes
+
+	for {
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("reading tar entry: %w", err)
+		}
+
+		// Reject absolute paths (zip-slip class 1).
+		if filepath.IsAbs(hdr.Name) {
+			return fmt.Errorf("archive entry %q has absolute path; rejected", hdr.Name)
+		}
+		target := filepath.Clean(filepath.Join(destDir, hdr.Name))
+		// Reject paths that resolve outside destDir (zip-slip class 2).
+		if target != destDir && !strings.HasPrefix(target+string(os.PathSeparator), prefix) {
+			return fmt.Errorf("archive entry %q would escape destination; rejected (zip-slip)", hdr.Name)
+		}
+
+		mode := os.FileMode(hdr.Mode) & 0o777
+
+		switch hdr.Typeflag {
+		case tar.TypeDir:
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				return fmt.Errorf("creating directory %s: %w", target, err)
+			}
+			dirModes = append(dirModes, dirMode{path: target, mode: mode})
+		case tar.TypeReg:
+			if hdr.Size < 0 || hdr.Size > maxExtractBytes-written {
+				return fmt.Errorf("archive entry %q would exceed the %d-byte extraction limit; rejected",
+					hdr.Name, maxExtractBytes)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o750); err != nil {
+				return fmt.Errorf("creating parent of %s: %w", target, err)
+			}
+			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+			if err != nil {
+				return fmt.Errorf("creating %s: %w", target, err)
+			}
+			// tar.Reader caps each entry's read at hdr.Size, which was
+			// checked against the extraction limit above.
+			nw, err := io.Copy(f, tr)
+			written += nw
+			if err != nil {
+				f.Close() //nolint:errcheck
+				return fmt.Errorf("writing %s: %w", target, err)
+			}
+			if err := f.Close(); err != nil {
+				return fmt.Errorf("closing %s: %w", target, err)
+			}
+			if err := os.Chmod(target, mode); err != nil {
+				return fmt.Errorf("setting mode of %s: %w", target, err)
+			}
+		default:
+			// Symlinks, hardlinks, devices, FIFOs are out of scope for
+			// Phase 2. Do NOT add link extraction here without validating
+			// hdr.Linkname — the zip-slip checks above only cover hdr.Name,
+			// and an unvalidated link target enables write-through-link
+			// escapes. Warn so the caller knows the copy is incomplete.
+			fmt.Fprintf(warnW, "warning: skipping unsupported archive entry %q (typeflag %q)\n",
+				hdr.Name, hdr.Typeflag)
+		}
+	}
+
+	for i := len(dirModes) - 1; i >= 0; i-- {
+		if err := os.Chmod(dirModes[i].path, dirModes[i].mode); err != nil {
+			return fmt.Errorf("setting mode of %s: %w", dirModes[i].path, err)
+		}
+	}
+	return nil
+}
+
+func (c *Client) doRequest(ctx context.Context, method, rawURL string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, method, rawURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("building %s request for %s: %w", method, rawURL, err)
 	}
 	return c.http.Do(req)
+}
+
+func (c *Client) get(ctx context.Context, rawURL string) (*http.Response, error) {
+	return c.doRequest(ctx, http.MethodGet, rawURL)
 }

@@ -33,6 +33,7 @@ run_workflow() {
         # Configure git
         git config user.email 'kapsis@test.com'
         git config user.name 'Kapsis Agent'
+        git config commit.gpgsign false
 
         # Create branch
         git checkout -b \"$branch\" 2>/dev/null || git checkout \"$branch\"
@@ -100,6 +101,7 @@ test_workflow_commits_changes() {
         cd /workspace
         git config user.email 'test@test.com'
         git config user.name 'Test'
+        git config commit.gpgsign false
         git checkout -b feature/commit-test
         echo 'change' > change.txt
         git add change.txt
