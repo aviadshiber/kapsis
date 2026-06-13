@@ -346,7 +346,6 @@ inject_gist_instructions() {
 
     log_info "Injecting gist instructions (workspace: $workspace)"
 
-    local marker="Kapsis Activity Gist"
     local injected=false
     local rendered
     rendered=$(render_gist_instructions "$gist_instructions") || {
@@ -354,46 +353,34 @@ inject_gist_instructions() {
         return 0
     }
 
-    # Append to CLAUDE.md if it exists (for Claude Code)
-    local claude_md="${workspace}/CLAUDE.md"
-    if [[ -f "$claude_md" ]]; then
-        if [[ ! -w "$claude_md" ]]; then
-            log_warn "$claude_md is not writable -- skipping gist append"
-        elif ! grep -q "$marker" "$claude_md" 2>/dev/null; then
-            {
-                echo ""
-                echo "---"
-                echo ""
-                echo "$rendered"
-            } >> "$claude_md"
-            log_debug "Gist instructions appended to $claude_md"
-            injected=true
-        fi
+    # Issue #391: write to .kapsis/CLAUDE.md (gitignored by info/exclude and
+    # KAPSIS_GIT_EXCLUDE_PATTERNS) instead of the workspace-root CLAUDE.md.
+    # Claude Code auto-reads all CLAUDE.md files in the project tree, including
+    # subdirectories, so .kapsis/CLAUDE.md is visible to the agent at startup.
+    # Writing to .kapsis/ prevents this infrastructure block from ever being
+    # staged or committed to the user's branch.
+    local kapsis_claude_md="${kapsis_dir}/CLAUDE.md"
+    if printf '%s\n' "$rendered" > "$kapsis_claude_md" 2>/dev/null; then
+        log_debug "Gist instructions written to $kapsis_claude_md"
+        injected=true
+    else
+        log_warn "Could not write $kapsis_claude_md -- skipping"
     fi
 
-    # Append to AGENTS.md if it exists (for Gemini CLI, Codex CLI)
-    local agents_md="${workspace}/AGENTS.md"
-    if [[ -f "$agents_md" ]]; then
-        if [[ ! -w "$agents_md" ]]; then
-            log_warn "$agents_md is not writable -- skipping gist append"
-        elif ! grep -q "$marker" "$agents_md" 2>/dev/null; then
-            {
-                echo ""
-                echo "---"
-                echo ""
-                echo "$rendered"
-            } >> "$agents_md"
-            log_debug "Gist instructions appended to $agents_md"
-            injected=true
-        fi
+    # Write to .kapsis/AGENTS.md for Gemini CLI and Codex CLI (issue #391).
+    # Both agents auto-read AGENTS.md files from subdirectories.
+    local kapsis_agents_md="${kapsis_dir}/AGENTS.md"
+    if printf '%s\n' "$rendered" > "$kapsis_agents_md" 2>/dev/null; then
+        log_debug "Gist instructions written to $kapsis_agents_md"
+    else
+        log_warn "Could not write $kapsis_agents_md -- skipping"
     fi
 
-    # Always create .kapsis/README.md as fallback for agents that explore workspace
+    # .kapsis/README.md as additional fallback for agents that explore the workspace
     local kapsis_readme="${kapsis_dir}/README.md"
     if [[ ! -f "$kapsis_readme" ]]; then
         if printf '%s\n' "$rendered" > "$kapsis_readme" 2>/dev/null; then
             log_debug "Gist instructions placed in $kapsis_readme"
-            injected=true
         else
             log_warn "Could not write $kapsis_readme -- skipping"
         fi

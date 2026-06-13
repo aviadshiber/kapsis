@@ -164,6 +164,24 @@ validate_staged_files() {
     local staged_files
     staged_files=$(git diff --cached --name-only 2>/dev/null || true)
 
+    # Issue #391: filter .bak* backup files left by tool setup (e.g. sed -i.bak,
+    # Maven extensions.xml.bak2). These are never intentional deliverables.
+    # Uses a direct regex rather than _pattern_to_regex because that helper does
+    # not support wildcard prefixes (*.bak* would produce invalid grep regex).
+    if [[ -n "$staged_files" ]]; then
+        local bak_files
+        bak_files=$(echo "$staged_files" | grep -E '\.bak[0-9]*$' || true)
+        if [[ -n "$bak_files" ]]; then
+            log_info "Found staged backup files (.bak*):"
+            while IFS= read -r f; do
+                [[ -z "$f" ]] && continue
+                log_info "  - $f (tool setup backup, Kapsis artifact)"
+                suspicious_files+=("$f")
+            done <<< "$bak_files"
+            has_filter_issues=1
+        fi
+    fi
+
     # --- Ephemeral artifact patterns (built-in, non-overridable) ---
     # These are test/build artifacts that are never legitimate to commit.
     local ephemeral_patterns="${KAPSIS_DEFAULT_EPHEMERAL_PATTERNS:-}"
