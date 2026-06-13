@@ -384,6 +384,25 @@ validate_launch_config() {
         fi
     fi
 
+    # Validate security.seccomp.allow_userns if present. Opt out of the default
+    # user-namespace + mount-escalation seccomp denial (CVE-2022-0185 class).
+    # Only for workloads that genuinely need nested userns/mounts (nested
+    # containers, bubblewrap, Chromium sandbox). Maps to KAPSIS_ALLOW_USERNS.
+    #
+    # NOTE: extract via `if has(...) then ... else "<absent>"` rather than the
+    # `// "null"` alternative operator — jq treats boolean `false` as falsy, so
+    # `false // "null"` wrongly yields "null" and an explicit `false` would be
+    # skipped. The has()-guard distinguishes "absent" from an explicit false.
+    local allow_userns
+    allow_userns=$(yq -r 'if (.security.seccomp | type == "object") and (.security.seccomp | has("allow_userns")) then (.security.seccomp.allow_userns | tostring) else "<absent>" end' "$config_file" 2>/dev/null)
+    if [[ "$allow_userns" != "<absent>" ]]; then
+        if [[ "$allow_userns" == "true" || "$allow_userns" == "false" ]]; then
+            log_pass "Valid security.seccomp.allow_userns: $allow_userns"
+        else
+            log_error "Invalid security.seccomp.allow_userns: $allow_userns (must be true/false)"
+        fi
+    fi
+
     # Validate lsp_servers if present
     validate_lsp_config "$config_file"
 
