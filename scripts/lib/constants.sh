@@ -52,10 +52,19 @@ readonly CONTAINER_STATUS_PATH="/kapsis-status"
 
 # Default patterns for files that should never be committed by Kapsis
 # These are typically config files that the sandbox may modify but shouldn't commit
+# Issue #391: added .claude/settings.json.
+# .claude/settings.json — Kapsis injects status hooks and attribution into this
+# tracked file via inject-status-hooks.sh. info/exclude covers the untracked
+# case; COMMIT_EXCLUDE is the fallback when the file is already tracked.
+# MCP server config belongs in .claude.json, not settings.json, so excluding
+# this rarely suppresses legitimate agent work.
+# Note: .bak* files are filtered via a hardcoded check in validate_staged_files()
+# because _pattern_to_regex() does not support wildcard prefixes (e.g. *.bak*).
 readonly KAPSIS_DEFAULT_COMMIT_EXCLUDE=".gitignore
 **/.gitignore
 .gitattributes
-**/.gitattributes"
+**/.gitattributes
+**/.claude/settings.json"
 
 #===============================================================================
 # PUSH TIMEOUT (Issue #227)
@@ -163,7 +172,10 @@ readonly KAPSIS_GIT_EXCLUDE_PATTERNS="# Kapsis internal files
 # Anchored at the worktree root because these are bind-mounts at /workspace/.
 # Regression guard for products PR #102836 (committed entire object DB).
 /.git-safe/
-/.git-objects/"
+/.git-objects/
+
+# Tool setup backup files (issue #391: e.g. .mvn/extensions.xml.bak2 from sed -i.bak)
+*.bak*"
 
 #===============================================================================
 # SECRET STORE INJECTION
