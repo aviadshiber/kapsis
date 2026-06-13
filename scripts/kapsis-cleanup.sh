@@ -885,8 +885,10 @@ clean_conversations() {
 
     for conv_dir in "$CONVERSATIONS_DIR"/*/; do
         [[ -d "$conv_dir" ]] || continue
-        # Security: skip symlinks to prevent following attacks (see clean_sandboxes).
-        [[ -L "$conv_dir" ]] && continue
+        # Security: skip symlinked entries to prevent following attacks (see
+        # clean_sandboxes). The glob above yields trailing-slash paths and
+        # [[ -L "path/" ]] follows the link (always false), so strip the slash.
+        [[ -L "${conv_dir%/}" ]] && continue
         local name
         name=$(basename "$conv_dir")
 
