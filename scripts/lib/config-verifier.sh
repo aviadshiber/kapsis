@@ -389,13 +389,16 @@ validate_launch_config() {
     # Only for workloads that genuinely need nested userns/mounts (nested
     # containers, bubblewrap, Chromium sandbox). Maps to KAPSIS_ALLOW_USERNS.
     #
-    # NOTE: extract via `if has(...) then ... else "<absent>"` rather than the
-    # `// "null"` alternative operator — jq treats boolean `false` as falsy, so
-    # `false // "null"` wrongly yields "null" and an explicit `false` would be
-    # skipped. The has()-guard distinguishes "absent" from an explicit false.
+    # Use plain-path access (NOT `// "null"`): the alternative operator treats
+    # boolean `false` as empty, so `false // "null"` would mask an explicit
+    # `false`. Plain `.a.b.c` instead yields "null" only when truly absent,
+    # "true"/"false" when set. Avoid `has()`/`type` — mikefarah yq (CI) errors
+    # on `has()` against an absent (null) parent, which under `set -e` aborts
+    # the whole verifier with no diagnostic. The `|| echo null` keeps the
+    # command substitution non-fatal if yq errors (e.g. malformed nesting).
     local allow_userns
-    allow_userns=$(yq -r 'if (.security.seccomp | type == "object") and (.security.seccomp | has("allow_userns")) then (.security.seccomp.allow_userns | tostring) else "<absent>" end' "$config_file" 2>/dev/null)
-    if [[ "$allow_userns" != "<absent>" ]]; then
+    allow_userns=$(yq -r '.security.seccomp.allow_userns' "$config_file" 2>/dev/null || echo "null")
+    if [[ "$allow_userns" != "null" && -n "$allow_userns" ]]; then
         if [[ "$allow_userns" == "true" || "$allow_userns" == "false" ]]; then
             log_pass "Valid security.seccomp.allow_userns: $allow_userns"
         else
