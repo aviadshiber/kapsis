@@ -212,8 +212,9 @@ test_macos_dry_run_skips_podman() {
 
     assert_equals "" "$(_podman_calls)" \
         "dry-run must not create/inspect volumes or run helper containers"
-    assert_contains "${VOLUME_MOUNTS[*]}" ":O,upperdir=/dry-run/volumes/${OVERLAY_VOLUME}/_data/upper" \
-        "dry-run must render the :O mount with the placeholder mountpoint"
+    local placeholder="/dry-run/volumes/${OVERLAY_VOLUME}/_data"
+    assert_contains "${VOLUME_MOUNTS[*]}" ":O,upperdir=${placeholder}/upper,workdir=${placeholder}/work" \
+        "dry-run must render the full :O mount with placeholder upperdir and workdir"
 
     _teardown
 }
@@ -272,6 +273,12 @@ test_macos_upper_work_precreated_in_volume() {
         "helper must bypass the image entrypoint (podman-health.sh probe pattern)"
     assert_contains "$(_podman_calls)" "--cap-drop=ALL" \
         "helper container must itself run fully cap-dropped"
+    assert_contains "$(_podman_calls)" "--security-opt=no-new-privileges" \
+        "helper container must block privilege escalation"
+    assert_contains "$(_podman_calls)" "--read-only" \
+        "helper container root filesystem must be read-only"
+    assert_contains "$(_podman_calls)" "--network=none" \
+        "helper container must have no network access"
     assert_contains "$(_podman_calls)" "kapsis-test-image:latest" \
         "helper must reuse the already-present sandbox image (IMAGE_NAME)"
 
@@ -283,6 +290,7 @@ test_macos_volume_prep_failure_returns_mount_failure() {
     _setup
     _IS_MACOS_OVERRIDE="true"
     # Override stub: the mkdir helper run fails.
+    # shellcheck disable=SC2329  # inner stub shadows global; called by setup_overlay_sandbox
     podman() {
         printf 'podman %s\n' "$*" >> "$_PODMAN_CALLS_FILE"
         case "${1:-} ${2:-}" in
@@ -298,6 +306,53 @@ test_macos_volume_prep_failure_returns_mount_failure() {
     setup_overlay_sandbox || rc=$?
     assert_equals "${KAPSIS_EXIT_MOUNT_FAILURE:-4}" "$rc" \
         "volume preparation failure must surface through the mount_failure path (exit 4)"
+
+    _restore_podman_stub
+    _teardown
+}
+
+test_macos_volume_create_failure_returns_mount_failure() {
+    log_test "macOS: podman volume create failure bubbles up as KAPSIS_EXIT_MOUNT_FAILURE (4)"
+    _setup
+    _IS_MACOS_OVERRIDE="true"
+    # shellcheck disable=SC2329  # inner stub shadows global; called by setup_overlay_sandbox
+    podman() {
+        printf 'podman %s\n' "$*" >> "$_PODMAN_CALLS_FILE"
+        case "${1:-} ${2:-}" in
+            "volume exists")  return 1 ;;       # no stale volume
+            "volume create")  return 1 ;;       # creation fails
+        esac
+        return 0
+    }
+
+    local rc=0
+    setup_overlay_sandbox || rc=$?
+    assert_equals "${KAPSIS_EXIT_MOUNT_FAILURE:-4}" "$rc" \
+        "volume create failure must surface as mount_failure (exit 4)"
+
+    _restore_podman_stub
+    _teardown
+}
+
+test_macos_volume_inspect_empty_returns_mount_failure() {
+    log_test "macOS: empty podman volume inspect output bubbles up as KAPSIS_EXIT_MOUNT_FAILURE (4)"
+    _setup
+    _IS_MACOS_OVERRIDE="true"
+    # shellcheck disable=SC2329  # inner stub shadows global; called by setup_overlay_sandbox
+    podman() {
+        printf 'podman %s\n' "$*" >> "$_PODMAN_CALLS_FILE"
+        case "${1:-} ${2:-}" in
+            "volume exists")  return 1 ;;       # no stale volume
+            "volume create")  return 0 ;;       # creation succeeds
+            "volume inspect") echo ""; return 0 ;;  # returns empty mountpoint
+        esac
+        return 0
+    }
+
+    local rc=0
+    setup_overlay_sandbox || rc=$?
+    assert_equals "${KAPSIS_EXIT_MOUNT_FAILURE:-4}" "$rc" \
+        "empty volume inspect (unresolvable VM mountpoint) must surface as mount_failure (exit 4)"
 
     _restore_podman_stub
     _teardown
@@ -461,6 +516,7 @@ test_export_overlay_volume_to_host_extracts_upper_and_work() {
     mkdir -p "$fixture/upper/src" "$fixture/work"
     echo "changed" > "$fixture/upper/src/main.txt"
     ln -s "/etc/shadow" "$fixture/upper/evil-link"
+    # shellcheck disable=SC2329  # inner stub shadows global; called by export_overlay_volume_to_host
     podman() {
         printf 'podman %s\n' "$*" >> "$_PODMAN_CALLS_FILE"
         case "${1:-} ${2:-}" in
@@ -503,6 +559,7 @@ test_export_noop_when_volume_mode_disabled() {
 
 # Restores the default recording podman stub after per-test overrides.
 _restore_podman_stub() {
+    # shellcheck disable=SC2329  # inner stub shadows global; called by subsequent test helpers
     podman() {
         printf 'podman %s\n' "$*" >> "$_PODMAN_CALLS_FILE"
         case "${1:-} ${2:-}" in
@@ -549,6 +606,8 @@ main() {
     run_test test_macos_no_stale_volume_no_rm
     run_test test_macos_upper_work_precreated_in_volume
     run_test test_macos_volume_prep_failure_returns_mount_failure
+    run_test test_macos_volume_create_failure_returns_mount_failure
+    run_test test_macos_volume_inspect_empty_returns_mount_failure
     run_test test_strict_profile_keeps_volume_mode
     run_test test_paranoid_profile_keeps_volume_mode
     run_test test_standard_profile_keeps_volume_mode

@@ -41,6 +41,7 @@ _KAPSIS_OVERLAY_SANDBOX_LOADED=1
 # launch-agent.sh's ensure_dir sourced/defined first).
 declare -f log_info    &>/dev/null || log_info()    { echo "[INFO] $*"; }
 declare -f log_warn    &>/dev/null || log_warn()    { echo "[WARN] $*" >&2; }
+declare -f log_error   &>/dev/null || log_error()   { echo "[ERROR] $*" >&2; }
 declare -f log_debug   &>/dev/null || log_debug()   { :; }
 declare -f log_success &>/dev/null || log_success() { echo "[OK] $*"; }
 declare -f is_macos    &>/dev/null || is_macos()    { [[ "$(uname -s)" == "Darwin" ]]; }
