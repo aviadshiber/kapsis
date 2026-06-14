@@ -52,10 +52,14 @@ readonly CONTAINER_STATUS_PATH="/kapsis-status"
 
 # Default patterns for files that should never be committed by Kapsis
 # These are typically config files that the sandbox may modify but shouldn't commit
+# Issue #391: .claude/settings.json is modified by LSP/plugin injection during the session;
+# committing it would pollute the user's branch with agent-session config mutations.
 readonly KAPSIS_DEFAULT_COMMIT_EXCLUDE=".gitignore
 **/.gitignore
 .gitattributes
-**/.gitattributes"
+**/.gitattributes
+.claude/settings.json
+**/.claude/settings.json"
 
 #===============================================================================
 # PUSH TIMEOUT (Issue #227)
@@ -79,10 +83,39 @@ readonly KAPSIS_DEFAULT_PUSH_TIMEOUT=60
 #   **/<file>  — matches <file> at any depth
 #===============================================================================
 
+# Issue #391: Maven plugin backups (.mvn/extensions.xml.bak2 etc.) are created
+# by in-container builds and must never reach a commit. Scoped to .mvn/ for the
+# numbered-suffix form (*.bak2, *.bak10) plus a generic exact-suffix *.bak —
+# deliberately NOT **/*.bak* which over-matched names like README.bakery.md
+# or notes.bak.swp (PR #394 review).
 readonly KAPSIS_DEFAULT_EPHEMERAL_PATTERNS="**/__pycache__/
 **/.pytest_cache/
 .coverage
-**/.coverage"
+**/.coverage
+**/*.bak
+**/.mvn/*.bak*"
+
+#===============================================================================
+# GIST INJECTION SENTINELS (Issue #391)
+#
+# inject_gist_instructions() (scripts/lib/inject-status-hooks.sh) brackets the
+# gist-instructions block it appends to CLAUDE.md / AGENTS.md with these
+# HTML-comment markers (invisible in rendered Markdown). On the host,
+# strip_kapsis_injections() (scripts/post-container-git.sh) removes the
+# bracketed block before staging so it never lands in user commits.
+#
+# Single source of truth — both files source this one. The marker text must
+# stay free of ERE metacharacters: the strip builds grep/awk regexes from it
+# verbatim.
+#===============================================================================
+
+readonly KAPSIS_GIST_MARKER_BEGIN="<!-- KAPSIS_GIST_BEGIN -->"
+readonly KAPSIS_GIST_MARKER_END="<!-- KAPSIS_GIST_END -->"
+
+# First heading line of scripts/lib/gist-instructions.md. Used to locate
+# legacy (pre-#391) injections that were appended with a bare "---" separator
+# and no sentinel markers. Must also stay ERE-metacharacter-free.
+readonly KAPSIS_GIST_LEGACY_HEADING="# Kapsis Activity Gist"
 
 #===============================================================================
 # NETWORK ISOLATION

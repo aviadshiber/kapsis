@@ -51,6 +51,10 @@ source "$POST_GIT_SCRIPT_DIR/lib/sanitize-files.sh"
 #   **/<dir>/   — matches any file inside <dir>/ at any depth
 #   **/<file>   — matches <file> at any depth
 #   <file>      — exact match at root only
+#
+# Within <dir>/<file>, a single `*` is converted to `[^/]*` (matches within
+# one path component, never across `/`), so glob patterns like `**/*.bak`
+# or `**/.mvn/*.bak*` work as expected (issue #391).
 #===============================================================================
 _pattern_to_regex() {
     local p="$1"
@@ -58,17 +62,216 @@ _pattern_to_regex() {
         # Directory-prefix: **/__pycache__/ matches src/__pycache__/foo.pyc
         local dir_name="${p#\*\*/}"
         dir_name="${dir_name%/}"
-        # Escape literal dots so they don't match any character in grep -E
+        # Escape literal dots, then convert * glob to [^/]* (no path separator)
         local escaped_dir="${dir_name//./\\.}"
+        escaped_dir="${escaped_dir//\*/[^/]*}"
         echo "(^|/)${escaped_dir}/"
     elif [[ "$p" == "**/"* ]]; then
         local base="${p#\*\*/}"
         local escaped_base="${base//./\\.}"
+        escaped_base="${escaped_base//\*/[^/]*}"
         echo "(^|/)${escaped_base}$"
     else
         local escaped_p="${p//./\\.}"
+        escaped_p="${escaped_p//\*/[^/]*}"
         echo "^${escaped_p}$"
     fi
+}
+
+#===============================================================================
+# STRIP KAPSIS INFRASTRUCTURE INJECTIONS (Issue #391)
+#
+# Removes Kapsis-injected blocks from CLAUDE.md and AGENTS.md before staging.
+# These blocks are added by inject_gist_instructions() (inject-status-hooks.sh,
+# invoked from entrypoint.sh) to guide the agent during the session but must
+# not land in user commits.
+#
+# Two formats are handled:
+#   - Sentinel format (current): block bracketed by KAPSIS_GIST_MARKER_BEGIN /
+#     KAPSIS_GIST_MARKER_END HTML comments (constants.sh).
+#   - Legacy format (pre-#391): block introduced by a bare "---" separator
+#     followed by the KAPSIS_GIST_LEGACY_HEADING line, extending to EOF.
+#
+# Idempotent: files without injected blocks are left unchanged. Files that
+# cannot be stripped safely (unbalanced markers, ambiguous legacy layout) are
+# left unchanged with a warning — never silently truncated.
+#
+# Returns: 0 on success (including no-op), 1 if the worktree is inaccessible.
+#===============================================================================
+
+# Strip one sentinel-bracketed block set from a file (in CWD).
+# Marker matching tolerates leading/trailing whitespace and CRLF line endings
+# ([[:space:]] includes \r), so files that round-tripped through Windows or a
+# formatter still strip correctly. Multiple BEGIN/END pairs are all removed.
+# The single blank line the injector writes before each BEGIN is consumed too,
+# making inject→strip byte-exact (no whitespace-only diff left behind).
+# A BEGIN without a matching END aborts the rewrite (file left unchanged) —
+# never truncate the tail on malformed input.
+# Returns: 0 if the file was rewritten, 1 if it was left unchanged.
+_strip_sentinel_gist_block() {
+    local md_file="$1"
+
+    local tmp_file
+    tmp_file=$(mktemp "${md_file}.kapsis-strip-XXXXXX") || {
+        log_warn "strip_kapsis_injections: mktemp failed for $md_file — injection left in place"
+        return 1
+    }
+
+    # Marker constants contain no ERE metacharacters (enforced by comment in
+    # constants.sh), so embedding them verbatim in a regex is safe.
+    local begin_re="^[[:space:]]*${KAPSIS_GIST_MARKER_BEGIN}[[:space:]]*$"
+    local end_re="^[[:space:]]*${KAPSIS_GIST_MARKER_END}[[:space:]]*$"
+
+    # Blank lines are buffered (pend[]) so that exactly one blank directly
+    # before a BEGIN — written by inject_gist_instructions() — can be dropped.
+    local awk_rc=0
+    awk -v begin_re="$begin_re" -v end_re="$end_re" '
+        $0 ~ begin_re {
+            if (npend) npend--
+            skip = 1
+            next
+        }
+        skip && $0 ~ end_re { skip = 0; next }
+        skip { next }
+        /^[[:space:]]*$/ { pend[++npend] = $0; next }
+        {
+            for (i = 1; i <= npend; i++) print pend[i]
+            npend = 0
+            print
+        }
+        END {
+            if (!skip) for (i = 1; i <= npend; i++) print pend[i]
+            exit skip
+        }
+    ' "$md_file" > "$tmp_file" || awk_rc=$?
+
+    if [[ "$awk_rc" -ne 0 ]]; then
+        rm -f "$tmp_file"
+        log_warn "strip_kapsis_injections: unbalanced sentinel markers in $md_file (BEGIN without END) — leaving file unchanged; remove the block manually"
+        return 1
+    fi
+
+    # An empty result is valid: injection only ever appends to an existing
+    # file, so a file that is 100% injection was empty before injection —
+    # writing the empty result restores it exactly.
+    mv "$tmp_file" "$md_file" || {
+        log_warn "strip_kapsis_injections: could not overwrite $md_file — injection left in place"
+        rm -f "$tmp_file"
+        return 1
+    }
+    return 0
+}
+
+# Strip a legacy (pre-#391) gist injection from a file (in CWD).
+# The legacy injector appended:  "" / "---" / "" / <gist-instructions>  at EOF
+# with no sentinels, so the block is located heuristically:
+#   - a KAPSIS_GIST_LEGACY_HEADING line whose nearest non-blank predecessor
+#     is a "---" separator, and
+#   - no OTHER H1 heading after it (an H1 below would indicate user content
+#     appended after the injection — refuse rather than risk deleting it).
+# The strip removes from the separator (plus blank lines above it) to EOF.
+# Returns: 0 if the file was rewritten, 1 if it was left unchanged.
+_strip_legacy_gist_block() {
+    local md_file="$1"
+
+    local tmp_file
+    tmp_file=$(mktemp "${md_file}.kapsis-strip-XXXXXX") || {
+        log_warn "strip_kapsis_injections: mktemp failed for $md_file — legacy injection left in place"
+        return 1
+    }
+
+    local heading_re="^${KAPSIS_GIST_LEGACY_HEADING}[[:space:]]*$"
+
+    local awk_rc=0
+    awk -v heading_re="$heading_re" '
+        { lines[NR] = $0 }
+        END {
+            cut = 0
+            for (i = 1; i <= NR; i++) {
+                if (lines[i] !~ heading_re) continue
+                # Nearest non-blank line above the heading must be "---"
+                j = i - 1
+                while (j >= 1 && lines[j] ~ /^[[:space:]]*$/) j--
+                if (j < 1 || lines[j] !~ /^---[[:space:]]*$/) continue
+                # Refuse if any OTHER H1 follows (likely user content)
+                ok = 1
+                for (k = i + 1; k <= NR; k++) {
+                    if (lines[k] ~ /^#[[:space:]]/ && lines[k] !~ heading_re) { ok = 0; break }
+                }
+                if (ok) { cut = j; break }
+            }
+            if (!cut) exit 1
+            # Trim blank lines the injector added above the separator
+            last = cut - 1
+            while (last >= 1 && lines[last] ~ /^[[:space:]]*$/) last--
+            for (i = 1; i <= last; i++) print lines[i]
+        }
+    ' "$md_file" > "$tmp_file" || awk_rc=$?
+
+    if [[ "$awk_rc" -ne 0 ]]; then
+        rm -f "$tmp_file"
+        log_warn "strip_kapsis_injections: legacy gist block in $md_file has no recognizable '---' boundary or is followed by user content — leaving file unchanged; remove the '$KAPSIS_GIST_LEGACY_HEADING' section manually"
+        return 1
+    fi
+
+    mv "$tmp_file" "$md_file" || {
+        log_warn "strip_kapsis_injections: could not overwrite $md_file — legacy injection left in place"
+        rm -f "$tmp_file"
+        return 1
+    }
+    return 0
+}
+
+strip_kapsis_injections() {
+    local worktree_path="$1"
+
+    cd "$worktree_path" || {
+        log_error "strip_kapsis_injections: cannot cd to worktree: $worktree_path"
+        return 1
+    }
+
+    local stripped_count=0
+    local stripped_files=""
+    local md_file
+    for md_file in CLAUDE.md AGENTS.md; do
+        if [[ ! -f "$md_file" ]]; then
+            continue
+        fi
+        local file_stripped=0
+
+        # Sentinel format (current injections)
+        if grep -qF "$KAPSIS_GIST_MARKER_BEGIN" "$md_file" 2>/dev/null; then
+            if _strip_sentinel_gist_block "$md_file"; then
+                log_info "Stripped Kapsis gist injection from $md_file"
+                file_stripped=1
+            fi
+        fi
+
+        # Legacy format (pre-#391 injections without sentinels). Only when no
+        # sentinel remains: if the sentinel strip was refused above, leave the
+        # file fully untouched for manual inspection.
+        if ! grep -qF "$KAPSIS_GIST_MARKER_BEGIN" "$md_file" 2>/dev/null \
+            && grep -qE "^${KAPSIS_GIST_LEGACY_HEADING}[[:space:]]*$" "$md_file" 2>/dev/null; then
+            if _strip_legacy_gist_block "$md_file"; then
+                log_info "Stripped legacy (pre-sentinel) Kapsis gist injection from $md_file"
+                file_stripped=1
+            fi
+        fi
+
+        if [[ "$file_stripped" -eq 1 ]]; then
+            ((stripped_count++)) || true
+            stripped_files+="${stripped_files:+, }$md_file"
+        fi
+    done
+
+    if [[ "$stripped_count" -gt 0 ]]; then
+        log_success "Removed Kapsis infrastructure injections from $stripped_count file(s): $stripped_files"
+        # Surface in status.json for external monitoring (Dashboard Sync Rule)
+        if declare -f status_set_stripped_injections &>/dev/null; then
+            status_set_stripped_injections "$stripped_count"
+        fi
+    fi
+    return 0
 }
 
 #===============================================================================
@@ -188,7 +391,14 @@ validate_staged_files() {
 
     # Check for files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
     # This prevents committing files like .gitignore that were modified by Kapsis
+    # KAPSIS_COMMIT_EXCLUDE replaces the defaults wholesale (so users can also
+    # REMOVE a default, e.g. to commit .claude/settings.json intentionally);
+    # KAPSIS_EXTRA_COMMIT_EXCLUDE appends patterns without redeclaring the
+    # defaults (issue #391, PR #394 review).
     local exclude_patterns="${KAPSIS_COMMIT_EXCLUDE:-$KAPSIS_DEFAULT_COMMIT_EXCLUDE}"
+    if [[ -n "${KAPSIS_EXTRA_COMMIT_EXCLUDE:-}" ]]; then
+        exclude_patterns+=$'\n'"${KAPSIS_EXTRA_COMMIT_EXCLUDE}"
+    fi
     if [[ -n "$exclude_patterns" ]] && [[ -n "$staged_files" ]]; then
         while IFS= read -r pattern; do
             [[ -z "$pattern" ]] && continue
@@ -352,6 +562,15 @@ commit_changes() {
     local co_authors="${4:-}"
 
     cd "$worktree_path"
+
+    # Strip Kapsis infrastructure injections (gist blocks, etc.) before staging
+    # so they never reach the user's branch commit (issue #391). A strip
+    # failure is logged but never aborts the commit — losing the user's work
+    # would be worse than an injected block surviving (which per-file warnings
+    # already surface for manual cleanup).
+    if ! strip_kapsis_injections "$worktree_path"; then
+        log_warn "strip_kapsis_injections failed for $worktree_path — continuing with commit"
+    fi
 
     # Note: git read-tree HEAD for cache-tree rebuild is handled by
     # sync_index_from_container(). The duplicate here was removed in

@@ -424,6 +424,14 @@ For shell scripts, prefer adding them to `scripts/` so the existing `cp -r scrip
 8. **Bare arithmetic** — `((x++))` fails under `set -e` when result is 0; use `((x++)) || true`
 9. **Working on main** — always use feature branches
 
+## Commit Artifact Filtering (Issue #391)
+
+Before the post-container commit, Kapsis removes its own infrastructure artifacts so they never land on the user's branch:
+
+1. **Injected doc blocks** — `strip_kapsis_injections()` (`scripts/post-container-git.sh`) removes the gist-instructions block that `inject_gist_instructions()` appended to `CLAUDE.md`/`AGENTS.md`. Blocks are bracketed by HTML-comment sentinels defined once in `scripts/lib/constants.sh` (`KAPSIS_GIST_MARKER_BEGIN`/`_END`). Matching tolerates CRLF and trailing whitespace; unbalanced markers leave the file unchanged (never truncate). A legacy fallback strips pre-sentinel blocks (`---` separator + `# Kapsis Activity Gist` heading at EOF); ambiguous layouts are refused with a warning for manual cleanup. The stripped-file count is reported in `status.json` as `stripped_injections`.
+2. **Commit excludes** — `.claude/settings.json` (mutated by LSP/plugin injection) is in `KAPSIS_DEFAULT_COMMIT_EXCLUDE`. `KAPSIS_COMMIT_EXCLUDE` replaces the list wholesale; `KAPSIS_EXTRA_COMMIT_EXCLUDE` appends without redeclaring defaults.
+3. **Ephemeral patterns** (non-overridable) — `**/*.bak` and `**/.mvn/*.bak*` cover Maven plugin backups (e.g. `.mvn/extensions.xml.bak2`) without over-matching names like `README.bakery.md`.
+
 ## Push Fallback (Agent Recovery)
 
 When push fails (common in containers without credentials), Kapsis outputs a structured fallback:
