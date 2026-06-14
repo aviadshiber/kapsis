@@ -1152,6 +1152,103 @@ _gc_lock_acquire() {
     mkdir "$lock_dir" 2>/dev/null
 }
 
+#===============================================================================
+# HOST-SIDE GIST INJECTION WITH PROVENANCE (Issue #408)
+#
+# Runs on the HOST before the container starts.  Renders the gist-instructions
+# template, wraps it in KAPSIS_GIST_BEGIN/END sentinels, appends it to
+# CLAUDE.md / AGENTS.md in the worktree, and records the SHA-256 of the
+# injected block in $TMPDIR (host-private, NOT bind-mounted into the container).
+#
+# post-container-git.sh reads the recorded hash at strip time and only removes
+# blocks that match — blocks injected by a rogue agent won't match and are
+# preserved + flagged, defeating the content-hiding attack described in #408.
+#
+# Only runs when:
+#   - SANDBOX_MODE == "worktree" (overlay workspaces are read-only)
+#   - KAPSIS_INJECT_GIST == "true"  (opt-in, same guard as entrypoint.sh)
+#   - gist-instructions.md template exists on the host
+#===============================================================================
+host_inject_gist_instructions() {
+    local worktree_path="$1"
+    local agent_id="$2"
+
+    [[ "${KAPSIS_INJECT_GIST:-false}" == "true" ]] || return 0
+    [[ -n "$worktree_path" && -d "$worktree_path" ]] || return 0
+
+    local lib_dir="${KAPSIS_HOME:-${SCRIPT_DIR}}/lib"
+    local template="${lib_dir}/gist-instructions.md"
+    [[ -f "$template" ]] || {
+        log_debug "gist-instructions.md not found at $template — container will inject without provenance"
+        return 0
+    }
+
+    # Determine the gist file path the container will use (must match entrypoint.sh)
+    local gist_file="/workspace/.kapsis/gist.txt"
+
+    # Render the template (same awk substitution as render_gist_instructions in
+    # inject-status-hooks.sh — keep both in sync if the substitution logic changes)
+    local rendered
+    rendered=$(KAPSIS_GIST_FILE_RENDER="$gist_file" awk '
+        BEGIN { gf = ENVIRON["KAPSIS_GIST_FILE_RENDER"]; needle = "@@KAPSIS_GIST_FILE@@"; nlen = length(needle) }
+        {
+            out = ""
+            line = $0
+            while ((pos = index(line, needle)) > 0) {
+                out = out substr(line, 1, pos-1) gf
+                line = substr(line, pos+nlen)
+            }
+            print out line
+        }
+    ' "$template") || {
+        log_warn "Failed to render gist-instructions.md on host — container will inject without provenance"
+        return 0
+    }
+
+    # Build the sentinel-wrapped block (must match inject_gist_instructions output)
+    local block
+    block="<!-- KAPSIS_GIST_BEGIN -->
+${rendered}
+<!-- KAPSIS_GIST_END -->"
+
+    # Record SHA-256 in a host-private path that is NOT bind-mounted into the container.
+    # post-container-git.sh reads this to verify blocks before stripping (Issue #408).
+    local proof_file="${TMPDIR:-/tmp}/kapsis-${agent_id}-gist-proof"
+    local block_sha256
+    block_sha256=$(printf '%s' "$block" | sha256_hash 2>/dev/null) || {
+        log_warn "sha256_hash failed — skipping host-side gist injection (container will inject without provenance)"
+        return 0
+    }
+    printf '%s\n' "$block_sha256" > "$proof_file"
+    chmod 600 "$proof_file" 2>/dev/null || true
+    log_debug "Gist provenance recorded: ${proof_file} (SHA256: ${block_sha256:0:12}...)"
+
+    # Inject into CLAUDE.md and AGENTS.md in the worktree
+    local injected=false
+    for file_name in "CLAUDE.md" "AGENTS.md"; do
+        local file="${worktree_path}/${file_name}"
+        [[ -f "$file" ]] || continue
+        # Idempotent: skip if sentinels already present (e.g. resume mode)
+        grep -q "<!-- KAPSIS_GIST_BEGIN -->" "$file" 2>/dev/null && {
+            log_debug "${file_name} already contains gist sentinels — skipping host injection"
+            continue
+        }
+        {
+            printf '\n---\n\n'
+            printf '%s\n' "$block"
+        } >> "$file" || {
+            log_warn "Could not append gist instructions to ${file_name}"
+            continue
+        }
+        injected=true
+        log_debug "Host-injected gist instructions into ${file_name}"
+    done
+
+    [[ "$injected" == "true" ]] && log_info "Host-side gist injection complete (provenance SHA256: ${block_sha256:0:16}...)"
+    return 0
+}
+
+#===============================================================================
 # SANDBOX SETUP (dispatches to mode-specific setup)
 #===============================================================================
 setup_sandbox() {
@@ -2811,6 +2908,13 @@ main() {
             exit 1
         fi
     fi
+    # Host-side gist injection with provenance (Issue #408): must run after
+    # setup_sandbox (WORKTREE_PATH is set) and before backend_run (container start).
+    # Overlay mode is a no-op inside host_inject_gist_instructions().
+    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
+        host_inject_gist_instructions "${WORKTREE_PATH:-}" "${AGENT_ID:-}"
+    fi
+
     if ! backend_build_spec; then
         status_complete 1 "Failed to build container spec for backend '${BACKEND}'"
         _STATUS_COMPLETE_SHOWN=true

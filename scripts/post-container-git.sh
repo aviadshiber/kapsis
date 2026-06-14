@@ -234,6 +234,107 @@ validate_staged_files() {
 }
 
 #===============================================================================
+# STRIP KAPSIS GIST INJECTIONS (Issue #408)
+#
+# Removes Kapsis-injected gist instruction blocks from CLAUDE.md and AGENTS.md
+# in the worktree before staging.  Only blocks whose SHA-256 matches the
+# host-side provenance record (written to $TMPDIR before container start) are
+# removed.  Blocks without a matching record are left intact and flagged —
+# this defeats the rogue-agent attack where the agent wraps arbitrary content
+# in the sentinel markers hoping the host will strip it from the commit diff.
+#
+# Provenance file: $TMPDIR/kapsis-<agent-id>-gist-proof (host-private, not
+# bind-mounted into the container).
+#===============================================================================
+strip_kapsis_injections() {
+    local worktree_path="$1"
+    local agent_id="${2:-${KAPSIS_AGENT_ID:-}}"
+
+    # Source compat.sh for cross-platform sha256_hash() if not already loaded
+    if [[ -z "${_KAPSIS_COMPAT_LOADED:-}" ]]; then
+        # shellcheck source=scripts/lib/compat.sh
+        source "${POST_GIT_SCRIPT_DIR}/lib/compat.sh" 2>/dev/null || true
+    fi
+
+    local proof_file="${TMPDIR:-/tmp}/kapsis-${agent_id}-gist-proof"
+    local expected_sha256=""
+    if [[ -f "$proof_file" ]]; then
+        expected_sha256=$(cat "$proof_file" | tr -d '[:space:]')
+        # One-time use: remove so it cannot be replayed to a different agent session
+        rm -f "$proof_file" || true
+    fi
+
+    local stripped_count=0
+    local suspicious_count=0
+
+    for file_rel in "CLAUDE.md" "AGENTS.md"; do
+        local file="${worktree_path}/${file_rel}"
+        [[ -f "$file" ]] || continue
+        grep -q "<!-- KAPSIS_GIST_BEGIN -->" "$file" 2>/dev/null || continue
+
+        # Walk the file line-by-line, extract sentinel blocks, verify provenance
+        local new_content=""
+        local in_block=false
+        local current_block=""
+
+        while IFS= read -r line || [[ -n "$line" ]]; do
+            if [[ "$line" == "<!-- KAPSIS_GIST_BEGIN -->" ]]; then
+                in_block=true
+                current_block="${line}"$'\n'
+                continue
+            fi
+            if [[ "$line" == "<!-- KAPSIS_GIST_END -->" ]]; then
+                in_block=false
+                current_block+="${line}"
+
+                local block_sha256=""
+                if declare -f sha256_hash &>/dev/null; then
+                    block_sha256=$(printf '%s' "$current_block" | sha256_hash 2>/dev/null || true)
+                fi
+
+                if [[ -n "$expected_sha256" && -n "$block_sha256" && "$block_sha256" == "$expected_sha256" ]]; then
+                    # Verified Kapsis injection — strip it (and eat the trailing blank/separator lines)
+                    ((stripped_count++)) || true
+                    log_debug "Stripped verified Kapsis gist block from ${file_rel}"
+                else
+                    # Unverified block — preserve and warn (possible rogue-agent injection)
+                    new_content+="${current_block}"$'\n'
+                    ((suspicious_count++)) || true
+                    local sha_display="${block_sha256:-(sha256 unavailable)}"
+                    log_warn "Unverified KAPSIS_GIST sentinel block in ${file_rel} left intact (SHA256: ${sha_display:0:16}...) — possible rogue injection"
+                fi
+
+                current_block=""
+                continue
+            fi
+
+            if [[ "$in_block" == "true" ]]; then
+                current_block+="${line}"$'\n'
+            else
+                new_content+="${line}"$'\n'
+            fi
+        done < "$file"
+
+        if [[ "$stripped_count" -gt 0 ]]; then
+            # Remove trailing blank lines that were separators before the block
+            new_content=$(printf '%s' "$new_content" | sed 's/[[:blank:]]*$//' | sed -e :a -e '/^\n*$/{$d;N;ba}')
+            printf '%s\n' "$new_content" > "$file"
+        fi
+    done
+
+    if [[ "$stripped_count" -gt 0 ]]; then
+        log_info "Stripped $stripped_count verified Kapsis gist injection(s) before staging"
+    fi
+    if [[ "$suspicious_count" -gt 0 ]]; then
+        log_warn "${suspicious_count} unverified KAPSIS_GIST sentinel block(s) preserved — review before merging"
+    fi
+    if [[ "$stripped_count" -eq 0 && "$suspicious_count" -eq 0 ]]; then
+        log_debug "No Kapsis gist sentinel blocks found in worktree"
+    fi
+    return 0
+}
+
+#===============================================================================
 # CHECK FOR CHANGES
 #
 # Returns 0 if there are uncommitted changes, 1 otherwise.
@@ -356,6 +457,11 @@ commit_changes() {
     # Note: git read-tree HEAD for cache-tree rebuild is handled by
     # sync_index_from_container(). The duplicate here was removed in
     # #211 — it caused index inconsistency on large monorepos.
+
+    # Strip Kapsis gist injections before staging (Issue #408).
+    # Only removes blocks whose SHA-256 matches the host-side provenance record;
+    # unverified sentinel blocks are preserved and flagged.
+    strip_kapsis_injections "$worktree_path" "$agent_id"
 
     # Stage changes: prefer explicit paths (targeted), fallback to git add -A (#211)
     # Uses cut -c4- to strip the 2-char status + space prefix from porcelain output,
