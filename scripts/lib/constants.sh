@@ -373,6 +373,11 @@ readonly KAPSIS_DEFAULT_VFS_RM_FORCE_TIMEOUT=5
 # Suffix appended to AGENT_ID to form the status volume name
 readonly KAPSIS_STATUS_VOLUME_SUFFIX="-status"
 
+# Suffix appended to AGENT_ID to form the overlay named volume name (Issue #376).
+# On macOS the overlay upper/work dirs live in this VM-native named volume instead
+# of the virtio-fs share, eliminating AVF cache-coherency races on overlay metadata.
+readonly KAPSIS_OVERLAY_VOLUME_SUFFIX="-overlay"
+
 # Interval (seconds) between host-side syncs of the status volume.
 # 5s matches the kapsis-status.sh --watch poll cadence; smaller values
 # increase Podman API call frequency (podman volume export on every tick).

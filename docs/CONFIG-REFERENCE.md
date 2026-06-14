@@ -2043,6 +2043,40 @@ KAPSIS_AUDIT_ENABLED=true ./scripts/launch-agent.sh ~/project --task "implement 
 
 ---
 
+## macOS Overlay Named Volume (Issue #376)
+
+On macOS, overlay-mode sandboxes keep the OverlayFS `upper/` and `work/` directories in a
+per-agent Podman named volume (`kapsis-<agent-id>-overlay`, VM-native ext4) instead of the
+virtio-fs share. This eliminates the AVF virtio-fs cache-coherency races that surface as
+`exit_code=4` / `error_type=mount_failure`. The project is mounted at `/workspace` with the
+same podman-side overlay mechanism the Linux path uses —
+`:O,upperdir=<volume-mountpoint>/upper,workdir=<volume-mountpoint>/work`, where the
+mountpoint is the volume's VM-side path from `podman volume inspect --format
+'{{.Mountpoint}}'`. The Podman runtime assembles the overlay inside the VM, so the agent
+container needs **no extra capabilities or devices**. Because Podman does not create custom
+`upperdir`/`workdir` paths itself, Kapsis pre-creates `upper/` and `work/` inside the
+volume once per launch with a short-lived, fully cap-dropped helper container. After the
+container exits, the volume's `upper/` and `work/` subtrees are exported back to the host
+sandbox directory (`sandbox.upper_dir_base`, default `~/.ai-sandboxes/<sandbox-id>/`;
+staged and symlink-hardened) so post-container inspection works unchanged. Linux always
+uses kernel OverlayFS on host directories directly and is unaffected.
+
+Requires Podman ≥ 4.0 (custom `upperdir=`/`workdir=` options on `:O` volume mounts).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_OVERLAY_USE_VOLUME` | `true` | macOS only. Set to `false` to opt out of the named-volume overlay and fall back to kernel OverlayFS with `upper/`/`work/` on the virtio-fs share |
+
+**Security note:** the overlay is constructed by the Podman runtime, not by code inside the
+container — no `--cap-add SYS_ADMIN`, no `--device /dev/fuse`. The mode is therefore
+available under **all** security profiles, including `strict` and `paranoid` (see
+[SECURITY-HARDENING.md](SECURITY-HARDENING.md)). The stale volume from any previous run with
+the same agent ID is removed at launch so each session starts with a clean upper layer; the
+volume is cleaned up at session end (kept with `--keep-volumes`, reclaimable via
+`kapsis-cleanup.sh --volumes`).
+
+---
+
 ## Cleanup
 
 For cleanup configuration and usage, see [CLEANUP.md](CLEANUP.md).
