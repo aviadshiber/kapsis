@@ -777,6 +777,94 @@ configure_git_hooks() {
 
 
 #===============================================================================
+# FUSE-OVERLAYFS SETUP (for macOS true CoW support, legacy mode)
+#===============================================================================
+setup_fuse_overlay() {
+    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-false}" != "true" ]]; then
+        return
+    fi
+
+    log_info "Setting up fuse-overlayfs for true Copy-on-Write..."
+
+    # Verify required mounts exist
+    if [[ ! -d "/lower" ]]; then
+        log_warn "KAPSIS_USE_FUSE_OVERLAY=true but /lower not mounted. Skipping overlay setup."
+        return
+    fi
+
+    # Determine overlay directory layout
+    # New layout: single /overlay volume with upper/ and work/ subdirectories
+    # This ensures upperdir and workdir are on the same filesystem (required by overlayfs)
+    # Legacy layout: separate /upper and /work volumes (deprecated due to EXDEV errors)
+    local upper_dir work_dir
+    if [[ -d "/overlay" ]]; then
+        # New layout: single volume
+        upper_dir="/overlay/upper"
+        work_dir="/overlay/work"
+    else
+        # Legacy layout: separate volumes (may cause EXDEV errors on mkdir)
+        upper_dir="/upper/data"
+        work_dir="/work/data"
+    fi
+
+    # Create overlay directories
+    mkdir -p "$upper_dir" "$work_dir" /workspace 2>/dev/null || true
+
+    # Mount fuse-overlayfs
+    # Options:
+    # - squash_to_uid/gid: Makes lower layer files appear owned by container user,
+    #   enabling copy-up operations that would otherwise fail with EPERM when the
+    #   lower layer has different ownership (common with host directory mounts)
+    # - noxattr: Disables extended attributes to avoid permission issues
+    # See: https://github.com/containers/fuse-overlayfs/issues/428
+    local mount_uid mount_gid
+    mount_uid=$(id -u)
+    mount_gid=$(id -g)
+    if fuse-overlayfs -o "lowerdir=/lower,upperdir=$upper_dir,workdir=$work_dir,squash_to_uid=$mount_uid,squash_to_gid=$mount_gid,noxattr" /workspace 2>/dev/null; then
+        log_success "fuse-overlayfs mounted successfully"
+        log_info "  Lower (read-only): /lower"
+        log_info "  Upper (writes):    $upper_dir"
+        log_info "  Merged view:       /workspace"
+
+        # Git workaround: Copy .git directory to upper layer to avoid cross-device link issues
+        # Git creates lock files that require same-filesystem linking
+        local git_upper="$upper_dir/.git"
+        if [[ -d /lower/.git ]] && [[ ! -d "$git_upper" ]]; then
+            log_info "Copying .git directory to upper layer for git compatibility..."
+            # Use rsync-like copy that handles missing files gracefully
+            cp -a /lower/.git "$git_upper" 2>&1 | grep -v "No such file" || true
+            # Verify the copy worked
+            if [[ -d "$git_upper/objects" ]]; then
+                log_success ".git directory copied successfully"
+
+                # Set GIT_DIR to point to the upper layer copy to avoid cross-device link issues
+                export GIT_DIR="$git_upper"
+                export GIT_WORK_TREE=/workspace
+                export GIT_TEST_FSMONITOR=0
+                log_info "Git configured: GIT_DIR=$git_upper GIT_WORK_TREE=/workspace"
+
+                configure_git_hooks
+            else
+                log_warn "Failed to copy .git directory"
+            fi
+        elif [[ -d "$git_upper" ]]; then
+            # .git already exists in upper (from previous run)
+            export GIT_DIR="$git_upper"
+            export GIT_WORK_TREE=/workspace
+            export GIT_TEST_FSMONITOR=0
+            log_info "Using existing .git in upper layer"
+
+            configure_git_hooks
+        fi
+    else
+        log_warn "fuse-overlayfs mount failed. Falling back to /lower as workspace."
+        # Create symlink as fallback
+        rm -rf /workspace 2>/dev/null || true
+        ln -s /lower /workspace 2>/dev/null || true
+    fi
+}
+
+#===============================================================================
 # ENVIRONMENT SETUP
 #===============================================================================
 setup_environment() {
@@ -1547,6 +1635,24 @@ validate_workspace_mount() {
         return 0
     fi
 
+    # In fuse-overlayfs mode, /workspace is set up by setup_fuse_overlay AFTER this
+    # validation runs (entrypoint mounts it from /lower via fuse-overlayfs).
+    # Validate /lower (the source directory) instead of /workspace.
+    if [[ "${KAPSIS_USE_FUSE_OVERLAY:-false}" == "true" ]]; then
+        if [[ ! -d "/lower" ]]; then
+            log_error "WORKSPACE MOUNT FAILURE: /lower not mounted (required for fuse-overlayfs mode)"
+            log_error "  Agent ID: ${KAPSIS_AGENT_ID:-unknown}"
+            return 1
+        fi
+        if [[ -z "$(ls -A "/lower" 2>/dev/null)" ]]; then
+            log_error "WORKSPACE MOUNT FAILURE: /lower exists but is EMPTY (fuse-overlayfs mode)"
+            log_error "  Agent ID: ${KAPSIS_AGENT_ID:-unknown}"
+            return 1
+        fi
+        log_debug "Workspace mount validation passed: /lower (fuse-overlayfs mode)"
+        return 0
+    fi
+
     if [[ ! -d "$workspace" ]]; then
         log_error "WORKSPACE MOUNT FAILURE: $workspace does not exist"
         log_error "Check: Podman VM status, host worktree path, virtio-fs health"
@@ -1800,6 +1906,11 @@ main() {
         # Legacy overlay mode
         log_info "Sandbox mode: overlay"
         log_debug "Setting up overlay mode environment"
+
+        # Set up fuse-overlayfs if on macOS
+        log_timer_start "fuse_overlay_setup"
+        setup_fuse_overlay
+        log_timer_end "fuse_overlay_setup"
 
         log_timer_start "environment_setup"
         setup_environment
