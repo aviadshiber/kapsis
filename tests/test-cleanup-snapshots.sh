@@ -160,33 +160,12 @@ _seed_snapshots() {
         || touch -t "$(date -v-30d +%Y%m%d0000 2>/dev/null || date -d '30 days ago' +%Y%m%d0000)" "$base/agent-stale"
 }
 
-# Run a snippet of the cleanup script after pre-sourcing its lib dependencies.
-# Feeding the script body via /dev/stdin makes its $SCRIPT_DIR resolve to /dev,
-# which prevents the script's own `if [[ -f $SCRIPT_DIR/lib/compat.sh ]]` block
-# from loading helpers like get_dir_mtime. We load them explicitly first.
-_run_cleanup_snippet() {
-    local snippet="$1"
-    bash -c '
-        set -e
-        # shellcheck source=/dev/null
-        source "'"$KAPSIS_ROOT"'/scripts/lib/compat.sh"
-        # shellcheck source=/dev/null
-        source "'"$KAPSIS_ROOT"'/scripts/lib/logging.sh"
-        # shellcheck source=/dev/null
-        source "'"$KAPSIS_ROOT"'/scripts/lib/constants.sh"
-        script_body=$(sed "s|^main \"\\\$@\"$|# main suppressed|" "'"$CLEANUP_SCRIPT"'")
-        # shellcheck disable=SC1090
-        source /dev/stdin <<< "$script_body"
-        '"$snippet"'
-    ' 2>&1
-}
-
 _run_clean_snapshots() {
     local snap_dir="$1"
     local ttl_override="${2:-}"
     local clean_all="${3:-false}"
     local dry_run="${4:-false}"
-    _run_cleanup_snippet '
+    run_cleanup_snippet '
         SNAPSHOTS_DIR="'"$snap_dir"'"
         SNAPSHOTS_TTL_OVERRIDE="'"$ttl_override"'"
         CLEAN_ALL="'"$clean_all"'"
@@ -203,7 +182,7 @@ _run_check_disk_pressure() {
     local kapsis_dir="$1"
     local threshold_gb="$2"
     local dry_run="${3:-false}"
-    _run_cleanup_snippet '
+    run_cleanup_snippet '
         KAPSIS_DIR="'"$kapsis_dir"'"
         KAPSIS_DIR_WARN_SIZE_GB="'"$threshold_gb"'"
         DRY_RUN="'"$dry_run"'"

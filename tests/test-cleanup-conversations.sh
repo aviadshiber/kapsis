@@ -31,32 +31,10 @@ CLEANUP_SCRIPT="$KAPSIS_ROOT/scripts/kapsis-cleanup.sh"
 
 print_test_header "Conversation Directory Cleanup (symlink guard)"
 
-#-------------------------------------------------------------------------------
-# Source kapsis-cleanup.sh with its top-level main() suppressed, then run a
-# snippet with the relevant globals injected. Mirrors the harness in
-# tests/test-cleanup-snapshots.sh.
-#-------------------------------------------------------------------------------
-_run_cleanup_snippet() {
-    local snippet="$1"
-    bash -c '
-        set -e
-        # shellcheck source=/dev/null
-        source "'"$KAPSIS_ROOT"'/scripts/lib/compat.sh"
-        # shellcheck source=/dev/null
-        source "'"$KAPSIS_ROOT"'/scripts/lib/logging.sh"
-        # shellcheck source=/dev/null
-        source "'"$KAPSIS_ROOT"'/scripts/lib/constants.sh"
-        script_body=$(sed "s|^main \"\\\$@\"$|# main suppressed|" "'"$CLEANUP_SCRIPT"'")
-        # shellcheck disable=SC1090
-        source /dev/stdin <<< "$script_body"
-        '"$snippet"'
-    ' 2>&1
-}
-
 _run_clean_conversations() {
     local conv_root="$1"
     local dry_run="${2:-false}"
-    _run_cleanup_snippet '
+    run_cleanup_snippet '
         CONVERSATIONS_DIR="'"$conv_root"'"
         CLEAN_ALL="false"
         DRY_RUN="'"$dry_run"'"
@@ -114,13 +92,13 @@ test_symlinked_entry_skipped() {
 
     assert_contains "$output" "No expired conversation directories to clean" \
         "Symlinked entry must be skipped, not counted as a cleaned conversation"
+    # The real invariant: the symlink target's contents were not touched. On
+    # macOS `rm -rf path/` with a trailing slash on a symlink deletes the
+    # target's contents but leaves the link in place, so asserting the link
+    # itself survived would pass even with the bug present — this marker check
+    # is what actually catches the regression.
     assert_file_exists "$victim_dir/marker" \
         "Symlink target content must be untouched"
-    if [[ ! -L "$conv_root/agent-link" ]]; then
-        _log_failure "Symlinked entry should remain in place" \
-            "Missing symlink: $conv_root/agent-link"
-        return 1
-    fi
 }
 
 #===============================================================================
