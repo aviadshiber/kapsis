@@ -570,6 +570,12 @@ create_safe_git_config() {
         remote_url=$(git remote get-url origin 2>/dev/null || echo "")
     fi
 
+    # Resolve committer identity from env (set by launch-agent.sh's
+    # resolve_committer_identity). Fall back to the synthetic "Kapsis Agent"
+    # identity only when nothing was resolved upstream.
+    local committer_name="${KAPSIS_COMMITTER_NAME:-Kapsis Agent $agent_id}"
+    local committer_email="${KAPSIS_COMMITTER_EMAIL:-kapsis-agent-${agent_id}@localhost}"
+
     cat > "$config_path" << EOF
 [core]
     repositoryformatversion = 0
@@ -577,8 +583,8 @@ create_safe_git_config() {
     bare = false
     # No fsmonitor, no hooks path, no credential helper
 [user]
-    name = Kapsis Agent $agent_id
-    email = kapsis-agent-${agent_id}@localhost
+    name = $committer_name
+    email = $committer_email
 [init]
     defaultBranch = main
 [receive]

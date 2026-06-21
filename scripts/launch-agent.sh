@@ -101,6 +101,7 @@ FORCE_CLEAN=false      # Fix #1: Force remove existing worktree
 KEEP_WORKTREE="${KAPSIS_KEEP_WORKTREE:-false}"  # Fix #169: Preserve worktree after completion
 KEEP_VOLUMES="${KAPSIS_KEEP_VOLUMES:-false}"  # Fix #191: Preserve build cache volumes after completion
 CLI_CO_AUTHORS=()  # Co-authors added via --co-author CLI flag (merged with config)
+CLI_AUTHOR=""  # Committer identity override via --author CLI flag (Name <email>)
 INTERACTIVE=false
 DRY_RUN=false
 # Use KAPSIS_IMAGE env var if set (for CI), otherwise default
@@ -271,6 +272,9 @@ Options:
                         Security hardening: minimal, standard (default), strict, paranoid
   --co-author "Name <email>"
                         Add a git Co-authored-by trailer (repeatable; merges with config)
+  --author "Name <email>"
+                        Override the committer identity for this run.
+                        Takes precedence over config git.co_authors and host git identity.
   -h, --help            Show this help message
 
 Available Agents:
@@ -511,6 +515,18 @@ parse_args() {
                 CLI_CO_AUTHORS+=("$2")
                 shift 2
                 ;;
+            --author)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--author requires an argument"
+                    exit 1
+                fi
+                if [[ ! "$2" =~ ^[[:alnum:][:space:].\'\",_-]+\ \<[^\>]+@[^\>]+\>$ ]]; then
+                    log_error "Invalid --author format (expected 'Name <email>'): $2"
+                    exit 1
+                fi
+                CLI_AUTHOR="$2"
+                shift 2
+                ;;
             -h|--help)
                 usage
                 ;;
@@ -537,6 +553,56 @@ parse_args() {
     # Reinitialize logging with agent-specific log file
     # This prevents log interleaving when running parallel agents
     log_reinit_with_agent_id "$AGENT_ID"
+}
+
+#===============================================================================
+# RESOLVE COMMITTER IDENTITY
+#
+# Sets KAPSIS_COMMITTER_NAME / KAPSIS_COMMITTER_EMAIL in precedence order:
+#   1. --author CLI flag (CLI_AUTHOR)
+#   2. First entry of git.co_authors (GIT_CO_AUTHORS, pipe-separated)
+#   3. Host git config user.name / user.email
+#   4. Synthetic "Kapsis Agent <id>" fallback
+#===============================================================================
+resolve_committer_identity() {
+    KAPSIS_COMMITTER_NAME=""
+    KAPSIS_COMMITTER_EMAIL=""
+    local source=""
+    local raw=""
+
+    if [[ -n "${CLI_AUTHOR:-}" ]]; then
+        raw="$CLI_AUTHOR"
+        source="--author flag"
+    elif [[ -n "${GIT_CO_AUTHORS:-}" ]]; then
+        raw="${GIT_CO_AUTHORS%%|*}"
+        source="config git.co_authors"
+    fi
+
+    if [[ -n "$raw" ]]; then
+        # Parse "Name <email>"
+        KAPSIS_COMMITTER_NAME="${raw% <*}"
+        KAPSIS_COMMITTER_EMAIL="${raw#*<}"
+        KAPSIS_COMMITTER_EMAIL="${KAPSIS_COMMITTER_EMAIL%>}"
+    fi
+
+    if [[ -z "$KAPSIS_COMMITTER_NAME" || -z "$KAPSIS_COMMITTER_EMAIL" ]]; then
+        local host_name host_email
+        host_name=$(git config --global user.name 2>/dev/null || echo "")
+        host_email=$(git config --global user.email 2>/dev/null || echo "")
+        if [[ -n "$host_name" && -n "$host_email" ]]; then
+            KAPSIS_COMMITTER_NAME="$host_name"
+            KAPSIS_COMMITTER_EMAIL="$host_email"
+            source="host git config"
+        fi
+    fi
+
+    if [[ -z "$KAPSIS_COMMITTER_NAME" || -z "$KAPSIS_COMMITTER_EMAIL" ]]; then
+        KAPSIS_COMMITTER_NAME="Kapsis Agent ${AGENT_ID}"
+        KAPSIS_COMMITTER_EMAIL="kapsis-agent-${AGENT_ID}@localhost"
+        source="synthetic fallback"
+    fi
+
+    log_info "Committer identity resolved from ${source}: ${KAPSIS_COMMITTER_NAME} <${KAPSIS_COMMITTER_EMAIL}>"
 }
 
 #===============================================================================
@@ -1039,6 +1105,11 @@ parse_config() {
         done
         log_debug "Merged ${#CLI_CO_AUTHORS[@]} CLI co-author(s) with config"
     fi
+
+    # Resolve committer identity (KAPSIS_COMMITTER_NAME / KAPSIS_COMMITTER_EMAIL)
+    # Precedence: --author > first git.co_authors entry > host git config > synthetic
+    resolve_committer_identity
+    export KAPSIS_COMMITTER_NAME KAPSIS_COMMITTER_EMAIL
 
     # Resolve attribution templates — fall back to Kapsis-only default when
     # config has no attribution key (yq returns "null" for missing keys).
@@ -1970,6 +2041,14 @@ generate_env_vars() {
     ENV_VARS+=("-e" "KAPSIS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_PROJECT=$(basename "$PROJECT_PATH")")
     ENV_VARS+=("-e" "KAPSIS_SANDBOX_MODE=${SANDBOX_MODE}")
+
+    # Committer identity for in-container git commits (resolved by resolve_committer_identity)
+    if [[ -n "${KAPSIS_COMMITTER_NAME:-}" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_COMMITTER_NAME=${KAPSIS_COMMITTER_NAME}")
+    fi
+    if [[ -n "${KAPSIS_COMMITTER_EMAIL:-}" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_COMMITTER_EMAIL=${KAPSIS_COMMITTER_EMAIL}")
+    fi
 
     # Status reporting environment variables (for container to update status)
     ENV_VARS+=("-e" "KAPSIS_STATUS_PROJECT=$(basename "$PROJECT_PATH")")
