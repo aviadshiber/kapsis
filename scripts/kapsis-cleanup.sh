@@ -717,7 +717,7 @@ clean_images() {
 
     # Get kapsis images (kapsis-sandbox, kapsis-claude-cli, etc.)
     local images
-    images=$(podman images --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}" 2>/dev/null | grep -E "^kapsis-" || true)
+    images=$(podman images --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}" 2>/dev/null | grep -E "(^|/)kapsis-" || true)
 
     if [[ -n "$images" ]]; then
         while IFS= read -r line; do

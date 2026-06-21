@@ -116,6 +116,18 @@ test_clean_images_function_exists() {
     assert_contains "$content" "podman image prune" "Should prune dangling images"
 }
 
+test_cleanup_images_pattern_matches_localhost_prefix() {
+    log_test "Testing image pattern matches localhost/ prefixed repository names"
+
+    local content
+    content=$(cat "$CLEANUP_SCRIPT")
+
+    # Podman on macOS stores locally built images as localhost/kapsis-*:tag.
+    # grep -E "^kapsis-" never matches those — pattern must handle the prefix.
+    assert_contains "$content" 'grep -E "(^|/)kapsis-"' \
+        "Image grep should match both bare and localhost/ prefixed repos"
+}
+
 test_cleanup_keep_volumes_documented() {
     log_test "Testing --keep-volumes is documented in usage"
 
@@ -143,6 +155,7 @@ main() {
     run_test test_launch_has_cleanup_agent_volumes
     run_test test_launch_auto_cleanup_invocation
     run_test test_clean_images_function_exists
+    run_test test_cleanup_images_pattern_matches_localhost_prefix
     run_test test_cleanup_keep_volumes_documented
 
     print_summary
