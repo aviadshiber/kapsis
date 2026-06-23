@@ -2094,3 +2094,43 @@ your shell profile to override the built-in defaults.
 | `KAPSIS_CLEANUP_VM_DISK_CRITICAL_PCT` | `95` | Disk usage critical threshold (%) |
 | `KAPSIS_CLEANUP_VM_JOURNAL_VACUUM_SIZE` | `100M` | Journal vacuum target size |
 | `KAPSIS_CLEANUP_VM_SSH_TIMEOUT` | `15` | Timeout (seconds) for VM SSH commands |
+
+### TTL Cleanup & Disk Pressure Environment Variables
+
+TTL-based cleanup (Issue #389) expires per-agent state that leaked when agents were hard-killed or crashed, and warns when `~/.kapsis/` grows beyond a size threshold.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_SNAPSHOTS_DIR` | `~/.kapsis/snapshots` | Base directory for per-agent staging snapshots of `filesystem.include` files |
+| `KAPSIS_SNAPSHOTS_TTL_DAYS` | `14` | Snapshot age (days) before `kapsis-cleanup.sh` deletes it (override per run with `--snapshots-older-than <days>`) |
+| `KAPSIS_DIR_WARN_SIZE_GB` | `50` | Warn after cleanup when total `~/.kapsis/` size meets/exceeds this (GB). Shows top 3 subdirectories and remediation hints; set `0` to disable. The measurement is cached in `~/.kapsis/.disk-usage-cache` (JSON) for the dashboard and preflight checks |
+| `KAPSIS_TRANSCRIPT_MAX_BYTES` | `52428800` (50 MB) | Conversation transcript size cap; the tail is kept on truncation |
+
+Conversation transcripts in `~/.kapsis/conversations/` expire after 7 days by default (see [CLEANUP.md](CLEANUP.md)).
+
+---
+
+## Watchdog Configuration (macOS)
+
+Two host-side watchdogs guard against Podman VM failure modes on macOS that in-container probes cannot see. Both are enabled by default and tunable via environment variables.
+
+### vfkit Watchdog (Issue #303)
+
+Polls the vfkit hypervisor process; if it exits mid-run, the agent's mounts are gone. Writes `exit_code=4` + `error_type=mount_failure` to status.json and SIGTERMs the agent within ~10 seconds.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_VFKIT_WATCHDOG_ENABLED` | `true` | Enable the vfkit watchdog |
+| `KAPSIS_VFKIT_WATCHDOG_INTERVAL` | `5` | Seconds between vfkit liveness polls |
+
+### Exec-Channel Watchdog (Issue #382)
+
+Detects the silent wedge where `podman exec` hangs forever while vfkit is alive and the container is still reported `Up`. Probes the exec channel periodically; after N consecutive timed-out probes it writes `exit_code=4` + `error_type=exec_channel_hang` and SIGTERMs the agent.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_EXEC_WATCHDOG_ENABLED` | `true` | Enable the exec-channel watchdog (no-op on Linux) |
+| `KAPSIS_EXEC_WATCHDOG_INTERVAL` | `30` | Seconds between exec probes |
+| `KAPSIS_EXEC_WATCHDOG_TIMEOUT` | `5` | Per-probe timeout (seconds) |
+| `KAPSIS_EXEC_WATCHDOG_THRESHOLD` | `3` | Consecutive probe failures before firing (~90s blind window with defaults) |
+| `KAPSIS_EXEC_WATCHDOG_PODMAN` | `podman` | Podman binary to use for probes |
