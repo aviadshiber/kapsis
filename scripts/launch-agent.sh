@@ -101,6 +101,7 @@ FORCE_CLEAN=false      # Fix #1: Force remove existing worktree
 KEEP_WORKTREE="${KAPSIS_KEEP_WORKTREE:-false}"  # Fix #169: Preserve worktree after completion
 KEEP_VOLUMES="${KAPSIS_KEEP_VOLUMES:-false}"  # Fix #191: Preserve build cache volumes after completion
 CLI_CO_AUTHORS=()  # Co-authors added via --co-author CLI flag (merged with config)
+CLI_AUTHOR=""  # Committer identity override via --author CLI flag (Name <email>)
 INTERACTIVE=false
 DRY_RUN=false
 # Use KAPSIS_IMAGE env var if set (for CI), otherwise default
@@ -270,7 +271,12 @@ Options:
   --security-profile <profile>
                         Security hardening: minimal, standard (default), strict, paranoid
   --co-author "Name <email>"
-                        Add a git Co-authored-by trailer (repeatable; merges with config)
+                        Append a git Co-authored-by: trailer on commits.
+                        Repeatable; merges with git.co_authors from config.
+  --author "Name <email>"
+                        Set the committer/author identity (the name shown in
+                        \`git log\`). Single value. Takes precedence over the
+                        first git.co_authors entry and the host git config.
   -h, --help            Show this help message
 
 Available Agents:
@@ -371,6 +377,19 @@ handle_global_flags() {
             exit $?
             ;;
     esac
+}
+
+# Validate "Name <email>" format for --author, --co-author, and YAML
+# git.co_authors entries. Tightened over the original (PR #416 security review):
+# - Name uses a literal-space separator (not [[:space:]]) so newlines/tabs
+#   are rejected outright.
+# - Email portion forbids ALL whitespace, preventing multi-line injection
+#   into the heredoc written by create_safe_git_config.
+# Returns 0 if valid, 1 otherwise.
+_KAPSIS_AUTHOR_FORMAT_REGEX='^[A-Za-z0-9.'"'"'\",_-]+( [A-Za-z0-9.'"'"'\",_-]+)* <[^>[:space:]]+@[^>[:space:]]+>$'
+validate_author_format() {
+    local value="$1"
+    [[ "$value" =~ $_KAPSIS_AUTHOR_FORMAT_REGEX ]]
 }
 
 parse_args() {
@@ -503,12 +522,23 @@ parse_args() {
                     log_error "--co-author requires an argument"
                     exit 1
                 fi
-                # Validate format: "Name <email>" — reject shell metacharacters in name
-                if [[ ! "$2" =~ ^[[:alnum:][:space:].\'\",_-]+\ \<[^\>]+@[^\>]+\>$ ]]; then
+                if ! validate_author_format "$2"; then
                     log_error "Invalid --co-author format (expected 'Name <email>'): $2"
                     exit 1
                 fi
                 CLI_CO_AUTHORS+=("$2")
+                shift 2
+                ;;
+            --author)
+                if [[ $# -lt 2 ]]; then
+                    log_error "--author requires an argument"
+                    exit 1
+                fi
+                if ! validate_author_format "$2"; then
+                    log_error "Invalid --author format (expected 'Name <email>'): $2"
+                    exit 1
+                fi
+                CLI_AUTHOR="$2"
                 shift 2
                 ;;
             -h|--help)
@@ -537,6 +567,66 @@ parse_args() {
     # Reinitialize logging with agent-specific log file
     # This prevents log interleaving when running parallel agents
     log_reinit_with_agent_id "$AGENT_ID"
+}
+
+#===============================================================================
+# RESOLVE COMMITTER IDENTITY
+#
+# Sets KAPSIS_COMMITTER_NAME / KAPSIS_COMMITTER_EMAIL in precedence order:
+#   1. --author CLI flag (CLI_AUTHOR)
+#   2. First entry of git.co_authors (GIT_CO_AUTHORS, pipe-separated)
+#   3. Host git config user.name / user.email
+#   4. Synthetic "Kapsis Agent <id>" fallback
+#===============================================================================
+resolve_committer_identity() {
+    KAPSIS_COMMITTER_NAME=""
+    KAPSIS_COMMITTER_EMAIL=""
+    local identity_source=""
+    local raw=""
+
+    if [[ -n "${CLI_AUTHOR:-}" ]]; then
+        raw="$CLI_AUTHOR"
+        identity_source="--author flag"
+    elif [[ -n "${GIT_CO_AUTHORS:-}" ]]; then
+        raw="${GIT_CO_AUTHORS%%|*}"
+        identity_source="config git.co_authors"
+    fi
+
+    if [[ -n "$raw" ]]; then
+        # Re-validate the raw entry. CLI_AUTHOR was validated at parse time and
+        # GIT_CO_AUTHORS entries are filtered in parse_config, but cheap to recheck
+        # — guards against any future code path that bypasses those gates.
+        if validate_author_format "$raw"; then
+            # Parse "Name <email>". Both extractions only run on validated input,
+            # so they cannot produce an email with whitespace or angle brackets.
+            KAPSIS_COMMITTER_NAME="${raw% <*}"
+            KAPSIS_COMMITTER_EMAIL="${raw#*<}"
+            KAPSIS_COMMITTER_EMAIL="${KAPSIS_COMMITTER_EMAIL%>}"
+        else
+            log_warn "Committer source (${identity_source}) failed format validation; falling through"
+            KAPSIS_COMMITTER_NAME=""
+            KAPSIS_COMMITTER_EMAIL=""
+        fi
+    fi
+
+    if [[ -z "$KAPSIS_COMMITTER_NAME" || -z "$KAPSIS_COMMITTER_EMAIL" ]]; then
+        local host_name host_email
+        host_name=$(git config --global user.name 2>/dev/null || echo "")
+        host_email=$(git config --global user.email 2>/dev/null || echo "")
+        if [[ -n "$host_name" && -n "$host_email" ]]; then
+            KAPSIS_COMMITTER_NAME="$host_name"
+            KAPSIS_COMMITTER_EMAIL="$host_email"
+            identity_source="host git config"
+        fi
+    fi
+
+    if [[ -z "$KAPSIS_COMMITTER_NAME" || -z "$KAPSIS_COMMITTER_EMAIL" ]]; then
+        KAPSIS_COMMITTER_NAME="Kapsis Agent ${AGENT_ID}"
+        KAPSIS_COMMITTER_EMAIL="kapsis-agent-${AGENT_ID}@localhost"
+        identity_source="synthetic fallback"
+    fi
+
+    log_debug "Committer identity resolved from ${identity_source}: ${KAPSIS_COMMITTER_NAME} <${KAPSIS_COMMITTER_EMAIL}>"
 }
 
 #===============================================================================
@@ -827,8 +917,24 @@ parse_config() {
         GIT_REMOTE=$(yq -r '.git.auto_push.remote // "origin"' "$CONFIG_FILE")
         GIT_COMMIT_MSG=$(yq -r '.git.auto_push.commit_message // "feat: AI agent changes"' "$CONFIG_FILE")
 
-        # Parse co-authors (newline-separated list)
-        GIT_CO_AUTHORS=$(yq -r '.git.co_authors[]' "$CONFIG_FILE" 2>/dev/null | tr '\n' '|' | sed 's/|$//' || echo "")
+        # Parse co-authors (newline-separated list). Each entry is run through
+        # validate_author_format to block multi-line / shell-metachar injection
+        # via .kapsis/config.yaml (security review of PR #416). Invalid entries
+        # are dropped with a warning rather than failing the launch, so a
+        # single typo doesn't block the whole run.
+        GIT_CO_AUTHORS=""
+        while IFS= read -r _co_author_entry; do
+            [[ -z "$_co_author_entry" ]] && continue
+            if ! validate_author_format "$_co_author_entry"; then
+                log_warn "Skipping invalid git.co_authors entry (expected 'Name <email>'): $_co_author_entry"
+                continue
+            fi
+            if [[ -n "$GIT_CO_AUTHORS" ]]; then
+                GIT_CO_AUTHORS+="|$_co_author_entry"
+            else
+                GIT_CO_AUTHORS="$_co_author_entry"
+            fi
+        done < <(yq -r '.git.co_authors[]' "$CONFIG_FILE" 2>/dev/null || true)
 
         # Parse attribution templates (commit trailer + PR description).
         # A null/missing value yields the string "null" from yq -r; treat that as unset
@@ -1039,6 +1145,11 @@ parse_config() {
         done
         log_debug "Merged ${#CLI_CO_AUTHORS[@]} CLI co-author(s) with config"
     fi
+
+    # Resolve committer identity (KAPSIS_COMMITTER_NAME / KAPSIS_COMMITTER_EMAIL)
+    # Precedence: --author > first git.co_authors entry > host git config > synthetic
+    resolve_committer_identity
+    export KAPSIS_COMMITTER_NAME KAPSIS_COMMITTER_EMAIL
 
     # Resolve attribution templates — fall back to Kapsis-only default when
     # config has no attribution key (yq returns "null" for missing keys).
@@ -1970,6 +2081,14 @@ generate_env_vars() {
     ENV_VARS+=("-e" "KAPSIS_AGENT_ID=${AGENT_ID}")
     ENV_VARS+=("-e" "KAPSIS_PROJECT=$(basename "$PROJECT_PATH")")
     ENV_VARS+=("-e" "KAPSIS_SANDBOX_MODE=${SANDBOX_MODE}")
+
+    # Committer identity for in-container git commits (resolved by resolve_committer_identity)
+    if [[ -n "${KAPSIS_COMMITTER_NAME:-}" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_COMMITTER_NAME=${KAPSIS_COMMITTER_NAME}")
+    fi
+    if [[ -n "${KAPSIS_COMMITTER_EMAIL:-}" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_COMMITTER_EMAIL=${KAPSIS_COMMITTER_EMAIL}")
+    fi
 
     # Status reporting environment variables (for container to update status)
     ENV_VARS+=("-e" "KAPSIS_STATUS_PROJECT=$(basename "$PROJECT_PATH")")
@@ -3606,5 +3725,9 @@ post_container_overlay() {
     fi
 }
 
-# Run main
-main "$@"
+# Run main — but only when executed directly. When the script is sourced
+# (e.g. from a test that wants to call a single helper like
+# resolve_committer_identity or validate_author_format), skip the main flow.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

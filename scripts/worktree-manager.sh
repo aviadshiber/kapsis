@@ -570,20 +570,30 @@ create_safe_git_config() {
         remote_url=$(git remote get-url origin 2>/dev/null || echo "")
     fi
 
-    cat > "$config_path" << EOF
+    # Resolve committer identity from env (set by launch-agent.sh's
+    # resolve_committer_identity). Fall back to the synthetic "Kapsis Agent"
+    # identity only when nothing was resolved upstream.
+    local committer_name="${KAPSIS_COMMITTER_NAME:-Kapsis Agent $agent_id}"
+    local committer_email="${KAPSIS_COMMITTER_EMAIL:-kapsis-agent-${agent_id}@localhost}"
+
+    # Write static sections via a quoted heredoc — no shell interpolation,
+    # no injection surface. User identity is written separately via
+    # `git config --file` below, which handles escaping correctly even if a
+    # value contains git-special characters (defense-in-depth on top of the
+    # validate_author_format() regex enforced upstream).
+    cat > "$config_path" << 'EOF'
 [core]
     repositoryformatversion = 0
     filemode = true
     bare = false
     # No fsmonitor, no hooks path, no credential helper
-[user]
-    name = Kapsis Agent $agent_id
-    email = kapsis-agent-${agent_id}@localhost
 [init]
     defaultBranch = main
 [receive]
     denyCurrentBranch = updateInstead
 EOF
+    git config --file "$config_path" user.name "$committer_name"
+    git config --file "$config_path" user.email "$committer_email"
 
     # Add remote if available (allows push via host post-processing)
     if [[ -n "$remote_url" ]]; then
