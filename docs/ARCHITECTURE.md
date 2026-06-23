@@ -122,11 +122,12 @@ Kapsis supports two sandbox modes for different use cases:
 
 ### Overlay Mode (Legacy)
 
-The original isolation method using fuse-overlayfs:
+The original isolation method using a Copy-on-Write overlay (kernel OverlayFS assembled
+by the Podman runtime via the `:O` volume option):
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│  Container with fuse-overlayfs                                                  │
+│  Container with CoW overlay                                                     │
 │  ┌─────────────────────────────────────────────────────────────────────────┐   │
 │  │  /workspace (merged view)                                               │   │
 │  │  ├── lower: host project (read-only)                                    │   │
@@ -138,6 +139,35 @@ The original isolation method using fuse-overlayfs:
 ```
 
 **Auto-selected when:** No `--branch` flag OR project is not a git repository
+
+#### macOS Named-Volume Variant (Issue #376)
+
+On macOS, the overlay `upper/` and `work/` directories live in a per-agent Podman named
+volume (`kapsis-<agent-id>-overlay`) on the VM's native ext4 filesystem instead of the
+virtio-fs share. The project is mounted with the same podman-side mechanism the Linux path
+uses — `:O,upperdir=<volume-mountpoint>/upper,workdir=<volume-mountpoint>/work`, where the
+mountpoint comes from `podman volume inspect --format '{{.Mountpoint}}'` and is interpreted
+server-side inside the VM where that path is valid. The Podman runtime assembles the kernel
+overlay before the container starts — zero virtio-fs round-trips on overlay metadata,
+eliminating the AVF cache-coherency bug (Apple FB16008360, podman#23061) that caused
+sporadic `exit_code=4` mount failures.
+
+- Adds **no capabilities or devices** to the agent container (the overlay is constructed by
+  the runtime, not in-container), so the mode is available under **all** security profiles,
+  including `strict`/`paranoid`
+- Requires Podman ≥ 4.0 (custom `upperdir=`/`workdir=` on `:O` mounts); since Podman does
+  not create custom upper/work paths itself, Kapsis pre-creates them inside the volume with
+  a one-time, fully cap-dropped helper container at launch
+- Any stale volume with the same agent ID is removed at launch so each run starts with a
+  clean upper layer
+- After the container exits, `upper/` and `work/` are exported back to the host sandbox
+  directory through a staged, symlink-hardened tar extraction, so post-container scope
+  validation and change summaries work unchanged
+- Opt out with `KAPSIS_OVERLAY_USE_VOLUME=false`; Linux always uses kernel OverlayFS (`:O`)
+  with `upper/`/`work/` on host directories
+- CI note: the VM-side interpretation of the volume-mountpoint `upperdir` cannot be
+  exercised on Linux runners — validate changes to this path with a single smoke run on
+  real macOS (`./scripts/launch-agent.sh <project> --overlay-mode --task "touch x"`)
 
 ### Worktree Mode (New, Recommended)
 

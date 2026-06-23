@@ -446,6 +446,235 @@ check_userns_compat() {
     esac
 }
 
+# Resolve an integer-valued KAPSIS_VM_* override into the named variable,
+# falling back to the default when the env var is unset or not a plain
+# non-negative integer. The guard matters: these values flow into bash
+# arithmetic expansion, which recursively expands array subscripts (including
+# command substitution) — an unvalidated override is an arbitrary-command
+# hazard, not just a typo hazard.
+#   $1 = destination variable name
+#   $2 = override env var name
+#   $3 = default value
+_resolve_vm_numeric_override() {
+    local var_name="$1" env_name="$2" default_value="$3"
+    local value="${!env_name:-}"
+    if [[ -n "$value" && "$value" =~ ^[0-9]+$ ]]; then
+        printf -v "$var_name" '%s' "$value"
+    else
+        if [[ -n "$value" ]]; then
+            log_warn "Ignoring non-numeric ${env_name}='${value}' — using default ${default_value}"
+        fi
+        printf -v "$var_name" '%s' "$default_value"
+    fi
+}
+
+# Extract one labeled field from `sysctl vm.swapusage` output as integer MB.
+#   $1 = field label ("total" | "used" | "free")
+#   $2 = full vm.swapusage line
+# Only the documented megabyte suffix is accepted (e.g. "2048.00M"); any other
+# unit prints nothing so the caller skips the check rather than mis-scaling.
+# Sub-MB fractions round UP so a tiny-but-present swap ("total = 0.50M") is
+# not mistaken for "no swap configured".
+_swapusage_field_mb() {
+    local label="$1" line="$2"
+    printf '%s' "$line" | awk -v lbl="$label" '
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i == lbl && $(i + 1) == "=") {
+                    if ($(i + 2) ~ /^[0-9]+(\.[0-9]+)?M$/) {
+                        v = $(i + 2)
+                        sub(/M$/, "", v)
+                        n = v + 0
+                        printf "%d", (n == int(n)) ? n : int(n) + 1
+                    }
+                    exit
+                }
+            }
+        }'
+}
+
+# Check Podman VM memory allocation (macOS only — Issue #377)
+#
+# Two independent advisory checks, both of which always run (a VM can be
+# simultaneously below the concurrency threshold and oversized for the host):
+#   Check 1 — VM below the recommended minimum for the planned parallel-agent
+#             concurrency
+#   Check 2 — VM consuming so much host RAM that the AVF helper becomes
+#             jetsam's primary eviction target
+# Neither warning blocks launch — both print the exact `podman machine set`
+# remediation command so the user can act.
+check_podman_vm_memory() {
+    local config_file="${1:-}"
+
+    # macOS only — Linux uses native Podman, no VM to size
+    if ! is_macos; then
+        return 0
+    fi
+
+    log_info "Checking Podman VM memory sizing..."
+
+    local machine
+    machine="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
+
+    # Numeric overrides are regex-guarded before any arithmetic use
+    local base_gb=0 per_agent_gb=0 max_host_pct=0
+    _resolve_vm_numeric_override base_gb KAPSIS_VM_BASE_MEMORY_GB "${KAPSIS_DEFAULT_VM_BASE_MEMORY_GB}"
+    _resolve_vm_numeric_override per_agent_gb KAPSIS_VM_PER_AGENT_MEMORY_GB "${KAPSIS_DEFAULT_VM_PER_AGENT_MEMORY_GB}"
+    _resolve_vm_numeric_override max_host_pct KAPSIS_VM_MAX_HOST_PCT "${KAPSIS_DEFAULT_VM_MAX_HOST_PCT}"
+
+    # Resolve max_parallel_agents: KAPSIS_MAX_PARALLEL_AGENTS env > vm.max_parallel_agents YAML > 1.
+    # The resolved value and its source are always logged so a setting that was
+    # silently ignored (missing yq, mistyped key, non-numeric value) is visible.
+    local max_parallel_agents=1 agents_source="default"
+    if [[ -n "${KAPSIS_MAX_PARALLEL_AGENTS:-}" ]]; then
+        if [[ "${KAPSIS_MAX_PARALLEL_AGENTS}" =~ ^[0-9]+$ ]]; then
+            max_parallel_agents="$KAPSIS_MAX_PARALLEL_AGENTS"
+            agents_source="env KAPSIS_MAX_PARALLEL_AGENTS"
+        else
+            log_warn "Ignoring non-numeric KAPSIS_MAX_PARALLEL_AGENTS='${KAPSIS_MAX_PARALLEL_AGENTS}'"
+        fi
+    fi
+    if [[ "$agents_source" == "default" && -n "$config_file" && -f "$config_file" ]]; then
+        if command -v yq &>/dev/null; then
+            local cfg_agents
+            cfg_agents=$(yq -r '.vm.max_parallel_agents // ""' "$config_file" 2>/dev/null || echo "")
+            if [[ -n "$cfg_agents" && "$cfg_agents" =~ ^[0-9]+$ ]]; then
+                max_parallel_agents="$cfg_agents"
+                agents_source="config vm.max_parallel_agents"
+            elif [[ -n "$cfg_agents" && "$cfg_agents" != "null" ]]; then
+                log_warn "Ignoring non-numeric vm.max_parallel_agents='${cfg_agents}' in ${config_file}"
+            fi
+        else
+            log_info "yq not available — vm.max_parallel_agents in ${config_file} not consulted"
+        fi
+    fi
+    log_info "Planned concurrency: ${max_parallel_agents} parallel agent(s) (source: ${agents_source})"
+
+    # Minimum recommended VM memory for the planned concurrency.
+    # All comparisons below stay in MiB — truncating to whole GiB first would
+    # lose up to 1023 MiB in the jetsam ratio and in displayed sizes.
+    local recommended_gb recommended_mb
+    recommended_gb=$(( base_gb + per_agent_gb * max_parallel_agents ))
+    recommended_mb=$(( recommended_gb * 1024 ))
+
+    # Read VM memory in MiB via `podman machine inspect` — gracefully skip on failure
+    local vm_mem_mb
+    vm_mem_mb=$(podman machine inspect "$machine" --format '{{.Resources.Memory}}' 2>/dev/null || echo "0")
+    if ! [[ "${vm_mem_mb:-0}" =~ ^[0-9]+$ ]] || (( vm_mem_mb == 0 )); then
+        log_debug "Could not read VM memory from 'podman machine inspect' — skipping memory advisor"
+        return 0
+    fi
+
+    # Read host total RAM (bytes → MiB)
+    local host_mem_bytes host_mem_mb
+    host_mem_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo "0")
+    host_mem_mb=0
+    if [[ "${host_mem_bytes:-0}" =~ ^[0-9]+$ ]] && (( host_mem_bytes > 0 )); then
+        host_mem_mb=$(( host_mem_bytes / 1024 / 1024 ))
+    fi
+
+    local warned=0
+
+    # Check 1: VM below recommended threshold for planned concurrency
+    if (( vm_mem_mb < recommended_mb )); then
+        warned=1
+        preflight_warn "VM memory ${vm_mem_mb}MB < recommended ${recommended_mb}MB (${recommended_gb}GB) for ${max_parallel_agents} parallel agent(s)"
+        preflight_warn "  AVF virtio-fs cache race window widens under memory pressure (Apple FB16008360)"
+        preflight_warn "  To resize (requires VM restart — kills in-flight agents):"
+        preflight_warn "    podman machine stop ${machine} && podman machine set --memory ${recommended_mb} ${machine} && podman machine start ${machine}"
+    fi
+
+    # Check 2: VM consumes too much host RAM — jetsam amplifier risk.
+    # Runs even when Check 1 fired: an undersized VM can still be oversized
+    # for the host, and the user needs to see both constraints together.
+    if (( host_mem_mb > 0 )); then
+        local vm_pct
+        vm_pct=$(( vm_mem_mb * 100 / host_mem_mb ))
+        if (( vm_pct > max_host_pct )); then
+            warned=1
+            local safe_mb
+            safe_mb=$(( host_mem_mb * max_host_pct / 100 ))
+            preflight_warn "VM memory ${vm_mem_mb}MB is ${vm_pct}% of host RAM ${host_mem_mb}MB (threshold: ${max_host_pct}%)"
+            preflight_warn "  High VM:host ratio makes the AVF helper the top jetsam candidate (Apple FB16008360)"
+            preflight_warn "  Recommended VM size: ${safe_mb}MB"
+            preflight_warn "    podman machine stop ${machine} && podman machine set --memory ${safe_mb} ${machine} && podman machine start ${machine}"
+        fi
+    fi
+
+    if (( warned == 0 )); then
+        preflight_ok "VM memory OK (${vm_mem_mb}MB allocated, ${max_parallel_agents} parallel agent(s), threshold ${recommended_mb}MB)"
+    fi
+    return 0
+}
+
+# Check macOS host memory pressure (Issue #377)
+#
+# Elevated swap usage widens the AVF virtio-fs cache-coherency race window
+# (Apple FB16008360), increasing mount_failure (exit_code=4) frequency.
+# Warning-only — does not block launch.
+#
+# The percentage signal is gated by an absolute floor (KAPSIS_VM_SWAP_FLOOR_MB):
+# macOS allocates small dynamic swapfiles even when pressure is benign, so a
+# tiny swap at a high used-percentage is not the same signal as a host that is
+# actually thrashing.
+check_host_memory_pressure() {
+    # macOS only
+    if ! is_macos; then
+        return 0
+    fi
+
+    # Numeric overrides are regex-guarded before any arithmetic use
+    local swap_warn_pct=0 swap_floor_mb=0
+    _resolve_vm_numeric_override swap_warn_pct KAPSIS_VM_SWAP_WARN_PCT "${KAPSIS_DEFAULT_VM_SWAP_WARN_PCT}"
+    _resolve_vm_numeric_override swap_floor_mb KAPSIS_VM_SWAP_FLOOR_MB "${KAPSIS_DEFAULT_VM_SWAP_FLOOR_MB}"
+
+    log_info "Checking host memory pressure..."
+
+    # sysctl vm.swapusage: total = 4096.00M  used = 2048.00M  free = 2048.00M  (encrypted)
+    local swap_line
+    swap_line=$(sysctl vm.swapusage 2>/dev/null || echo "")
+    if [[ -z "$swap_line" ]]; then
+        log_debug "vm.swapusage not available — skipping memory pressure check"
+        return 0
+    fi
+
+    # Unit-aware parse: accepts only the documented M suffix, rounds sub-MB up
+    local swap_total_mb swap_used_mb
+    swap_total_mb=$(_swapusage_field_mb "total" "$swap_line")
+    swap_used_mb=$(_swapusage_field_mb "used" "$swap_line")
+
+    # Empty means a missing field or a non-MB unit — skip rather than mis-scale
+    if ! [[ "$swap_total_mb" =~ ^[0-9]+$ ]] || ! [[ "$swap_used_mb" =~ ^[0-9]+$ ]]; then
+        log_debug "Could not parse vm.swapusage (missing field or non-MB unit): '$swap_line'"
+        return 0
+    fi
+
+    if (( swap_total_mb == 0 )); then
+        preflight_ok "No swap configured — host memory pressure: low"
+        return 0
+    fi
+
+    # Absolute floor: a high percentage of a tiny dynamic swap is noise, not pressure
+    if (( swap_used_mb < swap_floor_mb )); then
+        preflight_ok "Host memory pressure OK (swap ${swap_used_mb}MB used — below ${swap_floor_mb}MB floor)"
+        return 0
+    fi
+
+    local swap_pct
+    swap_pct=$(( swap_used_mb * 100 / swap_total_mb ))
+
+    if (( swap_pct > swap_warn_pct )); then
+        preflight_warn "Host swap usage ${swap_pct}% (${swap_used_mb}MB/${swap_total_mb}MB)"
+        preflight_warn "  Elevated swap widens the AVF virtio-fs cache race window (Apple FB16008360)"
+        preflight_warn "  This increases mount_failure (exit_code=4) frequency"
+        preflight_warn "  Consider: close memory-heavy apps, or reduce Podman VM memory"
+    else
+        preflight_ok "Host memory pressure OK (swap ${swap_pct}% used)"
+    fi
+
+    return 0
+}
+
 preflight_check() {
     local project_path="${1:-.}"
     local target_branch="${2:-}"
@@ -462,6 +691,8 @@ preflight_check() {
 
     # Run all checks
     check_podman || true
+    check_podman_vm_memory "$agent_config" || true
+    check_host_memory_pressure || true
     check_disk_space || true
     check_images "$image_name" || true
     check_userns_compat "$agent_config" || true
