@@ -118,7 +118,6 @@
         "set_tid_address",
         "setfsgid", "setfsuid",
         "setgid", "setgroups",
-        "setns",
         "setpgid", "setsid",
         "setresgid", "setresuid",
         "setsockopt",
@@ -144,13 +143,22 @@
         "umask",
         "uname",
         "unlink", "unlinkat",
-        "unshare",
         "utime", "utimes", "utimensat", "futimesat",
         "vfork",
         "wait4", "waitid", "waitpid",
         "write", "writev"
       ],
       "action": "SCMP_ACT_ALLOW"
+    },
+    {
+      "comment": "Hardening (CVE-2022-0185 class): deny user-namespace + mount-escalation primitives with EPERM. setns/unshare removed from the allow list above so they cannot be used to enter a nested userns and reach the mount/fsconfig surface. Opt out with KAPSIS_ALLOW_USERNS=true.",
+      "names": [
+        "setns",
+        "unshare"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "errno": "EPERM"
     },
     {
       "comment": "PTRACE_TRACEME only - allows strace on self for debugging",

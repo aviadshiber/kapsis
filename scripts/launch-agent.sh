@@ -1097,6 +1097,14 @@ parse_config() {
         cfg_val=$(yq -r '.security.seccomp.enabled // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
         [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_SECCOMP_ENABLED:-}" ]] && export KAPSIS_SECCOMP_ENABLED="true"
 
+        # Opt out of the default user-namespace + mount-escalation seccomp
+        # denial (CVE-2022-0185 class). Set to true ONLY for workloads that
+        # legitimately need nested user namespaces / mounts: nested
+        # containerization, bubblewrap/nsjail, Chromium/Playwright sandboxes.
+        # Env var KAPSIS_ALLOW_USERNS wins over this YAML key.
+        cfg_val=$(yq -r '.security.seccomp.allow_userns // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_ALLOW_USERNS:-}" ]] && export KAPSIS_ALLOW_USERNS="true"
+
         cfg_val=$(yq -r '.security.filesystem.noexec_tmp // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
         [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_NOEXEC_TMP:-}" ]] && export KAPSIS_NOEXEC_TMP="true"
 

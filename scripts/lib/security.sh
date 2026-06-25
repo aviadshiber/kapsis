@@ -46,7 +46,15 @@ SECURITY_DEFAULTS=(
 
     [standard_caps_drop_all]=true
     [standard_no_new_privs]=true
-    [standard_seccomp]=false
+    # Seccomp ON by default (was false). The default profile is the upstream
+    # containers/common default MINUS the user-namespace + mount-escalation
+    # syscall family (unshare/setns/mount/fsconfig/...), closing the
+    # unshare(CLONE_NEWUSER) -> nested-userns -> mount/fsconfig escalation path
+    # (CVE-2022-0185 class) that Podman's stock profile leaves open even with
+    # caps dropped. See get_seccomp_profile() and security/seccomp/. Opt out
+    # for nested-container/bubblewrap/Chromium workloads with
+    # KAPSIS_ALLOW_USERNS=true; disable entirely with KAPSIS_SECCOMP_ENABLED=false.
+    [standard_seccomp]=true
     [standard_pids_limit]=1000
     [standard_noexec_tmp]=false
 
@@ -141,10 +149,27 @@ get_seccomp_profile() {
         fi
     fi
 
-    # Check for custom profile
+    # Check for custom profile (explicit user override takes full control)
     if [[ -n "${KAPSIS_SECCOMP_PROFILE:-}" ]] && [[ -f "${KAPSIS_SECCOMP_PROFILE}" ]]; then
         echo "${KAPSIS_SECCOMP_PROFILE}"
         return
+    fi
+
+    # Escape hatch: KAPSIS_ALLOW_USERNS=true swaps to the userns-permissive
+    # profile (verbatim upstream containers/common default) for workloads that
+    # legitimately need nested user namespaces / mounts — nested
+    # containerization (podman/docker-in-container), bubblewrap / nsjail, and
+    # Chromium/Playwright/Electron sandboxes. This restores the pre-hardening
+    # behavior (Podman's stock default) while still being an explicit, audited
+    # profile. Takes precedence over the agent-specific and hardened defaults so
+    # the opt-out is reliable regardless of which agent is running.
+    if [[ "${KAPSIS_ALLOW_USERNS:-false}" == "true" ]]; then
+        if [[ -f "${seccomp_dir}/kapsis-default-userns.json" ]]; then
+            log_warn "KAPSIS_ALLOW_USERNS=true: using userns-permissive seccomp profile (unshare/setns/mount NOT denied). Only use this for nested-container/bubblewrap/Chromium workloads."
+            echo "${seccomp_dir}/kapsis-default-userns.json"
+            return
+        fi
+        log_warn "KAPSIS_ALLOW_USERNS=true but kapsis-default-userns.json missing; falling through to hardened default."
     fi
 
     # Check for agent-specific profile
@@ -153,7 +178,18 @@ get_seccomp_profile() {
         return
     fi
 
-    # Fall back to base profile
+    # Default: the hardened profile (upstream containers/common default with the
+    # userns + mount-escalation family denied). Preferred over the legacy thin
+    # kapsis-agent-base allowlist so that turning seccomp on for the `standard`
+    # profile does NOT regress to a hand-rolled allowlist that could miss
+    # syscalls real tools need — the hardened profile keeps all of upstream's
+    # coverage and only subtracts the escalation family.
+    if [[ -f "${seccomp_dir}/kapsis-default-hardened.json" ]]; then
+        echo "${seccomp_dir}/kapsis-default-hardened.json"
+        return
+    fi
+
+    # Fall back to legacy base profile (also hardened: unshare/setns denied)
     if [[ -f "${seccomp_dir}/kapsis-agent-base.json" ]]; then
         echo "${seccomp_dir}/kapsis-agent-base.json"
     fi
@@ -526,12 +562,24 @@ generate_security_args() {
 print_security_summary() {
     local profile="${KAPSIS_SECURITY_PROFILE:-standard}"
 
+    local seccomp_path seccomp_desc
+    seccomp_path=$(get_seccomp_profile "")
+    if [[ -z "$seccomp_path" ]]; then
+        seccomp_desc="disabled"
+    elif [[ "$seccomp_path" == *kapsis-default-userns.json ]]; then
+        seccomp_desc="userns-permissive (KAPSIS_ALLOW_USERNS=true — unshare/mount ALLOWED)"
+    elif [[ "$seccomp_path" == *kapsis-audit.json ]]; then
+        seccomp_desc="audit (log-only, NOT enforcing)"
+    else
+        seccomp_desc="enforcing, userns+mount DENIED ($(basename "$seccomp_path"))"
+    fi
+
     echo ""
     echo "Security Configuration:"
     echo "  Profile:          ${profile}"
     echo "  Capabilities:     ${SECURITY_DEFAULTS[${profile}_caps_drop_all]:-unknown}"
     echo "  No New Privs:     ${SECURITY_DEFAULTS[${profile}_no_new_privs]:-unknown}"
-    echo "  Seccomp:          ${SECURITY_DEFAULTS[${profile}_seccomp]:-unknown}"
+    echo "  Seccomp:          ${seccomp_desc}"
     echo "  PID Limit:        ${SECURITY_DEFAULTS[${profile}_pids_limit]:-unknown}"
     echo "  NoExec /tmp:      ${SECURITY_DEFAULTS[${profile}_noexec_tmp]:-unknown}"
     echo "  LSM:              $(detect_lsm)"

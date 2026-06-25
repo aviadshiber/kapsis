@@ -313,8 +313,9 @@ resources:
 #
 # Profiles:
 #   minimal   - No restrictions (trusted execution only)
-#   standard  - Drops capabilities, prevents privilege escalation
-#   strict    - Adds syscall filtering (seccomp), noexec /tmp (untrusted execution)
+#   standard  - Drops capabilities, prevents privilege escalation, seccomp
+#               denies user-namespace + mount escalation (CVE-2022-0185 class)
+#   strict    - Standard + noexec /tmp, lower PID limit (untrusted execution)
 #   paranoid  - Adds read-only root, requires AppArmor/SELinux
 #
 security:
@@ -322,12 +323,26 @@ security:
   # Default: standard
   profile: standard
 
-  # Seccomp syscall filtering
-  # Blocks dangerous syscalls: ptrace, mount, bpf, kexec_load, etc.
-  # Default: enabled for strict/paranoid, disabled for standard/minimal
+  # Seccomp syscall filtering.
+  # As of the userns hardening, the default profile (standard/strict/paranoid)
+  # is the upstream containers/common default with the user-namespace +
+  # mount-escalation syscall family DENIED with EPERM: unshare, setns, mount,
+  # umount2, fsopen, fsconfig, fspick, move_mount, open_tree, pivot_root,
+  # mount_setattr. This closes the unshare(CLONE_NEWUSER) -> nested-userns ->
+  # mount/fsconfig escalation path that Podman's stock profile leaves open even
+  # with all capabilities dropped. clone/clone3 stay allowed (process/thread
+  # creation). minimal keeps seccomp off.
   seccomp:
-    enabled: true  # Recommended even for standard profile
-    # profile: /custom/seccomp.json  # Optional custom profile
+    enabled: true  # default-on for standard/strict/paranoid
+    # profile: /custom/seccomp.json  # Optional custom profile (full override)
+
+    # Opt out of the userns + mount denial ONLY for workloads that legitimately
+    # need nested user namespaces / mounts: nested containerization
+    # (podman/docker-in-container), bubblewrap/nsjail, Chromium/Playwright/
+    # Electron sandboxes. Swaps to the verbatim upstream-default profile (userns
+    # ALLOWED). Env var KAPSIS_ALLOW_USERNS=true takes precedence over this key.
+    # Default: false (denial active).
+    allow_userns: false
 
   # Process isolation
   process:

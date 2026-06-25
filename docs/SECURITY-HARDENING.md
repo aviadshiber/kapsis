@@ -8,10 +8,13 @@ This document provides a comprehensive container hardening design for the Kapsis
 - Rootless Podman with `--userns=keep-id` (good baseline)
 - Non-root user (developer, UID 1000)
 - Memory/CPU limits configurable
-- NO seccomp profile (all ~300+ syscalls allowed)
-- SELinux/AppArmor disabled (`--security-opt label=disable`)
-- No explicit capability dropping
-- No cgroup v2 hardening beyond memory/CPU
+- Seccomp ON by default (standard/strict/paranoid): the upstream
+  containers/common default profile with the user-namespace + mount-escalation
+  syscall family denied (EPERM). See
+  [1.3 User-Namespace + Mount-Escalation Hardening](#13-user-namespace--mount-escalation-hardening).
+- AppArmor/SELinux auto-detected; labels disabled when no profile is installed
+- Capability dropping: `--cap-drop=ALL` plus a minimal add-back set (standard+)
+- cgroup v2 memory/CPU/PID limits
 
 **Target Security Posture:**
 - Defense-in-depth with multiple isolation layers
@@ -241,14 +244,82 @@ This profile allows syscalls required for:
 }
 ```
 
-### 1.3 Blocked Syscalls (Security-Critical)
+### 1.3 User-Namespace + Mount-Escalation Hardening
+
+**Threat (CVE-2022-0185 class).** Podman's stock default seccomp profile, and the
+upstream containers/common default it is based on, *unconditionally allow*
+`unshare`, `mount`, and the new-mount-API family (`fsopen`/`fsconfig`/`fspick`/
+`move_mount`/`open_tree`/`mount_setattr`) plus `umount2`/`pivot_root`. A
+code-executing agent — even after Kapsis drops all capabilities — can call
+`unshare(CLONE_NEWUSER)` to create a **nested** user namespace in which it holds a
+full capability set (including `CAP_SYS_ADMIN`) *relative to that namespace*, and
+from there reach the `mount`/`fsconfig` surface. Historically this surface has
+produced kernel container-escape primitives (e.g. CVE-2022-0185, a heap overflow
+in the Filesystem Context API reachable via `fsconfig`). Capability dropping alone
+does **not** close it, because the capabilities are re-granted inside the
+agent-created namespace.
+
+**Mitigation.** The default profile for `standard` (and `strict`/`paranoid`) is
+`security/seccomp/kapsis-default-hardened.json` — the verbatim upstream
+containers/common default profile (so it keeps *all* of upstream's protections
+and 7-architecture coverage) with the following family **denied, returning
+`EPERM`**:
+
+| Syscall | Why denied |
+|---------|-----------|
+| `unshare` | Primary escalation primitive — `unshare(CLONE_NEWUSER)` grants caps in a nested userns |
+| `setns` | Join an existing namespace |
+| `mount`, `umount2` | Classic mount manipulation / escape |
+| `fsopen`, `fsconfig`, `fspick` | New mount API — the CVE-2022-0185 surface |
+| `move_mount`, `open_tree` | New mount API — graft/detach mounts |
+| `pivot_root` | Change the root mount |
+| `mount_setattr` | Re-flag existing mounts |
+
+**EPERM, not KILL.** The denial uses `SCMP_ACT_ERRNO` returning `EPERM`, not
+`SCMP_ACT_KILL`. Well-behaved tools that *probe* for userns/mount support (some
+sandboxing libraries, language test harnesses) see a clean "operation not
+permitted" and degrade gracefully, rather than the whole process being
+SIGSYS-killed.
+
+**Residual: `clone`/`clone3`.** These remain allowed — they are the basis of
+*all* process and thread creation (`fork`/`pthread_create`), so denying them
+breaks everything. In principle `clone(CLONE_NEWUSER)` is an alternative path to a
+nested userns; argument-filtering it in static OCI seccomp JSON is impractical
+(the flag is a bitmask in a register and portable matching across `clone`/`clone3`
+arg layouts is fragile). The **load-bearing** escalation path is
+`unshare(CLONE_NEWUSER)` followed by `mount`/`fsconfig`, and *both ends are
+denied*: even if an agent reaches a nested userns via `clone`, the `mount`/
+`fsconfig`/`setns` family is still `EPERM`. `clone(CLONE_NEWUSER)` is therefore
+left to the complementary defenses — rootless user-namespace remapping
+(`--userns=keep-id`), `--cap-drop=ALL`, and `--security-opt no-new-privileges`.
+
+**Known breakage (use the opt-out).** Workloads that legitimately need nested user
+namespaces or mounts will break under the default and must opt out:
+- Nested containerization — running Podman/Docker *inside* the agent container.
+- `bubblewrap` / `nsjail` based sandboxes.
+- Chromium / Playwright / Electron, which set up a userns+mount sandbox unless run
+  with `--no-sandbox`.
+
+**Opt-out.** Set `KAPSIS_ALLOW_USERNS=true` (env) or `security.seccomp.allow_userns:
+true` (YAML). This swaps to `security/seccomp/kapsis-default-userns.json` — the
+verbatim upstream default with the family **allowed** — restoring the prior
+behavior. The env var wins over the YAML key. The master switch
+`KAPSIS_SECCOMP_ENABLED=false` disables seccomp entirely (not recommended). The
+`minimal` profile ships no seccomp by design.
+
+> The two legacy thin-allowlist profiles (`kapsis-agent-base.json`,
+> `kapsis-interactive.json`) were also updated to deny `unshare`/`setns` with
+> `EPERM` (the mount family was already absent from their allowlists), so every
+> shipped enforcing profile closes this hole.
+
+### 1.4 Blocked Syscalls (Security-Critical)
 
 The following syscalls are explicitly blocked by the default-deny policy:
 
 | Syscall | Risk | Notes |
 |---------|------|-------|
 | `ptrace` | Container escape | Process tracing/debugging |
-| `mount`, `umount`, `umount2` | Filesystem manipulation | Already blocked by capability drop |
+| `mount`, `umount`, `umount2` | Filesystem manipulation | Denied with EPERM (see 1.3); not just capability-gated |
 | `reboot` | System disruption | Kernel control |
 | `swapon`, `swapoff` | Resource exhaustion | Memory management |
 | `sethostname`, `setdomainname` | Identity spoofing | Network identity |
@@ -262,9 +333,9 @@ The following syscalls are explicitly blocked by the default-deny policy:
 | `keyctl` | Credential theft | Kernel keyring |
 | `add_key`, `request_key` | Credential manipulation | Kernel keyring |
 
-### 1.4 Agent-Specific Profiles
+### 1.5 Agent-Specific Profiles
 
-#### 1.4.1 Claude CLI Profile (`kapsis-claude.json`)
+#### 1.5.1 Claude CLI Profile (`kapsis-claude.json`)
 
 Claude Code requires Node.js and may spawn subprocesses. Uses base profile with no additions.
 
@@ -275,7 +346,7 @@ Claude Code requires Node.js and may spawn subprocesses. Uses base profile with 
 }
 ```
 
-#### 1.4.2 Aider Profile (`kapsis-aider.json`)
+#### 1.5.2 Aider Profile (`kapsis-aider.json`)
 
 Aider uses Python and may require additional syscalls for pip operations.
 
@@ -292,7 +363,7 @@ Aider uses Python and may require additional syscalls for pip operations.
 }
 ```
 
-#### 1.4.3 Interactive/Debug Profile (`kapsis-interactive.json`)
+#### 1.5.3 Interactive/Debug Profile (`kapsis-interactive.json`)
 
 For debugging, allows additional syscalls but still blocks dangerous ones.
 
@@ -1254,9 +1325,9 @@ Pre-defined security profiles for convenience:
 
 | Profile | Description | Use Case |
 |---------|-------------|----------|
-| `minimal` | Only userns + basic limits | Development/testing |
-| `standard` | Capabilities + no-new-privs + limits | Production default |
-| `strict` | Standard + seccomp + noexec + readonly root | High security |
+| `minimal` | Only userns + basic limits (no seccomp) | Development/testing |
+| `standard` | Caps drop + no-new-privs + seccomp (userns/mount denied) | Production default |
+| `strict` | Standard + noexec /tmp + lower PID limit | High security |
 | `paranoid` | Strict + readonly root + LSM | Maximum security |
 
 #### Profile Definitions
@@ -1273,14 +1344,15 @@ profiles:
     capabilities.drop_all: true
     process.no_new_privileges: true
     process.pids_limit: 1000
-    seccomp.enabled: false
+    seccomp.enabled: true                       # default-on (was false)
+    seccomp.profile: kapsis-default-hardened     # upstream default minus userns/mount
 
   strict:
     capabilities.drop_all: true
     process.no_new_privileges: true
     process.pids_limit: 500
     seccomp.enabled: true
-    seccomp.profile: kapsis-agent-base
+    seccomp.profile: kapsis-default-hardened
     filesystem.readonly_root: true
     filesystem.noexec_tmp: true
     filesystem.noexec_configs: true
@@ -1290,12 +1362,17 @@ profiles:
     process.no_new_privileges: true
     process.pids_limit: 300
     seccomp.enabled: true
-    seccomp.profile: kapsis-agent-base
+    seccomp.profile: kapsis-default-hardened
     filesystem.readonly_root: true
     filesystem.noexec_tmp: true
     filesystem.noexec_configs: true
     lsm.mode: auto
     lsm.require_profile: true
+
+# Opt out of the userns + mount denial for nested-container / bubblewrap /
+# Chromium workloads (swaps to the verbatim upstream default profile):
+#   KAPSIS_ALLOW_USERNS=true        (env)
+#   security.seccomp.allow_userns: true   (YAML; env wins)
 ```
 
 ---
