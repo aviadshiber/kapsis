@@ -31,7 +31,7 @@ jobs:
       scripts: ${{ steps.determine.outputs.scripts }}
       container: ${{ steps.determine.outputs.container }}
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
         with:
           # Need >1 ref to compare against HEAD's first parent for the
           # per-push dashboard-only override below.
@@ -128,7 +128,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
 
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
@@ -176,7 +176,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
 
       - name: Verify base image digest pinning
         run: |
@@ -263,7 +263,7 @@ jobs:
             echo "$unpinned"
             echo ""
             echo "Actions must be pinned to commit SHAs for security."
-            echo "Example: uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6"
+            echo "Example: uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6"
             exit 1
           fi
           echo "✓ All GitHub Actions are pinned to commit SHAs"
@@ -276,7 +276,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
 
       - name: Install dependencies
         run: |
@@ -316,7 +316,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
 
       - name: Install test dependencies
         run: |
@@ -359,7 +359,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
 
       - name: Install dependencies
         run: |
@@ -472,7 +472,7 @@ jobs:
 
       - name: Checkout code
         if: steps.oauth.outputs.has_token == 'true'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
         with:
           persist-credentials: false
 
@@ -513,7 +513,7 @@ jobs:
     if: needs.changes.outputs.container == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
 
       - name: Configure git for tests
         run: |
@@ -555,7 +555,7 @@ jobs:
 
       - name: Restore cached container image
         id: cache-restore
-        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v5
         with:
           path: /tmp/kapsis-image.tar
           key: ${{ steps.cache-key.outputs.key }}
@@ -595,7 +595,7 @@ jobs:
 
       - name: Upload image cache
         if: steps.cache-restore.outputs.cache-hit != 'true'
-        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v5
         with:
           path: /tmp/kapsis-image.tar
           key: ${{ steps.cache-key.outputs.key }}
@@ -624,10 +624,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
 
       - name: Set up Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version-file: cmd/kapsis-ctl/go.mod
           # No go.sum — stdlib-only module. setup-go@v6 hard-fails the cache
