@@ -27,7 +27,8 @@ Reclaim disk space and clean up artifacts after agent work.
 | `--project <name>` | Clean only artifacts for specific project |
 | `--agent <proj> <id>` | Clean only specific agent's artifacts |
 | `--volumes` | Also clean build cache volumes (Maven, Gradle) |
-| `--images` | Clean Kapsis container images and dangling images |
+| `--images` | Clean unused Kapsis container images and dangling layers (in-use and keep-pattern-protected images are skipped) |
+| `--prune-dangling` | Prune only dangling (`<none>:<none>`) build layers — cheap, in-use-safe, recommended for cron/housekeepers |
 | `--containers` | Clean stopped Kapsis containers |
 | `--logs` | Clean log files older than 7 days |
 | `--ssh-cache` | Clear cached SSH host keys from keychain |
@@ -56,6 +57,9 @@ Reclaim disk space and clean up artifacts after agent work.
 # Clean only old logs
 ./scripts/kapsis-cleanup.sh --logs
 
+# Cheap, in-use-safe dangling layer prune (ideal for cron)
+./scripts/kapsis-cleanup.sh --prune-dangling --force
+
 # Check Podman VM health (macOS only)
 ./scripts/kapsis-cleanup.sh --vm-health
 
@@ -73,7 +77,8 @@ Reclaim disk space and clean up artifacts after agent work.
 | **Sanitized git** | `~/.kapsis/sanitized-git/` | Default |
 | **Snapshots** | `~/.kapsis/snapshots/` | Default (14-day TTL or `--all`) |
 | **Containers** | Podman | `--all` or `--containers` |
-| **Images** | Podman | `--all` or `--images` |
+| **Images** | Podman | `--all` or `--images` (in-use/protected images skipped) |
+| **Dangling layers** | Podman | `--all`, `--images`, or `--prune-dangling` |
 | **Volumes** | Podman | `--volumes` only |
 | **Logs** | `~/.kapsis/logs/` | `--all` or `--logs` |
 | **Audit files** | `~/.kapsis/audit/` | `--all` (TTL-based) |
@@ -148,6 +153,64 @@ rm -rf ~/.kapsis/snapshots/<agent-id>
 
 Default TTL is 14 days. Override with `--snapshots-older-than <days>` or the `KAPSIS_SNAPSHOTS_TTL_DAYS` environment variable. Tracked under issue #389 (where an unmanaged 109 GB / 852-dir accumulation filled disk to 98% and silently broke agent dispatch).
 
+## Image Garbage Collection (Issues #418/#421)
+
+`--images` removes `kapsis-*` container images, guarded by three layers
+(hardened after the 2026-07-02 Podman outage, where cleanup removed the
+in-use `kapsis-slack-bot` image and 257 dangling `<none>` layers piled up):
+
+1. **In-use guard (primary)** — an image referenced by ANY container
+   (running or stopped) is never passed to `podman rmi`. If the in-use
+   query (`podman ps -a`) itself fails, cleanup **fails closed**: no named
+   image is removed at all for that invocation. The dangling prune still
+   runs in that case — `podman image prune` is natively in-use-safe — so
+   space reclaim survives a degraded podman.
+2. **Podman dependency refusal (secondary)** — `rmi` is never passed
+   `--force` and its exit code is never swallowed, so podman's native
+   "image used by container" / "has dependent children" refusals
+   transitively protect parent layers (e.g. `kapsis-sandbox` beneath an
+   in-use `kapsis-slack-bot`). Refused removals are reported as
+   `[SKIPPED]` and never counted as cleaned.
+3. **Keep-patterns (tertiary)** — images whose `repository:tag` matches
+   `KAPSIS_IMAGE_KEEP_PATTERNS` (an ERE; default protects
+   `kapsis-slack-bot`, `kapsis-claude-cli`, `kapsis-sandbox`) are always
+   skipped. Set the variable explicitly empty
+   (`KAPSIS_IMAGE_KEEP_PATTERNS=''`) to disable protection, or override
+   it to extend protection to downstream service images.
+
+> **Behavior change:** working (in-use or keep-pattern-protected) images now
+> survive `--images`/`--all` by default. To remove a protected working image
+> intentionally, use `podman rmi <image>` directly or override
+> `KAPSIS_IMAGE_KEEP_PATTERNS`.
+
+### Dangling Layer Prune
+
+Every image rebuild leaves the previous build's layers behind as dangling
+(`<none>:<none>`) images. `--prune-dangling` reclaims them without touching
+any named image — it is cheap, natively in-use-safe, and the recommended
+routine space reclaim for cron jobs and downstream housekeepers (e.g. the
+slack-bot host):
+
+```bash
+./scripts/kapsis-cleanup.sh --prune-dangling --force
+```
+
+`--vm-health` also prunes dangling layers proactively as soon as VM health
+degrades to WARNING (threshold-based trigger for issue #421), while the
+heavier full image cleanup stays gated to CRITICAL.
+
+> **Incident note (2026-07-02):** `podman machine stop && podman machine
+> start` does NOT reclaim the space consumed by dangling layers —
+> `--prune-dangling` does.
+
+### Downstream Housekeepers
+
+If your service wraps `kapsis-cleanup --images` for routine space reclaim,
+migrate to `--prune-dangling` — it reclaims the actual space hogs (stale
+build layers) without ever racing your running containers. Extend
+`KAPSIS_IMAGE_KEEP_PATTERNS` with your service image names to also protect
+them during the between-runs window when no container references them.
+
 ## Disk Pressure Warning
 
 After every `kapsis-cleanup` run, the total size of `~/.kapsis/` is measured and compared against a configurable threshold (default 50 GB). If the threshold is exceeded, a warning prints with the top three subdirectories by size and remediation hints. The measurement is also written to `~/.kapsis/.disk-usage-cache` for downstream consumers (dashboard, preflight checks) to read without re-scanning.
@@ -168,9 +231,14 @@ becomes a problem.
 
 | Metric | Warning | Critical | Auto-action |
 |--------|---------|----------|-------------|
-| Inode usage | ≥ 70% | ≥ 90% | Auto image cleanup at critical |
-| Disk usage | ≥ 80% | ≥ 95% | Report only |
+| Inode usage | ≥ 70% | ≥ 90% | Dangling-layer prune at warning; full image cleanup at critical |
+| Disk usage | ≥ 80% | ≥ 95% | Dangling-layer prune at warning |
 | Journal size | — | — | Vacuums to 100 MB at critical |
+
+The critical-tier image cleanup is safe to run unattended: it is fail-closed
+by construction — if the in-use container query fails, no named image is
+removed, and the dangling prune (natively in-use-safe, never `--force`) still
+runs. See [Image Garbage Collection](#image-garbage-collection-issues-418421).
 
 ### Usage
 
@@ -294,15 +362,19 @@ Symptoms include "no space left on device" errors despite gigabytes of free disk
 # Diagnose: check inode and disk usage in the VM
 ./scripts/kapsis-cleanup.sh --vm-health
 
-# If inodes are critical: clean container images (primary inode consumer)
+# First try the cheap, in-use-safe dangling layer prune
+./scripts/kapsis-cleanup.sh --prune-dangling --force
+
+# If inodes are still critical: clean unused container images (primary inode consumer)
 ./scripts/kapsis-cleanup.sh --images --force
 
 # Full recovery: clean images + volumes
 ./scripts/kapsis-cleanup.sh --images --volumes --force
 ```
 
-The `--vm-health` flag auto-triggers image cleanup when inode usage reaches the critical
-threshold (default 90%). Use `--dry-run` to preview what would happen without making changes.
+The `--vm-health` flag prunes dangling layers as soon as health degrades to WARNING and
+auto-triggers full image cleanup when inode usage reaches the critical threshold
+(default 90%). Use `--dry-run` to preview what would happen without making changes.
 
 ## Automation
 
@@ -380,6 +452,7 @@ podman volume rm kapsis-1-m2
 | `KAPSIS_SNAPSHOTS_DIR` | `~/.kapsis/snapshots` | Per-agent filesystem-include staging |
 | `KAPSIS_SNAPSHOTS_TTL_DAYS` | `14` | Snapshot retention before cleanup deletes |
 | `KAPSIS_DIR_WARN_SIZE_GB` | `50` | Warn when `~/.kapsis/` exceeds this size (set `0` to disable) |
+| `KAPSIS_IMAGE_KEEP_PATTERNS` | protects `kapsis-slack-bot`, `kapsis-claude-cli`, `kapsis-sandbox` | ERE matched against `repository:tag`; matching images are never removed by `--images`/`--all` (set `''` to disable) |
 
 ### VM Health (macOS)
 
