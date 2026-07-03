@@ -48,6 +48,9 @@ export function terminalRule(s: AgentStatus): HealthRule | null {
   if (s.error_type === "mount_failure") {
     return { name: "terminal", state: "failed", detail: s.error ?? "mount failure" };
   }
+  // Legacy (Issue #414): exec_channel_hang is no longer emitted — the
+  // exec-channel watchdog is non-terminal now. Kept so historical status
+  // files still render as failed.
   if (s.error_type === "exec_channel_hang") {
     return { name: "terminal", state: "failed", detail: s.error ?? "exec channel hang" };
   }
@@ -76,15 +79,22 @@ export function containerRule(s: AgentStatus, info: ContainerInfo | null): Healt
   }
 }
 
-/** Parse the tail buffer once; produce both mount-probe and liveness-skip verdicts. */
-export function tailRules(lines: string[]): { mount: HealthRule; liveness: HealthRule } {
+/** Parse the tail buffer once; produce mount-probe, liveness-skip, and exec-channel verdicts. */
+export function tailRules(lines: string[]): { mount: HealthRule; liveness: HealthRule; execChannel: HealthRule } {
   let mountFailed = false;
   let softCount = 0;
   let hardCount = 0;
+  // Exec-channel degradation (Issue #414): the exec-channel watchdog is a
+  // non-terminal reporter — it logs KAPSIS_EXEC_CHANNEL_DEGRADED when the
+  // podman exec channel wedges and KAPSIS_EXEC_CHANNEL_RECOVERED when it
+  // clears. The LAST event wins (episodes can repeat within one tail window).
+  let execLast: "degraded" | "recovered" | null = null;
   for (const line of lines) {
     if (line.includes("KAPSIS_MOUNT_FAILURE:")) mountFailed = true;
     if (line.includes("api_soft_skip")) softCount++;
     if (line.includes("api_hard_skip")) hardCount++;
+    if (line.includes("KAPSIS_EXEC_CHANNEL_DEGRADED")) execLast = "degraded";
+    if (line.includes("KAPSIS_EXEC_CHANNEL_RECOVERED")) execLast = "recovered";
   }
   const mount: HealthRule = mountFailed
     ? { name: "mount-probe", state: "failed", detail: "KAPSIS_MOUNT_FAILURE sentinel in log" }
@@ -97,7 +107,15 @@ export function tailRules(lines: string[]): { mount: HealthRule; liveness: Healt
   } else {
     liveness = { name: "liveness-skip", state: "healthy", detail: "no skip events" };
   }
-  return { mount, liveness };
+  let execChannel: HealthRule;
+  if (execLast === "degraded") {
+    execChannel = { name: "exec-channel", state: "degraded", detail: "exec-channel degraded (daemon exec wedge) — agent still running, status may lag" };
+  } else if (execLast === "recovered") {
+    execChannel = { name: "exec-channel", state: "healthy", detail: "exec channel recovered after degraded episode" };
+  } else {
+    execChannel = { name: "exec-channel", state: "healthy", detail: "no exec-channel degradation in recent log" };
+  }
+  return { mount, liveness, execChannel };
 }
 
 export async function computeHealth(
@@ -121,16 +139,18 @@ export async function computeHealth(
   const size = await logs.size(s.agent_id);
   let mount: HealthRule;
   let liveness: HealthRule;
+  let execChannel: HealthRule;
   if (size === 0) {
     mount = { name: "mount-probe", state: "unknown", detail: "no log" };
     liveness = { name: "liveness-skip", state: "unknown", detail: "no log" };
+    execChannel = { name: "exec-channel", state: "unknown", detail: "no log" };
   } else {
     const startAt = Math.max(0, size - 64 * 1024);
     const chunk = await logs.read(s.agent_id, startAt);
-    ({ mount, liveness } = tailRules(chunk.lines));
+    ({ mount, liveness, execChannel } = tailRules(chunk.lines));
   }
   const container = containerRule(s, containerInfo);
-  const rules: HealthRule[] = [heartbeatRule(s), updatedAtRule(s), container, mount, liveness];
+  const rules: HealthRule[] = [heartbeatRule(s), updatedAtRule(s), container, mount, liveness, execChannel];
   const state = worst(rules.map((r) => r.state));
   return { state, rules, sparkline: [] };
 }
