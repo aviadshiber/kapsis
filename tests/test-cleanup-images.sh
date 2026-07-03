@@ -96,16 +96,21 @@ _teardown_shim() {
 
 # Run the real kapsis-cleanup.sh with the fake podman shim first on PATH.
 # FAKE_* knobs are exported by prefixing them on the caller's function call.
-# Prints combined output; always returns 0 (callers check RUN_RC separately).
+# Captures combined output in RUN_OUTPUT and the exit status in RUN_RC;
+# always returns 0. Callers must invoke this directly (NOT inside a
+# command substitution) — a $(...) subshell would discard both variables.
 RUN_RC=0
+RUN_OUTPUT=""
 _run_cleanup() {
     RUN_RC=0
-    PODMAN_CALL_LOG="$CALL_LOG" \
-    PODMAN_STATE_DIR="$STATE_DIR" \
-    KAPSIS_DIR="$TEST_TMP/kapsis" \
-    KAPSIS_LOG_DIR="$TEST_TMP/logs" \
-    PATH="$SHIM_DIR:$PATH" \
-        bash "$CLEANUP_SCRIPT" "$@" 2>&1 || RUN_RC=$?
+    RUN_OUTPUT=$(
+        PODMAN_CALL_LOG="$CALL_LOG" \
+        PODMAN_STATE_DIR="$STATE_DIR" \
+        KAPSIS_DIR="$TEST_TMP/kapsis" \
+        KAPSIS_LOG_DIR="$TEST_TMP/logs" \
+        PATH="$SHIM_DIR:$PATH" \
+            bash "$CLEANUP_SCRIPT" "$@" 2>&1
+    ) || RUN_RC=$?
 }
 
 #===============================================================================
@@ -116,9 +121,9 @@ _run_cleanup() {
 test_in_use_image_skipped() {
     _setup_shim
 
-    local output
-    output=$(FAKE_PS_OUTPUT="$SLACKBOT_ID_64" KAPSIS_IMAGE_KEEP_PATTERNS='' \
-        _run_cleanup --images --force)
+    FAKE_PS_OUTPUT="$SLACKBOT_ID_64" KAPSIS_IMAGE_KEEP_PATTERNS='' \
+        _run_cleanup --images --force
+    local output="$RUN_OUTPUT"
 
     if grep -q "rmi $SLACKBOT_ID" "$CALL_LOG"; then
         _teardown_shim
@@ -140,8 +145,8 @@ test_in_use_image_skipped() {
 test_keep_patterns_default_protects_service_images() {
     _setup_shim
 
-    local output
-    output=$(_run_cleanup --images --force)
+    _run_cleanup --images --force
+    local output="$RUN_OUTPUT"
 
     if grep -q "rmi $SLACKBOT_ID" "$CALL_LOG"; then
         _teardown_shim
@@ -166,7 +171,7 @@ test_keep_patterns_default_protects_service_images() {
 test_keep_patterns_empty_disables_protection() {
     _setup_shim
 
-    KAPSIS_IMAGE_KEEP_PATTERNS='' _run_cleanup --images --force >/dev/null
+    KAPSIS_IMAGE_KEEP_PATTERNS='' _run_cleanup --images --force
 
     if ! grep -q "rmi $SANDBOX_ID" "$CALL_LOG" || ! grep -q "rmi $SLACKBOT_ID" "$CALL_LOG"; then
         _teardown_shim
@@ -183,10 +188,10 @@ test_keep_patterns_empty_disables_protection() {
 test_fail_closed_on_ps_failure() {
     _setup_shim
 
-    local output
-    output=$(FAKE_PS_EXIT=1 KAPSIS_IMAGE_KEEP_PATTERNS='' \
+    FAKE_PS_EXIT=1 KAPSIS_IMAGE_KEEP_PATTERNS='' \
         FAKE_DANGLING_IDS=$'dddddddddddd\neeeeeeeeeeee' \
-        _run_cleanup --images --force)
+        _run_cleanup --images --force
+    local output="$RUN_OUTPUT"
 
     if grep -q "^rmi " "$CALL_LOG"; then
         _teardown_shim
@@ -213,9 +218,9 @@ test_fail_closed_on_ps_failure() {
 test_rmi_refusal_not_counted_as_cleaned() {
     _setup_shim
 
-    local output
-    output=$(FAKE_RMI_EXIT=1 KAPSIS_IMAGE_KEEP_PATTERNS='' \
-        _run_cleanup --images --force)
+    FAKE_RMI_EXIT=1 KAPSIS_IMAGE_KEEP_PATTERNS='' \
+        _run_cleanup --images --force
+    local output="$RUN_OUTPUT"
 
     assert_contains "$output" "[SKIPPED]" "Refused rmi should print [SKIPPED]"
     assert_contains "$output" "rmi refused" "Skip reason should mention rmi refusal"
@@ -233,9 +238,9 @@ test_rmi_refusal_not_counted_as_cleaned() {
 test_id_format_normalization() {
     _setup_shim
 
-    local output
-    output=$(FAKE_PS_OUTPUT="sha256:$SLACKBOT_ID_64" KAPSIS_IMAGE_KEEP_PATTERNS='' \
-        _run_cleanup --images --force)
+    FAKE_PS_OUTPUT="sha256:$SLACKBOT_ID_64" KAPSIS_IMAGE_KEEP_PATTERNS='' \
+        _run_cleanup --images --force
+    local output="$RUN_OUTPUT"
 
     if grep -q "rmi $SLACKBOT_ID" "$CALL_LOG"; then
         _teardown_shim
@@ -254,9 +259,9 @@ test_id_format_normalization() {
 test_dry_run_makes_no_mutations() {
     _setup_shim
 
-    local output
-    output=$(KAPSIS_IMAGE_KEEP_PATTERNS='' FAKE_DANGLING_IDS='dddddddddddd' \
-        _run_cleanup --images --force --dry-run)
+    KAPSIS_IMAGE_KEEP_PATTERNS='' FAKE_DANGLING_IDS='dddddddddddd' \
+        _run_cleanup --images --force --dry-run
+    local output="$RUN_OUTPUT"
 
     if grep -q "^rmi " "$CALL_LOG" || grep -q "image prune" "$CALL_LOG"; then
         _teardown_shim
@@ -277,9 +282,9 @@ test_dry_run_makes_no_mutations() {
 test_prune_dangling_flag_standalone() {
     _setup_shim
 
-    local output
-    output=$(FAKE_DANGLING_IDS=$'dddddddddddd\neeeeeeeeeeee\nffffffffffff' \
-        _run_cleanup --prune-dangling --force)
+    FAKE_DANGLING_IDS=$'dddddddddddd\neeeeeeeeeeee\nffffffffffff' \
+        _run_cleanup --prune-dangling --force
+    local output="$RUN_OUTPUT"
 
     local prune_calls
     prune_calls=$(grep -c "image prune -f" "$CALL_LOG" || true)
@@ -296,7 +301,8 @@ test_prune_dangling_flag_standalone() {
     # With zero dangling images, prune must not be invoked at all.
     _teardown_shim
     _setup_shim
-    output=$(_run_cleanup --prune-dangling --force)
+    _run_cleanup --prune-dangling --force
+    output="$RUN_OUTPUT"
     if grep -q "image prune" "$CALL_LOG"; then
         _teardown_shim
         _log_failure "prune invoked despite zero dangling images" \
@@ -313,8 +319,8 @@ test_prune_dangling_flag_standalone() {
 test_prune_query_fail_closed() {
     _setup_shim
 
-    local output
-    output=$(FAKE_DANGLING_EXIT=1 _run_cleanup --prune-dangling --force)
+    FAKE_DANGLING_EXIT=1 _run_cleanup --prune-dangling --force
+    local output="$RUN_OUTPUT"
 
     if grep -q "image prune" "$CALL_LOG"; then
         _teardown_shim
