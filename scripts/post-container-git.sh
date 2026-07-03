@@ -600,10 +600,20 @@ commit_changes() {
     fi
 
     # Commit with full error capture (Issue #256)
+    # Override committer/author identity from resolved env when set, so the
+    # post-container commit matches what in-container commits used.
     local _commit_output
     local _commit_exit=0
     # shellcheck disable=SC2086  # _no_verify_flag intentionally unquoted (empty or --no-verify)
-    _commit_output=$(git commit $_no_verify_flag -m "$full_message" 2>&1) || _commit_exit=$?
+    if [[ -n "${KAPSIS_COMMITTER_NAME:-}" && -n "${KAPSIS_COMMITTER_EMAIL:-}" ]]; then
+        _commit_output=$(GIT_COMMITTER_NAME="$KAPSIS_COMMITTER_NAME" \
+                         GIT_COMMITTER_EMAIL="$KAPSIS_COMMITTER_EMAIL" \
+                         GIT_AUTHOR_NAME="$KAPSIS_COMMITTER_NAME" \
+                         GIT_AUTHOR_EMAIL="$KAPSIS_COMMITTER_EMAIL" \
+                         git commit $_no_verify_flag -m "$full_message" 2>&1) || _commit_exit=$?
+    else
+        _commit_output=$(git commit $_no_verify_flag -m "$full_message" 2>&1) || _commit_exit=$?
+    fi
 
     if [[ $_commit_exit -eq 0 ]]; then
         log_success "Changes committed"

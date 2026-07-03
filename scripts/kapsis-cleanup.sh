@@ -717,7 +717,7 @@ clean_images() {
 
     # Get kapsis images (kapsis-sandbox, kapsis-claude-cli, etc.)
     local images
-    images=$(podman images --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}" 2>/dev/null | grep -E "^kapsis-" || true)
+    images=$(podman images --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}" 2>/dev/null | grep -E "(^|/)kapsis-" || true)
 
     if [[ -n "$images" ]]; then
         while IFS= read -r line; do
@@ -885,8 +885,15 @@ clean_conversations() {
 
     for conv_dir in "$CONVERSATIONS_DIR"/*/; do
         [[ -d "$conv_dir" ]] || continue
-        # Security: skip symlinks to prevent following attacks (see clean_sandboxes).
-        [[ -L "$conv_dir" ]] && continue
+        # Security: skip symlinked entries to prevent following attacks. The
+        # glob "$CONVERSATIONS_DIR"/*/ yields trailing-slash paths, and
+        # [[ -L "path/" ]] resolves the slash by following the link — so the
+        # test would always return false on a symlink-to-dir, defeating the
+        # guard and letting `rm -rf "path/"` recurse into the link target. We
+        # must strip the trailing slash before testing. Mirrors the same fix
+        # in clean_snapshots() and the bare-glob guards in clean_sandboxes,
+        # clean_worktrees, and clean_sanitized_git.
+        [[ -L "${conv_dir%/}" ]] && continue
         local name
         name=$(basename "$conv_dir")
 
