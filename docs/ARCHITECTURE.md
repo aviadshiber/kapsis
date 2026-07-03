@@ -2,7 +2,7 @@
 
 ## Overview
 
-Kapsis provides hermetically isolated sandboxes for AI coding agents. Each agent runs in a Podman container with Copy-on-Write filesystem overlay, ensuring complete isolation between parallel agents.
+Kapsis provides hermetically isolated sandboxes for AI coding agents. Each agent runs in a Podman container (or, with `--backend k8s`, a Kubernetes Pod managed by the AgentRequest operator) with Copy-on-Write filesystem overlay, ensuring complete isolation between parallel agents. A file-based observability layer (`~/.kapsis/`) feeds the status CLI, the local web dashboard, and orchestration scripts; host-side watchdogs detect hung agents and VM-level failures for unattended operation.
 
 ## Architecture Diagram
 
@@ -313,6 +313,46 @@ Kapsis provides JSON-based status reporting for external monitoring with **agent
 
 **For detailed hook architecture, injection methods, and tool-to-phase mapping, see [STATUS-TRACKING.md](STATUS-TRACKING.md).**
 
+## Observability & Control Plane
+
+Everything an agent produces lands as plain files under `~/.kapsis/` (status JSON, logs, audit JSONL, conversation transcripts, specs). Three consumers sit on top of that state:
+
+```
+                         ~/.kapsis/
+                         ├── status/          (JSON per agent)
+                         ├── logs/            (rotated log files)
+                         ├── audit/           (hash-chained JSONL)
+                         ├── conversations/   (transcript.txt per agent)
+                         ├── specs/           (task spec per agent)
+                         └── snapshots/       (per-agent staging copies)
+                               ▲
+        ┌──────────────────────┼──────────────────────┐
+        │                      │                      │
+  kapsis-status.sh      kapsis-dashboard         your scripts
+  (CLI, --watch,        (web UI: agents,         (JSON status,
+   --json)               health, logs, audit,     kapsis-recovery-action,
+                         disk, kill/cleanup)      kapsis-ctl)
+```
+
+| Component | Location | Purpose |
+|-----------|----------|---------|
+| `kapsis-status.sh` | `scripts/` | CLI status queries; `--watch` for live terminal view, `--json` for scripting |
+| Dashboard | `dashboard/` | Local web UI (single Bun-compiled binary). Live agent list with composite health, per-agent logs/spec/activity/audit/conversation/container tabs, disk usage, maintenance controls. Localhost-only with bearer-token auth; destructive actions audited |
+| `kapsis-ctl` | `cmd/kapsis-ctl/` | Host-side Go binary speaking the libpod REST API directly: `inspect`, `list`, `alive` (read-only) plus `stop`, `logs`, `cp` (control). Used by scripts/orchestrators that need reliable container access without the `podman` CLI. Never installed inside containers — the Podman socket is host-only |
+| `kapsis-recovery-action.sh` | `scripts/` | Maps `error_type` from status.json to a recommended action (retry / retry push / restart VM / notify human) |
+
+## Reliability Watchdogs
+
+Long unattended runs are protected by layered detection, each covering a failure mode the others can't see:
+
+| Watchdog | Vantage point | Detects | Outcome |
+|----------|---------------|---------|---------|
+| Liveness monitor (`lib/liveness-monitor.sh`) | In-container | Hung agent: stale status, no process-tree I/O, idle API connections | Diagnostics captured, agent killed (exit 5 if work was complete) |
+| Mount probes (`lib/podman-health.sh`, `entrypoint.sh`) | Host pre-launch + container startup | virtio-fs mount unwritable before/at agent start | Auto-heal (VM restart) or fail fast with exit 4 |
+| vfkit watchdog (`lib/vfkit-watchdog.sh`) | Host, macOS | vfkit hypervisor process exit mid-run | Host-only sentinel + exit 4 (`mount_failure`) within ~10s |
+| Exec-channel watchdog (`lib/exec-channel-watchdog.sh`) | Host, macOS | `podman exec` wedged while container looks Up (vfkit still alive) | exit 4 + `error_type: exec_channel_hang`, agent SIGTERMed |
+| Status sync (`lib/status-sync.sh`) | Host, macOS | — (mirror, not detector) | Mirrors per-agent named status volumes to `~/.kapsis/status/` every 5s so status survives virtio-fs degradation |
+
 ## Volume Mounts
 
 | Mount | Source | Target | Mode |
@@ -321,7 +361,8 @@ Kapsis provides JSON-based status reporting for external monitoring with **agent
 | Maven Repo | `kapsis-{id}-m2` | `~/.m2/repository` | volume |
 | Gradle Cache | `kapsis-{id}-gradle` | `~/.gradle` | volume |
 | GE Workspace | `kapsis-{id}-ge` | `~/.m2/.gradle-enterprise` | volume |
-| Status Dir | `~/.kapsis/status` | `/kapsis-status` | bind |
+| Status Dir | `~/.kapsis/status` (Linux) / `kapsis-{id}-status` named volume (macOS, Issue #276) | `/kapsis-status` | bind / volume |
+| Conversations | `~/.kapsis/conversations/{id}` | `/home/developer/.claude/conversations` | bind |
 | Git Config | `~/.gitconfig` | `~/.gitconfig` | `:ro` |
 | SSH Keys | `~/.ssh` | `~/.ssh` | `:ro` |
 | Agent Config | `~/.claude` | `~/.claude` | `:ro` |
