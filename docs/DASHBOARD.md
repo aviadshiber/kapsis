@@ -116,7 +116,7 @@ Failed. Each rule is shown in the Overview tab with its detail string.
 | Logs | `~/.kapsis/logs/kapsis-<id>.log` | byte-offset tail, follow toggle |
 | Activity | `status.gist` transitions (server-side in-memory ring, 200/agent) | reverse-chronological list; live updates via SSE; cleared on agent reap |
 | Audit | `~/.kapsis/audit/<id>-*.jsonl` | hash-chain verification badge per file |
-| Conversation | `~/.kapsis/conversations/<id>/` | empty state when transcripts aren't configured |
+| Conversation | `~/.kapsis/conversations/<id>/` | transcripts are captured automatically for every run (Issue #390); empty state only for runs predating transcript support |
 | Container | `podman inspect` + `podman stats` | live CPU/memory when running |
 | Disk usage | `du` of state dirs + `podman volume`/`images` | stacked bar by category |
 | Maintenance | `kapsis-cleanup.sh` wrapper | per-target Preview (dry-run) → Execute |
