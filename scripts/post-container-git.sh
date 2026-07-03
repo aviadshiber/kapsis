@@ -277,10 +277,12 @@ strip_kapsis_injections() {
         local in_block=false
         local current_block=""
 
-        # Per-file counter (reset each iteration) so the rewrite decision
-        # describes THIS file only. The global stripped_count still drives
-        # the summary log lines below.
+        # Per-file counters (reset each iteration) so the rewrite decision and
+        # the emitted audit event describe THIS file only. The global counters
+        # below still drive the summary log lines; these mirror them per file.
         local file_stripped=0
+        local file_suspicious=0
+        local file_bytes_removed=0
 
         while IFS= read -r line || [[ -n "$line" ]]; do
             if [[ "$line" == "<!-- KAPSIS_GIST_BEGIN -->" ]]; then
@@ -301,11 +303,13 @@ strip_kapsis_injections() {
                     # Verified Kapsis injection — strip it (and eat the trailing blank/separator lines)
                     ((stripped_count++)) || true
                     ((file_stripped++)) || true
+                    file_bytes_removed=$((file_bytes_removed + ${#current_block}))
                     log_debug "Stripped verified Kapsis gist block from ${file_rel}"
                 else
                     # Unverified block — preserve and warn (possible rogue-agent injection)
                     new_content+="${current_block}"$'\n'
                     ((suspicious_count++)) || true
+                    ((file_suspicious++)) || true
                     local sha_display="${block_sha256:-(sha256 unavailable)}"
                     log_warn "Unverified KAPSIS_GIST sentinel block in ${file_rel} left intact (SHA256: ${sha_display:0:16}...) — possible rogue injection"
                 fi
@@ -339,6 +343,22 @@ strip_kapsis_injections() {
                     for (i = 1; i <= last; i++) print lines[i]
                 }')
             printf '%s\n' "$new_content" > "$file"
+
+            # Record the host-side mutation in the non-chained audit sidecar
+            # (Issue #407). Failure-isolated: a broken audit path can never
+            # fail the commit. Only emitted when bytes actually changed on disk.
+            if [[ -z "${_KAPSIS_AUDIT_LOADED:-}" ]]; then
+                # shellcheck source=scripts/lib/audit.sh
+                source "${POST_GIT_SCRIPT_DIR}/lib/audit.sh" 2>/dev/null || true
+            fi
+            if declare -f audit_log_host_event &>/dev/null; then
+                local escaped_file
+                escaped_file=$(json_escape_string "$file_rel")
+                local detail
+                detail="{\"action\":\"gist_injection_strip\",\"file\":\"${escaped_file}\",\"blocks_stripped\":${file_stripped},\"bytes_removed\":${file_bytes_removed},\"removed_sha256\":\"${expected_sha256}\",\"proof_outcome\":\"verified\",\"suspicious_blocks_preserved\":${file_suspicious}}"
+                audit_log_host_event "$agent_id" "host_commit_mutation" "strip_kapsis_injections" "$detail" \
+                    || log_warn "host audit event emission failed — strip proceeded, audit record incomplete (${file_rel})"
+            fi
         fi
     done
 
