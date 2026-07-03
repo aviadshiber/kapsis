@@ -368,7 +368,7 @@ Written by `post-container-git.sh` and `launch-agent.sh` into the status file up
 | `agent_failure` | **Retry** | No work lost; agent can start fresh |
 | `push_failure` | **Retry push only** | Work is committed; only the push failed |
 | `mount_failure` | **Restart VM, then retry** | virtio-fs degradation; restart Podman VM first |
-| `exec_channel_hang` | **Restart VM, then retry** | `podman exec` channel wedged while the container appears Up (macOS applehv); detected by the host-side exec-channel watchdog (PR #383), reported with exit code 4 |
+| `exec_channel_hang` | **Notify human** | `podman exec` channel wedged while the container appears Up (macOS applehv); detected by the host-side exec-channel watchdog (PR #383), reported with exit code 4. `kapsis-recovery-action` resolves this to `notify_human` — restart the Podman VM manually before retrying |
 | `agent_partial` | **Notify human, do NOT retry** | Partial work exists on branch; retry may duplicate |
 | `commit_failure` | **Notify human, do NOT retry** | Staged changes preserved in worktree for manual recovery |
 | `uncommitted_work` | **Notify human** | Changes exist but weren't staged; manual commit needed |
