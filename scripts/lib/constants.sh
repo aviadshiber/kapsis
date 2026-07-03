@@ -52,10 +52,14 @@ readonly CONTAINER_STATUS_PATH="/kapsis-status"
 
 # Default patterns for files that should never be committed by Kapsis
 # These are typically config files that the sandbox may modify but shouldn't commit
+# Issue #391: .claude/settings.json is modified by LSP/plugin injection during the session;
+# committing it would pollute the user's branch with agent-session config mutations.
 readonly KAPSIS_DEFAULT_COMMIT_EXCLUDE=".gitignore
 **/.gitignore
 .gitattributes
-**/.gitattributes"
+**/.gitattributes
+.claude/settings.json
+**/.claude/settings.json"
 
 #===============================================================================
 # PUSH TIMEOUT (Issue #227)
@@ -79,10 +83,17 @@ readonly KAPSIS_DEFAULT_PUSH_TIMEOUT=60
 #   **/<file>  — matches <file> at any depth
 #===============================================================================
 
+# Issue #391: Maven plugin backups (.mvn/extensions.xml.bak2 etc.) are created
+# by in-container builds and must never reach a commit. Scoped to .mvn/ for the
+# numbered-suffix form (*.bak2, *.bak10) plus a generic exact-suffix *.bak —
+# deliberately NOT **/*.bak* which over-matched names like README.bakery.md
+# or notes.bak.swp (PR #394 review).
 readonly KAPSIS_DEFAULT_EPHEMERAL_PATTERNS="**/__pycache__/
 **/.pytest_cache/
 .coverage
-**/.coverage"
+**/.coverage
+**/*.bak
+**/.mvn/*.bak*"
 
 #===============================================================================
 # NETWORK ISOLATION

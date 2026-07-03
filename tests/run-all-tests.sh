@@ -33,7 +33,7 @@ get_tests_for_category() {
             echo "test-agent-shortcut.sh test-agent-unknown.sh test-agent-config-override.sh test-config-resolution.sh test-agent-profile-loading.sh test-agent-auth-requirements.sh test-agent-config-mounts.sh test-agent-image-build.sh test-containerfile.sh test-filter-agent-config.sh test-lsp-config.sh test-plugin-path-rewrite.sh test-liveness-monitor.sh"
             ;;
         validation)
-            echo "test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-preflight-check.sh test-version-fetch.sh test-version-management.sh test-post-container-exit-code.sh test-commit-failure-handling.sh test-disk-space-guard.sh test-workspace-mount-validation.sh test-vm-health.sh test-cleanup-vm-health.sh test-cleanup-snapshots.sh test-cleanup-conversations.sh test-vfkit-watchdog.sh test-config-verifier.sh test-zombie-recovery.sh test-userns-resolution.sh test-conversation-transcript.sh test-preflight-vm-memory.sh test-overlay-volume-sandbox.sh"
+            echo "test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh test-preflight-check.sh test-version-fetch.sh test-version-management.sh test-post-container-exit-code.sh test-commit-failure-handling.sh test-disk-space-guard.sh test-workspace-mount-validation.sh test-vm-health.sh test-cleanup-vm-health.sh test-cleanup-snapshots.sh test-cleanup-conversations.sh test-vfkit-watchdog.sh test-config-verifier.sh test-zombie-recovery.sh test-userns-resolution.sh test-conversation-transcript.sh test-preflight-vm-memory.sh test-overlay-volume-sandbox.sh test-kapsis-artifact-filter.sh"
             ;;
         status)
             echo "test-status-reporting.sh test-status-hooks.sh test-host-inject-gist-hook.sh test-host-inject-all-hooks.sh test-host-claude-mock-api.sh test-host-claude-live-api.sh"
@@ -48,7 +48,7 @@ get_tests_for_category() {
             echo "test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh test-container-plugin-hooks.sh test-ssh-keychain.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-config-security.sh test-network-isolation.sh test-scope-validation.sh test-sanitize-files.sh test-ssh-config-portability.sh test-git-credential-helper.sh test-secret-store-injection.sh test-secret-store.sh test-audit-patterns.sh test-container-status-hooks.sh test-container-gist-hook.sh test-container-all-hooks.sh"
             ;;
         git)
-            echo "test-git-new-branch.sh test-git-auto-commit-push.sh test-worktree-isolation.sh test-worktree-cleanup.sh test-push-verification.sh test-git-excludes.sh test-validate-staged-files.sh test-ephemeral-artifact-filtering.sh test-coauthor-fork.sh test-post-container-git.sh test-sanitized-git-objects.sh test-init-git-branch.sh test-post-exit-git.sh"
+            echo "test-git-new-branch.sh test-git-auto-commit-push.sh test-worktree-isolation.sh test-worktree-cleanup.sh test-push-verification.sh test-git-excludes.sh test-validate-staged-files.sh test-ephemeral-artifact-filtering.sh test-coauthor-fork.sh test-post-container-git.sh test-sanitized-git-objects.sh test-init-git-branch.sh test-post-exit-git.sh test-kapsis-artifact-filter.sh"
             ;;
         cleanup)
             echo "test-cleanup-sandbox.sh test-cleanup-snapshots.sh test-cleanup-conversations.sh test-volume-cleanup.sh"

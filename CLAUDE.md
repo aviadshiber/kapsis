@@ -424,6 +424,13 @@ For shell scripts, prefer adding them to `scripts/` so the existing `cp -r scrip
 8. **Bare arithmetic** — `((x++))` fails under `set -e` when result is 0; use `((x++)) || true`
 9. **Working on main** — always use feature branches
 
+## Commit Artifact Filtering (Issue #391)
+
+Before the post-container commit, Kapsis unstages its own infrastructure artifacts so they never land on the user's branch:
+
+1. **Commit excludes** — `.claude/settings.json` (mutated by LSP/plugin injection) is in `KAPSIS_DEFAULT_COMMIT_EXCLUDE`. `KAPSIS_COMMIT_EXCLUDE` replaces the list wholesale; `KAPSIS_EXTRA_COMMIT_EXCLUDE` appends without redeclaring defaults.
+2. **Ephemeral patterns** (non-overridable) — `**/*.bak` and `**/.mvn/*.bak*` cover Maven plugin backups (e.g. `.mvn/extensions.xml.bak2`) without over-matching names like `README.bakery.md`.
+
 ## Push Fallback (Agent Recovery)
 
 When push fails (common in containers without credentials), Kapsis outputs a structured fallback:
