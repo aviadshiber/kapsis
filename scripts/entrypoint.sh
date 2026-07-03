@@ -775,6 +775,7 @@ configure_git_hooks() {
     log_info "Git hooks: using project hooks (sandbox isolated)"
 }
 
+
 #===============================================================================
 # FUSE-OVERLAYFS SETUP (for macOS true CoW support, legacy mode)
 #===============================================================================

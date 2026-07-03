@@ -402,6 +402,29 @@ assert_dir_not_exists() {
     fi
 }
 
+# run_cleanup_snippet <snippet>
+# Sources scripts/kapsis-cleanup.sh with its top-level `main "$@"` line stripped,
+# then evaluates <snippet> in the same shell so it has access to all cleanup
+# functions and variables. Lib deps (compat/logging/constants) are pre-sourced
+# because feeding the body via /dev/stdin breaks the script's own SCRIPT_DIR
+# resolution. Caller must set CLEANUP_SCRIPT and KAPSIS_ROOT before invoking.
+run_cleanup_snippet() {
+    local snippet="$1"
+    bash -c '
+        set -e
+        # shellcheck source=/dev/null
+        source "'"$KAPSIS_ROOT"'/scripts/lib/compat.sh"
+        # shellcheck source=/dev/null
+        source "'"$KAPSIS_ROOT"'/scripts/lib/logging.sh"
+        # shellcheck source=/dev/null
+        source "'"$KAPSIS_ROOT"'/scripts/lib/constants.sh"
+        script_body=$(sed "s|^main \"\\\$@\"$|# main suppressed|" "'"$CLEANUP_SCRIPT"'")
+        # shellcheck disable=SC1090
+        source /dev/stdin <<< "$script_body"
+        '"$snippet"'
+    ' 2>&1
+}
+
 # assert_file_contains <file> <pattern> <message>
 # Checks if file contains a pattern (using grep -F for literal match)
 assert_file_contains() {
