@@ -16,6 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Resolve committer identity from --author / config / host (#416)
 
+## [2.36.1] - 2026-07-03
+
+### Documentation
+- Refresh docs and landing page for v2.34 capabilities (#405)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1051,7 +1056,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.36.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.36.1...HEAD
+[2.36.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.36.1
 [2.36.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.36.0
 [2.35.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.35.2
 [2.35.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.35.1
