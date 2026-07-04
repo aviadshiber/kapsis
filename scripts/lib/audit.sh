@@ -210,6 +210,74 @@ audit_log_event() {
     fi
 }
 
+# Log a HOST-authored event to a non-chained per-agent sidecar file.
+#
+# Trust-domain rationale (Issue #407):
+#   Some audit-worthy actions happen on the HOST after the container has exited
+#   (e.g. post-container-git.sh stripping a verified Kapsis gist block). These
+#   cannot join the in-container session hash chain: a fresh host process has no
+#   live _KAPSIS_AUDIT_SEQ/_KAPSIS_AUDIT_PREV_HASH, and appending after the
+#   terminal session_end event would break audit_verify_chain. They are written
+#   here instead as flat JSONL lines with NO seq/prev_hash/hash/session_id.
+#
+#   This is deliberately NOT hash-chained, and that is not a weakness: this file
+#   is written once per session by the host after the container exits, so a
+#   keyless SHA over a length-1 file the writer fully controls is ceremony, not
+#   tamper-evidence. Trust separation is structural instead — the container never
+#   has write access to a file created after it exits, and the filename
+#   intentionally does NOT match `*.audit.jsonl`, so audit_verify_chain, the
+#   audit-report.sh file resolvers, and the dashboard's AUDIT_FILE_RE never
+#   process it. This mirrors the existing `${agent_id}-alerts.jsonl` sidecar
+#   written by audit-patterns.sh.
+#
+# Arguments:
+#   $1 - Agent ID (falls back to "unknown" if empty)
+#   $2 - Event type (e.g. "host_commit_mutation")
+#   $3 - Tool name (e.g. "strip_kapsis_injections")
+#   $4 - Detail JSON object (already-formed JSON; sanitized here before write)
+audit_log_host_event() {
+    # Gate BEFORE any filesystem I/O: audit-disabled is a true no-op.
+    [[ "${KAPSIS_AUDIT_ENABLED:-${KAPSIS_DEFAULT_AUDIT_ENABLED:-false}}" == "true" ]] || return 0
+
+    local agent_id="${1:-unknown}"
+    [[ -n "$agent_id" ]] || agent_id="unknown"
+    local event_type="${2:-host_event}"
+    local tool_name="${3:-unknown}"
+    local detail_json="${4:-"{}"}"
+
+    # Resolve and secure the audit directory (mirror audit_init).
+    local audit_dir="${KAPSIS_AUDIT_DIR:-$HOME/.kapsis/audit}"
+    mkdir -p "$audit_dir"
+    chmod 700 "$audit_dir"
+
+    # Sidecar filename deliberately does not match *.audit.jsonl (see header).
+    local host_file="${audit_dir}/${agent_id}-host-events.jsonl"
+    if [[ ! -f "$host_file" ]]; then
+        touch "$host_file"
+        chmod 600 "$host_file"
+    fi
+
+    # Sanitize detail through the shared secret sanitizer.
+    local sanitized_detail
+    sanitized_detail=$(sanitize_secrets "$detail_json")
+
+    # Timestamp and escaped string fields.
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    local escaped_agent_id
+    escaped_agent_id=$(json_escape_string "$agent_id")
+    local escaped_event_type
+    escaped_event_type=$(json_escape_string "$event_type")
+    local escaped_tool_name
+    escaped_tool_name=$(json_escape_string "$tool_name")
+
+    # Flat JSONL line — NO seq/prev_hash/hash/session_id (non-chained by design).
+    local jsonl_line
+    jsonl_line="{\"timestamp\":\"${timestamp}\",\"agent_id\":\"${escaped_agent_id}\",\"event_type\":\"${escaped_event_type}\",\"tool_name\":\"${escaped_tool_name}\",\"detail\":${sanitized_detail}}"
+
+    echo "$jsonl_line" >> "$host_file"
+}
+
 #===============================================================================
 # CHAIN VERIFICATION
 #===============================================================================
@@ -458,11 +526,12 @@ _audit_cleanup_ttl() {
     local ttl_seconds=$((ttl_days * 86400))
 
     # Find and check each audit file
-    # Clean audit logs, rotated files, alerts, and reports
+    # Clean audit logs, rotated files, alerts, host-event sidecars, and reports
     local file
     for file in "$audit_dir"/*.audit.jsonl \
                 "$audit_dir"/*.audit.jsonl.[0-9] \
                 "$audit_dir"/*-alerts.jsonl \
+                "$audit_dir"/*-host-events.jsonl \
                 "$audit_dir"/*-report.txt; do
         [[ -f "$file" ]] || continue
 
@@ -489,10 +558,11 @@ _audit_cleanup_size() {
     local -a files_by_age=()
 
     local file
-    # Include audit logs, rotated files, alerts, and reports
+    # Include audit logs, rotated files, alerts, host-event sidecars, and reports
     for file in "$audit_dir"/*.audit.jsonl \
                 "$audit_dir"/*.audit.jsonl.[0-9] \
                 "$audit_dir"/*-alerts.jsonl \
+                "$audit_dir"/*-host-events.jsonl \
                 "$audit_dir"/*-report.txt; do
         [[ -f "$file" ]] || continue
 
