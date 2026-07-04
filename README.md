@@ -14,23 +14,40 @@
   <strong>Hermetically Isolated AI Agent Sandbox for Parallel Development</strong>
 </p>
 
-Kapsis enables running multiple AI coding agents in parallel on the same Maven project with complete isolation. Each agent runs in a Podman container with Copy-on-Write filesystem, ensuring Agent A's work cannot affect Agent B.
+Kapsis enables running multiple AI coding agents in parallel on the same project with complete isolation. Each agent runs in a Podman container (or Kubernetes Pod) with Copy-on-Write filesystem, ensuring Agent A's work cannot affect Agent B.
 
 ## Features
 
+### Isolation & Security
+
 - **Agent Agnostic** - Pre-built profiles for Claude Code, Codex CLI, Aider, and Gemini CLI — or any CLI-based agent
-- **Agent Profiles** - Pre-built agent configurations with automatic container installation
 - **Config-Driven** - Single YAML file defines agent command and filesystem whitelist
-- **Copy-on-Write Filesystem** - Project files use overlay mounts (reads from host, writes isolated)
+- **Copy-on-Write Filesystem** - Project files use overlay mounts or git worktrees (reads from host, writes isolated)
 - **Network Isolation** - DNS-based allowlist filtering with IP pinning (default), blocks unauthorized network access
 - **Maven Isolation** - Per-agent `.m2/repository`, blocked remote SNAPSHOTs, blocked deploy
 - **Build Cache Isolation** - Gradle Enterprise remote cache disabled, per-agent local cache
-- **Git Workflow** - Optional branch-based workflow with PR review feedback loop
 - **SSH Security** - Automatic SSH host key verification for GitHub/GitLab/Bitbucket (enterprise servers supported)
 - **Keychain Integration** - Automatic secret retrieval and injection from macOS Keychain / Linux secret-tool
-- **Status Reporting** - JSON-based progress tracking for external monitoring
 - **Rootless Containers** - Security-hardened Podman rootless mode with seccomp and capability dropping
 - **File Sanitization** - Homoglyph detection and binary filtering for mounted files
+- **Tamper-Evident Audit Trail** - Hash-chained JSONL event logs with real-time suspicious-pattern detection
+
+### Workflow & Scale
+
+- **Git Workflow** - Optional branch-based workflow with PR review feedback loop
+- **Kubernetes Backend** - Run agents as K8s Pods via the `AgentRequest` CRD and in-cluster operator (`--backend k8s`)
+- **Plugin & LSP Injection** - Claude Code plugin hooks and LSP server configs injected into the container automatically
+
+### Observability & Reliability
+
+- **Web Dashboard** - Local single-binary dashboard: live agent list, health, logs, audit, conversations, disk usage, kill/cleanup controls
+- **Status Reporting** - JSON-based progress tracking for external monitoring (`kapsis-status --watch`)
+- **Conversation Transcripts** - Full agent output persisted to `~/.kapsis/conversations/<agent-id>/` for every run
+- **`kapsis-ctl`** - Host-side container queries and control (inspect, list, alive, stop, logs, cp) via the libpod REST API
+- **Liveness Monitoring** - Hung-agent detection with multi-signal probes (status staleness, process I/O, TCP activity) and auto-kill
+- **Mount-Failure Watchdogs** - virtio-fs drop detection across the full lifecycle (pre-launch probe, vfkit watchdog, exec-channel watchdog)
+- **Structured Recovery** - Machine-readable exit codes and `error_type` field, plus `kapsis-recovery-action` for retry decisions
+- **TTL-Based Cleanup** - Automatic snapshot/conversation expiry and disk pressure warnings
 
 ## Installation
 
@@ -58,13 +75,13 @@ kapsis --check-upgrade
 kapsis --upgrade
 
 # Upgrade to specific version
-kapsis --upgrade 0.15.0
+kapsis --upgrade 2.34.0
 
 # Downgrade to previous version
 kapsis --downgrade
 
 # Downgrade to specific version
-kapsis --downgrade 0.14.0
+kapsis --downgrade 2.33.1
 
 # Preview upgrade/downgrade without executing
 kapsis --upgrade --dry-run
@@ -220,6 +237,20 @@ Kapsis supports two isolation modes for the project filesystem:
 
 See [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md) for detailed comparison.
 
+### Kubernetes Backend
+
+Run agents as Kubernetes Pods instead of local containers — same flags, same isolation model, cluster-scale concurrency:
+
+```bash
+# Submit an AgentRequest CR to the cluster
+./scripts/launch-agent.sh ~/project --backend k8s --task "implement feature"
+
+# Preview the generated CR YAML without applying it
+./scripts/launch-agent.sh ~/project --backend k8s --task "..." --dry-run
+```
+
+An in-cluster operator (Go, kubebuilder) reconciles `AgentRequest` CRDs into Jobs with a status sidecar, enforces per-pod NetworkPolicy based on the network mode, and bridges agent status back into the CR. See [docs/K8S-BACKEND.md](docs/K8S-BACKEND.md).
+
 ### Monitor Agent Progress
 
 ```bash
@@ -237,6 +268,40 @@ See [docs/GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md) for detailed comparison.
 ```
 
 Status files are written to `~/.kapsis/status/` in JSON format, enabling external tools to monitor agent progress.
+
+### Web Dashboard
+
+A local web dashboard (single self-contained binary, no runtime dependencies) visualizes everything in `~/.kapsis/`: live agent list with composite health, per-agent logs, spec, activity timeline, audit trail with hash-chain verification, conversation transcripts, container stats, disk usage breakdown, and maintenance controls (kill agent, run cleanup).
+
+```bash
+# Installed via Homebrew/packages alongside kapsis
+kapsis-dashboard --open          # start on 127.0.0.1:7777 and open browser
+
+# Or build from source
+cd dashboard && bun install && bun run compile
+./dashboard/bin/kapsis-dashboard --open
+```
+
+The dashboard binds to localhost only and protects every request with a bearer token. Destructive actions (kill/cleanup) require a typed confirmation and are themselves audited. Use `--read-only` to disable them entirely. See [docs/DASHBOARD.md](docs/DASHBOARD.md).
+
+### kapsis-ctl (Container Queries & Control)
+
+`kapsis-ctl` is a host-side Go binary that talks to the Podman libpod REST API directly — a reliable alternative to the `podman` CLI for scripts and orchestrators:
+
+```bash
+make build-ctl                          # builds ./bin/kapsis-ctl
+
+kapsis-ctl list --filter name=kapsis    # JSON array of containers
+kapsis-ctl inspect kapsis-a3f2b1        # container metadata (secrets excluded)
+kapsis-ctl alive kapsis-a3f2b1          # exit 0 if running, 1 otherwise
+kapsis-ctl stop -t 10 kapsis-a3f2b1     # graceful SIGTERM→SIGKILL stop
+kapsis-ctl logs -f kapsis-a3f2b1        # stream container logs
+kapsis-ctl cp kapsis-a3f2b1:/workspace/report.md ./out   # copy files out
+```
+
+### Conversation Transcripts
+
+Every run persists the agent's full output (ANSI-stripped) to `~/.kapsis/conversations/<agent-id>/transcript.txt` — including on abnormal exits — so you can review what an agent did after the container is gone. Transcripts are capped at 50 MB and expire after 7 days via `kapsis-cleanup`.
 
 ## Configuration
 
@@ -395,6 +460,47 @@ kapsis ~/project --security-profile minimal --network-mode none --task "run trus
 
 See [docs/SECURITY-HARDENING.md](docs/SECURITY-HARDENING.md) for detailed configuration.
 
+### Audit Trail
+
+Every agent action can be recorded as a hash-chained JSONL event log — each event links to the previous via SHA-256, so any tampering breaks the chain. Real-time pattern detection flags credential exfiltration attempts, mass deletions, and suspicious commands as they happen.
+
+```bash
+# Enable per run (or set audit.enabled: true in YAML)
+KAPSIS_AUDIT_ENABLED=true kapsis ~/project --task "..."
+
+# Post-run report: timeline, statistics, alerts, chain verification
+./scripts/audit-report.sh --latest --verify
+```
+
+See [docs/AUDIT-SYSTEM.md](docs/AUDIT-SYSTEM.md).
+
+## Reliability & Recovery
+
+Kapsis is built to run unattended. A layered watchdog stack detects hung agents and infrastructure failures, and every outcome is reported with a machine-readable exit code and `error_type` so orchestrators can decide what to do next without guessing:
+
+- **Liveness monitor** — multi-signal hung-agent detection (status staleness, process-tree I/O, TCP connection quality) with bounded grace periods and auto-diagnostics before kill
+- **Mount-failure detection** — virtio-fs drops are caught pre-launch (host probe), at container startup, and mid-run (vfkit watchdog, exec-channel watchdog) on macOS
+- **Partial-work awareness** — if a crashed agent's work was already committed, `error_type` is `agent_partial` so callers don't blindly retry and duplicate work
+
+| Exit Code | Meaning |
+|-----------|---------|
+| 0 | Success (changes committed or no changes) |
+| 1 | Agent failure (`error_type` distinguishes `agent_failure` vs `agent_partial`) |
+| 2 | Push failed (a ready-to-run `KAPSIS_PUSH_FALLBACK` command is printed and stored in status.json) |
+| 3 | Uncommitted changes remain |
+| 4 | Mount failure (virtio-fs drop or exec-channel hang) |
+| 5 | Agent completed but process hung (killed by liveness monitor) |
+| 6 | Commit failed (worktree preserved with staged changes for manual recovery) |
+
+The `kapsis-recovery-action` script maps `error_type` to a recommended action (retry / retry push / restart VM / notify human):
+
+```bash
+kapsis-recovery-action myproject 42        # exit code encodes the action
+kapsis-recovery-action --json myproject 42 # rich JSON with next_steps
+```
+
+See [docs/STATUS-TRACKING.md](docs/STATUS-TRACKING.md) for the full `error_type` reference.
+
 ## Cleanup
 
 Reclaim disk space after agent work:
@@ -402,7 +508,10 @@ Reclaim disk space after agent work:
 ```bash
 ./scripts/kapsis-cleanup.sh --dry-run    # Preview
 ./scripts/kapsis-cleanup.sh --all        # Clean everything
+./scripts/kapsis-cleanup.sh --vm-health  # Podman VM inode/disk monitoring (macOS)
 ```
+
+Default runs also expire leaked per-agent snapshots (14-day TTL) and conversation transcripts (7-day TTL), and warn when `~/.kapsis/` exceeds a configurable size threshold (50 GB default) with a breakdown of the top consumers.
 
 See [docs/CLEANUP.md](docs/CLEANUP.md) for full options and troubleshooting.
 
@@ -461,13 +570,18 @@ See [kapsis#361](https://github.com/aviadshiber/kapsis/issues/361) for the under
 | [BUILD-CONFIGURATION.md](docs/BUILD-CONFIGURATION.md) | Customizing container images with build profiles |
 | [CONFIG-REFERENCE.md](docs/CONFIG-REFERENCE.md) | Complete configuration options for agent-sandbox.yaml |
 | [GIT-WORKFLOW.md](docs/GIT-WORKFLOW.md) | Branch-based workflow, worktree vs overlay modes |
-| [STATUS-TRACKING.md](docs/STATUS-TRACKING.md) | Real-time progress monitoring and hook system |
+| [STATUS-TRACKING.md](docs/STATUS-TRACKING.md) | Real-time progress monitoring, error types, and recovery |
+| [DASHBOARD.md](docs/DASHBOARD.md) | Local web dashboard: agents, health, audit, disk, controls |
+| [K8S-BACKEND.md](docs/K8S-BACKEND.md) | Kubernetes backend: AgentRequest CRD and operator |
+| [AUDIT-SYSTEM.md](docs/AUDIT-SYSTEM.md) | Tamper-evident audit trail and pattern detection |
+| [PLUGINS.md](docs/PLUGINS.md) | Claude Code plugin hook injection into containers |
 | [INSTALL.md](docs/INSTALL.md) | Detailed installation instructions |
 | [SETUP.md](docs/SETUP.md) | Initial setup and dependency configuration |
-| [CLEANUP.md](docs/CLEANUP.md) | Disk space management and cleanup operations |
+| [CLEANUP.md](docs/CLEANUP.md) | Disk space management, TTL cleanup, and VM health |
 | [SECURITY-HARDENING.md](docs/SECURITY-HARDENING.md) | Container security design and hardening options |
 | [NETWORK-ISOLATION.md](docs/NETWORK-ISOLATION.md) | Network security and isolation configuration |
 | [GITHUB-SETUP.md](docs/GITHUB-SETUP.md) | GitHub integration and authentication |
+| [TESTING.md](docs/TESTING.md) | Test tiers, conventions, and prerequisites |
 | [TEST-COVERAGE-ANALYSIS.md](docs/TEST-COVERAGE-ANALYSIS.md) | Test coverage analysis and recommendations |
 | [SECURITY-VULNERABILITY-SCAN.md](docs/SECURITY-VULNERABILITY-SCAN.md) | Security vulnerability scan report |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Development guide, testing, and logging |
@@ -479,6 +593,7 @@ kapsis/
 ├── agent-sandbox.yaml.template  # Config template
 ├── CONTRIBUTING.md              # Testing & logging guide
 ├── Containerfile                # Container image definition
+├── Makefile                     # Build targets for kapsis-ctl
 ├── setup.sh                     # System setup and validation
 ├── quick-start.sh               # Simplified agent launcher
 ├── configs/
@@ -488,52 +603,39 @@ kapsis/
 │   │   ├── codex-cli.yaml       # OpenAI Codex CLI
 │   │   ├── gemini-cli.yaml      # Google Gemini CLI
 │   │   └── aider.yaml           # Aider AI pair programmer
-│   ├── build-profiles/          # Container build profiles
-│   │   ├── minimal.yaml         # Minimal image (~500MB)
-│   │   ├── java-dev.yaml        # Java development (~1.5GB)
-│   │   ├── full-stack.yaml      # Multi-language (~2.1GB)
-│   │   └── ...                  # Other profiles
-│   ├── build-config.yaml        # Default build configuration
-│   ├── claude.yaml              # User configs (reference profiles)
-│   ├── codex.yaml
-│   ├── aider.yaml
-│   └── interactive.yaml
+│   ├── build-profiles/          # Container build profiles (minimal → full-stack)
+│   ├── specs/                   # Task specification templates
+│   ├── k8s/                     # K8s backend configs and examples
+│   ├── network-allowlist.yaml   # DNS filtering allowlist
+│   └── build-config.yaml        # Default build configuration
 ├── scripts/
 │   ├── launch-agent.sh          # Main launch script
 │   ├── kapsis-status.sh         # Status query CLI tool
-│   ├── kapsis-cleanup.sh        # Cleanup and reclaim disk space
+│   ├── kapsis-cleanup.sh        # Cleanup, TTL expiry, disk reclamation
+│   ├── kapsis-recovery-action.sh# Map error_type → recovery action
+│   ├── audit-report.sh          # Audit report generation
 │   ├── build-image.sh           # Build base container image
 │   ├── build-agent-image.sh     # Build agent-specific images
 │   ├── configure-deps.sh        # Configure container dependencies
 │   ├── worktree-manager.sh      # Git worktree management
 │   ├── post-container-git.sh    # Post-container git operations
-│   ├── post-exit-git.sh         # Post-exit commit/push
-│   ├── merge-changes.sh         # Manual merge workflow
 │   ├── entrypoint.sh            # Container entrypoint
-│   ├── init-git-branch.sh       # Git branch initialization
-│   ├── post-exit-git.sh         # Post-exit commit/push
-│   ├── switch-java.sh           # Java version switcher
-│   └── lib/
-│       ├── logging.sh           # Shared logging library
-│       ├── status.sh            # Status reporting library
-│       ├── constants.sh         # Central constants
-│       ├── compat.sh            # Cross-platform helpers
-│       ├── security.sh          # Security hardening
-│       ├── dns-filter.sh        # DNS-based network filtering
-│       ├── secret-store.sh      # OS keychain integration
-│       ├── json-utils.sh        # JSON parsing utilities
-│       ├── sanitize-files.sh    # File sanitization
-│       ├── validate-scope.sh    # Filesystem scope validation
-│       └── build-config.sh      # Build configuration parser
+│   ├── backends/                # Backend implementations (podman.sh, k8s.sh)
+│   ├── hooks/                   # Status/git hooks + agent adapters
+│   └── lib/                     # Shared libraries (logging, status, security,
+│                                #   audit, liveness-monitor, watchdogs, transcript, ...)
+├── cmd/
+│   └── kapsis-ctl/              # Host-side Podman query/control binary (Go)
+├── operator/                    # K8s operator (Go, kubebuilder) for AgentRequest CRD
+├── dashboard/                   # Local web dashboard (Bun + TypeScript + React)
+│   ├── server/                  # HTTP/SSE server reading ~/.kapsis/ state
+│   └── ui/                      # Vite + React SPA (embedded into single binary)
 ├── maven/
 │   └── isolated-settings.xml    # Maven isolation settings
-├── docs/
-│   ├── ARCHITECTURE.md
-│   ├── CONFIG-REFERENCE.md
-│   ├── GIT-WORKFLOW.md
-│   └── designs/                 # Architecture design documents
-│       └── agent-profiles-architecture.md
-└── tests/                       # Validation tests
+├── security/                    # AppArmor & seccomp profiles
+├── packaging/                   # Homebrew, Debian, RPM packages
+├── docs/                        # Extended documentation (see table above)
+└── tests/                       # 100+ test files using tests/lib/test-framework.sh
 ```
 
 ## Requirements
@@ -542,6 +644,11 @@ kapsis/
 - **macOS** with Apple Silicon (tested) or Linux
 - **Git** 2.0+
 - **yq** 4.0+ — required for YAML config parsing, agent image builds, and status hooks
+
+Optional (only for building from source — release packages ship pre-built binaries):
+
+- **Bun** — to develop or compile the web dashboard (`dashboard/`)
+- **Go** 1.22+ — to build `kapsis-ctl` (`make build-ctl`) or the K8s operator
 
 ## License
 
