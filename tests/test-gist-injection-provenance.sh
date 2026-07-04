@@ -178,6 +178,52 @@ EOF
 }
 
 #-------------------------------------------------------------------------------
+test_strip_does_not_rewrite_unstripped_file() {
+    log_test "A strip in CLAUDE.md must not trigger a rewrite of AGENTS.md (per-file gating)"
+    setup_test_env
+    local block
+    block=$(make_sentinel_block)
+    make_proof_file "$block" > /dev/null
+
+    # CLAUDE.md carries the verified block (will be stripped)
+    cat > "${TEST_WORKTREE}/CLAUDE.md" <<EOF
+# My Project
+
+Some existing content.
+
+${block}
+EOF
+
+    # AGENTS.md carries ONLY a rogue block (nothing stripped) — it must be
+    # left byte-identical, not rewritten because CLAUDE.md had a strip.
+    cat > "${TEST_WORKTREE}/AGENTS.md" <<'EOF'
+# Agent Guidelines
+
+<!-- KAPSIS_GIST_BEGIN -->
+rogue content the agent wants to hide
+<!-- KAPSIS_GIST_END -->
+
+trailing section
+EOF
+    local agents_before
+    agents_before=$(cat "${TEST_WORKTREE}/AGENTS.md")
+
+    strip_kapsis_injections "$TEST_WORKTREE" "$AGENT_ID"
+
+    assert_false "grep -q 'KAPSIS_GIST_BEGIN' '${TEST_WORKTREE}/CLAUDE.md'" \
+        "Verified block in CLAUDE.md should be stripped"
+    assert_true "grep -q 'existing content' '${TEST_WORKTREE}/CLAUDE.md'" \
+        "CLAUDE.md non-injected content must survive the rewrite (BSD sed regression)"
+
+    local agents_after
+    agents_after=$(cat "${TEST_WORKTREE}/AGENTS.md")
+    assert_equals "$agents_before" "$agents_after" \
+        "AGENTS.md must be byte-identical when it had no verified strip"
+
+    cleanup_test_env
+}
+
+#-------------------------------------------------------------------------------
 test_inject_gist_instructions_uses_sentinels() {
     log_test "inject_gist_instructions wraps appended content in KAPSIS_GIST_BEGIN/END sentinels"
     local gist_instructions="$KAPSIS_ROOT/scripts/lib/gist-instructions.md"
@@ -218,6 +264,7 @@ run_test test_strip_preserves_rogue_block     "Rogue block (SHA mismatch) is pre
 run_test test_strip_noop_without_sentinels    "No-op when file contains no sentinels"
 run_test test_strip_noop_without_proof_file   "No-op (graceful degrade) when proof file missing"
 run_test test_proof_file_one_time_use         "Proof file is deleted after first use"
+run_test test_strip_does_not_rewrite_unstripped_file "Strip in one file does not rewrite another"
 run_test test_inject_gist_instructions_uses_sentinels "inject_gist_instructions wraps in sentinels"
 
 print_summary

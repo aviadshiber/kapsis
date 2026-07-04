@@ -277,6 +277,11 @@ strip_kapsis_injections() {
         local in_block=false
         local current_block=""
 
+        # Per-file counter (reset each iteration) so the rewrite decision
+        # describes THIS file only. The global stripped_count still drives
+        # the summary log lines below.
+        local file_stripped=0
+
         while IFS= read -r line || [[ -n "$line" ]]; do
             if [[ "$line" == "<!-- KAPSIS_GIST_BEGIN -->" ]]; then
                 in_block=true
@@ -295,6 +300,7 @@ strip_kapsis_injections() {
                 if [[ -n "$expected_sha256" && -n "$block_sha256" && "$block_sha256" == "$expected_sha256" ]]; then
                     # Verified Kapsis injection — strip it (and eat the trailing blank/separator lines)
                     ((stripped_count++)) || true
+                    ((file_stripped++)) || true
                     log_debug "Stripped verified Kapsis gist block from ${file_rel}"
                 else
                     # Unverified block — preserve and warn (possible rogue-agent injection)
@@ -315,9 +321,23 @@ strip_kapsis_injections() {
             fi
         done < "$file"
 
-        if [[ "$stripped_count" -gt 0 ]]; then
-            # Remove trailing blank lines that were separators before the block
-            new_content=$(printf '%s' "$new_content" | sed 's/[[:blank:]]*$//' | sed -e :a -e '/^\n*$/{$d;N;ba}')
+        # Rewrite only when THIS file changed. Gating on the per-file counter
+        # (not the global stripped_count) prevents spuriously rewriting a later
+        # file just because an earlier one had a strip.
+        if [[ "$file_stripped" -gt 0 ]]; then
+            # Trim trailing whitespace per line, then drop the now-blank
+            # separator lines the stripped block left behind. Uses awk (not the
+            # GNU-only `sed -e :a -e '/^\n*$/{$d;N;ba}'` construct) because BSD
+            # sed on macOS rejects that grouping and exits non-zero — which,
+            # under command substitution, silently blanked new_content and
+            # destroyed the file's real content on Kapsis's primary platform.
+            new_content=$(printf '%s' "$new_content" | awk '
+                { sub(/[[:blank:]]+$/, ""); lines[NR] = $0 }
+                END {
+                    last = NR
+                    while (last > 0 && lines[last] == "") last--
+                    for (i = 1; i <= last; i++) print lines[i]
+                }')
             printf '%s\n' "$new_content" > "$file"
         fi
     done
