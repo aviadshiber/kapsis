@@ -10,7 +10,7 @@
 # Functions exercised:
 #   - validate_tool_phase_mapping (valid + each invalid-field case)
 #   - validate_agent_profile
-#   - validate_launch_config     (including nested lsp_servers + liveness)
+#   - validate_launch_config     (including nested lsp_servers + liveness + vm)
 #   - validate_network_config
 #   - detect_config_type         (network / launch / agent / unknown)
 #   - test_pattern_matching      (--test flag)
@@ -440,6 +440,63 @@ EOF
         "Must flag the below-minimum timeout"
 }
 
+test_launch_vm_valid_passes() {
+    log_test "validate_launch_config: valid vm.max_parallel_agents passes"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+vm:
+  max_parallel_agents: 4
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 0 "$CAPTURED_EXIT_CODE" "Valid vm section must exit 0"
+    assert_contains "$CAPTURED_STDOUT" "Valid vm.max_parallel_agents: 4" \
+        "Must confirm the validated value"
+}
+
+test_launch_vm_zero_agents_fails() {
+    log_test "validate_launch_config: vm.max_parallel_agents=0 is rejected"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+vm:
+  max_parallel_agents: 0
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "max_parallel_agents=0 must be rejected"
+    assert_contains "$CAPTURED_STDOUT" "Invalid vm.max_parallel_agents: 0" \
+        "Must flag the non-positive agent count"
+}
+
+test_launch_vm_typo_key_warns() {
+    log_test "validate_launch_config: typo'd key under vm: produces a warning"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+vm:
+  max_paralel_agents: 4
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 0 "$CAPTURED_EXIT_CODE" "Unknown key is a warning, not an error"
+    assert_contains "$CAPTURED_STDOUT" "Unknown key vm.max_paralel_agents" \
+        "Must surface the typo'd key (preflight silently falls back to 1 otherwise)"
+}
+
 #===============================================================================
 # validate_network_config TESTS
 #===============================================================================
@@ -659,6 +716,9 @@ main() {
     run_test test_launch_bad_auto_push_fails
     run_test test_launch_lsp_missing_command_fails
     run_test test_launch_liveness_timeout_below_minimum_fails
+    run_test test_launch_vm_valid_passes
+    run_test test_launch_vm_zero_agents_fails
+    run_test test_launch_vm_typo_key_warns
     run_test test_launch_userns_accepts_known_good_values
     run_test test_launch_userns_rejects_unknown_value
     run_test test_launch_userns_rejects_uid_below_1000

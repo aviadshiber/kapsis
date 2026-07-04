@@ -416,6 +416,26 @@ CONTAINER_CMD+=(
 )
 ```
 
+#### 2.3.1 macOS Named-Volume Overlay: No Extra Capabilities (Issue #376)
+
+On macOS, overlay-mode sandboxes keep the OverlayFS `upper/`/`work/` directories in a
+per-agent Podman named volume (VM-native ext4) and mount the project with the **same
+`:O,upperdir=...,workdir=...` mechanism the Linux path uses** — the option string points
+at the volume's VM-side mountpoint, and the Podman runtime assembles the kernel overlay
+inside the VM's rootless namespace before the container starts.
+
+Because the mount is performed by the runtime — never by code inside the agent container —
+this mode adds **no capabilities and no devices**: no `--cap-add SYS_ADMIN`, no
+`--device /dev/fuse`, no in-container `mount(2)` ability. The capability-drop contract of
+every security profile stays fully intact, and the CVE-2022-0185-class attack surface of
+letting sandboxed code drive filesystem mounts simply does not exist here.
+
+Consequently the named-volume overlay is available under **all** security profiles,
+including `strict` and `paranoid` — there is no profile gate and no downgrade path. Users
+can still opt out with `KAPSIS_OVERLAY_USE_VOLUME=false` (falls back to kernel OverlayFS
+with `upper/`/`work/` on the virtio-fs share). Worktree mode (the recommended mode) and
+Linux are unaffected.
+
 ### 2.4 Configuration Option
 
 Add to `CONFIG-REFERENCE.md`:

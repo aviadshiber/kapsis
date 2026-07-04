@@ -982,6 +982,49 @@ podman machine start
 # Re-run the agent
 ```
 
+## VM Memory Advisor (macOS)
+
+Preflight advisor for Podman VM memory sizing (Issue #377). macOS VM memory is set once at `podman machine init` and never revisited — an under-sized VM (or one consuming most of the host RAM) widens the AVF virtio-fs cache-coherency race window (Apple FB16008360) and increases `mount_failure` (exit code 4) frequency. Two warning-only checks run during preflight; neither blocks launch:
+
+1. **Sizing check** — warns when VM memory is below `base + per_agent × max_parallel_agents` (defaults: 2GB + 3GB × agents) and prints the exact `podman machine set --memory` remediation command
+2. **Jetsam check** — warns when the VM exceeds `KAPSIS_VM_MAX_HOST_PCT` (default 80%) of host RAM, which makes the AVF helper the top jetsam eviction candidate
+
+Both checks run independently — a VM can be simultaneously under-sized for the planned concurrency and over-sized for the host, and both warnings are reported together.
+
+A companion **host memory-pressure gate** warns when swap usage exceeds `KAPSIS_VM_SWAP_WARN_PCT` (default 50%) of total swap **and** absolute usage is at least `KAPSIS_VM_SWAP_FLOOR_MB` (default 512MB) — the floor prevents false positives from macOS's small dynamic swapfiles. On Linux both checks are silent no-ops (native Podman, no VM to size).
+
+### Configuration
+
+```yaml
+vm:
+  # Number of agents you intend to run in parallel on this machine (default: 1).
+  # Drives the recommended VM size: 2GB base + 3GB per agent.
+  max_parallel_agents: 1
+```
+
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_MAX_PARALLEL_AGENTS` | — | Overrides `vm.max_parallel_agents` (env wins over YAML) |
+| `KAPSIS_VM_BASE_MEMORY_GB` | `2` | VM OS + Podman daemon baseline (GB) |
+| `KAPSIS_VM_PER_AGENT_MEMORY_GB` | `3` | Memory budget per parallel agent (GB) |
+| `KAPSIS_VM_MAX_HOST_PCT` | `80` | VM:host RAM percentage above which the jetsam warning fires |
+| `KAPSIS_VM_SWAP_WARN_PCT` | `50` | Swap-used percentage above which the pressure warning fires |
+| `KAPSIS_VM_SWAP_FLOOR_MB` | `512` | Absolute swap-used floor (MB); below it the percentage signal is ignored |
+
+Non-numeric values in these overrides are ignored with a logged warning and the built-in default is used. The Podman machine to inspect follows `KAPSIS_PODMAN_MACHINE` (see `docs/ARCHITECTURE.md`).
+
+### Remediation
+
+```bash
+podman machine stop podman-machine-default && \
+  podman machine set --memory 5120 podman-machine-default && \
+  podman machine start podman-machine-default
+```
+
+Resizing requires a VM restart, which kills in-flight agents — the preflight warning prints this command rather than auto-applying it.
+
 ## Example Configurations
 
 ### Minimal Configuration
@@ -2000,6 +2043,40 @@ KAPSIS_AUDIT_ENABLED=true ./scripts/launch-agent.sh ~/project --task "implement 
 
 ---
 
+## macOS Overlay Named Volume (Issue #376)
+
+On macOS, overlay-mode sandboxes keep the OverlayFS `upper/` and `work/` directories in a
+per-agent Podman named volume (`kapsis-<agent-id>-overlay`, VM-native ext4) instead of the
+virtio-fs share. This eliminates the AVF virtio-fs cache-coherency races that surface as
+`exit_code=4` / `error_type=mount_failure`. The project is mounted at `/workspace` with the
+same podman-side overlay mechanism the Linux path uses —
+`:O,upperdir=<volume-mountpoint>/upper,workdir=<volume-mountpoint>/work`, where the
+mountpoint is the volume's VM-side path from `podman volume inspect --format
+'{{.Mountpoint}}'`. The Podman runtime assembles the overlay inside the VM, so the agent
+container needs **no extra capabilities or devices**. Because Podman does not create custom
+`upperdir`/`workdir` paths itself, Kapsis pre-creates `upper/` and `work/` inside the
+volume once per launch with a short-lived, fully cap-dropped helper container. After the
+container exits, the volume's `upper/` and `work/` subtrees are exported back to the host
+sandbox directory (`sandbox.upper_dir_base`, default `~/.ai-sandboxes/<sandbox-id>/`;
+staged and symlink-hardened) so post-container inspection works unchanged. Linux always
+uses kernel OverlayFS on host directories directly and is unaffected.
+
+Requires Podman ≥ 4.0 (custom `upperdir=`/`workdir=` options on `:O` volume mounts).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_OVERLAY_USE_VOLUME` | `true` | macOS only. Set to `false` to opt out of the named-volume overlay and fall back to kernel OverlayFS with `upper/`/`work/` on the virtio-fs share |
+
+**Security note:** the overlay is constructed by the Podman runtime, not by code inside the
+container — no `--cap-add SYS_ADMIN`, no `--device /dev/fuse`. The mode is therefore
+available under **all** security profiles, including `strict` and `paranoid` (see
+[SECURITY-HARDENING.md](SECURITY-HARDENING.md)). The stale volume from any previous run with
+the same agent ID is removed at launch so each session starts with a clean upper layer; the
+volume is cleaned up at session end (kept with `--keep-volumes`, reclaimable via
+`kapsis-cleanup.sh --volumes`).
+
+---
+
 ## Cleanup
 
 For cleanup configuration and usage, see [CLEANUP.md](CLEANUP.md).
@@ -2017,3 +2094,43 @@ your shell profile to override the built-in defaults.
 | `KAPSIS_CLEANUP_VM_DISK_CRITICAL_PCT` | `95` | Disk usage critical threshold (%) |
 | `KAPSIS_CLEANUP_VM_JOURNAL_VACUUM_SIZE` | `100M` | Journal vacuum target size |
 | `KAPSIS_CLEANUP_VM_SSH_TIMEOUT` | `15` | Timeout (seconds) for VM SSH commands |
+
+### TTL Cleanup & Disk Pressure Environment Variables
+
+TTL-based cleanup (Issue #389) expires per-agent state that leaked when agents were hard-killed or crashed, and warns when `~/.kapsis/` grows beyond a size threshold.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_SNAPSHOTS_DIR` | `~/.kapsis/snapshots` | Base directory for per-agent staging snapshots of `filesystem.include` files |
+| `KAPSIS_SNAPSHOTS_TTL_DAYS` | `14` | Snapshot age (days) before `kapsis-cleanup.sh` deletes it (override per run with `--snapshots-older-than <days>`) |
+| `KAPSIS_DIR_WARN_SIZE_GB` | `50` | Warn after cleanup when total `~/.kapsis/` size meets/exceeds this (GB). Shows top 3 subdirectories and remediation hints; set `0` to disable. The measurement is cached in `~/.kapsis/.disk-usage-cache` (JSON) for the dashboard and preflight checks |
+| `KAPSIS_TRANSCRIPT_MAX_BYTES` | `52428800` (50 MB) | Conversation transcript size cap; the tail is kept on truncation |
+
+Conversation transcripts in `~/.kapsis/conversations/` expire after 7 days by default (see [CLEANUP.md](CLEANUP.md)).
+
+---
+
+## Watchdog Configuration (macOS)
+
+Two host-side watchdogs guard against Podman VM failure modes on macOS that in-container probes cannot see. Both are enabled by default and tunable via environment variables.
+
+### vfkit Watchdog (Issue #303)
+
+Polls the vfkit hypervisor process; if it exits mid-run, the agent's mounts are gone. Writes `exit_code=4` + `error_type=mount_failure` to status.json and SIGTERMs the agent within ~10 seconds.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_VFKIT_WATCHDOG_ENABLED` | `true` | Enable the vfkit watchdog |
+| `KAPSIS_VFKIT_WATCHDOG_INTERVAL` | `5` | Seconds between vfkit liveness polls |
+
+### Exec-Channel Watchdog (Issue #382)
+
+Detects the silent wedge where `podman exec` hangs forever while vfkit is alive and the container is still reported `Up`. Probes the exec channel periodically; after N consecutive timed-out probes it writes `exit_code=4` + `error_type=exec_channel_hang` and SIGTERMs the agent.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_EXEC_WATCHDOG_ENABLED` | `true` | Enable the exec-channel watchdog (no-op on Linux) |
+| `KAPSIS_EXEC_WATCHDOG_INTERVAL` | `30` | Seconds between exec probes |
+| `KAPSIS_EXEC_WATCHDOG_TIMEOUT` | `5` | Per-probe timeout (seconds) |
+| `KAPSIS_EXEC_WATCHDOG_THRESHOLD` | `3` | Consecutive probe failures before firing (~90s blind window with defaults) |
+| `KAPSIS_EXEC_WATCHDOG_PODMAN` | `podman` | Podman binary to use for probes |

@@ -368,11 +368,13 @@ Written by `post-container-git.sh` and `launch-agent.sh` into the status file up
 | `agent_failure` | **Retry** | No work lost; agent can start fresh |
 | `push_failure` | **Retry push only** | Work is committed; only the push failed |
 | `mount_failure` | **Restart VM, then retry** | virtio-fs degradation; restart Podman VM first |
+| `exec_channel_hang` | **Restart VM, then retry** | `podman exec` channel wedged while the container appears Up (macOS applehv); detected by the host-side exec-channel watchdog (PR #383), reported with exit code 4 |
 | `agent_partial` | **Notify human, do NOT retry** | Partial work exists on branch; retry may duplicate |
 | `commit_failure` | **Notify human, do NOT retry** | Staged changes preserved in worktree for manual recovery |
 | `uncommitted_work` | **Notify human** | Changes exist but weren't staged; manual commit needed |
 | `hung_after_completion` (committed) | **Notify human, do NOT retry** | Work is on branch; just review and PR |
 | `hung_after_completion` (not committed) | **Retry** | Agent hung before committing; safe to restart |
+| `killed` | **Notify human** | Agent was deliberately killed (e.g., dashboard kill button or manual stop) |
 
 ### Using kapsis-recovery-action
 
@@ -445,6 +447,34 @@ case "$error_type" in
 esac
 ```
 
+## Conversation Transcripts (Issue #390)
+
+In addition to status JSON, every run persists the agent's full captured output as a plain-text transcript for post-mortem review — the answer to "what was the agent actually doing?" after the container is gone.
+
+### Location and Format
+
+```text
+~/.kapsis/conversations/
+└── <agent-id>/
+    └── transcript.txt
+```
+
+Each transcript starts with a header line:
+
+```text
+# kapsis-transcript agent=<id> exit=<code> at=<ISO-8601 timestamp>
+```
+
+Properties:
+
+- **Agent-agnostic** — works for Claude Code, Codex CLI, Gemini CLI, Aider, and custom agents (it captures container stdout+stderr, not agent-internal formats)
+- **ANSI-stripped** — terminal escape sequences are removed so transcripts are readable in any text viewer
+- **Crash-safe** — saved on the normal exit path *and* from the cleanup trap on SIGTERM/early-error exits (`transcript_save_partial` never overwrites an existing transcript)
+- **Size-capped** — 50 MB by default; the tail is kept on truncation (agent output is at the end, bootstrap noise at the head). Override with `KAPSIS_TRANSCRIPT_MAX_BYTES`
+- **TTL-managed** — `kapsis-cleanup.sh` expires transcripts after 7 days by default
+
+The dashboard renders transcripts in the per-agent **Conversation** tab.
+
 ## Files
 
 | File | Purpose |
@@ -462,3 +492,4 @@ esac
 | `scripts/hooks/agent-adapters/gemini-adapter.sh` | Parse Gemini CLI hook format |
 | `configs/tool-phase-mapping.yaml` | Tool → phase mapping configuration |
 | `scripts/kapsis-recovery-action.sh` | Determine recovery action from `error_type` (Issue #262) |
+| `scripts/lib/transcript.sh` | Conversation transcript persistence (Issue #390) |

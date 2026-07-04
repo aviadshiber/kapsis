@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Kapsis is a **hermetically isolated AI agent sandbox** (v2.23.8) for running multiple AI coding agents (Claude Code, Codex CLI, Aider, Gemini CLI) in parallel with complete isolation via Podman rootless containers, Copy-on-Write filesystems, and DNS-based network filtering.
+Kapsis is a **hermetically isolated AI agent sandbox** (v2.34.2) for running multiple AI coding agents (Claude Code, Codex CLI, Aider, Gemini CLI) in parallel with complete isolation via Podman rootless containers, Copy-on-Write filesystems, and DNS-based network filtering.
 
 ### Core Isolation Guarantees
 
@@ -32,7 +32,8 @@ kapsis/
 │   ├── post-exit-git.sh        # Post-exit commit/push (host-side)
 │   ├── init-git-branch.sh      # Git branch initialization
 │   ├── kapsis-status.sh        # Query agent status
-│   ├── kapsis-cleanup.sh       # Reclaim disk space
+│   ├── kapsis-cleanup.sh       # Reclaim disk space (incl. TTL snapshot/conversation expiry)
+│   ├── kapsis-recovery-action.sh # Map error_type → recovery action (Issue #262)
 │   ├── preflight-check.sh      # Pre-launch validation
 │   ├── merge-changes.sh        # Manual merge workflow
 │   ├── configure-deps.sh       # Interactive dependency configuration
@@ -76,8 +77,13 @@ kapsis/
 │   │   ├── audit-patterns.sh   # Audit pattern detection
 │   │   ├── liveness-monitor.sh # Container liveness monitoring
 │   │   ├── podman-health.sh    # Podman VM health probe & auto-heal (macOS)
+│   │   ├── vfkit-watchdog.sh   # Host-side vfkit hypervisor watchdog (macOS, Issue #303)
+│   │   ├── exec-channel-watchdog.sh # Host-side podman exec channel watchdog (macOS, Issue #382)
 │   │   ├── status-sync.sh      # Volume→host status mirror worker (macOS)
 │   │   ├── status.py           # Python status helpers
+│   │   ├── transcript.sh       # Conversation transcript persistence (Issue #390)
+│   │   ├── spec-store.sh       # Task spec persistence for dashboard/status consumers
+│   │   ├── launch-lock.sh      # Serialized sandbox setup (macOS AVF virtio-fs race, #375)
 │   │   ├── rewrite-plugin-paths.sh # Plugin path rewriting
 │   │   └── k8s-config.sh       # K8s config translator (Docker→K8s format)
 │   ├── backends/               # Backend implementations
@@ -99,14 +105,14 @@ kapsis/
 │   ├── network-allowlist.yaml  # DNS filtering allowlist
 │   ├── tool-phase-mapping.yaml # Tool lifecycle mapping
 │   └── k8s/                    # K8s backend configs and examples
-├── tests/                      # 95 test files using tests/lib/test-framework.sh
+├── tests/                      # 111 test files using tests/lib/test-framework.sh
 │   ├── run-all-tests.sh        # Test runner with category filtering
 │   └── test-*.sh               # Individual test scripts
-├── docs/                       # Extended documentation (15 guides + designs/)
+├── docs/                       # Extended documentation (18 guides + designs/)
 │   ├── designs/                # Design documents (agent-profiles-architecture.md)
 │   └── *.md                    # Reference guides (see Documentation Map below)
 ├── cmd/
-│   └── kapsis-ctl/             # Host-side Podman query binary (Phase 1, issue #266)
+│   └── kapsis-ctl/             # Host-side Podman query/control binary (Phases 1–2, issue #266)
 │       ├── go.mod              # Separate module — stdlib-only, no operator deps
 │       ├── main.go             # Entry point + subcommand dispatch
 │       └── podman/             # libpod REST API client + types + validation
@@ -153,6 +159,7 @@ kapsis/
 | Installation | `docs/INSTALL.md` |
 | Initial setup | `docs/SETUP.md` |
 | Logging & testing | `CONTRIBUTING.md` |
+| Testing guide (test tiers & conventions) | `docs/TESTING.md` |
 | Cleanup operations | `docs/CLEANUP.md` |
 | Test coverage analysis | `docs/TEST-COVERAGE-ANALYSIS.md` |
 | Security vulnerability scan | `docs/SECURITY-VULNERABILITY-SCAN.md` |
@@ -242,8 +249,8 @@ Status is written as JSON to `~/.kapsis/status/`.
 
 | File | Purpose |
 |------|---------|
-| `cmd/kapsis-ctl/` | **Phase 1 only — dev/operator tool, not packaged yet.** Build with `make build-ctl`. MUST NOT be installed inside container images (see issue #266 for Phase 2/3 roadmap). |
-| `cmd/kapsis-ctl/podman/client.go` | libpod REST API client — socket discovery, validation, Inspect/List/Alive |
+| `cmd/kapsis-ctl/` | **Phases 1–2 — dev/operator tool, not packaged yet.** Read-only queries (`inspect`, `list`, `alive`) + control (`stop`, `logs`, `cp`). Build with `make build-ctl`. MUST NOT be installed inside container images (see issue #266 for the Phase 3 roadmap). |
+| `cmd/kapsis-ctl/podman/client.go` | libpod REST API client — socket discovery, validation, Inspect/List/Alive/Stop/Logs/Archive |
 | `Makefile` | Top-level build targets for `kapsis-ctl` (`build-ctl`, `test-ctl`, `vet-ctl`) |
 | `scripts/launch-agent.sh` | Main entry point — orchestrates config, image, worktree, container |
 | `scripts/entrypoint.sh` | Container startup — SDKMAN, NVM, Maven settings, credential injection |
