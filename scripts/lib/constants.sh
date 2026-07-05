@@ -306,6 +306,20 @@ readonly KAPSIS_DEFAULT_CLEANUP_VM_JOURNAL_VACUUM_SIZE="100M"
 readonly KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT=15
 
 #===============================================================================
+# IMAGE GC (Issues #418/#421)
+#
+# Guards for kapsis-cleanup.sh image garbage collection.
+# Override via environment variables (e.g., KAPSIS_IMAGE_KEEP_PATTERNS='...').
+#===============================================================================
+
+# ERE matched against each candidate image's `repository:tag` reference.
+# Matching images are never removed by `kapsis-cleanup --images` / `--all`.
+# Default protects long-lived service images that must survive cleanup.
+# Override via the KAPSIS_IMAGE_KEEP_PATTERNS env var; set it explicitly
+# empty (KAPSIS_IMAGE_KEEP_PATTERNS='') to disable protection.
+readonly KAPSIS_DEFAULT_IMAGE_KEEP_PATTERNS='(^|/)(kapsis-slack-bot|kapsis-claude-cli|kapsis-sandbox)(:|$)'
+
+#===============================================================================
 # SSH PROBE DEFAULTS (Issue #255)
 #
 # Pre-flight connectivity check for Podman SSH tunnel (macOS only).
