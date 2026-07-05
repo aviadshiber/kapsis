@@ -400,6 +400,65 @@ report_alerts_text() {
     fi
 }
 
+# Section 3b: Host-Side Commit Mutations (Issue #407)
+#
+# Renders the non-chained ${agent_id}-host-events.jsonl sidecar. Unlike the
+# alerts renderer, the sidecar path is derived from the _agent_id parsed out of
+# the session events (parse_audit_file) — NOT from the audit filename suffix —
+# because audit_log_host_event() keys the file by agent-id alone.
+report_host_events_text() {
+    echo -e "${BOLD}${CYAN}=== Host-Side Commit Mutations ===${NC}"
+    echo ""
+
+    local host_file="${KAPSIS_AUDIT_DIR}/${_agent_id}-host-events.jsonl"
+
+    if [[ ! -f "$host_file" ]]; then
+        echo "  No host events recorded."
+        echo ""
+        return
+    fi
+
+    local host_count=0
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        ((host_count++)) || true
+
+        # detail.* keys are extracted directly: json_get_* grep the whole line
+        # and none of these keys collide with the top-level fields.
+        local timestamp
+        timestamp=$(json_get_string "$line" "timestamp")
+        local file_path
+        file_path=$(json_get_string "$line" "file")
+        local blocks_stripped
+        blocks_stripped=$(json_get_number "$line" "blocks_stripped")
+        local bytes_removed
+        bytes_removed=$(json_get_number "$line" "bytes_removed")
+        local removed_sha256
+        removed_sha256=$(json_get_string "$line" "removed_sha256")
+        local proof_outcome
+        proof_outcome=$(json_get_string "$line" "proof_outcome")
+        local suspicious_preserved
+        suspicious_preserved=$(json_get_number "$line" "suspicious_blocks_preserved")
+
+        echo -e "  ${YELLOW}[STRIP]${NC} ${file_path}"
+        echo "    Time:                $timestamp"
+        echo "    Blocks stripped:     ${blocks_stripped}"
+        echo "    Bytes removed:       ${bytes_removed}"
+        echo "    Removed SHA-256:     ${removed_sha256:0:16}..."
+        echo "    Proof outcome:       ${proof_outcome}"
+        echo "    Suspicious preserved: ${suspicious_preserved}"
+        echo ""
+    done < "$host_file"
+
+    if [[ "$host_count" -eq 0 ]]; then
+        echo "  No host events recorded."
+        echo ""
+    else
+        echo "  Total host events: $host_count"
+        echo ""
+    fi
+}
+
 # Section 4: Event Statistics
 report_statistics_text() {
     echo -e "${BOLD}${CYAN}=== Event Statistics ===${NC}"
@@ -616,6 +675,26 @@ report_json() {
         alerts_json+="]"
     fi
 
+    # Build host events JSON array (Issue #407, non-chained sidecar).
+    # Keyed by _agent_id (parsed from session events), matching the writer.
+    local host_events_json="[]"
+    local host_file
+    host_file="${KAPSIS_AUDIT_DIR}/${_agent_id}-host-events.jsonl"
+    if [[ -f "$host_file" ]]; then
+        host_events_json="["
+        local host_first=true
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if [[ "$host_first" == "true" ]]; then
+                host_first=false
+            else
+                host_events_json+=","
+            fi
+            host_events_json+="$line"
+        done < "$host_file"
+        host_events_json+="]"
+    fi
+
     # Build statistics JSON
     # Tool usage counts
     local tool_counts_json="{"
@@ -755,7 +834,7 @@ report_json() {
 
     # Build the final JSON object
     local result_json
-    result_json="{\"summary\":${summary_json},\"alerts\":${alerts_json},\"statistics\":${statistics_json},\"credential_access\":${cred_json},\"filesystem_impact\":${fs_json}"
+    result_json="{\"summary\":${summary_json},\"alerts\":${alerts_json},\"host_events\":${host_events_json},\"statistics\":${statistics_json},\"credential_access\":${cred_json},\"filesystem_impact\":${fs_json}"
 
     # Optionally add chain verification
     if [[ "$do_verify" == "true" ]]; then
@@ -903,6 +982,7 @@ main() {
         fi
 
         report_alerts_text "$audit_file"
+        report_host_events_text
         report_statistics_text
         report_credential_access_text
         report_filesystem_impact_text
