@@ -44,7 +44,8 @@ The git workflow enables AI agents to push changes to branches for PR-based revi
 │  │ PHASE 4: AGENT EXITS → POST-EXIT GIT OPERATIONS                     │   │
 │  │                                                                     │   │
 │  │   if changes exist:                                                 │   │
-│  │       git add -A                                                    │   │
+│  │       git add (explicit paths; git add -A fallback)                 │   │
+│  │       unstage excluded + ephemeral files (commit excludes)          │   │
 │  │       git commit -m "feat: {task_summary}"                          │   │
 │  │       if --push specified:                                          │   │
 │  │           git push origin feature/DEV-123 --set-upstream            │   │
@@ -83,6 +84,16 @@ The git workflow enables AI agents to push changes to branches for PR-based revi
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
+
+## Infrastructure Artifact Filtering (Issue #391)
+
+During container setup Kapsis writes a few files into the workspace to support the session (LSP/plugin config, Maven plugin backups). The post-exit pipeline unstages these before anything is committed, so they never land on the user's branch:
+
+1. **Commit excludes** — `.claude/settings.json` (mutated in-session by LSP/plugin hook injection) is part of `KAPSIS_DEFAULT_COMMIT_EXCLUDE` and is unstaged even when git-tracked. See [CONFIG-REFERENCE.md](CONFIG-REFERENCE.md#commit-exclude-patterns) for overriding (`KAPSIS_COMMIT_EXCLUDE`) or extending (`KAPSIS_EXTRA_COMMIT_EXCLUDE`) the pattern list.
+
+2. **Ephemeral artifacts (non-overridable)** — `**/*.bak` and `**/.mvn/*.bak*` cover Maven plugin backups such as `.mvn/extensions.xml.bak2`. The patterns are deliberately scoped so legitimate names like `README.bakery.md` or `notes.bak.swp` are never filtered.
+
+Each unstaged file is logged (`~/.kapsis/logs/`).
 
 ## SSH Host Key Setup
 

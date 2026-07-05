@@ -313,8 +313,9 @@ resources:
 #
 # Profiles:
 #   minimal   - No restrictions (trusted execution only)
-#   standard  - Drops capabilities, prevents privilege escalation
-#   strict    - Adds syscall filtering (seccomp), noexec /tmp (untrusted execution)
+#   standard  - Drops capabilities, prevents privilege escalation, seccomp
+#               denies user-namespace + mount escalation (CVE-2022-0185 class)
+#   strict    - Standard + noexec /tmp, lower PID limit (untrusted execution)
 #   paranoid  - Adds read-only root, requires AppArmor/SELinux
 #
 security:
@@ -322,12 +323,26 @@ security:
   # Default: standard
   profile: standard
 
-  # Seccomp syscall filtering
-  # Blocks dangerous syscalls: ptrace, mount, bpf, kexec_load, etc.
-  # Default: enabled for strict/paranoid, disabled for standard/minimal
+  # Seccomp syscall filtering.
+  # As of the userns hardening, the default profile (standard/strict/paranoid)
+  # is the upstream containers/common default with the user-namespace +
+  # mount-escalation syscall family DENIED with EPERM: unshare, setns, mount,
+  # umount2, fsopen, fsconfig, fspick, move_mount, open_tree, pivot_root,
+  # mount_setattr. This closes the unshare(CLONE_NEWUSER) -> nested-userns ->
+  # mount/fsconfig escalation path that Podman's stock profile leaves open even
+  # with all capabilities dropped. clone/clone3 stay allowed (process/thread
+  # creation). minimal keeps seccomp off.
   seccomp:
-    enabled: true  # Recommended even for standard profile
-    # profile: /custom/seccomp.json  # Optional custom profile
+    enabled: true  # default-on for standard/strict/paranoid
+    # profile: /custom/seccomp.json  # Optional custom profile (full override)
+
+    # Opt out of the userns + mount denial ONLY for workloads that legitimately
+    # need nested user namespaces / mounts: nested containerization
+    # (podman/docker-in-container), bubblewrap/nsjail, Chromium/Playwright/
+    # Electron sandboxes. Swaps to the verbatim upstream-default profile (userns
+    # ALLOWED). Env var KAPSIS_ALLOW_USERNS=true takes precedence over this key.
+    # Default: false (denial active).
+    allow_userns: false
 
   # Process isolation
   process:
@@ -1530,16 +1545,33 @@ Kapsis automatically prevents certain files from being committed. This addresses
 These files are automatically unstaged before commit:
 - `.gitignore` / `**/.gitignore` - Git ignore files
 - `.gitattributes` / `**/.gitattributes` - Git attributes files
+- `.claude/settings.json` / `**/.claude/settings.json` - Claude Code project settings (issue #391: mutated in-session by Kapsis LSP/plugin hook injection)
+
+> **Want to commit `.claude/settings.json`?** `KAPSIS_COMMIT_EXCLUDE` replaces the default list wholesale, so set it to just the patterns you want (e.g. the four git-meta defaults) and the settings file will be committed normally.
+
+### Ephemeral Artifact Patterns (non-overridable)
+
+Build/test artifacts that are never legitimate to commit from a sandbox run are filtered unconditionally (`KAPSIS_DEFAULT_EPHEMERAL_PATTERNS` in `scripts/lib/constants.sh`):
+- `**/__pycache__/`, `**/.pytest_cache/` - Python caches
+- `.coverage` / `**/.coverage` - Coverage data
+- `**/*.bak` - Backup files (exact `.bak` suffix only)
+- `**/.mvn/*.bak*` - Maven plugin backups (`.bak2`, `.bak10`, …) inside `.mvn/` (issue #391)
+
+The `.bak` patterns are deliberately scoped: names like `README.bakery.md` or `notes.bak.swp` are NOT filtered.
 
 ### Configuration
 
 **Via environment variable:**
 
 ```bash
-# Custom patterns (newline-separated)
+# Replace the defaults wholesale (newline-separated)
 export KAPSIS_COMMIT_EXCLUDE=".gitignore
 **/.gitignore
 .env.local"
+
+# Or APPEND patterns without redeclaring the defaults
+export KAPSIS_EXTRA_COMMIT_EXCLUDE="**/*.secret
+deploy/credentials.yaml"
 
 ./scripts/launch-agent.sh ~/project --task "implement feature"
 ```
@@ -2094,3 +2126,43 @@ your shell profile to override the built-in defaults.
 | `KAPSIS_CLEANUP_VM_DISK_CRITICAL_PCT` | `95` | Disk usage critical threshold (%) |
 | `KAPSIS_CLEANUP_VM_JOURNAL_VACUUM_SIZE` | `100M` | Journal vacuum target size |
 | `KAPSIS_CLEANUP_VM_SSH_TIMEOUT` | `15` | Timeout (seconds) for VM SSH commands |
+
+### TTL Cleanup & Disk Pressure Environment Variables
+
+TTL-based cleanup (Issue #389) expires per-agent state that leaked when agents were hard-killed or crashed, and warns when `~/.kapsis/` grows beyond a size threshold.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_SNAPSHOTS_DIR` | `~/.kapsis/snapshots` | Base directory for per-agent staging snapshots of `filesystem.include` files |
+| `KAPSIS_SNAPSHOTS_TTL_DAYS` | `14` | Snapshot age (days) before `kapsis-cleanup.sh` deletes it (override per run with `--snapshots-older-than <days>`) |
+| `KAPSIS_DIR_WARN_SIZE_GB` | `50` | Warn after cleanup when total `~/.kapsis/` size meets/exceeds this (GB). Shows top 3 subdirectories and remediation hints; set `0` to disable. The measurement is cached in `~/.kapsis/.disk-usage-cache` (JSON) for the dashboard and preflight checks |
+| `KAPSIS_TRANSCRIPT_MAX_BYTES` | `52428800` (50 MB) | Conversation transcript size cap; the tail is kept on truncation |
+
+Conversation transcripts in `~/.kapsis/conversations/` expire after 7 days by default (see [CLEANUP.md](CLEANUP.md)).
+
+---
+
+## Watchdog Configuration (macOS)
+
+Two host-side watchdogs guard against Podman VM failure modes on macOS that in-container probes cannot see. Both are enabled by default and tunable via environment variables.
+
+### vfkit Watchdog (Issue #303)
+
+Polls the vfkit hypervisor process; if it exits mid-run, the agent's mounts are gone. Writes `exit_code=4` + `error_type=mount_failure` to status.json and SIGTERMs the agent within ~10 seconds.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_VFKIT_WATCHDOG_ENABLED` | `true` | Enable the vfkit watchdog |
+| `KAPSIS_VFKIT_WATCHDOG_INTERVAL` | `5` | Seconds between vfkit liveness polls |
+
+### Exec-Channel Watchdog (Issue #382)
+
+Detects the silent wedge where `podman exec` hangs forever while vfkit is alive and the container is still reported `Up`. Probes the exec channel periodically; after N consecutive timed-out probes it writes `exit_code=4` + `error_type=exec_channel_hang` and SIGTERMs the agent.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `KAPSIS_EXEC_WATCHDOG_ENABLED` | `true` | Enable the exec-channel watchdog (no-op on Linux) |
+| `KAPSIS_EXEC_WATCHDOG_INTERVAL` | `30` | Seconds between exec probes |
+| `KAPSIS_EXEC_WATCHDOG_TIMEOUT` | `5` | Per-probe timeout (seconds) |
+| `KAPSIS_EXEC_WATCHDOG_THRESHOLD` | `3` | Consecutive probe failures before firing (~90s blind window with defaults) |
+| `KAPSIS_EXEC_WATCHDOG_PODMAN` | `podman` | Podman binary to use for probes |

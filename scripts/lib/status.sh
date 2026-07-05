@@ -428,7 +428,15 @@ status_get_commit_sha() {
 # Arguments:
 #   $1 - Error type: "agent_failure", "agent_partial", "commit_failure",
 #        "push_failure", "uncommitted_work", "mount_failure",
-#        "exec_channel_hang", "hung_after_completion", "killed"
+#        "exec_channel_hang" (legacy), "hung_after_completion", "killed"
+#
+# "exec_channel_hang" is legacy: retained so historical status files still
+# parse/render, but no longer emitted since Issue #414 demoted the
+# exec-channel watchdog to a non-terminal degraded-state reporter. Live
+# exec-channel degradation is surfaced out-of-band (host-only degraded
+# marker + KAPSIS_EXEC_CHANNEL_DEGRADED/RECOVERED log lines) — intentionally
+# NOT via error_type, because status-sync's whole-file volume mirror (macOS)
+# clobbers host-written status fields the moment the channel recovers.
 status_set_error_type() {
     _KAPSIS_ERROR_TYPE="${1:-}"
 }

@@ -16,6 +16,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Resolve committer identity from --author / config / host (#416)
 
+## [2.36.1] - 2026-07-03
+
+### Documentation
+- Refresh docs and landing page for v2.34 capabilities (#405)
+
+## [2.36.2] - 2026-07-05
+
+### Changed
+- Bump the github-actions group across 1 directory with 7 updates (#420)
+
+### Fixed
+- Provenance-protect gist sentinel strip against rogue-agent spoofing (#408) (#413)
+
+## [2.36.3] - 2026-07-05
+
+### Fixed
+- Demote exec-channel watchdog to non-lethal degraded-state reporter with recovery (#426)
+- Skip fuse-overlayfs for config staging when FUSE is unavailable (#397 drift) (#425)
+- Guard clean_images against in-use/service images and GC dangling layers proactively (#423)
+- Exclude .claude/settings.json and *.bak artifacts from user commits (#391) (#394)
+
+## [2.37.0] - 2026-07-05
+
+### Added
+- Container image signing, SBOM generation & Grype scan (#86) (#402)
+- Deny userns+mount escalation in default seccomp profile (#412)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1051,7 +1078,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.36.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.37.0...HEAD
+[2.37.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.0
+[2.36.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.36.3
+[2.36.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.36.2
+[2.36.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.36.1
 [2.36.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.36.0
 [2.35.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.35.2
 [2.35.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.35.1

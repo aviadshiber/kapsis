@@ -40,6 +40,19 @@ readonly CONTAINER_WORKSPACE_PATH="/workspace"
 readonly CONTAINER_STATUS_PATH="/kapsis-status"
 
 #===============================================================================
+# GIST INJECTION SENTINELS (Issue #408)
+#
+# Markdown comment markers that delimit Kapsis-injected gist instructions
+# in CLAUDE.md / AGENTS.md. The strip logic in post-container-git.sh removes
+# only blocks whose content matches the provenance hash recorded host-side
+# before the container starts — preventing rogue agents from using these
+# markers to hide arbitrary content from the commit diff.
+#===============================================================================
+
+readonly KAPSIS_GIST_SENTINEL_BEGIN="<!-- KAPSIS_GIST_BEGIN -->"
+readonly KAPSIS_GIST_SENTINEL_END="<!-- KAPSIS_GIST_END -->"
+
+#===============================================================================
 # COMMIT EXCLUDE PATTERNS (Issue #89)
 #
 # Files matching these patterns are automatically unstaged before commit.
@@ -52,10 +65,14 @@ readonly CONTAINER_STATUS_PATH="/kapsis-status"
 
 # Default patterns for files that should never be committed by Kapsis
 # These are typically config files that the sandbox may modify but shouldn't commit
+# Issue #391: .claude/settings.json is modified by LSP/plugin injection during the session;
+# committing it would pollute the user's branch with agent-session config mutations.
 readonly KAPSIS_DEFAULT_COMMIT_EXCLUDE=".gitignore
 **/.gitignore
 .gitattributes
-**/.gitattributes"
+**/.gitattributes
+.claude/settings.json
+**/.claude/settings.json"
 
 #===============================================================================
 # PUSH TIMEOUT (Issue #227)
@@ -79,10 +96,17 @@ readonly KAPSIS_DEFAULT_PUSH_TIMEOUT=60
 #   **/<file>  — matches <file> at any depth
 #===============================================================================
 
+# Issue #391: Maven plugin backups (.mvn/extensions.xml.bak2 etc.) are created
+# by in-container builds and must never reach a commit. Scoped to .mvn/ for the
+# numbered-suffix form (*.bak2, *.bak10) plus a generic exact-suffix *.bak —
+# deliberately NOT **/*.bak* which over-matched names like README.bakery.md
+# or notes.bak.swp (PR #394 review).
 readonly KAPSIS_DEFAULT_EPHEMERAL_PATTERNS="**/__pycache__/
 **/.pytest_cache/
 .coverage
-**/.coverage"
+**/.coverage
+**/*.bak
+**/.mvn/*.bak*"
 
 #===============================================================================
 # NETWORK ISOLATION
@@ -280,6 +304,20 @@ readonly KAPSIS_DEFAULT_CLEANUP_VM_JOURNAL_VACUUM_SIZE="100M"
 
 # Timeout (seconds) for podman machine ssh commands
 readonly KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT=15
+
+#===============================================================================
+# IMAGE GC (Issues #418/#421)
+#
+# Guards for kapsis-cleanup.sh image garbage collection.
+# Override via environment variables (e.g., KAPSIS_IMAGE_KEEP_PATTERNS='...').
+#===============================================================================
+
+# ERE matched against each candidate image's `repository:tag` reference.
+# Matching images are never removed by `kapsis-cleanup --images` / `--all`.
+# Default protects long-lived service images that must survive cleanup.
+# Override via the KAPSIS_IMAGE_KEEP_PATTERNS env var; set it explicitly
+# empty (KAPSIS_IMAGE_KEEP_PATTERNS='') to disable protection.
+readonly KAPSIS_DEFAULT_IMAGE_KEEP_PATTERNS='(^|/)(kapsis-slack-bot|kapsis-claude-cli|kapsis-sandbox)(:|$)'
 
 #===============================================================================
 # SSH PROBE DEFAULTS (Issue #255)

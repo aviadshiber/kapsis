@@ -211,8 +211,10 @@ test_caps_drop_override() {
 # SECCOMP PROFILE TESTS
 #===============================================================================
 
-test_seccomp_disabled_by_standard() {
-    log_test "Seccomp: disabled for standard profile"
+test_seccomp_enabled_by_standard() {
+    # Hardened default (CVE-2022-0185 class): the standard profile now ships a
+    # seccomp profile by default to deny the userns + mount-escalation family.
+    log_test "Seccomp: ENABLED for standard profile (hardened default)"
 
     reset_security_env
     export KAPSIS_SECURITY_PROFILE="standard"
@@ -220,13 +222,109 @@ test_seccomp_disabled_by_standard() {
     local args
     args=$(generate_seccomp_args "claude")
 
+    assert_contains "$args" "seccomp=" \
+        "Standard profile should now enable seccomp by default"
+}
+
+test_seccomp_standard_uses_hardened_profile() {
+    log_test "Seccomp: standard resolves to the hardened (upstream-derived) profile"
+
+    reset_security_env
+    export KAPSIS_SECURITY_PROFILE="standard"
+
+    local profile_path
+    profile_path=$(get_seccomp_profile "claude")
+
+    assert_contains "$profile_path" "kapsis-default-hardened.json" \
+        "Standard should use kapsis-default-hardened.json, not the thin allowlist"
+    assert_file_exists "$profile_path" \
+        "Hardened profile file should exist"
+}
+
+test_seccomp_allow_userns_optout() {
+    log_test "Seccomp: KAPSIS_ALLOW_USERNS=true swaps to the permissive profile"
+
+    reset_security_env
+    export KAPSIS_SECURITY_PROFILE="standard"
+    export KAPSIS_ALLOW_USERNS="true"
+
+    local profile_path
+    profile_path=$(get_seccomp_profile "claude" 2>/dev/null)
+
+    assert_contains "$profile_path" "kapsis-default-userns.json" \
+        "Opt-out should select the userns-permissive profile"
+    assert_file_exists "$profile_path" \
+        "Userns-permissive profile file should exist"
+
+    unset KAPSIS_ALLOW_USERNS
+}
+
+test_seccomp_master_kill_switch() {
+    log_test "Seccomp: KAPSIS_SECCOMP_ENABLED=false disables seccomp on standard"
+
+    reset_security_env
+    export KAPSIS_SECURITY_PROFILE="standard"
+    export KAPSIS_SECCOMP_ENABLED="false"
+
+    local args
+    args=$(generate_seccomp_args "claude")
+
     if [[ -n "$args" ]]; then
-        log_fail "Standard profile should not enable seccomp"
+        log_fail "KAPSIS_SECCOMP_ENABLED=false should disable seccomp entirely"
         log_info "Got: $args"
+        unset KAPSIS_SECCOMP_ENABLED
         return 1
     fi
 
+    unset KAPSIS_SECCOMP_ENABLED
     return 0
+}
+
+# Assert the hardened profile JSON actually denies the userns + mount family.
+# This is the load-bearing security assertion — without it the wiring could
+# point at a profile that allows the very syscalls we mean to block.
+test_hardened_profile_denies_userns_mount() {
+    log_test "Seccomp: hardened profile JSON denies unshare/setns/mount family"
+
+    local profile="$KAPSIS_ROOT/security/seccomp/kapsis-default-hardened.json"
+    assert_file_exists "$profile" "Hardened profile must exist"
+
+    # Default action must be deny-by-errno (not ALLOW).
+    local default_action
+    default_action=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['defaultAction'])" "$profile")
+    assert_equals "SCMP_ACT_ERRNO" "$default_action" \
+        "Hardened profile defaultAction must be SCMP_ACT_ERRNO"
+
+    # None of the escalation family may appear in any SCMP_ACT_ALLOW rule, and
+    # each must be explicitly denied with EPERM (errnoRet=1).
+    local verdict
+    verdict=$(python3 - "$profile" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+DENY = {"unshare","setns","mount","umount2","fsopen","fsconfig","fspick",
+        "move_mount","open_tree","pivot_root","mount_setattr"}
+allowed=set(); eperm=set()
+for blk in d.get("syscalls", []):
+    if blk.get("action") == "SCMP_ACT_ALLOW":
+        allowed |= set(blk.get("names", []))
+    if blk.get("action") == "SCMP_ACT_ERRNO" and blk.get("errnoRet") == 1:
+        eperm |= set(blk.get("names", []))
+leaked = DENY & allowed
+missing = DENY - eperm
+# clone/clone3 must remain allowed (process/thread creation)
+core_ok = {"clone","clone3","execve","openat"} <= allowed
+if leaked:
+    print("LEAK:" + ",".join(sorted(leaked)))
+elif missing:
+    print("MISSING_EPERM:" + ",".join(sorted(missing)))
+elif not core_ok:
+    print("CORE_BROKEN")
+else:
+    print("OK")
+PY
+)
+    assert_equals "OK" "$verdict" \
+        "Hardened profile must deny userns+mount (EPERM) while keeping clone/exec allowed"
 }
 
 test_seccomp_enabled_by_strict() {
@@ -626,9 +724,11 @@ test_generate_security_args_standard() {
     assert_contains "$args" "--pids-limit=1000" \
         "Should have PID limit"
 
-    # Should NOT have seccomp (standard profile)
-    assert_not_contains "$args" "seccomp=" \
-        "Standard profile should not have seccomp"
+    # Should now HAVE seccomp by default (hardened userns+mount denial)
+    assert_contains "$args" "seccomp=" \
+        "Standard profile should have seccomp by default (hardened)"
+    assert_contains "$args" "kapsis-default-hardened.json" \
+        "Standard profile should use the hardened seccomp profile"
 
     # Should have resource limits
     assert_contains "$args" "--memory=8g" \
@@ -952,7 +1052,11 @@ main() {
     run_test test_caps_drop_override
 
     # Seccomp tests
-    run_test test_seccomp_disabled_by_standard
+    run_test test_seccomp_enabled_by_standard
+    run_test test_seccomp_standard_uses_hardened_profile
+    run_test test_seccomp_allow_userns_optout
+    run_test test_seccomp_master_kill_switch
+    run_test test_hardened_profile_denies_userns_mount
     run_test test_seccomp_enabled_by_strict
     run_test test_seccomp_env_override
     run_test test_seccomp_profile_path

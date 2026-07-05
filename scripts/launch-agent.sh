@@ -1097,6 +1097,14 @@ parse_config() {
         cfg_val=$(yq -r '.security.seccomp.enabled // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
         [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_SECCOMP_ENABLED:-}" ]] && export KAPSIS_SECCOMP_ENABLED="true"
 
+        # Opt out of the default user-namespace + mount-escalation seccomp
+        # denial (CVE-2022-0185 class). Set to true ONLY for workloads that
+        # legitimately need nested user namespaces / mounts: nested
+        # containerization, bubblewrap/nsjail, Chromium/Playwright sandboxes.
+        # Env var KAPSIS_ALLOW_USERNS wins over this YAML key.
+        cfg_val=$(yq -r '.security.seccomp.allow_userns // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_ALLOW_USERNS:-}" ]] && export KAPSIS_ALLOW_USERNS="true"
+
         cfg_val=$(yq -r '.security.filesystem.noexec_tmp // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
         [[ "$cfg_val" == "true" ]] && [[ -z "${KAPSIS_NOEXEC_TMP:-}" ]] && export KAPSIS_NOEXEC_TMP="true"
 
@@ -1273,6 +1281,103 @@ _gc_lock_acquire() {
     mkdir "$lock_dir" 2>/dev/null
 }
 
+#===============================================================================
+# HOST-SIDE GIST INJECTION WITH PROVENANCE (Issue #408)
+#
+# Runs on the HOST before the container starts.  Renders the gist-instructions
+# template, wraps it in KAPSIS_GIST_BEGIN/END sentinels, appends it to
+# CLAUDE.md / AGENTS.md in the worktree, and records the SHA-256 of the
+# injected block in $TMPDIR (host-private, NOT bind-mounted into the container).
+#
+# post-container-git.sh reads the recorded hash at strip time and only removes
+# blocks that match — blocks injected by a rogue agent won't match and are
+# preserved + flagged, defeating the content-hiding attack described in #408.
+#
+# Only runs when:
+#   - SANDBOX_MODE == "worktree" (overlay workspaces are read-only)
+#   - KAPSIS_INJECT_GIST == "true"  (opt-in, same guard as entrypoint.sh)
+#   - gist-instructions.md template exists on the host
+#===============================================================================
+host_inject_gist_instructions() {
+    local worktree_path="$1"
+    local agent_id="$2"
+
+    [[ "${KAPSIS_INJECT_GIST:-false}" == "true" ]] || return 0
+    [[ -n "$worktree_path" && -d "$worktree_path" ]] || return 0
+
+    local lib_dir="${KAPSIS_HOME:-${SCRIPT_DIR}}/lib"
+    local template="${lib_dir}/gist-instructions.md"
+    [[ -f "$template" ]] || {
+        log_debug "gist-instructions.md not found at $template — container will inject without provenance"
+        return 0
+    }
+
+    # Determine the gist file path the container will use (must match entrypoint.sh)
+    local gist_file="/workspace/.kapsis/gist.txt"
+
+    # Render the template (same awk substitution as render_gist_instructions in
+    # inject-status-hooks.sh — keep both in sync if the substitution logic changes)
+    local rendered
+    rendered=$(KAPSIS_GIST_FILE_RENDER="$gist_file" awk '
+        BEGIN { gf = ENVIRON["KAPSIS_GIST_FILE_RENDER"]; needle = "@@KAPSIS_GIST_FILE@@"; nlen = length(needle) }
+        {
+            out = ""
+            line = $0
+            while ((pos = index(line, needle)) > 0) {
+                out = out substr(line, 1, pos-1) gf
+                line = substr(line, pos+nlen)
+            }
+            print out line
+        }
+    ' "$template") || {
+        log_warn "Failed to render gist-instructions.md on host — container will inject without provenance"
+        return 0
+    }
+
+    # Build the sentinel-wrapped block (must match inject_gist_instructions output)
+    local block
+    block="<!-- KAPSIS_GIST_BEGIN -->
+${rendered}
+<!-- KAPSIS_GIST_END -->"
+
+    # Record SHA-256 in a host-private path that is NOT bind-mounted into the container.
+    # post-container-git.sh reads this to verify blocks before stripping (Issue #408).
+    local proof_file="${TMPDIR:-/tmp}/kapsis-${agent_id}-gist-proof"
+    local block_sha256
+    block_sha256=$(printf '%s' "$block" | sha256_hash 2>/dev/null) || {
+        log_warn "sha256_hash failed — skipping host-side gist injection (container will inject without provenance)"
+        return 0
+    }
+    printf '%s\n' "$block_sha256" > "$proof_file"
+    chmod 600 "$proof_file" 2>/dev/null || true
+    log_debug "Gist provenance recorded: ${proof_file} (SHA256: ${block_sha256:0:12}...)"
+
+    # Inject into CLAUDE.md and AGENTS.md in the worktree
+    local injected=false
+    for file_name in "CLAUDE.md" "AGENTS.md"; do
+        local file="${worktree_path}/${file_name}"
+        [[ -f "$file" ]] || continue
+        # Idempotent: skip if sentinels already present (e.g. resume mode)
+        grep -q "<!-- KAPSIS_GIST_BEGIN -->" "$file" 2>/dev/null && {
+            log_debug "${file_name} already contains gist sentinels — skipping host injection"
+            continue
+        }
+        {
+            printf '\n---\n\n'
+            printf '%s\n' "$block"
+        } >> "$file" || {
+            log_warn "Could not append gist instructions to ${file_name}"
+            continue
+        }
+        injected=true
+        log_debug "Host-injected gist instructions into ${file_name}"
+    done
+
+    [[ "$injected" == "true" ]] && log_info "Host-side gist injection complete (provenance SHA256: ${block_sha256:0:16}...)"
+    return 0
+}
+
+#===============================================================================
 # SANDBOX SETUP (dispatches to mode-specific setup)
 #===============================================================================
 setup_sandbox() {
@@ -2723,11 +2828,13 @@ main() {
     # when disabled. Cleaned up in _cleanup_with_completion.
     _EXEC_CHANNEL_WATCHDOG_PID=""
 
-    # Host-only sentinel path written by the exec-channel watchdog when
-    # `podman exec <container> true` hangs N consecutive times. Same trust
-    # model as _VFKIT_FIRED_SENTINEL: under $TMPDIR, host-private, NOT
-    # bind-mounted into the container.
-    _EXEC_HANG_FIRED_SENTINEL=""
+    # Host-only degraded marker maintained by the exec-channel watchdog while
+    # `podman exec <container> true` keeps timing out (Issue #382, demoted to
+    # non-terminal in #414). It is a degraded-state heartbeat, NOT a fire
+    # sentinel: presence means "channel degraded", mtime freshness means
+    # "watchdog still probing". Same placement rules as _VFKIT_FIRED_SENTINEL:
+    # under $TMPDIR, host-private, NOT bind-mounted into the container.
+    _EXEC_DEGRADED_MARKER=""
 
     # Cleanup function that ensures completion message is shown
     # shellcheck disable=SC2329  # Function is invoked via trap on line 1565
@@ -2776,8 +2883,8 @@ main() {
             wait "$_EXEC_CHANNEL_WATCHDOG_PID" 2>/dev/null || true
             _EXEC_CHANNEL_WATCHDOG_PID=""
         fi
-        if [[ -n "${_EXEC_HANG_FIRED_SENTINEL:-}" ]]; then
-            rm -f "$_EXEC_HANG_FIRED_SENTINEL" 2>/dev/null || true
+        if [[ -n "${_EXEC_DEGRADED_MARKER:-}" ]]; then
+            rm -f "$_EXEC_DEGRADED_MARKER" 2>/dev/null || true
         fi
         # Stop host-side status volume sync and flush one final snapshot to
         # the host status dir so post-exit consumers see the definitive state
@@ -2942,6 +3049,13 @@ main() {
             exit 1
         fi
     fi
+    # Host-side gist injection with provenance (Issue #408): must run after
+    # setup_sandbox (WORKTREE_PATH is set) and before backend_run (container start).
+    # Overlay mode is a no-op inside host_inject_gist_instructions().
+    if [[ "$SANDBOX_MODE" == "worktree" ]]; then
+        host_inject_gist_instructions "${WORKTREE_PATH:-}" "${AGENT_ID:-}"
+    fi
+
     if ! backend_build_spec; then
         status_complete 1 "Failed to build container spec for backend '${BACKEND}'"
         _STATUS_COMPLETE_SHOWN=true
@@ -3072,13 +3186,17 @@ main() {
         start_vfkit_watchdog "$AGENT_ID" "" "" "$_VFKIT_FIRED_SENTINEL" \
             || log_warn "vfkit watchdog failed to start — mount failure detection disabled for this session"
 
-        # exec-channel watchdog (Issue #382): catches the silent-wedge mode
-        # where vfkit is alive but `podman exec` hangs (the v2.24.0 vfkit
-        # watchdog cannot detect this). Same trust model as the vfkit
-        # sentinel — host-only path under $TMPDIR, never bind-mounted.
-        _EXEC_HANG_FIRED_SENTINEL="${TMPDIR:-/tmp}/kapsis-${AGENT_ID}.exec-hang-fired"
-        rm -f "$_EXEC_HANG_FIRED_SENTINEL" 2>/dev/null || true
-        start_exec_channel_watchdog "$AGENT_ID" "" "" "" "" "$_EXEC_HANG_FIRED_SENTINEL" \
+        # exec-channel watchdog (Issue #382, demoted in #414): reports the
+        # silent-wedge mode where vfkit is alive but `podman exec` hangs
+        # (the v2.24.0 vfkit watchdog cannot detect this). The marker is a
+        # non-terminal degraded heartbeat, not a fire sentinel — the
+        # watchdog never kills the agent and never writes terminal status.
+        # Host-only path under $TMPDIR, never bind-mounted. Pre-cleaned so
+        # a leftover marker cannot make a resumed --agent-id run appear
+        # degraded.
+        _EXEC_DEGRADED_MARKER="${TMPDIR:-/tmp}/kapsis-${AGENT_ID}.exec-degraded"
+        rm -f "$_EXEC_DEGRADED_MARKER" 2>/dev/null || true
+        start_exec_channel_watchdog "$AGENT_ID" "" "" "" "" "$_EXEC_DEGRADED_MARKER" \
             || log_warn "exec-channel watchdog failed to start — silent-wedge detection disabled for this session"
     fi
 
@@ -3277,39 +3395,17 @@ main() {
         fi
     fi
 
-    # Check for exec-channel watchdog hang (Issue #382). Same trust model
-    # as the vfkit override above: host-only sentinel is the authoritative
-    # signal; status.json's `error_type: exec_channel_hang` is defense in
-    # depth. Skipped if the vfkit watchdog already fired — both watchdogs
-    # share exit code 4, and `exec_channel_hang` would otherwise overwrite
-    # the more specific `mount_failure` error_type when both fire in close
-    # succession (e.g. vfkit dies while exec is already hung). We gate on
-    # the `_KAPSIS_VFKIT_HANG_DETECTED` boolean rather than the sentinel
-    # file because `_cleanup_with_completion` may delete the sentinel
-    # before this block runs (e.g. via an ERR/EXIT trap during a fatal
-    # error earlier in main), and a missing sentinel would otherwise let
-    # this block silently overwrite the vfkit watchdog's diagnosis.
-    if [[ "$EXIT_CODE" -ne 0 ]] \
-       && [[ -n "${_EXEC_HANG_FIRED_SENTINEL:-}" && -f "$_EXEC_HANG_FIRED_SENTINEL" ]] \
-       && [[ "${_KAPSIS_VFKIT_HANG_DETECTED:-false}" != "true" ]]; then
-        local _status_file_exec
-        _status_file_exec="${KAPSIS_STATUS_DIR:-$HOME/.kapsis/status}/kapsis-$(basename "$PROJECT_PATH")-${AGENT_ID}.json"
-        local status_exit_exec status_err_exec
-        status_exit_exec=$(status_get_exit_code 2>/dev/null || echo "")
-        status_err_exec=""
-        if [[ -f "$_status_file_exec" ]] \
-           && grep -Eq '"error_type":[[:space:]]*"exec_channel_hang"' "$_status_file_exec" 2>/dev/null; then
-            status_err_exec="exec_channel_hang"
-        fi
-        if [[ "$status_exit_exec" == "4" && "$status_err_exec" == "exec_channel_hang" ]]; then
-            log_warn "Exec-channel hang confirmed by host-side watchdog (sentinel + status.json exec_channel_hang) — overriding exit code from $EXIT_CODE to 4"
-            EXIT_CODE=4
-            _KAPSIS_EXEC_HANG_DETECTED=true
-        else
-            log_warn "Exec-channel hang detected via host sentinel (status.json mismatch — disk full?) — overriding exit code from $EXIT_CODE to 4"
-            EXIT_CODE=4
-            _KAPSIS_EXEC_HANG_DETECTED=true
-        fi
+    # Exec-channel degraded marker (Issue #382, demoted in #414): purely
+    # informational. The exec-channel watchdog no longer fires terminally —
+    # it maintains a host-only degraded marker while `podman exec` probes
+    # keep timing out and removes it on recovery. If the marker is still
+    # present here, the channel was degraded at the moment the container
+    # exited. The container's exit code is authoritative and is NEVER
+    # modified by this branch (incident #414: an agent with 56 committed
+    # changes and exit 0 was falsely reclassified as exit 4 by the old
+    # override).
+    if [[ -n "${_EXEC_DEGRADED_MARKER:-}" && -f "$_EXEC_DEGRADED_MARKER" ]]; then
+        log_warn "Exec channel was degraded when the container exited (marker present) — exit code $EXIT_CODE preserved; see KAPSIS_EXEC_CHANNEL_DEGRADED/RECOVERED lines in the agent log"
     fi
 
     # Persist conversation transcript before discarding the buffer (Issue #390).
@@ -3391,20 +3487,18 @@ main() {
         _DISPLAY_COMPLETE_SHOWN=true
         rm -f "$_kill_marker" 2>/dev/null || true
     elif [[ "$EXIT_CODE" -eq 4 ]]; then
-        # Mount-class failure detected via sentinel (Issue #248 / #382).
-        # _KAPSIS_EXEC_HANG_DETECTED distinguishes the silent-wedge mode
-        # from a true virtio-fs drop so the user message and error_type
-        # reflect the actual diagnosis.
+        # Mount failure detected via sentinel (Issue #248 / #303). Since
+        # #414 exec-channel degradation is non-terminal (the exec-channel
+        # watchdog never sets exit 4), so the vfkit/mount path is the only
+        # remaining producer of this code and it always classifies as
+        # mount_failure. `exec_channel_hang` is a legacy error_type that is
+        # no longer emitted (kept in the dashboard union for historical
+        # status files).
         FINAL_EXIT_CODE=4
         log_finalize 4
         local mount_error
-        if [[ "${_KAPSIS_EXEC_HANG_DETECTED:-false}" == "true" ]]; then
-            status_set_error_type "exec_channel_hang"
-            mount_error="Container exec channel wedged (podman daemon hang while vfkit alive). Recovery: podman machine stop && podman machine start, then re-run."
-        else
-            status_set_error_type "mount_failure"
-            mount_error="Workspace mount lost (virtio-fs drop). Recovery: podman machine stop && podman machine start, then re-run."
-        fi
+        status_set_error_type "mount_failure"
+        mount_error="Workspace mount lost (virtio-fs drop). Recovery: podman machine stop && podman machine start, then re-run."
         status_complete 4 "$mount_error"
         _STATUS_COMPLETE_SHOWN=true
         display_complete 4 "" "$mount_error"

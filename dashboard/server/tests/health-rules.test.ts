@@ -59,12 +59,14 @@ describe("terminalRule", () => {
   it("failed on mount_failure", () => {
     expect(terminalRule(baseStatus({ phase: "complete", exit_code: 4, error_type: "mount_failure", error: "vfs" }))!.state).toBe("failed");
   });
-  it("failed on exec_channel_hang with detail from error field", () => {
+  // exec_channel_hang is legacy since Issue #414 (no longer emitted) but
+  // historical status files must still render as failed.
+  it("failed on legacy exec_channel_hang with detail from error field", () => {
     const r = terminalRule(baseStatus({ phase: "complete", exit_code: 4, error_type: "exec_channel_hang", error: "channel wedged" }))!;
     expect(r.state).toBe("failed");
     expect(r.detail).toBe("channel wedged");
   });
-  it("failed on exec_channel_hang with detail fallback when error is null", () => {
+  it("failed on legacy exec_channel_hang with detail fallback when error is null", () => {
     const r = terminalRule(baseStatus({ phase: "complete", exit_code: 4, error_type: "exec_channel_hang", error: null }))!;
     expect(r.state).toBe("failed");
     expect(r.detail).toBe("exec channel hang");
@@ -97,9 +99,10 @@ describe("containerRule", () => {
 
 describe("tailRules", () => {
   it("healthy on clean logs", () => {
-    const { mount, liveness } = tailRules(["just a normal log line", "running"]);
+    const { mount, liveness, execChannel } = tailRules(["just a normal log line", "running"]);
     expect(mount.state).toBe("healthy");
     expect(liveness.state).toBe("healthy");
+    expect(execChannel.state).toBe("healthy");
   });
   it("failed mount-probe when sentinel is present", () => {
     const { mount } = tailRules(["something", "KAPSIS_MOUNT_FAILURE: vfs drop"]);
@@ -110,5 +113,34 @@ describe("tailRules", () => {
     expect(soft.state).toBe("degraded");
     const hard = tailRules(["api_hard_skip z"]).liveness;
     expect(hard.state).toBe("stalled");
+  });
+  it("degraded exec-channel when DEGRADED marker has no later RECOVERED (Issue #414)", () => {
+    const { execChannel } = tailRules([
+      "normal line",
+      "[WARN] KAPSIS_EXEC_CHANNEL_DEGRADED[exec_channel_watchdog]: 3 consecutive podman exec timeouts on kapsis-abc — daemon exec channel degraded; continuing to probe (agent NOT killed)",
+      "later normal line",
+    ]);
+    expect(execChannel.state).toBe("degraded");
+    expect(execChannel.name).toBe("exec-channel");
+  });
+  it("healthy exec-channel when DEGRADED is followed by RECOVERED", () => {
+    const { execChannel } = tailRules([
+      "[WARN] KAPSIS_EXEC_CHANNEL_DEGRADED[exec_channel_watchdog]: 3 consecutive podman exec timeouts",
+      "some other line",
+      "[WARN] KAPSIS_EXEC_CHANNEL_RECOVERED[exec_channel_watchdog]: exec channel recovered after 120s degraded",
+    ]);
+    expect(execChannel.state).toBe("healthy");
+  });
+  it("degraded exec-channel when a new episode starts after a RECOVERED (last event wins)", () => {
+    const { execChannel } = tailRules([
+      "[WARN] KAPSIS_EXEC_CHANNEL_DEGRADED[exec_channel_watchdog]: episode 1",
+      "[WARN] KAPSIS_EXEC_CHANNEL_RECOVERED[exec_channel_watchdog]: recovered",
+      "[WARN] KAPSIS_EXEC_CHANNEL_DEGRADED[exec_channel_watchdog]: episode 2",
+    ]);
+    expect(execChannel.state).toBe("degraded");
+  });
+  it("healthy exec-channel when no exec-channel lines appear", () => {
+    const { execChannel } = tailRules(["api_soft_skip x", "KAPSIS_MOUNT_FAILURE: vfs drop"]);
+    expect(execChannel.state).toBe("healthy");
   });
 });
