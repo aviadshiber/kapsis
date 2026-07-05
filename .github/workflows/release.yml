@@ -134,6 +134,123 @@ jobs:
             echo "Pushed ${REGISTRY}/${IMAGE}:${VERSION}"
           done
 
+  sign-and-attest:
+    name: Sign Images & Generate SBOMs
+    runs-on: ubuntu-latest
+    needs: [validate, build-and-push]
+    permissions:
+      contents: read      # job-level permissions reset unlisted scopes; checkout needs this
+      packages: write     # push cosign signatures + SBOM attestations to GHCR
+      id-token: write     # keyless OIDC signing via Sigstore Fulcio
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6
+
+      - name: Install cosign
+        run: |
+          COSIGN_VERSION="v2.4.3"
+          curl -fsSLO "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign-linux-amd64"
+          curl -fsSLO "https://github.com/sigstore/cosign/releases/download/${COSIGN_VERSION}/cosign_checksums.txt"
+          grep " cosign-linux-amd64$" cosign_checksums.txt | sha256sum -c -
+          chmod +x cosign-linux-amd64
+          sudo mv cosign-linux-amd64 /usr/local/bin/cosign
+          cosign version
+
+      - name: Install syft
+        run: |
+          SYFT_VERSION="1.21.0"
+          # Keep the upstream filename — sha256sum -c resolves the file
+          # by the name recorded in the checksums line.
+          SYFT_TARBALL="syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/${SYFT_TARBALL}" \
+            -o "${SYFT_TARBALL}"
+          curl -fsSL \
+            "https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}/syft_${SYFT_VERSION}_checksums.txt" \
+            -o syft_checksums.txt
+          grep " ${SYFT_TARBALL}$" syft_checksums.txt | sha256sum -c -
+          tar -xzf "${SYFT_TARBALL}" syft
+          sudo mv syft /usr/local/bin/syft
+          syft version
+
+      - name: Install grype
+        run: |
+          GRYPE_VERSION="0.88.0"
+          # Keep the upstream filename — sha256sum -c resolves the file
+          # by the name recorded in the checksums line.
+          GRYPE_TARBALL="grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          curl -fsSL \
+            "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/${GRYPE_TARBALL}" \
+            -o "${GRYPE_TARBALL}"
+          curl -fsSL \
+            "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_checksums.txt" \
+            -o grype_checksums.txt
+          grep " ${GRYPE_TARBALL}$" grype_checksums.txt | sha256sum -c -
+          tar -xzf "${GRYPE_TARBALL}" grype
+          sudo mv grype /usr/local/bin/grype
+          grype version
+
+      - name: Log in to ghcr.io
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: Sign images, generate SBOMs, and scan
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          REGISTRY: ghcr.io/${{ github.repository_owner }}
+        run: |
+          set -euo pipefail
+          mkdir -p sboms
+
+          for IMAGE in kapsis-sandbox kapsis-claude-cli; do
+            IMAGE_REF="${REGISTRY}/${IMAGE}:${VERSION}"
+            SBOM_FILE="sboms/${IMAGE}-${VERSION}-sbom.spdx.json"
+
+            echo "=== ${IMAGE} ==="
+
+            # Keyless OIDC signing — certificate anchored to this workflow run,
+            # stored in Sigstore Rekor transparency log.
+            echo "Signing ${IMAGE_REF}..."
+            cosign sign --yes "${IMAGE_REF}"
+            echo "✓ Signed"
+
+            # Generate SPDX 2.3 SBOM by pulling the image directly from the registry.
+            echo "Generating SPDX SBOM..."
+            syft "registry:${IMAGE_REF}" \
+              --output "spdx-json=${SBOM_FILE}" \
+              --output "table=/dev/stdout"
+            echo "✓ SBOM: ${SBOM_FILE}"
+
+            # Attach SBOM as in-toto DSSE attestation — verifiable with cosign.
+            echo "Attaching SBOM attestation to registry..."
+            cosign attest --yes \
+              --predicate "${SBOM_FILE}" \
+              --type spdxjson \
+              "${IMAGE_REF}"
+            echo "✓ Attestation pushed"
+
+            # Grype SBOM scan — informational; Trivy in security.yml owns blocking scans.
+            # --fail-on high makes grype exit non-zero on HIGH/CRITICAL findings
+            # (without it grype always exits 0), which the || turns into a
+            # warning annotation instead of a job failure.
+            echo "Running Grype SBOM scan..."
+            grype "sbom:${SBOM_FILE}" --output table --fail-on high \
+              || echo "::warning::Grype found HIGH/CRITICAL vulnerabilities (or the scan errored) in ${IMAGE} — review before shipping"
+
+            echo ""
+          done
+
+          ls -la sboms/
+
+      - name: Upload SBOMs as workflow artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: sboms
+          path: sboms/*.spdx.json
+          retention-days: 90
+
   # The actual matrix lives in .github/workflows/dashboard-compile.yml —
   # shared with dashboard-build.yml so the two callers can't drift (#372
   # was caused by exactly that drift).
@@ -146,7 +263,7 @@ jobs:
   release:
     name: Create GitHub Release
     runs-on: ubuntu-latest
-    needs: [validate, test, build-and-push, compile-dashboard]
+    needs: [validate, test, sign-and-attest, compile-dashboard]
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
@@ -167,6 +284,12 @@ jobs:
           pattern: kapsis-dashboard-*
           path: dashboard-artifacts
           merge-multiple: true
+
+      - name: Download SBOMs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: sboms
+          path: .
 
       - name: Stage dashboard binaries
         run: |
@@ -193,7 +316,9 @@ jobs:
         env:
           VERSION: ${{ needs.validate.outputs.version }}
         run: |
-          sha256sum "kapsis-${VERSION}.tar.gz" kapsis-dashboard-* > checksums.sha256
+          sha256sum "kapsis-${VERSION}.tar.gz" kapsis-dashboard-* \
+            "kapsis-sandbox-${VERSION}-sbom.spdx.json" \
+            "kapsis-claude-cli-${VERSION}-sbom.spdx.json" > checksums.sha256
 
           echo "Generated checksums:"
           cat checksums.sha256
@@ -288,6 +413,32 @@ jobs:
             echo '```'
             echo ""
 
+            echo "### 🔐 Supply Chain Security"
+            echo ""
+            echo "Container images are signed with [Sigstore cosign](https://docs.sigstore.dev/) keyless signing."
+            echo "The signing certificate is anchored to this workflow run and recorded in the Rekor transparency log."
+            echo ""
+            echo '```bash'
+            echo "# Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/"
+            echo ""
+            echo "# Verify image signature"
+            echo 'cosign verify \'
+            echo "  --certificate-identity-regexp '^https://github.com/${{ github.repository }}/.github/workflows/release\.yml@' \\"
+            echo "  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \\"
+            echo "  ghcr.io/${{ github.repository_owner }}/kapsis-sandbox:${VERSION}"
+            echo '```'
+            echo ""
+            echo "SPDX SBOMs are attached as registry attestations and as release assets below:"
+            echo '```bash'
+            echo "# Verify and extract the SBOM attestation"
+            echo 'cosign verify-attestation \'
+            echo "  --certificate-identity-regexp '^https://github.com/${{ github.repository }}/.github/workflows/release\.yml@' \\"
+            echo "  --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \\"
+            echo "  --type spdxjson \\"
+            echo "  ghcr.io/${{ github.repository_owner }}/kapsis-sandbox:${VERSION} | jq '.payload | @base64d | fromjson'"
+            echo '```'
+            echo ""
+
             echo "### 📊 Dashboard Binary"
             echo ""
             echo "Per-platform \`kapsis-dashboard\` binaries are attached below."
@@ -325,6 +476,8 @@ jobs:
             kapsis-dashboard-darwin-x64
             kapsis-dashboard-linux-arm64
             kapsis-dashboard-linux-x64
+            kapsis-sandbox-${{ needs.validate.outputs.version }}-sbom.spdx.json
+            kapsis-claude-cli-${{ needs.validate.outputs.version }}-sbom.spdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -912,7 +1065,7 @@ jobs:
   notify:
     name: Post-Release
     runs-on: ubuntu-latest
-    needs: [validate, release, update-packages, sync-homebrew-tap]
+    needs: [validate, release, sign-and-attest, update-packages, sync-homebrew-tap]
     if: always() && needs.release.result == 'success'
     steps:
       - name: Release Summary
@@ -920,12 +1073,19 @@ jobs:
           VERSION="${{ needs.validate.outputs.version }}"
           PACKAGES_STATUS="${{ needs.update-packages.result }}"
           TAP_STATUS="${{ needs.sync-homebrew-tap.result }}"
+          SIGN_STATUS="${{ needs.sign-and-attest.result }}"
 
           echo "## Release v$VERSION completed!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ GitHub Release created" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Container images pushed to ghcr.io" >> $GITHUB_STEP_SUMMARY
           echo "- ✅ Checksums generated" >> $GITHUB_STEP_SUMMARY
+
+          if [[ "$SIGN_STATUS" == "success" ]]; then
+            echo "- ✅ Images signed (cosign keyless) + SBOMs generated and attested" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️ Image signing / SBOM: $SIGN_STATUS" >> $GITHUB_STEP_SUMMARY
+          fi
 
           if [[ "$PACKAGES_STATUS" == "success" ]]; then
             echo "- ✅ CHANGELOG.md updated" >> $GITHUB_STEP_SUMMARY
