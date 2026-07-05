@@ -152,9 +152,11 @@ EOF
         source /opt/kapsis/lib/atomic-copy.sh
         source /opt/kapsis/lib/compat.sh 2>/dev/null || true
 
-        # Extract setup_staged_config_overlays function from entrypoint.sh
-        # without running the whole thing. The function reads
-        # KAPSIS_STAGED_CONFIGS, $HOME, and uses fuse-overlayfs/atomic_copy_dir.
+        # Extract setup_staged_config_overlays (and its _fuse_available FUSE
+        # probe, issue #419) from entrypoint.sh without running the whole
+        # thing. The function reads KAPSIS_STAGED_CONFIGS, $HOME, and uses
+        # fuse-overlayfs/atomic_copy_dir.
+        eval "$(awk "/^_fuse_available\\(\\) \\{\$/,/^\\}\$/" /opt/kapsis/entrypoint.sh)"
         eval "$(awk "/^setup_staged_config_overlays\\(\\) \\{\$/,/^\\}\$/" /opt/kapsis/entrypoint.sh)"
 
         echo "--- invoking setup_staged_config_overlays ---"

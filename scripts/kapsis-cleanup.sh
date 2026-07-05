@@ -63,6 +63,7 @@ CLEAN_VM_HEALTH=false
 CLEAN_WORKTREES=false
 CLEAN_SNAPSHOTS=false
 CLEAN_REPAIR=false
+PRUNE_DANGLING=false
 SNAPSHOTS_TTL_OVERRIDE=""
 
 # Module-level corruption tracking (set by clean_containers when store errors detected)
@@ -99,7 +100,11 @@ OPTIONS:
     --project <name>    Clean only artifacts for specific project
     --agent <proj> <id> Clean only specific agent's artifacts
     --volumes           Also clean build cache volumes (Maven, Gradle)
-    --images            Clean Kapsis container images and dangling images
+    --images            Clean unused Kapsis container images and dangling layers
+                        (in-use and keep-pattern-protected images are skipped;
+                        see KAPSIS_IMAGE_KEEP_PATTERNS below)
+    --prune-dangling    Prune only dangling (<none>:<none>) build layers —
+                        cheap, in-use-safe, recommended for cron/housekeepers
     --containers        Clean stopped Kapsis containers
     --logs              Clean log files older than 7 days
     --ssh-cache         Clear cached SSH host keys from keychain
@@ -110,7 +115,8 @@ OPTIONS:
     --snapshots-older-than <days>
                         Override default 14-day TTL when cleaning snapshots
     --vm-health         Check Podman VM health (inode %, disk %, journal size)
-                        Warns at 70% inodes, auto-cleans images at 90%
+                        Warns at 70% inodes; prunes dangling layers at WARNING,
+                        auto-cleans images at 90% (CRITICAL)
     --repair            Repair corrupted Podman container store
                         Stage 1: podman system check --repair --force
                         Stage 2 (if needed): full VM reset (requires --force)
@@ -144,8 +150,11 @@ EXAMPLES:
     # Full cleanup including volumes and images
     $cmd_name --all --volumes
 
-    # Clean only Kapsis images and dangling layers
+    # Clean only unused Kapsis images and dangling layers
     $cmd_name --images
+
+    # Cheap, in-use-safe dangling layer prune (ideal for cron)
+    $cmd_name --prune-dangling --force
 
     # Clean specific agent
     $cmd_name --agent products 1
@@ -161,6 +170,14 @@ EXAMPLES:
 
     # Force repair with full VM reset if needed
     $cmd_name --repair --force
+
+ENVIRONMENT:
+    KAPSIS_IMAGE_KEEP_PATTERNS
+                        ERE matched against each candidate image's
+                        repository:tag reference; matching images are never
+                        removed by --images/--all. Default protects
+                        kapsis-slack-bot, kapsis-claude-cli, kapsis-sandbox.
+                        Set explicitly empty ('') to disable protection.
 EOF
 }
 
@@ -249,6 +266,16 @@ print_item() {
     else
         echo -e "  ${GREEN}[CLEANED]${NC} Removed $type: $name ($size)"
     fi
+}
+
+# Print item that was deliberately skipped, with a reason (e.g. 'in use',
+# 'protected by keep-patterns', 'rmi refused'). Skipped items must NEVER be
+# counted as cleaned (Issues #418/#421 — honest reporting).
+print_item_skipped() {
+    local type="$1"
+    local name="$2"
+    local reason="$3"
+    echo -e "  ${YELLOW}[SKIPPED]${NC} $type: $name ($reason)"
 }
 
 # Clean worktrees
@@ -704,7 +731,85 @@ clean_volumes() {
     fi
 }
 
-# Clean Kapsis container images (Fix #191)
+#===============================================================================
+# Image GC helpers (Issues #418/#421)
+#===============================================================================
+
+# Normalize a podman image ID for comparison.
+# `podman ps -a --format '{{.ImageID}}'` emits 64-char (sometimes
+# 'sha256:'-prefixed) IDs while `podman images --format '{{.ID}}'` emits
+# 12-char IDs. Strip the optional prefix and truncate to 12 chars so both
+# sides compare equal.
+_normalize_image_id() {
+    local id="$1"
+    id="${id#sha256:}"
+    echo "${id:0:12}"
+}
+
+# Emit the normalized image IDs of every container (running AND stopped),
+# one per line. Returns non-zero when the underlying `podman ps -a` query
+# itself fails — callers MUST fail closed (skip named-image removal).
+_get_inuse_image_ids() {
+    local raw
+    if ! raw=$(podman ps -a --format '{{.ImageID}}' 2>/dev/null); then
+        return 1
+    fi
+    local id
+    while IFS= read -r id; do
+        [[ -z "$id" ]] && continue
+        _normalize_image_id "$id"
+    done <<< "$raw"
+    return 0
+}
+
+# Prune dangling (<none>:<none>) build layers.
+# `podman image prune` is natively in-use-safe: podman refuses to remove
+# layers referenced by containers or tagged images, and we never pass
+# --force to rmi anywhere. Only genuinely removed layers are counted.
+# DRY_RUN-aware: prints a [DRY-RUN] line and makes no mutation.
+_prune_dangling_layers() {
+    local dangling_ids
+    if ! dangling_ids=$(podman images -q --filter "dangling=true" 2>/dev/null); then
+        log_warn "Could not enumerate dangling images; skipping dangling prune (fail-closed)"
+        return 0
+    fi
+
+    local dangling_count
+    dangling_count=$(echo "$dangling_ids" | grep -c . || true)
+    [[ "$dangling_count" =~ ^[0-9]+$ ]] || dangling_count=0
+
+    if (( dangling_count == 0 )); then
+        echo "  No dangling images to prune"
+        return 0
+    fi
+
+    if [[ "$DRY_RUN" == "true" ]]; then
+        echo -e "  ${CYAN}[DRY-RUN]${NC} Would prune $dangling_count dangling image(s)"
+        return 0
+    fi
+
+    if ! podman image prune -f >/dev/null 2>&1; then
+        log_warn "Dangling image prune failed; nothing counted as cleaned"
+        return 0
+    fi
+
+    # Re-count what remains so only genuinely removed layers are reported
+    # (podman may legitimately refuse some layers — honest reporting, #418).
+    local remaining pruned
+    remaining=$(podman images -q --filter "dangling=true" 2>/dev/null | grep -c . || true)
+    [[ "$remaining" =~ ^[0-9]+$ ]] || remaining=0
+    pruned=$((dangling_count - remaining))
+    (( pruned < 0 )) && pruned=0
+    if (( pruned > 0 )); then
+        echo -e "  ${GREEN}[CLEANED]${NC} Pruned $pruned dangling image(s)"
+        ((ITEMS_CLEANED += pruned)) || true
+    else
+        echo "  No dangling images could be pruned"
+    fi
+    return 0
+}
+
+# Clean Kapsis container images (Fix #191; hardened for Issues #418/#421)
 clean_images() {
     section "Kapsis Images"
 
@@ -715,38 +820,70 @@ clean_images() {
 
     local count=0
 
-    # Get kapsis images (kapsis-sandbox, kapsis-claude-cli, etc.)
-    local images
-    images=$(podman images --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}" 2>/dev/null | grep -E "(^|/)kapsis-" || true)
+    # Candidate kapsis images (kapsis-sandbox, kapsis-claude-cli, etc.)
+    local candidates
+    candidates=$(podman images --format "{{.Repository}}:{{.Tag}} {{.ID}} {{.Size}}" 2>/dev/null | grep -E "(^|/)kapsis-" || true)
 
-    if [[ -n "$images" ]]; then
+    # PRIMARY guard (Issue #418): never remove an image referenced by ANY
+    # container (running or stopped). If the query itself fails we cannot
+    # know what is in use — fail closed and skip ALL named-image removal.
+    local in_use_ids="" skip_all_rmi=false
+    if ! in_use_ids=$(_get_inuse_image_ids); then
+        log_warn "Could not enumerate in-use images; skipping ALL named-image removal for safety (fail-closed)"
+        skip_all_rmi=true
+    fi
+
+    # TERTIARY guard: protect long-lived service images by name.
+    # ${VAR-default} single-dash expansion: unset -> default patterns,
+    # explicitly empty -> protection disabled.
+    local keep_patterns="${KAPSIS_IMAGE_KEEP_PATTERNS-${KAPSIS_DEFAULT_IMAGE_KEEP_PATTERNS:-}}"
+
+    if [[ -n "$candidates" ]]; then
         while IFS= read -r line; do
             [[ -z "$line" ]] && continue
             local image_ref image_id image_size
             read -r image_ref image_id image_size <<< "$line"
 
+            if [[ -n "$keep_patterns" ]] && [[ "$image_ref" =~ $keep_patterns ]]; then
+                print_item_skipped "image" "$image_ref" "protected by keep-patterns"
+                continue
+            fi
+
+            if [[ "$skip_all_rmi" == "true" ]]; then
+                print_item_skipped "image" "$image_ref" "in-use check unavailable"
+                continue
+            fi
+
+            local normalized_id
+            normalized_id=$(_normalize_image_id "$image_id")
+            if grep -qxF "$normalized_id" <<< "$in_use_ids"; then
+                print_item_skipped "image" "$image_ref" "in use"
+                continue
+            fi
+
             if [[ "$DRY_RUN" == "true" ]]; then
                 print_item "image" "$image_ref" "$image_size"
+                ((count++)) || true
             else
-                podman rmi "$image_id" &>/dev/null || true
-                print_item "image" "$image_ref" "$image_size"
+                # SECONDARY guard: no `|| true` and never --force — podman's
+                # native refusal ("image used by container" / "has dependent
+                # children") transitively protects parent layers of in-use
+                # children (Issue #418).
+                if podman rmi "$image_id" &>/dev/null; then
+                    print_item "image" "$image_ref" "$image_size"
+                    ((count++)) || true
+                else
+                    print_item_skipped "image" "$image_ref" "rmi refused (in use or has dependent children)"
+                    log_warn "podman rmi refused to remove $image_ref ($image_id)"
+                fi
             fi
-            ((count++)) || true
-        done <<< "$images"
+        done <<< "$candidates"
     fi
 
-    # Also prune dangling images
-    local dangling_count
-    dangling_count=$(podman images -q --filter "dangling=true" 2>/dev/null | wc -l | tr -d ' ')
-    if (( dangling_count > 0 )); then
-        if [[ "$DRY_RUN" == "true" ]]; then
-            echo -e "  ${CYAN}[DRY-RUN]${NC} Would prune $dangling_count dangling image(s)"
-        else
-            podman image prune -f >/dev/null 2>&1 || true
-            echo -e "  ${GREEN}[CLEANED]${NC} Pruned $dangling_count dangling image(s)"
-        fi
-        ((count += dangling_count)) || true
-    fi
+    # Dangling (<none>) layer prune (Issue #421). Deliberately runs even when
+    # the in-use query failed: `podman image prune` is natively in-use-safe,
+    # so reclaim capability survives a degraded podman.
+    _prune_dangling_layers
 
     if (( count == 0 )); then
         echo "  No images to clean"
@@ -1338,7 +1475,20 @@ _vm_remediate() {
     local vacuum_size="${KAPSIS_CLEANUP_VM_JOURNAL_VACUUM_SIZE:-${KAPSIS_DEFAULT_CLEANUP_VM_JOURNAL_VACUUM_SIZE:-100M}}"
     local ssh_timeout="${KAPSIS_CLEANUP_VM_SSH_TIMEOUT:-${KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT:-15}}"
 
-    # Auto-trigger image cleanup at CRITICAL inode usage
+    # Proactive dangling-layer GC (Issue #421): reclaim <none> build layers
+    # as soon as health degrades to WARNING, before pressure turns CRITICAL.
+    # _prune_dangling_layers is internally DRY_RUN-aware (prints its own
+    # [DRY-RUN] line and makes no mutation in dry-run mode).
+    if [[ "$VM_HEALTH_STATUS" != "HEALTHY" ]]; then
+        log_info "Proactively pruning dangling images (health: $VM_HEALTH_STATUS)..."
+        _prune_dangling_layers
+    fi
+
+    # Auto-trigger image cleanup at CRITICAL inode usage.
+    # Invariant (Issues #418/#421): clean_images is fail-closed by
+    # construction — if the in-use container query fails, no named image is
+    # removed; the dangling prune still runs and is natively in-use-safe
+    # (never --force). Safe to invoke unattended.
     if [[ "$VM_HEALTH_STATUS" == "CRITICAL" ]]; then
         log_warn "Auto-triggering image cleanup to reclaim inodes..."
         if [[ "$DRY_RUN" == "true" ]]; then
@@ -1571,6 +1721,11 @@ main() {
                 explicit_action_requested=true
                 shift
                 ;;
+            --prune-dangling)
+                PRUNE_DANGLING=true
+                explicit_action_requested=true
+                shift
+                ;;
             --containers)
                 clean_containers_flag=true
                 explicit_action_requested=true
@@ -1694,6 +1849,14 @@ main() {
 
     if [[ "$CLEAN_IMAGES" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
         clean_images
+    fi
+
+    # Standalone dangling-layer prune (Issue #421). Guarded so a combined
+    # `--prune-dangling --images` / `--all` invocation does not prune twice
+    # (clean_images already calls _prune_dangling_layers).
+    if [[ "$PRUNE_DANGLING" == "true" ]] && [[ "$CLEAN_IMAGES" != "true" ]] && [[ "$CLEAN_ALL" != "true" ]]; then
+        section "Dangling Images"
+        _prune_dangling_layers
     fi
 
     if [[ "$clean_logs_flag" == "true" ]] || [[ "$CLEAN_ALL" == "true" ]]; then
