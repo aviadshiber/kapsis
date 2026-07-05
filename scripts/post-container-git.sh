@@ -51,6 +51,10 @@ source "$POST_GIT_SCRIPT_DIR/lib/sanitize-files.sh"
 #   **/<dir>/   — matches any file inside <dir>/ at any depth
 #   **/<file>   — matches <file> at any depth
 #   <file>      — exact match at root only
+#
+# Within <dir>/<file>, a single `*` is converted to `[^/]*` (matches within
+# one path component, never across `/`), so glob patterns like `**/*.bak`
+# or `**/.mvn/*.bak*` work as expected (issue #391).
 #===============================================================================
 _pattern_to_regex() {
     local p="$1"
@@ -58,15 +62,18 @@ _pattern_to_regex() {
         # Directory-prefix: **/__pycache__/ matches src/__pycache__/foo.pyc
         local dir_name="${p#\*\*/}"
         dir_name="${dir_name%/}"
-        # Escape literal dots so they don't match any character in grep -E
+        # Escape literal dots, then convert * glob to [^/]* (no path separator)
         local escaped_dir="${dir_name//./\\.}"
+        escaped_dir="${escaped_dir//\*/[^/]*}"
         echo "(^|/)${escaped_dir}/"
     elif [[ "$p" == "**/"* ]]; then
         local base="${p#\*\*/}"
         local escaped_base="${base//./\\.}"
+        escaped_base="${escaped_base//\*/[^/]*}"
         echo "(^|/)${escaped_base}$"
     else
         local escaped_p="${p//./\\.}"
+        escaped_p="${escaped_p//\*/[^/]*}"
         echo "^${escaped_p}$"
     fi
 }
@@ -188,7 +195,14 @@ validate_staged_files() {
 
     # Check for files matching KAPSIS_COMMIT_EXCLUDE patterns (issue #89)
     # This prevents committing files like .gitignore that were modified by Kapsis
+    # KAPSIS_COMMIT_EXCLUDE replaces the defaults wholesale (so users can also
+    # REMOVE a default, e.g. to commit .claude/settings.json intentionally);
+    # KAPSIS_EXTRA_COMMIT_EXCLUDE appends patterns without redeclaring the
+    # defaults (issue #391, PR #394 review).
     local exclude_patterns="${KAPSIS_COMMIT_EXCLUDE:-$KAPSIS_DEFAULT_COMMIT_EXCLUDE}"
+    if [[ -n "${KAPSIS_EXTRA_COMMIT_EXCLUDE:-}" ]]; then
+        exclude_patterns+=$'\n'"${KAPSIS_EXTRA_COMMIT_EXCLUDE}"
+    fi
     if [[ -n "$exclude_patterns" ]] && [[ -n "$staged_files" ]]; then
         while IFS= read -r pattern; do
             [[ -z "$pattern" ]] && continue
