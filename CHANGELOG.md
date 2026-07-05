@@ -37,6 +37,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Guard clean_images against in-use/service images and GC dangling layers proactively (#423)
 - Exclude .claude/settings.json and *.bak artifacts from user commits (#391) (#394)
 
+## [2.37.0] - 2026-07-05
+
+### Added
+- Container image signing, SBOM generation & Grype scan (#86) (#402)
+- Deny userns+mount escalation in default seccomp profile (#412)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1072,7 +1078,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.36.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.37.0...HEAD
+[2.37.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.0
 [2.36.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.36.3
 [2.36.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.36.2
 [2.36.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.36.1
