@@ -71,6 +71,28 @@ export interface AuditEvent {
   hash: string;
 }
 
+// Mirror of audit_log_host_event() in scripts/lib/audit.sh (Issue #407).
+// Host-authored events written to `<agent-id>-host-events.jsonl` AFTER the
+// container exits (e.g. the post-container-git.sh gist strip). This sidecar is
+// intentionally NOT hash-chained — it carries no seq/prev_hash/hash — so it
+// must NEVER be fed to AuditStore.verifyFile, and its filename deliberately
+// does not match AUDIT_FILE_RE (`\.audit\.jsonl`).
+export interface HostEvent {
+  timestamp: string;
+  agent_id: string;
+  event_type: string;
+  tool_name: string;
+  detail: {
+    action: string;
+    file: string;
+    blocks_stripped: number;
+    bytes_removed: number;
+    removed_sha256: string;
+    proof_outcome: string;
+    suspicious_blocks_preserved: number;
+  };
+}
+
 export interface AuditChainStatus {
   valid: boolean;
   lastSeq: number;
