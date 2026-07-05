@@ -594,7 +594,20 @@ fix_ssh_permissions() {
 # - Merged view: $HOME/<path> (transparent CoW)
 #
 # This preserves true Copy-on-Write: reads from host, writes isolated.
+#
+# Issue #419: after PR #397 the launcher no longer passes /dev/fuse (or
+# SYS_ADMIN) into containers, so fuse-overlayfs cannot mount anything and
+# every staged config used to fail with a scary "fuse: device not found"
+# warning before falling back to atomic copy. The probe below lets the
+# staging loop detect that up front and take the copy path directly.
 #===============================================================================
+
+# Returns success only when a fuse-overlayfs CoW mount can plausibly work:
+# the FUSE device must be present AND the fuse-overlayfs binary installed.
+_fuse_available() {
+    [[ -e /dev/fuse ]] && command -v fuse-overlayfs >/dev/null 2>&1
+}
+
 setup_staged_config_overlays() {
     local staging_dir="/kapsis-staging"
     local upper_base="/kapsis-upper"
@@ -637,6 +650,19 @@ setup_staged_config_overlays() {
         log_warn "Failed to create overlay state dirs ($upper_base, $work_base) — falling back to copy for every entry"
     fi
 
+    # Issue #419: compute FUSE availability ONCE for the whole staging loop.
+    # When unavailable (the norm after PR #397 stopped passing /dev/fuse into
+    # containers), go straight to atomic copy with a single INFO line instead
+    # of one "Overlay failed" WARN pair per staged config. Linux setups that
+    # still pass /dev/fuse keep the CoW overlay path (and its existing
+    # per-entry fallback behavior) unchanged.
+    local fuse_ok=0
+    if _fuse_available; then
+        fuse_ok=1
+    else
+        log_info "FUSE unavailable — staging configs via atomic copy (expected post-#397)"
+    fi
+
     # Split comma-separated list
     IFS=',' read -ra configs <<< "$KAPSIS_STAGED_CONFIGS"
 
@@ -663,22 +689,32 @@ setup_staged_config_overlays() {
             # Directory: create overlay mount
             mkdir -p "$dst" 2>/dev/null || true
 
-            # Issue #328: capture fuse-overlayfs stderr so failures are
-            # debuggable. Previously redirected to /dev/null, which forced
-            # users to bisect from a generic "Overlay failed" warning.
-            local _overlay_stderr _overlay_rc
-            _overlay_stderr=$(fuse-overlayfs -o "lowerdir=${src},upperdir=${upper},workdir=${work}" "$dst" 2>&1) && _overlay_rc=0 || _overlay_rc=$?
+            local _use_copy=0
+            if [[ "$fuse_ok" -eq 1 ]]; then
+                # Issue #328: capture fuse-overlayfs stderr so failures are
+                # debuggable. Previously redirected to /dev/null, which forced
+                # users to bisect from a generic "Overlay failed" warning.
+                local _overlay_stderr _overlay_rc
+                _overlay_stderr=$(fuse-overlayfs -o "lowerdir=${src},upperdir=${upper},workdir=${work}" "$dst" 2>&1) && _overlay_rc=0 || _overlay_rc=$?
 
-            if [[ $_overlay_rc -eq 0 ]]; then
-                log_debug "CoW overlay: ${relative_path}"
-            else
-                # Fallback: atomic copy with validation (fixes race condition #151)
-                if [[ -n "$_overlay_stderr" ]]; then
-                    log_warn "Overlay failed for ${relative_path} (rc=${_overlay_rc}): ${_overlay_stderr}"
+                if [[ $_overlay_rc -eq 0 ]]; then
+                    log_debug "CoW overlay: ${relative_path}"
                 else
-                    log_warn "Overlay failed for ${relative_path} (rc=${_overlay_rc}, no stderr)"
+                    # Fallback: atomic copy with validation (fixes race condition #151)
+                    if [[ -n "$_overlay_stderr" ]]; then
+                        log_warn "Overlay failed for ${relative_path} (rc=${_overlay_rc}): ${_overlay_stderr}"
+                    else
+                        log_warn "Overlay failed for ${relative_path} (rc=${_overlay_rc}, no stderr)"
+                    fi
+                    log_warn "Falling back to atomic copy for ${relative_path}"
+                    _use_copy=1
                 fi
-                log_warn "Falling back to atomic copy for ${relative_path}"
+            else
+                # Issue #419: FUSE unavailable — copy directly, no per-entry warning.
+                _use_copy=1
+            fi
+
+            if [[ "$_use_copy" -eq 1 ]]; then
                 atomic_copy_dir "$src" "$dst" || log_warn "Atomic copy validation failed for dir: ${relative_path}"
                 # Issue #328: ensure every file in the staged dir is user-writable
                 # after any copy path (socket-file errors cause cp to exit 1 but
@@ -689,6 +725,7 @@ setup_staged_config_overlays() {
                 if [[ -d "$dst" ]]; then
                     find "$dst" -type f -exec chmod u+rw {} + 2>/dev/null || true
                 fi
+                log_debug "Copied dir (atomic): ${relative_path}"
             fi
         else
             # File: atomic copy with validation (fixes race condition #151)
