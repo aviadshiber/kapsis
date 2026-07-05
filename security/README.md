@@ -6,10 +6,12 @@ This directory contains security profiles and configurations for hardening Kapsi
 
 ```
 security/
-├── seccomp/                    # Seccomp syscall filter profiles
-│   ├── kapsis-agent-base.json  # Base profile for all agents
-│   ├── kapsis-interactive.json # Extended profile for debugging
-│   └── kapsis-audit.json       # Audit mode (logs, doesn't block)
+├── seccomp/                          # Seccomp syscall filter profiles
+│   ├── kapsis-default-hardened.json  # DEFAULT: upstream default minus userns/mount
+│   ├── kapsis-default-userns.json    # Opt-out: verbatim upstream (userns allowed)
+│   ├── kapsis-agent-base.json        # Legacy thin allowlist (also hardened)
+│   ├── kapsis-interactive.json       # Extended profile for debugging
+│   └── kapsis-audit.json             # Audit mode (logs, doesn't block)
 ├── apparmor/                   # AppArmor MAC profiles (Linux)
 │   └── kapsis-agent            # Main AppArmor profile
 ├── selinux/                    # SELinux policies (RHEL/Fedora)
@@ -37,28 +39,41 @@ security:
 | Profile | Capabilities | Seccomp | PID Limit | NoExec /tmp | Read-only Root |
 |---------|-------------|---------|-----------|-------------|----------------|
 | `minimal` | Keep all | No | No | No | No |
-| `standard` | Drop + minimal | No | 1000 | No | No |
-| `strict` | Drop + minimal | Yes | 500 | Yes | No |
-| `paranoid` | Drop + minimal | Yes | 300 | Yes | Yes |
+| `standard` | Drop + minimal | Yes (hardened) | 1000 | No | No |
+| `strict` | Drop + minimal | Yes (hardened) | 500 | Yes | No |
+| `paranoid` | Drop + minimal | Yes (hardened) | 300 | Yes | Yes |
 
 ## Seccomp Profiles
 
-### Base Profile (`kapsis-agent-base.json`)
+### Default-Hardened Profile (`kapsis-default-hardened.json`) — the default
 
-The base profile allows syscalls required for:
-- Java/Node.js development (JVM, npm, Maven, Gradle)
-- Git operations (clone, commit, push)
-- Network access (HTTP/HTTPS for AI APIs)
-- File operations (read, write, create)
+Used by `standard`/`strict`/`paranoid`. It is the **verbatim upstream
+containers/common default seccomp profile** (so it keeps all of upstream's broad
+syscall coverage and multi-architecture support) with the **user-namespace +
+mount-escalation family denied (EPERM)**: `unshare`, `setns`, `mount`, `umount2`,
+`fsopen`, `fsconfig`, `fspick`, `move_mount`, `open_tree`, `pivot_root`,
+`mount_setattr`. This closes the `unshare(CLONE_NEWUSER)` → nested-userns →
+`mount`/`fsconfig` escalation path (CVE-2022-0185 class) that the stock profile
+leaves open even with all capabilities dropped. `clone`/`clone3` remain allowed
+(process/thread creation). See `docs/SECURITY-HARDENING.md` §1.3 for the threat
+model, residual risk, and the known-breakage list.
 
-**Blocked syscalls** (security-critical):
-- `ptrace` - Process tracing (container escape vector)
-- `mount`/`umount` - Filesystem manipulation
-- `bpf` - eBPF programs
-- `kexec_load` - Kernel replacement
-- `init_module`/`delete_module` - Kernel modules
-- `keyctl` - Kernel keyring access
-- And many more...
+**Opt out** (nested containers, bubblewrap/nsjail, Chromium/Playwright sandboxes):
+set `KAPSIS_ALLOW_USERNS=true` or `security.seccomp.allow_userns: true` to swap to
+`kapsis-default-userns.json` (the verbatim upstream default, userns allowed).
+
+### Userns-Permissive Profile (`kapsis-default-userns.json`) — opt-out
+
+The verbatim upstream containers/common default (userns + mount allowed). Selected
+only when `KAPSIS_ALLOW_USERNS=true`.
+
+### Legacy Base Profile (`kapsis-agent-base.json`)
+
+A hand-rolled `defaultAction: SCMP_ACT_ERRNO` allowlist for Java/Node.js
+development, Git, network, and file operations. Also hardened: `unshare`/`setns`
+are now denied with EPERM (the mount family was already absent from its
+allowlist). Retained as a fallback; the default-hardened profile is preferred
+because it inherits upstream's full coverage rather than a thin allowlist.
 
 ### Interactive Profile (`kapsis-interactive.json`)
 
@@ -129,8 +144,9 @@ Coming soon. For now, SELinux is disabled via `--security-opt label=disable`.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `KAPSIS_SECURITY_PROFILE` | `standard` | Security profile (minimal/standard/strict/paranoid) |
-| `KAPSIS_SECCOMP_ENABLED` | per profile | Enable seccomp filtering |
-| `KAPSIS_SECCOMP_PROFILE` | auto | Custom seccomp profile path |
+| `KAPSIS_SECCOMP_ENABLED` | per profile | Master switch for seccomp filtering (false = no profile) |
+| `KAPSIS_SECCOMP_PROFILE` | auto | Custom seccomp profile path (full override) |
+| `KAPSIS_ALLOW_USERNS` | `false` | Opt out of userns+mount denial — swaps to the permissive upstream profile (nested containers / bubblewrap / Chromium) |
 | `KAPSIS_SECCOMP_AUDIT` | `false` | Enable syscall auditing |
 | `KAPSIS_CAPS_DROP_ALL` | per profile | Drop all capabilities |
 | `KAPSIS_CAPS_ADD` | - | Additional capabilities (comma-separated) |
@@ -149,7 +165,9 @@ security:
 
   seccomp:
     enabled: true
-    profile: kapsis-agent-base
+    # allow_userns: true   # opt out of the userns+mount denial (nested
+    #                      # containers / bubblewrap / Chromium sandboxes)
+    # profile: /custom/seccomp.json   # full override
 
   capabilities:
     drop_all: true
@@ -186,6 +204,21 @@ Likely a missing capability:
 1. Check which capability is needed
 2. Add via `KAPSIS_CAPS_ADD=CAP_NAME`
 3. Consider if this is safe for your use case
+
+### Nested containers / bubblewrap / Chromium fail with EPERM on `unshare`/`mount`
+
+The default-hardened profile denies the user-namespace + mount-escalation family
+(CVE-2022-0185 class). Workloads that legitimately need nested user namespaces or
+mounts — running Podman/Docker inside the agent, `bubblewrap`/`nsjail`, or
+Chromium/Playwright/Electron sandboxes — will see `EPERM`. Opt out:
+
+```bash
+KAPSIS_ALLOW_USERNS=true ./scripts/launch-agent.sh ...
+# or in agent-sandbox.yaml: security.seccomp.allow_userns: true
+```
+
+This swaps to the verbatim upstream default profile (userns allowed). See
+`docs/SECURITY-HARDENING.md` §1.3.
 
 ### Scripts fail in /tmp
 

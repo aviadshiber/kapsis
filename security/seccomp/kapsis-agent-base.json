@@ -237,12 +237,14 @@
       "action": "SCMP_ACT_ALLOW"
     },
     {
-      "comment": "Namespace operations - limited to reading/joining",
+      "comment": "Hardening (CVE-2022-0185 class): deny user-namespace + mount-escalation primitives with EPERM. setns/unshare are NOT allowed — a code-executing agent must not unshare(CLONE_NEWUSER) into a nested userns where it gains CAP_SYS_ADMIN and reaches the mount/fsconfig surface. The mount family (mount, umount2, fsopen, fsconfig, fspick, move_mount, open_tree, pivot_root, mount_setattr) is already denied by defaultAction=SCMP_ACT_ERRNO (absent from every allow rule). clone/clone3 remain allowed for process/thread creation. Opt out with KAPSIS_ALLOW_USERNS=true.",
       "names": [
         "setns",
         "unshare"
       ],
-      "action": "SCMP_ACT_ALLOW"
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "errno": "EPERM"
     },
     {
       "comment": "Personality - allow specific safe values only",
