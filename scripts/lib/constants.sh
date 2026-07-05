@@ -40,6 +40,19 @@ readonly CONTAINER_WORKSPACE_PATH="/workspace"
 readonly CONTAINER_STATUS_PATH="/kapsis-status"
 
 #===============================================================================
+# GIST INJECTION SENTINELS (Issue #408)
+#
+# Markdown comment markers that delimit Kapsis-injected gist instructions
+# in CLAUDE.md / AGENTS.md. The strip logic in post-container-git.sh removes
+# only blocks whose content matches the provenance hash recorded host-side
+# before the container starts — preventing rogue agents from using these
+# markers to hide arbitrary content from the commit diff.
+#===============================================================================
+
+readonly KAPSIS_GIST_SENTINEL_BEGIN="<!-- KAPSIS_GIST_BEGIN -->"
+readonly KAPSIS_GIST_SENTINEL_END="<!-- KAPSIS_GIST_END -->"
+
+#===============================================================================
 # COMMIT EXCLUDE PATTERNS (Issue #89)
 #
 # Files matching these patterns are automatically unstaged before commit.

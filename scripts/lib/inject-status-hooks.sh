@@ -346,7 +346,6 @@ inject_gist_instructions() {
 
     log_info "Injecting gist instructions (workspace: $workspace)"
 
-    local marker="Kapsis Activity Gist"
     local injected=false
     local rendered
     rendered=$(render_gist_instructions "$gist_instructions") || {
@@ -359,12 +358,14 @@ inject_gist_instructions() {
     if [[ -f "$claude_md" ]]; then
         if [[ ! -w "$claude_md" ]]; then
             log_warn "$claude_md is not writable -- skipping gist append"
-        elif ! grep -q "$marker" "$claude_md" 2>/dev/null; then
+        elif ! grep -q "<!-- KAPSIS_GIST_BEGIN -->" "$claude_md" 2>/dev/null; then
             {
                 echo ""
                 echo "---"
                 echo ""
+                echo "<!-- KAPSIS_GIST_BEGIN -->"
                 echo "$rendered"
+                echo "<!-- KAPSIS_GIST_END -->"
             } >> "$claude_md"
             log_debug "Gist instructions appended to $claude_md"
             injected=true
@@ -376,12 +377,14 @@ inject_gist_instructions() {
     if [[ -f "$agents_md" ]]; then
         if [[ ! -w "$agents_md" ]]; then
             log_warn "$agents_md is not writable -- skipping gist append"
-        elif ! grep -q "$marker" "$agents_md" 2>/dev/null; then
+        elif ! grep -q "<!-- KAPSIS_GIST_BEGIN -->" "$agents_md" 2>/dev/null; then
             {
                 echo ""
                 echo "---"
                 echo ""
+                echo "<!-- KAPSIS_GIST_BEGIN -->"
                 echo "$rendered"
+                echo "<!-- KAPSIS_GIST_END -->"
             } >> "$agents_md"
             log_debug "Gist instructions appended to $agents_md"
             injected=true
