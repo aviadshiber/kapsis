@@ -41,6 +41,11 @@ if [[ -f "$SCRIPT_DIR/lib/constants.sh" ]]; then
     source "$SCRIPT_DIR/lib/constants.sh"
 fi
 
+# Source the worktree in-use guard (Issue #428)
+if [[ -f "$SCRIPT_DIR/lib/worktree-guard.sh" ]]; then
+    source "$SCRIPT_DIR/lib/worktree-guard.sh"
+fi
+
 # Directories
 KAPSIS_DIR="${KAPSIS_DIR:-$HOME/.kapsis}"
 WORKTREE_DIR="${KAPSIS_WORKTREE_DIR:-$KAPSIS_DIR/worktrees}"
@@ -64,6 +69,7 @@ CLEAN_WORKTREES=false
 CLEAN_SNAPSHOTS=false
 CLEAN_REPAIR=false
 PRUNE_DANGLING=false
+INCLUDE_ACTIVE=false
 SNAPSHOTS_TTL_OVERRIDE=""
 
 # Module-level corruption tracking (set by clean_containers when store errors detected)
@@ -110,6 +116,10 @@ OPTIONS:
     --ssh-cache         Clear cached SSH host keys from keychain
     --branches          Clean stale agent branches (requires --project)
     --worktrees         Clean git worktrees (included by default, explicit for scripting)
+    --include-active    Bypass the in-use guard and remove worktrees even if
+                        they appear to belong to an active agent (requires
+                        --force). DANGEROUS: only for operators who
+                        understand the risk of deleting a live agent's work.
     --snapshots         Clean per-agent snapshot dirs in ~/.kapsis/snapshots/
                         (included by default; explicit form for scripting)
     --snapshots-older-than <days>
@@ -314,6 +324,17 @@ clean_worktrees() {
         fi
         if [[ -n "$AGENT_FILTER" ]] && [[ "$name" != "${PROJECT_FILTER}-${AGENT_FILTER}" ]]; then
             continue
+        fi
+
+        # In-use guard (Issue #428): skip worktrees that belong to agents
+        # which are not in a terminal-complete phase and are not old enough
+        # (or podman-confirmed idle) to reap. --include-active bypasses this.
+        if [[ "$INCLUDE_ACTIVE" != "true" ]] && declare -f worktree_is_safe_to_reap &>/dev/null; then
+            local status_file="${STATUS_DIR}/kapsis-${name}.json"
+            if ! worktree_is_safe_to_reap "$status_file" "$worktree"; then
+                print_item_skipped "worktree" "$name" "${WORKTREE_GUARD_SKIP_REASON:-in use}"
+                continue
+            fi
         fi
 
         local size
@@ -1751,6 +1772,10 @@ main() {
                 explicit_action_requested=true
                 shift
                 ;;
+            --include-active)
+                INCLUDE_ACTIVE=true
+                shift
+                ;;
             --snapshots)
                 CLEAN_SNAPSHOTS=true
                 explicit_action_requested=true
@@ -1796,6 +1821,17 @@ main() {
                 ;;
         esac
     done
+
+    # --include-active bypasses the Issue #428 in-use guard entirely, so
+    # require --force too (mirrors CLEAN_ALL's confirmation precedent below)
+    # to make sure an operator opts in deliberately.
+    if [[ "$INCLUDE_ACTIVE" == "true" ]]; then
+        if [[ "$FORCE" != "true" ]]; then
+            log_error "--include-active requires --force"
+            exit 1
+        fi
+        log_warn "--include-active: bypassing the in-use guard -- worktrees belonging to active agents may be removed"
+    fi
 
     echo -e "${BOLD}Kapsis Cleanup${NC}"
     if [[ "$DRY_RUN" == "true" ]]; then
