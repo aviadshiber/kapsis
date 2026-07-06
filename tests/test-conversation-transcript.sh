@@ -33,6 +33,10 @@ source "$SCRIPT_DIR/lib/test-framework.sh"
 
 source "$KAPSIS_ROOT/scripts/lib/constants.sh"
 source "$KAPSIS_ROOT/scripts/lib/compat.sh"
+# Real status_set_transcript_content_missing (Issue #430) so the fixture
+# tests below observe the actual JSON-status wiring, not transcript.sh's
+# standalone-sourcing no-op fallback.
+source "$KAPSIS_ROOT/scripts/lib/status.sh"
 # Production code under test
 source "$KAPSIS_ROOT/scripts/lib/transcript.sh"
 
@@ -256,6 +260,55 @@ test_transcript_truncation_keeps_tail() {
     fi
 }
 
+test_transcript_content_missing_flagged_for_boilerplate_only() {
+    log_test "transcript_save sets transcript_content_missing=true for a boilerplate-only buffer (Issue #430)"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-conv-boiler-XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmpdir'" RETURN
+
+    local conv_dir="${tmpdir}/agent-boiler"
+    mkdir -p "$conv_dir"
+    local buf="${tmpdir}/buf"
+    cat > "$buf" << 'EOF'
+[INFO] [entrypoint] [entrypoint.sh:122] Injecting credentials to files...
+[WARN] [liveness-monitor] [liveness-monitor.sh:88] heartbeat check ok
+dnsmasq: started, version 2.85 cachesize 150
+EOF
+
+    # Reset flag from any prior test in this process before exercising it.
+    status_set_transcript_content_missing "false"
+    transcript_save "$conv_dir" "$buf" "boiler-agent" "0"
+
+    assert_equals "true" "$_KAPSIS_TRANSCRIPT_CONTENT_MISSING" \
+        "transcript_content_missing must be set true when the transcript matches only known boilerplate"
+}
+
+test_transcript_content_missing_not_set_for_real_content() {
+    log_test "transcript_save leaves transcript_content_missing unset when real content is interleaved (Issue #430)"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-conv-real-XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmpdir'" RETURN
+
+    local conv_dir="${tmpdir}/agent-real"
+    mkdir -p "$conv_dir"
+    local buf="${tmpdir}/buf"
+    cat > "$buf" << 'EOF'
+[INFO] [entrypoint] [entrypoint.sh:122] Injecting credentials to files...
+Sure, I can help with that — here is my plan for the refactor.
+dnsmasq: started, version 2.85 cachesize 150
+EOF
+
+    status_set_transcript_content_missing "true"  # start "dirty" so we prove it gets cleared
+    transcript_save "$conv_dir" "$buf" "real-agent" "0"
+
+    assert_not_equals "true" "$_KAPSIS_TRANSCRIPT_CONTENT_MISSING" \
+        "transcript_content_missing must not be true when real agent dialogue is present"
+}
+
 test_transcript_skipped_when_conv_dir_absent() {
     log_test "No error when conversations directory is absent (agent ran without mount)"
 
@@ -466,6 +519,8 @@ main() {
     run_test test_transcript_ansi_stripped
     run_test test_strip_ansi_handles_osc_csi_and_cr
     run_test test_transcript_truncation_keeps_tail
+    run_test test_transcript_content_missing_flagged_for_boilerplate_only
+    run_test test_transcript_content_missing_not_set_for_real_content
     run_test test_transcript_skipped_when_conv_dir_absent
     run_test test_transcript_skipped_when_buffer_empty
     run_test test_interrupt_path_saves_transcript

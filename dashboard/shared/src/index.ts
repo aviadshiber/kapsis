@@ -53,9 +53,27 @@ export interface AgentStatus {
     | "killed"
     | "zombie"
     | null;
+  // Issue #430 (defect 2 instrumentation): set true when the captured
+  // transcript.txt matched only known entrypoint/liveness-monitor/dnsmasq
+  // boilerplate — i.e. actual agent dialogue was not captured. See
+  // scripts/lib/transcript.sh::_transcript_is_boilerplate_only. Optional/
+  // absent on status files written before this field existed.
+  transcript_content_missing?: boolean;
 }
 
 export type AgentKey = { project: string; agentId: string };
+
+// Side-channel artifact files a completed agent may leave under its status
+// dir (Issue #430, defect 3) — response-<id>.md / decisions-<id>.json /
+// debug-<id>.log. The allowed basenames MUST match, filename-for-filename,
+// the whitelist already codified in scripts/lib/status-sync.sh:92 — see
+// dashboard/server/src/store/conversations.ts's ARTIFACT_NAME_RE.
+export interface ArtifactEntry {
+  name: string;
+  kind: "response" | "decisions" | "debug";
+  size: number;
+  mtime: string;
+}
 
 export interface AuditEvent {
   seq: number;

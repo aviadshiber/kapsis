@@ -27,6 +27,10 @@ _KAPSIS_TRANSCRIPT_LOADED=1
 declare -f log_warn  &>/dev/null || log_warn()  { echo "[WARN] $*" >&2; }
 declare -f log_debug &>/dev/null || log_debug() { [[ "${KAPSIS_DEBUG:-}" == "1" ]] && echo "[DEBUG] $*" >&2 || true; }
 
+# status.sh fallback for standalone sourcing (tests); launch-agent.sh sources
+# status.sh first, so the real implementation (scripts/lib/status.sh) wins there.
+declare -f status_set_transcript_content_missing &>/dev/null || status_set_transcript_content_missing() { :; }
+
 # Default transcript cap: 50 MB. The tail is kept on truncation because the
 # agent's own output is always at the end — the head is container bootstrap
 # noise. Override per-run with KAPSIS_TRANSCRIPT_MAX_BYTES.
@@ -102,6 +106,37 @@ _transcript_write() {
 }
 
 #-------------------------------------------------------------------------------
+# _transcript_is_boilerplate_only <transcript_path>
+#
+# Detects the transcript-capture gap (Issue #430, defect 2): the captured
+# transcript sometimes contains only container bootstrap chatter — entrypoint
+# logging.sh-formatted lines, entrypoint's own pre-logging [KAPSIS]/[DEBUG]
+# fallback prefix, liveness-monitor heartbeat lines, and dnsmasq's own stdout
+# — with none of the actual agent dialogue. Validated against the
+# investigation's sampled transcripts (102/102 boilerplate-only cases matched
+# this pattern).
+#
+# Positive-match only: a line must match a KNOWN boilerplate shape to be
+# excluded. Anything unfamiliar is treated as real content, so a verbose or
+# differently-formatted agent is never false-flagged.
+#
+# Returns 0 (true) if every non-blank, non-header line matches known
+# boilerplate; 1 otherwise (including on read failure — never claim missing
+# content we couldn't actually inspect).
+#-------------------------------------------------------------------------------
+_transcript_is_boilerplate_only() {
+    local transcript_path="$1"
+    [[ -r "$transcript_path" ]] || return 1
+
+    # shellcheck disable=SC2016 # intentionally literal in the regex, not expanded
+    local boilerplate_re='(^# kapsis-transcript)|(\[entrypoint\])|(\[liveness-monitor\])|(^\[KAPSIS\])|(^\[DEBUG\])|(dnsmasq)'
+
+    local leftover
+    leftover=$(grep -Ev "$boilerplate_re" "$transcript_path" 2>/dev/null | grep -v '^[[:space:]]*$' || true)
+    [[ -z "$leftover" ]]
+}
+
+#-------------------------------------------------------------------------------
 # transcript_save <conv_dir> <output_file> <agent_id> <exit_code> [<max_bytes>]
 #
 # Persists the full container output buffer as <conv_dir>/transcript.txt.
@@ -121,7 +156,17 @@ transcript_save() {
     local header
     printf -v header '# kapsis-transcript agent=%s exit=%s at=%s' \
         "$agent_id" "$exit_code" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)"
-    _transcript_write "${conv_dir}/transcript.txt" "$output_file" "$header" "$max_bytes" || true
+    local transcript_path="${conv_dir}/transcript.txt"
+    _transcript_write "$transcript_path" "$output_file" "$header" "$max_bytes" || true
+
+    # Issue #430 defect 2 instrumentation: flag (don't fix) the transcript
+    # capture gap so it's a visible, testable signal instead of a silent one.
+    if [[ -f "$transcript_path" ]] && _transcript_is_boilerplate_only "$transcript_path"; then
+        log_warn "Captured transcript for agent=$agent_id is boilerplate-only (entrypoint/liveness-monitor/dnsmasq lines) — agent dialogue may not have been captured; see transcript_content_missing in status.json"
+        status_set_transcript_content_missing "true"
+    else
+        status_set_transcript_content_missing "false"
+    fi
     return 0
 }
 

@@ -112,7 +112,9 @@ export function AgentDetail({ agentId, readOnly, onBack }: Props) {
       {tab === "logs" && <LogsTab agentId={agentId} phase={status.phase} />}
       {tab === "activity" && <ActivityTab agentId={agentId} />}
       {tab === "audit" && <AuditTab agentId={agentId} />}
-      {tab === "conversation" && <ConversationTab agentId={agentId} />}
+      {tab === "conversation" && (
+        <ConversationTab agentId={agentId} transcriptContentMissing={status.transcript_content_missing === true} />
+      )}
       {tab === "container" && <ContainerTab container={container} stats={stats} />}
 
       {showKill && (
@@ -286,23 +288,57 @@ function AuditTab({ agentId }: { agentId: string }) {
   );
 }
 
-function ConversationTab({ agentId }: { agentId: string }) {
+function ConversationTab({ agentId, transcriptContentMissing }: { agentId: string; transcriptContentMissing: boolean }) {
   const [data, setData] = useState<ConversationEntry | null>(null);
+  const [responseArtifact, setResponseArtifact] = useState<{ name: string; content: string } | null | undefined>(undefined);
   useEffect(() => {
     let alive = true;
     api.conversation(agentId).then((d) => { if (alive) setData(d); });
     return () => { alive = false; };
   }, [agentId]);
 
+  // Issue #430 (defect 3): when the transcript is empty or flagged
+  // transcript_content_missing, fall back to the response-<id>.md
+  // side-channel artifact (if any) instead of only showing a blank state.
+  const shouldCheckArtifact = data !== null && (data.empty || transcriptContentMissing);
+  useEffect(() => {
+    if (!shouldCheckArtifact) return;
+    let alive = true;
+    setResponseArtifact(undefined);
+    api.artifacts(agentId).then((entries) => {
+      const response = entries.find((e) => e.kind === "response");
+      if (!response) { if (alive) setResponseArtifact(null); return; }
+      api.artifactContent(agentId, response.name).then((content) => {
+        if (alive) setResponseArtifact({ name: response.name, content });
+      }).catch(() => { if (alive) setResponseArtifact(null); });
+    }).catch(() => { if (alive) setResponseArtifact(null); });
+    return () => { alive = false; };
+  }, [agentId, shouldCheckArtifact]);
+
   if (!data) return <div>Loading…</div>;
+
+  const fallbackPanel = responseArtifact && (
+    <div style={{ marginTop: data.empty ? 0 : 16 }}>
+      <div className="banner" style={{ marginBottom: 8 }}>
+        Final Response (side-channel artifact) — read from <code>{responseArtifact.name}</code> because the
+        transcript {transcriptContentMissing ? "only captured entrypoint/liveness-monitor boilerplate" : "was empty"}.
+      </div>
+      <pre style={{ whiteSpace: "pre-wrap", overflowX: "auto" }}>{responseArtifact.content}</pre>
+    </div>
+  );
+
   if (data.empty) {
     return (
-      <div className="banner">
-        No conversation transcript captured for this agent yet. Kapsis writes transcript.txt (the captured container output) here when the agent session ends — an empty directory usually means the agent is still running or produced no output.
+      <div>
+        <div className="banner">
+          No conversation transcript captured for this agent yet. Kapsis writes transcript.txt (the captured container output) here when the agent session ends — an empty directory usually means the agent is still running or produced no output.
+        </div>
+        {fallbackPanel}
       </div>
     );
   }
   return (
+    <div>
     <table className="table">
       <thead><tr><th>File</th><th>Size</th><th>Modified</th></tr></thead>
       <tbody>
@@ -315,6 +351,8 @@ function ConversationTab({ agentId }: { agentId: string }) {
         ))}
       </tbody>
     </table>
+    {fallbackPanel}
+    </div>
   );
 }
 

@@ -160,7 +160,7 @@ async function main(): Promise<void> {
   await status.init();
   const audit = new AuditStore(p.audit);
   const logsStore = new LogStore(p.logs);
-  const conv = new ConversationStore(p.conversations);
+  const conv = new ConversationStore(p.conversations, p.status);
   const disk = new DiskUsageStore(p);
   // Loaded once at startup. When null (Kapsis install missing), the splitter
   // no-ops and the UI shows the full file content. Better degrade than break.

@@ -14,4 +14,8 @@
 // Last sync added HostEvent for Issue #407 (host-side commit-strip audit
 // sidecar <agent-id>-host-events.jsonl; non-chained, not matched by
 // AUDIT_FILE_RE).
+//
+// Issue #430 sync: AgentStatus gained transcript_content_missing (defect 2
+// instrumentation) and the new ArtifactEntry type (defect 3, side-channel
+// artifact listing) — both defined in dashboard/shared/src/index.ts.
 export * from "@kapsis/dashboard-shared";
