@@ -194,13 +194,41 @@ worktree_is_safe_to_reap() {
     local phase
     phase=$(grep -o '"phase"[[:space:]]*:[[:space:]]*"[^"]*"' "$status_file" 2>/dev/null | cut -d'"' -f4)
 
-    # --- Terminal success: reap unconditionally, zero Podman dependency ---
-    if [[ "$phase" == "complete" ]]; then
-        return 0
-    fi
-
     local agent_id=""
     agent_id=$(_worktree_guard_agent_id "$worktree_name") || true
+
+    # --- Terminal phase "complete": exit_code determines the verdict.
+    # status_complete() writes phase="complete" for EVERY exit code,
+    # including 3 (uncommitted changes remain) and 6 (commit failed) --
+    # both of which are designed to preserve the worktree for manual
+    # recovery. Only exit_code 0 is a true zero-Podman-dependency,
+    # unambiguous "safe to reap" signal. Any other exit_code (or a
+    # missing/unparseable one) must NOT be fast-reaped.
+    if [[ "$phase" == "complete" ]]; then
+        local exit_code
+        exit_code=$(grep -o '"exit_code"[[:space:]]*:[[:space:]]*[0-9]*' "$status_file" 2>/dev/null | grep -o '[0-9]*$')
+
+        if [[ "$exit_code" == "0" ]]; then
+            return 0
+        fi
+
+        if [[ -z "$exit_code" ]]; then
+            # Missing/unparseable exit_code -- fail-safe: skip rather than
+            # risk deleting a worktree preserved for manual recovery.
+            WORKTREE_GUARD_SKIP_REASON="phase: complete, exit_code unavailable"
+            return 1
+        fi
+
+        # Non-zero exit_code (e.g. 3, 6): route through the same
+        # age-fallback used for terminal failure phases below.
+        if [[ -n "$agent_id" ]] && _worktree_guard_podman_live "$agent_id"; then
+            WORKTREE_GUARD_SKIP_REASON="live container found (phase: complete, exit_code: ${exit_code})"
+            return 1
+        fi
+        _worktree_guard_age_verdict "$worktree_path" && return 0
+        [[ -z "$WORKTREE_GUARD_SKIP_REASON" ]] && WORKTREE_GUARD_SKIP_REASON="phase: complete, exit_code: ${exit_code}, not yet aged out"
+        return 1
+    fi
 
     # --- Terminal failure phases: same age-fallback as gc_stale_worktrees() ---
     if [[ "$phase" == "error" || "$phase" == "failed" || "$phase" == "killed" ]]; then
