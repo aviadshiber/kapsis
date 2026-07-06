@@ -82,6 +82,40 @@ class Kapsis < Formula
     end
   end
 
+  # kapsis-ctl (issue #266) is a host-side, Podman-socket-touching internal
+  # helper consumed only by scripts/lib/podman-health.sh's macOS-only
+  # auto-heal path (podman-health.sh's `is_linux` early-return in
+  # `maybe_autoheal_podman_vm`, plus launch-agent.sh's additional
+  # `is_macos` gate on that function's only caller). There is no Linux
+  # consumer today, so only darwin-arm64/darwin-x64 resources are declared
+  # here — do not add on_linux blocks without a real, code-backed consumer.
+  #
+  # Staged into libexec/bin/kapsis-ctl (NOT bin/) deliberately: it is not a
+  # supported public command, just an implementation detail that
+  # podman-health.sh discovers via its existing relative-path lookup
+  # (`${_self_dir}/../../bin/kapsis-ctl`, which resolves to
+  # libexec/bin/kapsis-ctl since `install` below sets KAPSIS_LIB to
+  # libexec/scripts/lib for every wrapper). Do not add a bin.install_symlink
+  # for it.
+  on_macos do
+    on_arm do
+      # KAPSIS_CTL_DARWIN_ARM64_MARKER_START
+      resource "kapsis-ctl" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.1/kapsis-ctl-darwin-arm64"
+        sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      end
+      # KAPSIS_CTL_DARWIN_ARM64_MARKER_END
+    end
+    on_intel do
+      # KAPSIS_CTL_DARWIN_X64_MARKER_START
+      resource "kapsis-ctl" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.1/kapsis-ctl-darwin-x64"
+        sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+      end
+      # KAPSIS_CTL_DARWIN_X64_MARKER_END
+    end
+  end
+
   def install
     # Install everything to libexec, then create wrappers
     libexec.install Dir["*"]
@@ -140,6 +174,24 @@ class Kapsis < Formula
       chmod 0755, bin_dir/"kapsis-dashboard"
     end
     bin.install_symlink libexec/"dashboard/bin/kapsis-dashboard"
+
+    # Install the kapsis-ctl binary from the per-platform release asset
+    # selected by the on_macos + on_arm/on_intel resource blocks above.
+    # Staged into libexec/bin/kapsis-ctl (NOT bin/) — it is an internal
+    # helper for podman-health.sh's macOS-only auto-heal path, not a
+    # supported public command. Intentionally no bin.install_symlink.
+    # No Linux resource is declared (no consumer there), so this only
+    # runs on macOS.
+    if OS.mac?
+      resource("kapsis-ctl").stage do
+        ctl_bin_dir = libexec/"bin"
+        ctl_bin_dir.mkpath
+        staged = Dir["kapsis-ctl-*"].first
+        odie "kapsis-ctl resource downloaded but no binary found" unless staged
+        cp staged, ctl_bin_dir/"kapsis-ctl"
+        chmod 0755, ctl_bin_dir/"kapsis-ctl"
+      end
+    end
   end
 
   def caveats
@@ -203,5 +255,19 @@ class Kapsis < Formula
       "kapsis-recovery-action wrapper should be installed"
     assert_match "Usage:",
       shell_output("#{bin}/kapsis-recovery-action --help 2>&1", 0)
+
+    # Verify kapsis-ctl was staged into libexec/bin (macOS only — no Linux
+    # resource is declared, see the on_macos block above), is NOT exposed
+    # as a public bin/ symlink, and its --version smoke check works.
+    if OS.mac?
+      assert_predicate libexec/"bin/kapsis-ctl", :exist?,
+        "kapsis-ctl binary should be staged into libexec/bin"
+      assert_predicate libexec/"bin/kapsis-ctl", :executable?,
+        "kapsis-ctl binary should be executable"
+      refute_predicate bin/"kapsis-ctl", :exist?,
+        "kapsis-ctl must not be exposed as a public bin/ command"
+      assert_match(/\d+\.\d+\.\d+|dev/,
+        shell_output("#{libexec}/bin/kapsis-ctl --version", 0))
+    end
   end
 end

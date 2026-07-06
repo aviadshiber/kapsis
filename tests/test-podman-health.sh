@@ -822,6 +822,43 @@ EOF
 }
 
 #===============================================================================
+# count_running_kapsis_containers — kapsis-ctl found-but-failed branch (#429)
+#===============================================================================
+
+test_count_ctl_failed_logs_warn_once_across_retries() {
+    log_test "count_running_kapsis_containers: kapsis-ctl found-but-failed logs WARN exactly once per process (#429)"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    # Fake kapsis-ctl: "list" always produces non-numeric/garbage output so
+    # the count parse fails and the found-but-failed branch fires.
+    cat > "$tmpdir/kapsis-ctl" <<'EOF'
+#!/usr/bin/env bash
+echo "not json"
+exit 0
+EOF
+    chmod +x "$tmpdir/kapsis-ctl"
+    # Fallback podman ps: no containers, so the function still returns cleanly.
+    _make_fake_podman "$tmpdir/podman" \
+        'if [[ "$1" == "ps" ]]; then exit 0; fi' \
+        'exit 0'
+
+    local out
+    # Call count_running_kapsis_containers TWICE within the SAME process
+    # (mirrors maybe_autoheal_podman_vm's retry loop, max_retries default 2)
+    # so the one-shot guard variable's process-scoping is actually exercised.
+    out=$(bash -c "
+        $(_load_lib_with_macos)
+        KAPSIS_CTL='$tmpdir/kapsis-ctl' KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' count_running_kapsis_containers
+        KAPSIS_CTL='$tmpdir/kapsis-ctl' KAPSIS_VFS_PROBE_PODMAN='$tmpdir/podman' count_running_kapsis_containers
+    " 2>&1)
+    rm -rf "$tmpdir"
+
+    local warn_count
+    warn_count=$(echo "$out" | grep -c '\[WARN\].*kapsis-ctl found but failed' || true)
+    assert_equals "1" "$warn_count" "WARN should fire exactly once across two calls in one process"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -842,6 +879,9 @@ main() {
     log_info "=== count_running_kapsis_containers — zombie exclusion (Issue #348) ==="
     run_test test_count_excludes_wedged_containers
     run_test test_count_excludes_all_when_no_timeout_binary
+
+    log_info "=== count_running_kapsis_containers — kapsis-ctl found-but-failed (#429) ==="
+    run_test test_count_ctl_failed_logs_warn_once_across_retries
 
     log_info "=== maybe_autoheal_podman_vm ==="
     run_test test_autoheal_noop_on_linux

@@ -141,6 +141,14 @@ chmod 755 %{buildroot}%{_bindir}/kapsis-quick
 # release artifact is never shipped without the dashboard.
 install -m 755 dashboard/bin/kapsis-dashboard %{buildroot}%{_bindir}/kapsis-dashboard
 
+# kapsis-ctl (issue #266) is intentionally NOT installed here. Its only
+# consumer is scripts/lib/podman-health.sh's macOS-only virtio-fs auto-heal
+# path (is_linux early-return in maybe_autoheal_podman_vm, plus an
+# additional is_macos gate on that function's only caller in
+# launch-agent.sh) — there is no Linux code path that ever invokes it.
+# See packaging/homebrew/kapsis.rb for the macOS-only (libexec-only)
+# packaging of this binary.
+
 %files
 %license LICENSE
 %doc README.md CHANGELOG.md
