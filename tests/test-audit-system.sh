@@ -153,24 +153,52 @@ test_audit_log_event_appends() {
 # returns non-zero for the common no-alert case. Regression test for the
 # hook crash where bare `audit_log_event ...` statements (no `if`/`||` guard)
 # aborted the hook process before its mandatory `echo "{}"`.
+#
+# IMPORTANT: this must run in a genuinely separate `bash` PROCESS with
+# `set -e` active, not merely as a function invoked from run_test(). When
+# run_test() invokes a test function as `$test_func || test_exit_code=$?`,
+# bash suspends errexit for the *entire* call chain underneath that `||`
+# (per POSIX/bash semantics: errexit is ignored for any command that is
+# part of the compound list controlling `&&`/`||`), so a bare `set -e`
+# abort inside audit_log_event would silently NOT terminate the test body
+# even if the fix were fully reverted -- the test would pass regardless.
+# Spawning a fresh `bash -c` subprocess sidesteps that: its exit status is
+# observed via `$?` on the outer (non-suspended) statement, so a genuine
+# errexit abort inside the subprocess is faithfully reported here.
 test_audit_log_event_survives_pattern_check_under_set_e() {
     log_test "audit_log_event survives audit_check_patterns non-zero exit under set -e"
 
     setup
-    source_audit
-    source_audit_patterns
+    local test_audit_dir="$TEST_AUDIT_DIR"
 
-    audit_init "test-agent-003" "project-y" "claude-cli"
+    local subprocess_script
+    subprocess_script=$(cat <<EOF
+set -euo pipefail
+export KAPSIS_AUDIT_DIR="$test_audit_dir"
+export KAPSIS_AUDIT_ENABLED="true"
+source "$AUDIT_SCRIPT"
+source "$AUDIT_PATTERNS_SCRIPT"
+audit_init "test-agent-003" "project-y" "claude-cli"
+# Bare statements (no if/||), exactly as kapsis-status-hook.sh does in
+# production. If audit_check_patterns' exit code were allowed to
+# propagate, set -e would abort this subprocess right here.
+audit_log_event "shell_command" "Bash" '{"command":"ls -la"}'
+audit_log_event "filesystem_op" "Read" '{"file_path":"/workspace/README.md"}'
+EOF
+)
 
-    # Call audit_log_event as bare statements (no if/||), exactly as
-    # kapsis-status-hook.sh does in production. If audit_check_patterns'
-    # exit code were still allowed to propagate, `set -e` would abort this
-    # function (and the test) right here.
-    audit_log_event "shell_command" "Bash" '{"command":"ls -la"}'
-    audit_log_event "filesystem_op" "Read" '{"file_path":"/workspace/README.md"}'
+    local subprocess_rc=0
+    bash -c "$subprocess_script" || subprocess_rc=$?
 
+    assert_equals "0" "$subprocess_rc" \
+        "Subprocess running bare audit_log_event calls under set -e should exit 0, not abort"
+
+    # The subprocess has its own PID, so its audit file name (which embeds
+    # $$) is unknown here. TEST_AUDIT_DIR is exclusive to this test, so
+    # there is exactly one *.audit.jsonl file to find.
     local audit_file
-    audit_file=$(audit_get_file)
+    audit_file=$(find "$test_audit_dir" -maxdepth 1 -name '*.audit.jsonl' -print -quit)
+    assert_not_equals "" "$audit_file" "Subprocess should have created an audit file"
 
     local line_count
     line_count=$(wc -l < "$audit_file" | tr -d ' ')
