@@ -91,9 +91,9 @@ start_vfkit_watchdog() {
     local vfkit_pid
     # `pgrep -o` (oldest) is more stable than `-n` (newest) when vfkit was
     # just restarted — `-n` could pick up a transient helper still in argv.
-    vfkit_pid=$(pgrep -o -f "vfkit.*${machine}" 2>/dev/null || true)
+    vfkit_pid=$(pgrep -o -f "(vfkit|krunkit).*${machine}" 2>/dev/null || true)
     if [[ -z "$vfkit_pid" ]]; then
-        log_debug "vfkit process not found for machine '$machine' — skipping watchdog"
+        log_warn "vfkit/krunkit process not found for machine '$machine' — mount-drop protection is NOT armed for this session"
         return 0
     fi
 

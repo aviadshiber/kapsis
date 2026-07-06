@@ -90,10 +90,13 @@ _install_fakes() {
     local fake_bin="$TEST_TMP/bin"
     mkdir -p "$fake_bin"
 
-    # pgrep: print the PID the test wants the watchdog to watch.
+    # pgrep: print the PID the test wants the watchdog to watch, and record
+    # the argv it was called with (so tests can assert on the -f pattern,
+    # e.g. that it contains the vfkit|krunkit alternation).
     # FAKE_PGREP_PID is expanded at host time (caller-supplied env var).
     cat > "$fake_bin/pgrep" <<EOF
 #!/usr/bin/env bash
+printf '%s\n' "\$@" > "$TEST_TMP/pgrep.argv"
 echo "${FAKE_PGREP_PID:-}"
 EOF
 
@@ -254,6 +257,69 @@ test_watchdog_skipped_when_vfkit_not_found() {
     FAKE_PGREP_PID="" _install_fakes
     start_vfkit_watchdog "$TEST_AGENT_ID"
     assert_equals "" "${_VFKIT_WATCHDOG_PID:-}" "watchdog must not start when pgrep finds no vfkit"
+    _teardown_test_env
+}
+
+#===============================================================================
+# krunkit/vfkit alternation pattern (Issue #409)
+#===============================================================================
+
+test_watchdog_pgrep_pattern_matches_krunkit() {
+    log_test "Watchdog's pgrep -f pattern matches krunkit (libkrun/AVF) in addition to vfkit"
+    TEST_AGENT_ID="vfkit-krunkit-15"
+    _setup_test_env
+
+    sleep 30 &
+    local fake_krunkit_pid=$!
+    TEST_CHILD_PIDS="$fake_krunkit_pid"
+
+    # The fake pgrep does not itself pattern-match; it always echoes
+    # FAKE_PGREP_PID. What we assert here is that the *pattern the watchdog
+    # constructs and passes to pgrep* now includes krunkit as an alternative
+    # — i.e. it would match a krunkit-only process on a real libkrun/AVF host.
+    FAKE_PGREP_PID="$fake_krunkit_pid" _install_fakes
+
+    KAPSIS_VFKIT_WATCHDOG_INTERVAL=5 start_vfkit_watchdog "$TEST_AGENT_ID"
+    local watchdog_pid="$_VFKIT_WATCHDOG_PID"
+
+    assert_file_exists "$TEST_TMP/pgrep.argv" "pgrep must be invoked by the watchdog to locate the hypervisor process"
+    local argv
+    argv=$(<"$TEST_TMP/pgrep.argv")
+    assert_contains "$argv" "vfkit" "pgrep pattern must still match vfkit (applehv)"
+    assert_contains "$argv" "krunkit" "pgrep pattern must also match krunkit (libkrun/AVF)"
+    assert_contains "$argv" "(vfkit|krunkit)" "pgrep pattern must use an alternation, not a fixed vfkit-only string"
+
+    kill "$watchdog_pid" 2>/dev/null || true
+    wait "$watchdog_pid" 2>/dev/null || true
+    kill "$fake_krunkit_pid" 2>/dev/null || true
+    wait "$fake_krunkit_pid" 2>/dev/null || true
+    TEST_CHILD_PIDS=""
+    _teardown_test_env
+}
+
+test_watchdog_not_found_branch_warns_not_debug() {
+    log_test "Watchdog's not-found branch logs at WARN (visible by default), not silent DEBUG"
+    TEST_AGENT_ID="vfkit-warn-16"
+    _setup_test_env
+    FAKE_PGREP_PID="" _install_fakes
+
+    # Re-capture log_warn/log_debug calls (the quiet stubs installed in
+    # _setup_test_env are no-ops — override them here to record whether
+    # each was invoked, and with what message).
+    : > "$TEST_TMP/log_warn.calls"
+    : > "$TEST_TMP/log_debug.calls"
+    log_warn()  { printf '%s\n' "$*" >> "$TEST_TMP/log_warn.calls"; }
+    log_debug() { printf '%s\n' "$*" >> "$TEST_TMP/log_debug.calls"; }
+
+    start_vfkit_watchdog "$TEST_AGENT_ID"
+    assert_equals "" "${_VFKIT_WATCHDOG_PID:-}" "watchdog must not start when no hypervisor process is found"
+
+    local warn_content debug_content
+    warn_content=$(<"$TEST_TMP/log_warn.calls")
+    debug_content=$(<"$TEST_TMP/log_debug.calls")
+    assert_contains "$warn_content" "vfkit/krunkit process not found" "not-found branch must log at WARN level (visible by default)"
+    assert_contains "$warn_content" "mount-drop protection is NOT armed" "WARN message must make the security-relevant consequence explicit"
+    assert_not_contains "$debug_content" "process not found" "not-found branch must no longer be silently logged at DEBUG only"
     _teardown_test_env
 }
 
@@ -465,6 +531,10 @@ main() {
     run_test test_watchdog_skipped_when_machine_name_invalid
     run_test test_watchdog_skipped_when_agent_id_invalid
     run_test test_watchdog_skipped_when_vfkit_not_found
+
+    log_info "=== krunkit/vfkit alternation pattern (Issue #409) ==="
+    run_test test_watchdog_pgrep_pattern_matches_krunkit
+    run_test test_watchdog_not_found_branch_warns_not_debug
 
     log_info "=== Post-container exit-code override ==="
     run_test test_post_container_override_to_4_for_signal_exit
