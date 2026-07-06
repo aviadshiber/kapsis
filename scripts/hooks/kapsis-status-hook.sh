@@ -441,10 +441,10 @@ print(json.dumps(state))
             if [[ "${_KAPSIS_AUDIT_INITIALIZED:-false}" != "true" ]]; then
                 audit_init "$_safe_agent_id" \
                            "${KAPSIS_STATUS_PROJECT:-unknown}" \
-                           "${KAPSIS_AGENT_TYPE:-claude-cli}"
+                           "${KAPSIS_AGENT_TYPE:-claude-cli}" || true
             fi
             audit_log_event "auto" "$tool_name" \
-                "{\"command\":\"$(json_escape_string "${command:0:1000}")\",\"file_path\":\"$(json_escape_string "$file_path")\",\"category\":\"$category\"}"
+                "{\"command\":\"$(json_escape_string "${command:0:1000}")\",\"file_path\":\"$(json_escape_string "$file_path")\",\"category\":\"$category\"}" || true
         fi
     fi
 

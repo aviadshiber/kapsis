@@ -148,6 +148,37 @@ test_audit_log_event_appends() {
     teardown
 }
 
+# 2b. audit_log_event must not abort under set -e when audit_check_patterns
+# (sourced alongside audit.sh, matching kapsis-status-hook.sh's real usage)
+# returns non-zero for the common no-alert case. Regression test for the
+# hook crash where bare `audit_log_event ...` statements (no `if`/`||` guard)
+# aborted the hook process before its mandatory `echo "{}"`.
+test_audit_log_event_survives_pattern_check_under_set_e() {
+    log_test "audit_log_event survives audit_check_patterns non-zero exit under set -e"
+
+    setup
+    source_audit
+    source_audit_patterns
+
+    audit_init "test-agent-003" "project-y" "claude-cli"
+
+    # Call audit_log_event as bare statements (no if/||), exactly as
+    # kapsis-status-hook.sh does in production. If audit_check_patterns'
+    # exit code were still allowed to propagate, `set -e` would abort this
+    # function (and the test) right here.
+    audit_log_event "shell_command" "Bash" '{"command":"ls -la"}'
+    audit_log_event "filesystem_op" "Read" '{"file_path":"/workspace/README.md"}'
+
+    local audit_file
+    audit_file=$(audit_get_file)
+
+    local line_count
+    line_count=$(wc -l < "$audit_file" | tr -d ' ')
+    assert_equals "3" "$line_count" "Audit file should have 3 events (genesis + 2) without aborting"
+
+    teardown
+}
+
 # 3. Hash chain verifies after multiple events
 test_audit_hash_chain_valid() {
     log_test "Hash chain verifies after multiple events"
@@ -1165,6 +1196,7 @@ main() {
     # Core tests (1-11)
     run_test test_audit_init_creates_file
     run_test test_audit_log_event_appends
+    run_test test_audit_log_event_survives_pattern_check_under_set_e
     run_test test_audit_hash_chain_valid
     run_test test_audit_hash_chain_broken
     run_test test_audit_classify_credential_access
