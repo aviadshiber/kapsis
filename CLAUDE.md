@@ -156,6 +156,7 @@ kapsis/
 | Audit system | `docs/AUDIT-SYSTEM.md` |
 | Network isolation | `docs/NETWORK-ISOLATION.md` |
 | K8s backend | `docs/K8S-BACKEND.md` |
+| Podman `libkrun`/`krunkit` provider (opt-in, macOS) | `docs/KRUNKIT-PROVIDER.md` |
 | Installation | `docs/INSTALL.md` |
 | Initial setup | `docs/SETUP.md` |
 | Logging & testing | `CONTRIBUTING.md` |

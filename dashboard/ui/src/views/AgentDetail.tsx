@@ -180,6 +180,9 @@ function OverviewTab({ status, health }: { status: AgentStatus; health: AgentHea
       <div className="card">
         <h3>Worktree</h3>
         <div className="sub" style={{ fontFamily: "var(--mono)", wordBreak: "break-all" }}>{status.worktree_path ?? "—"}</div>
+        {status.machine_provider && (
+          <div className="sub" style={{ marginTop: 4 }}>Podman provider: <code>{status.machine_provider}</code></div>
+        )}
       </div>
       {status.push_fallback_command && (
         <div className="card" style={{ gridColumn: "1 / -1" }}>

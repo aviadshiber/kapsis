@@ -704,6 +704,103 @@ test_kill_vfkit_zombie_scoped_to_named_machine() {
 }
 
 #===============================================================================
+# get_podman_machine_provider() TESTS (Issue #409)
+#===============================================================================
+
+# Writes a fake, executable `podman` to $1 with body statements $2..$N.
+# A real executable on PATH (not a shell function) is required here because
+# get_podman_machine_provider shells out via `timeout`/`gtimeout`, which
+# execve()s the binary directly and never sees bash function stubs.
+_provider_make_fake_podman() {
+    local target="$1"
+    shift
+    mkdir -p "$(dirname "$target")"
+    {
+        echo "#!/usr/bin/env bash"
+        for line in "$@"; do
+            echo "$line"
+        done
+    } > "$target"
+    chmod +x "$target"
+}
+
+test_get_podman_machine_provider_libkrun() {
+    log_test "get_podman_machine_provider: returns libkrun when podman reports it"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-provider-test.XXXXXX")
+    _provider_make_fake_podman "$tmpdir/podman" \
+        'if [[ "$1" == "machine" && "$2" == "inspect" ]]; then echo "libkrun"; exit 0; fi' \
+        'exit 1'
+
+    local provider
+    provider=$(
+        is_linux() { return 1; }
+        PATH="$tmpdir:$PATH"
+        get_podman_machine_provider "podman-machine-default"
+    )
+
+    rm -rf "$tmpdir"
+    assert_equals "libkrun" "$provider" "Should report libkrun"
+}
+
+test_get_podman_machine_provider_applehv() {
+    log_test "get_podman_machine_provider: returns applehv when podman reports it"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-provider-test.XXXXXX")
+    _provider_make_fake_podman "$tmpdir/podman" \
+        'if [[ "$1" == "machine" && "$2" == "inspect" ]]; then echo "applehv"; exit 0; fi' \
+        'exit 1'
+
+    local provider
+    provider=$(
+        is_linux() { return 1; }
+        PATH="$tmpdir:$PATH"
+        get_podman_machine_provider "podman-machine-default"
+    )
+
+    rm -rf "$tmpdir"
+    assert_equals "applehv" "$provider" "Should report applehv"
+}
+
+test_get_podman_machine_provider_empty_on_linux() {
+    log_test "get_podman_machine_provider: returns empty on Linux without invoking podman"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-provider-test.XXXXXX")
+    _provider_make_fake_podman "$tmpdir/podman" 'echo "SHOULD_NOT_BE_CALLED"; exit 0'
+
+    local provider
+    provider=$(
+        is_linux() { return 0; }
+        PATH="$tmpdir:$PATH"
+        get_podman_machine_provider "podman-machine-default"
+    )
+
+    rm -rf "$tmpdir"
+    assert_equals "" "$provider" "Should be empty on Linux, without invoking podman"
+}
+
+test_get_podman_machine_provider_empty_when_podman_fails() {
+    log_test "get_podman_machine_provider: returns empty when podman machine inspect fails"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-provider-test.XXXXXX")
+    _provider_make_fake_podman "$tmpdir/podman" 'exit 1'
+
+    local provider
+    provider=$(
+        is_linux() { return 1; }
+        PATH="$tmpdir:$PATH"
+        get_podman_machine_provider "podman-machine-default"
+    )
+
+    rm -rf "$tmpdir"
+    assert_equals "" "$provider" "Should be empty when podman fails, not raise an error"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -771,6 +868,12 @@ main() {
     run_test test_kill_vfkit_zombie_removes_runtime_files
     run_test test_kill_vfkit_zombie_respects_xdg_data_home
     run_test test_kill_vfkit_zombie_scoped_to_named_machine
+
+    # get_podman_machine_provider() tests (Issue #409)
+    run_test test_get_podman_machine_provider_libkrun
+    run_test test_get_podman_machine_provider_applehv
+    run_test test_get_podman_machine_provider_empty_on_linux
+    run_test test_get_podman_machine_provider_empty_when_podman_fails
 
     # Summary
     print_summary

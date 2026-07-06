@@ -78,6 +78,9 @@ _KAPSIS_HEARTBEAT_AT=""             # Last heartbeat timestamp from liveness mon
 # Populated for ALL non-zero exits so callers have one field to branch on
 _KAPSIS_ERROR_TYPE=""
 
+# Detected Podman machine hypervisor provider (Issue #409), e.g. "applehv"/"libkrun"
+_KAPSIS_MACHINE_PROVIDER=""
+
 # Gist rate limiting state (reduce I/O on frequent PostToolUse calls)
 _KAPSIS_GIST_LAST_READ=""        # Epoch timestamp of last gist read
 _KAPSIS_GIST_LAST_MTIME=""       # Last known file mtime
@@ -441,6 +444,16 @@ status_set_error_type() {
     _KAPSIS_ERROR_TYPE="${1:-}"
 }
 
+# Set the detected Podman machine hypervisor provider (Issue #409)
+# Informational only — records which virtio-fs backend this run used
+# ("applehv"/"libkrun" on macOS; empty on Linux). Callers detect via
+# get_podman_machine_provider() in compat.sh.
+# Arguments:
+#   $1 - Provider string (e.g. "applehv", "libkrun"), or empty
+status_set_machine_provider() {
+    _KAPSIS_MACHINE_PROVIDER="${1:-}"
+}
+
 # =============================================================================
 # Agent Gist (Activity Summary)
 # =============================================================================
@@ -622,6 +635,10 @@ _status_write() {
     local error_type_json="null"
     [[ -n "$_KAPSIS_ERROR_TYPE" ]] && error_type_json="\"$_KAPSIS_ERROR_TYPE\""
 
+    # Machine provider field (Issue #409)
+    local machine_provider_json="null"
+    [[ -n "$_KAPSIS_MACHINE_PROVIDER" ]] && machine_provider_json="\"$_KAPSIS_MACHINE_PROVIDER\""
+
     # Build JSON (using heredoc for readability)
     local json
     json=$(cat << EOF
@@ -650,7 +667,8 @@ _status_write() {
   "commit_sha": ${commit_sha_json},
   "uncommitted_files": ${uncommitted_files_json},
   "heartbeat_at": ${heartbeat_json},
-  "error_type": ${error_type_json}
+  "error_type": ${error_type_json},
+  "machine_provider": ${machine_provider_json}
 }
 EOF
 )

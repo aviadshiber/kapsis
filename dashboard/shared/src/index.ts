@@ -53,6 +53,11 @@ export interface AgentStatus {
     | "killed"
     | "zombie"
     | null;
+  // Podman machine hypervisor backend detected at launch (Issue #409):
+  // "applehv" (Apple Virtualization.framework, vfkit) or "libkrun"
+  // (Hypervisor.framework, krunkit). Informational only — null on Linux
+  // or when detection failed/was skipped.
+  machine_provider: "applehv" | "libkrun" | string | null;
 }
 
 export type AgentKey = { project: string; agentId: string };

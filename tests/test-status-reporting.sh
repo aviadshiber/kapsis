@@ -625,6 +625,42 @@ test_status_push_unverified() {
     cleanup_status_test
 }
 
+test_status_set_machine_provider() {
+    log_test "status_set_machine_provider sets machine_provider field"
+
+    setup_status_test
+
+    status_init "test-project" "1" "" "worktree" ""
+    status_set_machine_provider "libkrun"
+    status_phase "complete" 100 "Done"
+
+    local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+    local content
+    content=$(cat "$status_file")
+
+    assert_contains "$content" '"machine_provider": "libkrun"' "Should contain machine_provider"
+
+    cleanup_status_test
+}
+
+test_status_machine_provider_null_by_default() {
+    log_test "machine_provider is null by default (Linux / non-podman / detection skipped)"
+
+    setup_status_test
+
+    status_init "test-project" "1" "" "worktree" ""
+    # Don't call status_set_machine_provider
+    status_phase "complete" 100 "Done"
+
+    local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+    local content
+    content=$(cat "$status_file")
+
+    assert_contains "$content" '"machine_provider": null' "Should default to null"
+
+    cleanup_status_test
+}
+
 test_status_push_fields_null_by_default() {
     log_test "Push fields are null by default"
 
@@ -761,6 +797,10 @@ main() {
     run_test test_status_push_unverified
     run_test test_status_push_fields_null_by_default
     run_test test_status_json_valid_with_push_fields
+
+    # Machine provider tests (Issue #409)
+    run_test test_status_set_machine_provider
+    run_test test_status_machine_provider_null_by_default
 
     # Overlay commit status tests (Fix #168)
     run_test test_status_commit_info_overlay_pending

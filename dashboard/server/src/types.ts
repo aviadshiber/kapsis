@@ -14,4 +14,8 @@
 // Last sync added HostEvent for Issue #407 (host-side commit-strip audit
 // sidecar <agent-id>-host-events.jsonl; non-chained, not matched by
 // AUDIT_FILE_RE).
+//
+// Sync added AgentStatus.machine_provider for Issue #409 (Podman machine
+// hypervisor backend — "applehv"/"libkrun" — detected at launch by
+// scripts/lib/compat.sh::get_podman_machine_provider, informational only).
 export * from "@kapsis/dashboard-shared";
