@@ -458,6 +458,11 @@ setup_guard_test() {
     local agent_id="$1"
     local phase="$2"
     local updated_at="${3:-}"
+    # Real status_complete() always writes a concrete exit_code (default 0)
+    # once phase=complete -- default to "0" here so complete-phase fixtures
+    # match production JSON shape and exercise the fast-reap path rather
+    # than the guard's fail-safe (missing exit_code) branch.
+    local exit_code="${4:-0}"
 
     source "$KAPSIS_ROOT/scripts/worktree-manager.sh"
 
@@ -484,10 +489,10 @@ setup_guard_test() {
     create_worktree "$GUARD_PROJECT" "$agent_id" "feature/guard-test-${agent_id}" >/dev/null
 
     if [[ -n "$updated_at" ]]; then
-        echo '{"phase": "'"$phase"'", "agent_id": "'"$agent_id"'", "updated_at": "'"$updated_at"'"}' \
+        echo '{"phase": "'"$phase"'", "agent_id": "'"$agent_id"'", "updated_at": "'"$updated_at"'", "exit_code": '"$exit_code"'}' \
             > "$GUARD_STATUS_FILE"
     else
-        echo '{"phase": "'"$phase"'", "agent_id": "'"$agent_id"'"}' > "$GUARD_STATUS_FILE"
+        echo '{"phase": "'"$phase"'", "agent_id": "'"$agent_id"'", "exit_code": '"$exit_code"'}' > "$GUARD_STATUS_FILE"
     fi
 }
 
@@ -524,7 +529,7 @@ test_clean_worktrees_reaps_complete_without_podman() {
 
     local agent_id
     agent_id=$(printf '%06x' "$(( $$ + 1 ))")
-    setup_guard_test "$agent_id" "complete"
+    setup_guard_test "$agent_id" "complete" "" 0
 
     local cleanup_script="$KAPSIS_ROOT/scripts/kapsis-cleanup.sh"
     # Minimal system PATH with no podman -- proves the complete-phase fast
@@ -575,7 +580,7 @@ test_clean_worktrees_podman_failure_does_not_block_other_removals() {
 
     local complete_agent_id
     complete_agent_id=$(printf '%06x' "$(( $$ + 3 ))")
-    setup_guard_test "$complete_agent_id" "complete"
+    setup_guard_test "$complete_agent_id" "complete" "" 0
     local complete_worktree_path="$GUARD_WORKTREE_PATH"
     local shared_tmp="$GUARD_TMP_DIR"
     local shared_project="$GUARD_PROJECT"
