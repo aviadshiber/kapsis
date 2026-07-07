@@ -32,8 +32,28 @@ PODMAN_HEALTH="$KAPSIS_ROOT/scripts/lib/podman-health.sh"
 # TEST CASES
 #===============================================================================
 
+# _on_macos_line_ranges <file>
+# Print the line range of every top-level `on_macos do` ... `end` block as
+# "start:end", one per line. The closing `end` is found by tracking nested
+# do/end pairs (on_arm/on_intel/resource blocks), pure text — no `brew`.
+_on_macos_line_ranges() {
+    local file="$1"
+    awk '
+        depth == 0 && /^[[:space:]]*on_macos do[[:space:]]*$/ {
+            start = NR
+            depth = 1
+            next
+        }
+        depth > 0 && /(^|[[:space:]])do[[:space:]]*$/ { depth++; next }
+        depth > 0 && /^[[:space:]]*end[[:space:]]*$/ {
+            depth--
+            if (depth == 0) print start ":" NR
+        }
+    ' "$file"
+}
+
 test_homebrew_formula_has_both_ctl_marker_pairs() {
-    log_test "kapsis.rb declares both KAPSIS_CTL_DARWIN_* marker pairs"
+    log_test "kapsis.rb declares both KAPSIS_CTL_DARWIN_* marker pairs inside on_macos"
 
     assert_file_contains "$FORMULA_FILE" "KAPSIS_CTL_DARWIN_ARM64_MARKER_START" \
         "Missing darwin-arm64 start marker"
@@ -43,6 +63,40 @@ test_homebrew_formula_has_both_ctl_marker_pairs() {
         "Missing darwin-x64 start marker"
     assert_file_contains "$FORMULA_FILE" "KAPSIS_CTL_DARWIN_X64_MARKER_END" \
         "Missing darwin-x64 end marker"
+
+    # The markers must not merely exist somewhere in the formula — the
+    # resource blocks they delimit must be nested inside an on_macos block,
+    # or brew would fetch the darwin binaries on Linux too.
+    local on_macos_ranges
+    on_macos_ranges="$(_on_macos_line_ranges "$FORMULA_FILE")"
+    assert_not_empty "$on_macos_ranges" \
+        "kapsis.rb should contain at least one on_macos block"
+
+    local marker marker_line range_start range_end inside
+    for marker in \
+        KAPSIS_CTL_DARWIN_ARM64_MARKER_START \
+        KAPSIS_CTL_DARWIN_ARM64_MARKER_END \
+        KAPSIS_CTL_DARWIN_X64_MARKER_START \
+        KAPSIS_CTL_DARWIN_X64_MARKER_END; do
+        marker_line="$(grep -n -F "$marker" "$FORMULA_FILE" | cut -d: -f1 | head -n 1)"
+        # Existence already asserted above; guard against an empty line number
+        # so the arithmetic below cannot blow up mid-test.
+        [[ -n "$marker_line" ]] || continue
+        inside=false
+        while IFS=':' read -r range_start range_end; do
+            [[ -n "$range_start" && -n "$range_end" ]] || continue
+            if (( marker_line > range_start && marker_line < range_end )); then
+                inside=true
+                break
+            fi
+        done <<< "$on_macos_ranges"
+        if [[ "$inside" != "true" ]]; then
+            _log_failure "$marker must be nested inside an on_macos block" \
+                "Marker at line $marker_line" \
+                "on_macos block ranges: ${on_macos_ranges//$'\n'/ }"
+            return 1
+        fi
+    done
 
     # No Linux marker pair should exist — no code-backed consumer.
     assert_file_not_contains "$FORMULA_FILE" "KAPSIS_CTL_LINUX_ARM64_MARKER_START" \
