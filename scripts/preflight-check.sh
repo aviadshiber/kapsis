@@ -88,9 +88,11 @@ check_podman() {
 
     # Report the detected hypervisor provider (Issue #409): informational
     # only, helps explain which virtio-fs mitigations structurally apply.
+    # No explicit machine argument — let the function resolve
+    # KAPSIS_PODMAN_MACHINE like the launch-agent.sh call site does.
     if ! is_linux && declare -f get_podman_machine_provider &>/dev/null; then
         local provider
-        provider=$(get_podman_machine_provider "podman-machine-default" 2>/dev/null || true)
+        provider=$(get_podman_machine_provider 2>/dev/null || true)
         [[ -n "$provider" ]] && preflight_ok "Podman machine provider: $provider"
     fi
 
