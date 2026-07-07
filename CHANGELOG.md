@@ -48,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Bump golang.org/x/net from 0.49.0 to 0.55.0 in /operator in the go_modules group across 1 directory (#422)
 
+## [2.37.2] - 2026-07-07
+
+### Changed
+- Bump the github-actions group with 3 updates (#432)
+
+### Fixed
+- Add in-use guard to clean_worktrees to prevent deleting active agent worktrees (#434)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1083,7 +1091,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.37.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.37.2...HEAD
+[2.37.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.2
 [2.37.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.1
 [2.37.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.0
 [2.36.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.36.3
