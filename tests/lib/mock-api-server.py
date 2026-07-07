@@ -65,7 +65,7 @@ def _tool_use_sse() -> bytes:
             "type": "content_block_delta", "index": 0,
             "delta": {
                 "type": "input_json_delta",
-                "partial_json": json.dumps({"command": "echo kapsis-mock-hook-test"}),
+                "partial_json": json.dumps({"command": "echo kapsis-mock-hook-ran"}),
             },
         }),
         ("content_block_stop", {"type": "content_block_stop", "index": 0}),
@@ -112,7 +112,7 @@ def _tool_use_json() -> bytes:
         "id": "msg_mock_001", "type": "message", "role": "assistant",
         "content": [{
             "type": "tool_use", "id": "toolu_mock_001", "name": "Bash",
-            "input": {"command": "echo kapsis-mock-hook-test"},
+            "input": {"command": "echo kapsis-mock-hook-ran"},
         }],
         "model": "claude-haiku-4-5-20251001",
         "stop_reason": "tool_use", "stop_sequence": None,
