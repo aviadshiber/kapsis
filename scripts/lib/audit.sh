@@ -9,7 +9,7 @@
 #
 # Integrity model: this in-container writer is authored by the same process
 # tree the agent controls; treat the chain as tamper-EVIDENT for accidental
-# corruption, not tamper-PROOF against a compromised agent. See issue <TBD>
+# corruption, not tamper-PROOF against a compromised agent. See issue #439
 # for a host-authored redesign.
 #
 # Features:
