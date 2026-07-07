@@ -32,7 +32,6 @@ const base = (overrides: Partial<AgentStatus> = {}): AgentStatus => ({
   uncommitted_files: 0,
   heartbeat_at: null,
   error_type: null,
-  machine_provider: null,
   ...overrides,
 });
 
