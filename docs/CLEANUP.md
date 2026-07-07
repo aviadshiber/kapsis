@@ -104,10 +104,14 @@ cd ~/project && git worktree prune
 checks whether the worktree still belongs to an active agent, using a
 proportional-certainty guard (`scripts/lib/worktree-guard.sh`):
 
-1. **Terminal success (`phase: "complete"`)** — reaped unconditionally, with
-   zero Podman dependency. This is the only unambiguous "safe to reap"
-   signal, so a Podman outage or `podman` being absent from `PATH` never
-   blocks reclaiming these worktrees.
+1. **Terminal success (`phase: "complete"` with `exit_code: 0`)** — reaped
+   fast, with zero Podman dependency. This is the only unambiguous "safe to
+   reap" signal, so a Podman outage or `podman` being absent from `PATH`
+   never blocks reclaiming these worktrees. A non-zero `exit_code` (e.g. 3 —
+   uncommitted changes remain, or 6 — commit failure, both of which preserve
+   the worktree for manual recovery) or a missing/unparseable `exit_code` is
+   **not** fast-reaped: it falls through to the Podman corroboration and the
+   same age heuristic as step 2.
 2. **Terminal failure (`phase: error/failed/killed`)** — falls back to the
    same age heuristic as `worktree-manager.sh`'s opportunistic GC: directory
    mtime vs. `KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS` (default 168h/7 days).

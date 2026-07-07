@@ -50,9 +50,15 @@ WORKTREE_GUARD_SKIP_REASON=""
 # verified naming convention <project>-<6-hex-agent-id> (matches
 # worktree-manager.sh's create_worktree()/generate_agent_id()).
 #
+# Known limitation: launch-agent.sh also accepts a user-supplied --agent-id
+# matching ^[a-zA-Z0-9_-]+$, which this parser deliberately does NOT try to
+# handle -- project names may themselves contain hyphens, so splitting
+# <project>-<arbitrary-agent-id> is ambiguous. Callers must treat a parse
+# failure as "no Podman corroboration available" and fall back to the age
+# heuristic, NOT as a reason to retain the worktree forever.
+#
 # Prints the agent-id and returns 0 on match; prints nothing and returns 1
-# if the name doesn't match the convention (unparseable -> caller should
-# fail toward retaining, not deleting).
+# if the name doesn't match the convention.
 #-------------------------------------------------------------------------------
 _worktree_guard_agent_id() {
     local dirname="$1"
@@ -179,11 +185,13 @@ worktree_is_safe_to_reap() {
                 WORKTREE_GUARD_SKIP_REASON="live container found (no status file)"
                 return 1
             fi
-        else
-            # Unparseable name -- fail toward retaining, not deleting.
-            WORKTREE_GUARD_SKIP_REASON="unparseable worktree name, no status file"
-            return 1
         fi
+        # An unparseable name (e.g. a user-supplied --agent-id that doesn't
+        # match the <project>-<6-hex> convention -- see
+        # _worktree_guard_agent_id) simply means Podman corroboration is
+        # unavailable; the age heuristic below still decides the verdict.
+        # Retaining unconditionally here would make such a worktree
+        # permanently un-reapable.
         _worktree_guard_age_verdict "$worktree_path" && return 0
         [[ -z "$WORKTREE_GUARD_SKIP_REASON" ]] && WORKTREE_GUARD_SKIP_REASON="no status file, not yet aged out"
         return 1

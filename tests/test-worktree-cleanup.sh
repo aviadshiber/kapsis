@@ -635,6 +635,124 @@ EOF
     return 0
 }
 
+test_clean_worktrees_preserves_complete_exit_code_3() {
+    log_test "Testing clean_worktrees preserves phase=complete with exit_code=3"
+
+    # Exit code 3 = uncommitted changes remain -- the worktree is deliberately
+    # preserved for manual recovery, so the guard must NOT fast-reap it.
+    local agent_id
+    agent_id=$(printf '%06x' "$(( $$ + 5 ))")
+    setup_guard_test "$agent_id" "complete" "" 3
+
+    local cleanup_script="$KAPSIS_ROOT/scripts/kapsis-cleanup.sh"
+    # Minimal PATH with no podman -- isolates the exit_code branch from any
+    # live-container corroboration on the host.
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+        KAPSIS_DIR="$GUARD_TMP_DIR" "$cleanup_script" --force >/dev/null 2>&1 || true
+
+    assert_dir_exists "$GUARD_WORKTREE_PATH" \
+        "phase=complete, exit_code=3 worktree must survive kapsis-cleanup --force"
+
+    teardown_guard_test "$agent_id"
+}
+
+test_clean_worktrees_preserves_complete_exit_code_6() {
+    log_test "Testing clean_worktrees preserves phase=complete with exit_code=6"
+
+    # Exit code 6 = commit failure -- worktree kept with staged changes.
+    local agent_id
+    agent_id=$(printf '%06x' "$(( $$ + 6 ))")
+    setup_guard_test "$agent_id" "complete" "" 6
+
+    local cleanup_script="$KAPSIS_ROOT/scripts/kapsis-cleanup.sh"
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+        KAPSIS_DIR="$GUARD_TMP_DIR" "$cleanup_script" --force >/dev/null 2>&1 || true
+
+    assert_dir_exists "$GUARD_WORKTREE_PATH" \
+        "phase=complete, exit_code=6 worktree must survive kapsis-cleanup --force"
+
+    teardown_guard_test "$agent_id"
+}
+
+test_include_active_without_force_rejected() {
+    log_test "Testing --include-active without --force is rejected"
+
+    local cleanup_script="$KAPSIS_ROOT/scripts/kapsis-cleanup.sh"
+    local tmp_dir output
+    local exit_code=0
+    tmp_dir=$(mktemp -d)
+    output=$(KAPSIS_DIR="$tmp_dir" "$cleanup_script" --worktrees --include-active 2>&1) || exit_code=$?
+    rm -rf "$tmp_dir" 2>/dev/null || true
+
+    assert_equals "1" "$exit_code" "--include-active without --force should exit 1"
+    assert_contains "$output" "requires --force" \
+        "Rejection message should explain that --force is required"
+}
+
+test_clean_worktrees_include_active_reaps_guarded() {
+    log_test "Testing --include-active --force reaps a worktree the guard would retain"
+
+    # phase=running with a fresh heartbeat -- the guard retains this (see
+    # test_clean_worktrees_preserves_running_fresh_heartbeat); the operator
+    # escape hatch must bypass the guard and reap it anyway.
+    local agent_id
+    agent_id=$(printf '%06x' "$(( $$ + 7 ))")
+    local now
+    now=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    setup_guard_test "$agent_id" "running" "$now"
+
+    local cleanup_script="$KAPSIS_ROOT/scripts/kapsis-cleanup.sh"
+    KAPSIS_DIR="$GUARD_TMP_DIR" "$cleanup_script" --force --include-active >/dev/null 2>&1 || true
+
+    if [[ -d "$GUARD_WORKTREE_PATH" ]]; then
+        log_fail "--include-active --force should bypass the guard and reap a fresh-heartbeat worktree"
+        teardown_guard_test "$agent_id"
+        return 1
+    fi
+
+    rm -rf "$GUARD_TMP_DIR" 2>/dev/null || true
+    return 0
+}
+
+test_clean_worktrees_unparseable_name_age_fallback() {
+    log_test "Testing unparseable-name worktree with no status file uses the age fallback"
+
+    # Agent id whose trailing 6 chars are NOT lowercase hex, so
+    # _worktree_guard_agent_id cannot parse the worktree name (mirrors a
+    # user-supplied --agent-id, which launch-agent.sh permits). No status
+    # file either -- previously this combination was retained forever.
+    local agent_id="notparsezz"
+    setup_guard_test "$agent_id" "running" ""
+    rm -f "$GUARD_STATUS_FILE"
+
+    local cleanup_script="$KAPSIS_ROOT/scripts/kapsis-cleanup.sh"
+
+    # Fresh worktree: younger than the 168h max age -- must be retained.
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+        KAPSIS_DIR="$GUARD_TMP_DIR" "$cleanup_script" --force >/dev/null 2>&1 || true
+    assert_dir_exists "$GUARD_WORKTREE_PATH" \
+        "Fresh unparseable-name worktree should be retained by the age fallback"
+
+    # Backdate past the 168h max age: the age fallback must now reap it
+    # (before the follow-up fix it was permanently un-reapable).
+    local old_time=$(($(date +%s) - 8 * 24 * 3600))
+    touch -t "$(date -r "$old_time" +%Y%m%d%H%M.%S 2>/dev/null || date -d "@$old_time" +%Y%m%d%H%M.%S 2>/dev/null)" "$GUARD_WORKTREE_PATH" 2>/dev/null || {
+        # Fallback: try GNU touch
+        touch -d "@$old_time" "$GUARD_WORKTREE_PATH" 2>/dev/null || true
+    }
+    PATH="/usr/bin:/bin:/usr/sbin:/sbin" \
+        KAPSIS_DIR="$GUARD_TMP_DIR" "$cleanup_script" --force >/dev/null 2>&1 || true
+
+    if [[ -d "$GUARD_WORKTREE_PATH" ]]; then
+        log_fail "Aged-out unparseable-name worktree should be reaped via the age fallback"
+        teardown_guard_test "$agent_id"
+        return 1
+    fi
+
+    rm -rf "$GUARD_TMP_DIR" 2>/dev/null || true
+    return 0
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -679,6 +797,11 @@ main() {
     run_test test_clean_worktrees_reaps_complete_without_podman
     run_test test_clean_worktrees_skips_running_stale_heartbeat_no_podman_hit
     run_test test_clean_worktrees_podman_failure_does_not_block_other_removals
+    run_test test_clean_worktrees_preserves_complete_exit_code_3
+    run_test test_clean_worktrees_preserves_complete_exit_code_6
+    run_test test_include_active_without_force_rejected
+    run_test test_clean_worktrees_include_active_reaps_guarded
+    run_test test_clean_worktrees_unparseable_name_age_fallback
 
     # Cleanup
     cleanup_test_project

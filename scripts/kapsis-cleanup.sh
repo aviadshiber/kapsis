@@ -41,9 +41,12 @@ if [[ -f "$SCRIPT_DIR/lib/constants.sh" ]]; then
     source "$SCRIPT_DIR/lib/constants.sh"
 fi
 
-# Source the worktree in-use guard (Issue #428)
+# Source the worktree in-use guard (Issue #428). Fail-open by design: if the
+# library is missing or fails to source, clean_worktrees() reverts to
+# unconditional deletion (pre-#428 behavior) -- clean_worktrees() warns once
+# when that degradation is active.
 if [[ -f "$SCRIPT_DIR/lib/worktree-guard.sh" ]]; then
-    source "$SCRIPT_DIR/lib/worktree-guard.sh"
+    source "$SCRIPT_DIR/lib/worktree-guard.sh" || true
 fi
 
 # Directories
@@ -291,6 +294,15 @@ print_item_skipped() {
 # Clean worktrees
 clean_worktrees() {
     section "Worktrees"
+
+    # Degradation visibility (Issue #428): if lib/worktree-guard.sh could not
+    # be loaded, the loop below falls back to unconditional deletion (the
+    # pre-#428 behavior). That fail-open fallback is by design, but it must
+    # not be silent -- warn once per run. (--include-active is a deliberate
+    # operator bypass and already warns at argument parsing time.)
+    if [[ "$INCLUDE_ACTIVE" != "true" ]] && ! declare -f worktree_is_safe_to_reap &>/dev/null; then
+        log_warn "worktree in-use guard unavailable (lib/worktree-guard.sh missing or failed to load) -- worktrees will be removed unconditionally"
+    fi
 
     if [[ ! -d "$WORKTREE_DIR" ]]; then
         echo "  No worktree directory found"
