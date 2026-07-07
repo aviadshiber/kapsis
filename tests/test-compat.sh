@@ -800,6 +800,54 @@ test_get_podman_machine_provider_empty_when_podman_fails() {
     assert_equals "" "$provider" "Should be empty when podman fails, not raise an error"
 }
 
+test_get_podman_machine_provider_fallback_without_timeout_cmd() {
+    log_test "get_podman_machine_provider: fallback branch works when no timeout cmd available"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-provider-test.XXXXXX")
+    _provider_make_fake_podman "$tmpdir/podman" \
+        'if [[ "$1" == "machine" && "$2" == "inspect" ]]; then echo "libkrun"; exit 0; fi' \
+        'exit 1'
+
+    local provider
+    provider=$(
+        is_linux() { return 1; }
+        _KAPSIS_TIMEOUT_CMD=""
+        PATH="$tmpdir:$PATH"
+        get_podman_machine_provider "podman-machine-default"
+    )
+
+    rm -rf "$tmpdir"
+    assert_equals "libkrun" "$provider" "Fallback (no timeout cmd) branch should also return the provider"
+}
+
+test_get_podman_machine_provider_resolves_kapsis_podman_machine() {
+    log_test "get_podman_machine_provider: resolves KAPSIS_PODMAN_MACHINE when called without argument"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-provider-test.XXXXXX")
+    # Fake podman captures its argv so we can assert which machine name was passed.
+    _provider_make_fake_podman "$tmpdir/podman" \
+        "printf '%s\n' \"\$@\" > \"$tmpdir/argv\"" \
+        'echo "applehv"' \
+        'exit 0'
+
+    local provider
+    provider=$(
+        is_linux() { return 1; }
+        PATH="$tmpdir:$PATH"
+        KAPSIS_PODMAN_MACHINE="custom-machine"
+        get_podman_machine_provider
+    )
+
+    local argv=""
+    [[ -f "$tmpdir/argv" ]] && argv=$(cat "$tmpdir/argv")
+    rm -rf "$tmpdir"
+
+    assert_equals "applehv" "$provider" "Should return the provider reported by the fake podman"
+    assert_contains "$argv" "custom-machine" "custom-machine should be passed to podman machine inspect"
+}
+
 #===============================================================================
 # MAIN
 #===============================================================================
@@ -874,6 +922,8 @@ main() {
     run_test test_get_podman_machine_provider_applehv
     run_test test_get_podman_machine_provider_empty_on_linux
     run_test test_get_podman_machine_provider_empty_when_podman_fails
+    run_test test_get_podman_machine_provider_fallback_without_timeout_cmd
+    run_test test_get_podman_machine_provider_resolves_kapsis_podman_machine
 
     # Summary
     print_summary

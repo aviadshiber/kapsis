@@ -635,6 +635,16 @@ test_status_set_machine_provider() {
     status_phase "complete" 100 "Done"
 
     local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+
+    # Verify the whole status file is valid JSON
+    if python3 -c "import json; json.load(open('$status_file'))" 2>/dev/null; then
+        log_info "  JSON is valid with machine_provider set"
+    else
+        log_fail "Status file contains invalid JSON with machine_provider set"
+        cleanup_status_test
+        return 1
+    fi
+
     local content
     content=$(cat "$status_file")
 
@@ -653,6 +663,16 @@ test_status_machine_provider_null_by_default() {
     status_phase "complete" 100 "Done"
 
     local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+
+    # Verify the whole status file is valid JSON
+    if python3 -c "import json; json.load(open('$status_file'))" 2>/dev/null; then
+        log_info "  JSON is valid with machine_provider defaulted"
+    else
+        log_fail "Status file contains invalid JSON with machine_provider defaulted"
+        cleanup_status_test
+        return 1
+    fi
+
     local content
     content=$(cat "$status_file")
 
