@@ -194,5 +194,17 @@ transcript_save_partial() {
     printf -v header '# kapsis-transcript (interrupted) agent=%s at=%s' \
         "$agent_id" "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u)"
     _transcript_write "$transcript_path" "$output_file" "$header" "$max_bytes" || true
+
+    # Issue #430 defect 2 instrumentation: same boilerplate-only check as the
+    # normal-exit path (transcript_save). Agents killed early (SIGTERM,
+    # mount-failure, liveness-monitor kill) only ever go through this
+    # trap-path variant, so without this check transcript_content_missing
+    # would never be set for that entire failure class.
+    if [[ -f "$transcript_path" ]] && _transcript_is_boilerplate_only "$transcript_path"; then
+        log_warn "Captured partial transcript for agent=$agent_id is boilerplate-only (entrypoint/liveness-monitor/dnsmasq lines) — agent dialogue may not have been captured; see transcript_content_missing in status.json"
+        status_set_transcript_content_missing "true"
+    else
+        status_set_transcript_content_missing "false"
+    fi
     return 0
 }

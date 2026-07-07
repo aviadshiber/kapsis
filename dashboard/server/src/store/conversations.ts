@@ -1,4 +1,5 @@
-import { readdir, readFile, stat } from "node:fs/promises";
+import { readdir, readFile, stat, lstat, open } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
 import { join } from "node:path";
 import type { ArtifactEntry } from "@kapsis/dashboard-shared";
 
@@ -76,7 +77,12 @@ export class ConversationStore {
     for (const { kind, prefix, suffix } of ARTIFACT_KINDS) {
       const name = `${prefix}${agentId}${suffix}`;
       try {
-        const st = await stat(join(this.statusDir, name));
+        // lstat (not stat) so a symlink is rejected outright instead of
+        // followed — statusDir is a read-write bind mount into the
+        // container on Linux, so a hostile agent could otherwise plant
+        // e.g. `ln -s /etc/passwd response-<id>.md` for exfiltration.
+        // See readArtifact() below for the matching O_NOFOLLOW read guard.
+        const st = await lstat(join(this.statusDir, name));
         if (!st.isFile()) continue;
         out.push({ name, kind, size: st.size, mtime: st.mtime.toISOString() });
       } catch { /* artifact absent for this agent */ }
@@ -92,12 +98,20 @@ export class ConversationStore {
     const allowed = ARTIFACT_KINDS.some(({ prefix, suffix }) => name === `${prefix}${agentId}${suffix}`);
     if (!allowed) return null;
     const path = join(this.statusDir, name);
+    let handle;
     try {
-      const st = await stat(path);
+      // O_NOFOLLOW closes the stat->open TOCTOU: the open() call itself
+      // fails if the final path component is a symlink, so a symlink
+      // swapped in after listArtifacts()'s lstat check (or targeting a
+      // path never listed at all) still cannot be read through.
+      handle = await open(path, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+      const st = await handle.stat();
       if (!st.isFile() || st.size > maxBytes) return null;
-      return await readFile(path, "utf8");
+      return await handle.readFile({ encoding: "utf8" });
     } catch {
       return null;
+    } finally {
+      await handle?.close().catch(() => { /* already closed/failed to open */ });
     }
   }
 }
