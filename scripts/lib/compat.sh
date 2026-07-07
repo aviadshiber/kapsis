@@ -318,7 +318,7 @@ _podman_ssh_probe() {
 #-------------------------------------------------------------------------------
 _kill_vfkit_zombie() {
     local machine="${1:-podman-machine-default}"
-    declare -f log_warn &>/dev/null && log_warn "Killing vfkit hypervisor for '$machine' (zombie VM recovery)"
+    declare -f log_warn &>/dev/null && log_warn "Killing vfkit/krunkit hypervisor for '$machine' (zombie VM recovery)"
     pkill -9 -f "(vfkit|krunkit).*${machine}" &>/dev/null || true
 
     # Remove stale runtime artefacts left by the hard-killed hypervisor so that

@@ -140,11 +140,11 @@ start_vfkit_watchdog() {
             : > "$sentinel_path" 2>/dev/null || true
         fi
         status_set_error_type "mount_failure" 2>/dev/null || true
-        status_complete 4 "Workspace mount lost: vfkit (PID $vfkit_pid) exited (host-side watchdog). Recovery: podman machine stop && podman machine start, then re-run." 2>/dev/null || true
-        log_warn "KAPSIS_MOUNT_FAILURE[vfkit_watchdog]: vfkit (PID $vfkit_pid) exited — virtio-fs mounts lost"
+        status_complete 4 "Workspace mount lost: vfkit/krunkit (PID $vfkit_pid) exited (host-side watchdog). Recovery: podman machine stop && podman machine start, then re-run." 2>/dev/null || true
+        log_warn "KAPSIS_MOUNT_FAILURE[vfkit_watchdog]: vfkit/krunkit (PID $vfkit_pid) exited — virtio-fs mounts lost"
         pkill -TERM -f "podman run .*--name kapsis-${agent_id}(${boundary}|\$)" 2>/dev/null || true
     ) &
     _VFKIT_WATCHDOG_PID=$!
 
-    log_debug "vfkit watchdog active (vfkit PID: $vfkit_pid, poll: ${interval}s, watchdog PID: $_VFKIT_WATCHDOG_PID)"
+    log_debug "vfkit watchdog active (vfkit/krunkit PID: $vfkit_pid, poll: ${interval}s, watchdog PID: $_VFKIT_WATCHDOG_PID)"
 }

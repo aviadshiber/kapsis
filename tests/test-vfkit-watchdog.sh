@@ -279,7 +279,7 @@ test_watchdog_pgrep_pattern_matches_krunkit() {
     # — i.e. it would match a krunkit-only process on a real libkrun/AVF host.
     FAKE_PGREP_PID="$fake_krunkit_pid" _install_fakes
 
-    KAPSIS_VFKIT_WATCHDOG_INTERVAL=5 start_vfkit_watchdog "$TEST_AGENT_ID"
+    KAPSIS_VFKIT_WATCHDOG_INTERVAL=5 start_vfkit_watchdog "$TEST_AGENT_ID" "" "podman-machine-krunkit-test"
     local watchdog_pid="$_VFKIT_WATCHDOG_PID"
 
     assert_file_exists "$TEST_TMP/pgrep.argv" "pgrep must be invoked by the watchdog to locate the hypervisor process"
@@ -288,6 +288,7 @@ test_watchdog_pgrep_pattern_matches_krunkit() {
     assert_contains "$argv" "vfkit" "pgrep pattern must still match vfkit (applehv)"
     assert_contains "$argv" "krunkit" "pgrep pattern must also match krunkit (libkrun/AVF)"
     assert_contains "$argv" "(vfkit|krunkit)" "pgrep pattern must use an alternation, not a fixed vfkit-only string"
+    assert_contains "$argv" "podman-machine-krunkit-test" "pgrep pattern must still be scoped to the target machine name"
 
     kill "$watchdog_pid" 2>/dev/null || true
     wait "$watchdog_pid" 2>/dev/null || true
