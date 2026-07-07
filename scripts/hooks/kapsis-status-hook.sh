@@ -438,6 +438,12 @@ print(json.dumps(state))
         if [[ -f "$KAPSIS_HOME/lib/audit.sh" ]]; then
             source "$KAPSIS_HOME/lib/audit.sh"
             source "$KAPSIS_HOME/lib/audit-patterns.sh"
+            # NOTE: The || true guards below intentionally suppress ALL failures
+            # (not just the audit_check_patterns exit-1 case) — including
+            # disk-full or permission errors. This hook runs under set -e and
+            # its robustness contract requires that it never break the agent:
+            # it must always reach the final `echo "{}"` below. Audit logging
+            # is best-effort here; do NOT narrow these guards.
             if [[ "${_KAPSIS_AUDIT_INITIALIZED:-false}" != "true" ]]; then
                 audit_init "$_safe_agent_id" \
                            "${KAPSIS_STATUS_PROJECT:-unknown}" \
