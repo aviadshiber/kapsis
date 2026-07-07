@@ -538,11 +538,13 @@ clean_status() {
             mtime=$(get_file_mtime "$status_file" 2>/dev/null) || mtime=""
             if [[ "$phase" == "complete" ]]; then
                 # Complete: retain until the same TTL used for conversations/.
+                # -le (not -lt) to match clean_conversations() exactly, so the
+                # two lifecycles cannot diverge at the age==TTL boundary.
                 if [[ -z "$mtime" ]]; then
                     continue
                 fi
                 age=$((now - mtime))
-                if [[ "$age" -lt "$ttl_seconds" ]]; then
+                if [[ "$age" -le "$ttl_seconds" ]]; then
                     log_debug "Skipping complete status file within TTL: $name"
                     continue
                 fi

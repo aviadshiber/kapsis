@@ -302,7 +302,13 @@ function ConversationTab({ agentId, transcriptContentMissing }: { agentId: strin
   // side-channel artifact (if any) instead of only showing a blank state.
   const shouldCheckArtifact = data !== null && (data.empty || transcriptContentMissing);
   useEffect(() => {
-    if (!shouldCheckArtifact) return;
+    if (!shouldCheckArtifact) {
+      // Reset so a stale artifact panel from a previous agent (or a
+      // previous data state) never lingers once the fallback no longer
+      // applies — same reset-to-undefined pattern as the fetch below.
+      setResponseArtifact(undefined);
+      return;
+    }
     let alive = true;
     setResponseArtifact(undefined);
     api.artifacts(agentId).then((entries) => {

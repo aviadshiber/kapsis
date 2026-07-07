@@ -66,8 +66,9 @@ export type AgentKey = { project: string; agentId: string };
 // Side-channel artifact files a completed agent may leave under its status
 // dir (Issue #430, defect 3) — response-<id>.md / decisions-<id>.json /
 // debug-<id>.log. The allowed basenames MUST match, filename-for-filename,
-// the whitelist already codified in scripts/lib/status-sync.sh:92 — see
-// dashboard/server/src/store/conversations.ts's ARTIFACT_NAME_RE.
+// the whitelist already codified in scripts/lib/status-sync.sh:92 — see the
+// ARTIFACT_KINDS prefix/suffix table in
+// dashboard/server/src/store/conversations.ts.
 export interface ArtifactEntry {
   name: string;
   kind: "response" | "decisions" | "debug";

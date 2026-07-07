@@ -285,6 +285,79 @@ EOF
         "transcript_content_missing must be set true when the transcript matches only known boilerplate"
 }
 
+test_transcript_content_missing_lands_in_status_json() {
+    log_test "transcript_content_missing=true is persisted into the written status.json (Issue #430)"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-conv-json-XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmpdir'" RETURN
+
+    local conv_dir="${tmpdir}/agent-json"
+    mkdir -p "$conv_dir"
+    local buf="${tmpdir}/buf"
+    cat > "$buf" << 'EOF'
+[INFO] [entrypoint] [entrypoint.sh:122] Injecting credentials to files...
+dnsmasq: started, version 2.85 cachesize 150
+EOF
+
+    # Point status.sh at an isolated dir, run the real init → save →
+    # complete sequence, then assert the key landed in the JSON on disk —
+    # not just in the internal bash global.
+    local saved_status_dir="$KAPSIS_STATUS_DIR"
+    KAPSIS_STATUS_DIR="${tmpdir}/status"
+    status_set_transcript_content_missing "false"
+    status_init "convtest" "json-agent"
+    transcript_save "$conv_dir" "$buf" "json-agent" "0"
+    status_complete 0
+
+    local status_file="${tmpdir}/status/kapsis-convtest-json-agent.json"
+    # Restore shared state before asserting so a failure can't leak it.
+    KAPSIS_STATUS_DIR="$saved_status_dir"
+    _KAPSIS_STATUS_INITIALIZED=false
+    status_set_transcript_content_missing "false"
+
+    if [[ ! -f "$status_file" ]]; then
+        log_fail "status.json should have been written at $status_file"
+        return 1
+    fi
+    if ! grep -q '"transcript_content_missing": true' "$status_file"; then
+        log_fail "status.json must contain \"transcript_content_missing\": true, got: $(cat "$status_file")"
+        return 1
+    fi
+}
+
+test_partial_transcript_content_missing_flagged_for_boilerplate_only() {
+    log_test "transcript_save_partial (kill path) sets transcript_content_missing=true for boilerplate-only content (Issue #430)"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-conv-pboiler-XXXXXX")
+    # shellcheck disable=SC2064
+    trap "rm -rf '$tmpdir'" RETURN
+
+    local conv_dir="${tmpdir}/agent-pboiler"
+    mkdir -p "$conv_dir"
+    local buf="${tmpdir}/buf"
+    cat > "$buf" << 'EOF'
+[INFO] [entrypoint] [entrypoint.sh:122] Injecting credentials to files...
+[WARN] [liveness-monitor] [liveness-monitor.sh:88] heartbeat check ok
+dnsmasq: started, version 2.85 cachesize 150
+EOF
+
+    # Agents killed early (SIGTERM, mount failure, liveness kill) only ever
+    # traverse this trap-path variant — it must flag the gap too.
+    status_set_transcript_content_missing "false"
+    transcript_save_partial "$conv_dir" "$buf" "pboiler-agent"
+
+    if [[ ! -f "${conv_dir}/transcript.txt" ]]; then
+        log_fail "transcript_save_partial should have written transcript.txt"
+        return 1
+    fi
+    assert_equals "true" "$_KAPSIS_TRANSCRIPT_CONTENT_MISSING" \
+        "transcript_content_missing must be set true by the kill-path variant for boilerplate-only content"
+    status_set_transcript_content_missing "false"
+}
+
 test_transcript_content_missing_not_set_for_real_content() {
     log_test "transcript_save leaves transcript_content_missing unset when real content is interleaved (Issue #430)"
 
@@ -520,6 +593,8 @@ main() {
     run_test test_strip_ansi_handles_osc_csi_and_cr
     run_test test_transcript_truncation_keeps_tail
     run_test test_transcript_content_missing_flagged_for_boilerplate_only
+    run_test test_transcript_content_missing_lands_in_status_json
+    run_test test_partial_transcript_content_missing_flagged_for_boilerplate_only
     run_test test_transcript_content_missing_not_set_for_real_content
     run_test test_transcript_skipped_when_conv_dir_absent
     run_test test_transcript_skipped_when_buffer_empty

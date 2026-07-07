@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from "bun:test";
-import { mkdtemp, mkdir, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, writeFile, rm, symlink, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ConversationStore } from "../src/store/conversations";
@@ -149,6 +149,63 @@ describe("ConversationStore artifacts", () => {
     await writeFile(join(statusDir, "response-abc123.md"), "hi");
     const entries = await store.listArtifacts("../abc123");
     expect(entries).toEqual([]);
+  });
+
+  it("rejects a symlink planted at a whitelisted basename (listArtifacts and readArtifact)", async () => {
+    // statusDir is a read-write bind mount into the container on Linux, so
+    // a hostile agent could plant `ln -s <secret> response-<id>.md` hoping
+    // the dashboard reads through it. listArtifacts must not list it
+    // (lstat sees a symlink) and readArtifact must not read it (O_NOFOLLOW
+    // makes the open itself fail).
+    const secret = join(convDir, "secret.txt");
+    await writeFile(secret, "top secret");
+    await symlink(secret, join(statusDir, "response-abc123.md"));
+
+    const entries = await store.listArtifacts("abc123");
+    expect(entries).toEqual([]);
+    const body = await store.readArtifact("abc123", "response-abc123.md");
+    expect(body).toBeNull();
+  });
+
+  it("readArtifact rejects an artifact over the default 5MB cap", async () => {
+    const oversized = "x".repeat(5 * 1024 * 1024 + 1);
+    await writeFile(join(statusDir, "response-abc123.md"), oversized);
+    const body = await store.readArtifact("abc123", "response-abc123.md");
+    expect(body).toBeNull();
+    // Sanity: a small artifact in the same store is still served.
+    await writeFile(join(statusDir, "decisions-abc123.json"), "{}");
+    expect(await store.readArtifact("abc123", "decisions-abc123.json")).toBe("{}");
+  });
+
+  it("recognizes every artifact pattern documented in status-sync.sh (drift guard)", async () => {
+    // The bash side documents its legitimate side-channel basenames as
+    // backtick-quoted `<kind>-<id>.<ext>` patterns in the whitelist comment
+    // of scripts/lib/status-sync.sh. Extract them and assert each one is
+    // recognized by ARTIFACT_KINDS (behaviorally, via listArtifacts), so a
+    // pattern added or renamed on the bash side without a matching TS
+    // change fails this test. (`kapsis-<project>-<id>.json` intentionally
+    // doesn't match — it's a status file, not a side-channel artifact.)
+    const bashPath = new URL("../../../scripts/lib/status-sync.sh", import.meta.url).pathname;
+    const src = await readFile(bashPath, "utf8");
+    const matches = [...src.matchAll(/`([a-z]+)-<id>\.([a-z]+)`/g)];
+    expect(matches.length).toBeGreaterThanOrEqual(3);
+
+    const agentId = "parity1";
+    const expected = new Map<string, string>(); // name -> kind (= prefix)
+    for (const m of matches) {
+      const prefix = m[1]!;
+      const suffix = m[2]!;
+      const name = `${prefix}-${agentId}.${suffix}`;
+      if (expected.has(name)) continue;
+      expected.set(name, prefix);
+      await writeFile(join(statusDir, name), "x");
+    }
+    const entries = await store.listArtifacts(agentId);
+    for (const [name, kind] of expected) {
+      const match = entries.find((e) => e.name === name);
+      expect(match).toBeDefined();
+      expect(match!.kind).toBe(kind as "response" | "decisions" | "debug");
+    }
   });
 
   it("whitelist regex matches the exact example basenames status-sync.sh:92 documents", () => {
