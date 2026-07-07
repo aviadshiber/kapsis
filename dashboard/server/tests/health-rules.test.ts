@@ -12,6 +12,7 @@ const baseStatus = (over: Partial<AgentStatus> = {}): AgentStatus => ({
   push_status: null, local_commit: null, remote_commit: null,
   push_fallback_command: null, commit_status: null, commit_sha: null,
   uncommitted_files: 0, heartbeat_at: null, error_type: null,
+  machine_provider: null,
   ...over,
 });
 
