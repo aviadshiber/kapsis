@@ -59,6 +59,12 @@ export interface AgentStatus {
   // scripts/lib/transcript.sh::_transcript_is_boilerplate_only. Optional/
   // absent on status files written before this field existed.
   transcript_content_missing?: boolean;
+  //
+  // Podman machine hypervisor backend detected at launch (Issue #409):
+  // "applehv" (Apple Virtualization.framework, vfkit) or "libkrun"
+  // (Hypervisor.framework, krunkit). Informational only — null on Linux
+  // or when detection failed/was skipped.
+  machine_provider: "applehv" | "libkrun" | string | null;
 }
 
 export type AgentKey = { project: string; agentId: string };
