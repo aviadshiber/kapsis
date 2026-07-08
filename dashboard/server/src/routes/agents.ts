@@ -124,6 +124,27 @@ export function registerAgentRoutes(r: Router, deps: AgentsDeps): void {
     return new Response(body, { headers: { "content-type": "text/plain; charset=utf-8" } });
   });
 
+  // Side-channel artifacts (Issue #430, defect 3): response-<id>.md,
+  // decisions-<id>.json, debug-<id>.log written directly to the status dir.
+  // Follows the same requireAgentId + 404-on-null pattern as the
+  // conversation routes above.
+  r.get("/api/v1/agents/:id/artifacts", async (_req, params) => {
+    const id = p(params, "id");
+    const bad = requireAgentId(id);
+    if (bad) return bad;
+    return json(await conv.listArtifacts(id));
+  });
+
+  r.get("/api/v1/agents/:id/artifacts/:name", async (_req, params) => {
+    const id = p(params, "id");
+    const name = p(params, "name");
+    const bad = requireAgentId(id);
+    if (bad) return bad;
+    const body = await conv.readArtifact(id, name);
+    if (body === null) return errorResponse(404, "artifact not found, not whitelisted, or too large");
+    return new Response(body, { headers: { "content-type": "text/plain; charset=utf-8" } });
+  });
+
   // SSE endpoints — auth happens in the server layer (ephemeral token).
   r.get("/sse/agents", () => sse.subscribe(["agents"]));
   r.get("/sse/agents/:id/logs", (_req, params) => {

@@ -15,7 +15,7 @@
 import type {
   AgentStatus, AgentHealth, ContainerInfo, ContainerStats,
   LogChunk, AuditEvent, AuditChainStatus, ConversationEntry, DiskUsageEntry,
-  KillResultWire, SpecResponse, GistEntry,
+  KillResultWire, SpecResponse, GistEntry, ArtifactEntry,
 } from "../types";
 
 function readToken(): string {
@@ -62,6 +62,18 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   return res.json() as Promise<T>;
 }
 
+// Plain-text variant of request() for endpoints that return
+// `text/plain` (conversation/artifact file content) rather than JSON.
+async function requestText(method: string, path: string): Promise<string> {
+  const res = await fetch(path, { method, headers: { "Authorization": `Bearer ${token}` } });
+  if (!res.ok) {
+    let detail: unknown;
+    try { detail = await res.json(); } catch { /* ignore */ }
+    throw new ApiError(res.status, `${method} ${path} → ${res.status}`, detail);
+  }
+  return res.text();
+}
+
 export const api = {
   version: () => request<{ version: string; readOnly: boolean }>("GET", "/api/v1/version"),
   agents: () => request<{ agents: AgentStatus[] }>("GET", "/api/v1/agents"),
@@ -80,6 +92,17 @@ export const api = {
   }>("GET", `/api/v1/agents/${encodeURIComponent(id)}/audit`),
   conversation: (id: string) => request<ConversationEntry>(
     "GET", `/api/v1/agents/${encodeURIComponent(id)}/conversation`,
+  ),
+  conversationFile: (id: string, name: string) => requestText(
+    "GET", `/api/v1/agents/${encodeURIComponent(id)}/conversation/${encodeURIComponent(name)}`,
+  ),
+  // Side-channel artifacts (Issue #430, defect 3): response-<id>.md /
+  // decisions-<id>.json / debug-<id>.log written directly to the status dir.
+  artifacts: (id: string) => request<ArtifactEntry[]>(
+    "GET", `/api/v1/agents/${encodeURIComponent(id)}/artifacts`,
+  ),
+  artifactContent: (id: string, name: string) => requestText(
+    "GET", `/api/v1/agents/${encodeURIComponent(id)}/artifacts/${encodeURIComponent(name)}`,
   ),
   spec: (id: string) => request<SpecResponse>(
     "GET", `/api/v1/agents/${encodeURIComponent(id)}/spec`,
