@@ -11,9 +11,9 @@ class Kapsis < Formula
 
   # Stable release - automatically updated by CI on each release
   # RELEASE_VERSION_MARKER_START - Do not remove, used by CI
-  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.37.5.tar.gz"
-  sha256 "0ee49221b19907ba1fb0905d2e15235ba2da014f2bf3a7c502de29b4be4a7e30"
-  version "2.37.5"
+  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.37.6.tar.gz"
+  sha256 "be33642bb0f59dcac00dac6b547438ab761e888b1eaa1cf14de8d77e95802c2d"
+  version "2.37.6"
   # RELEASE_VERSION_MARKER_END
 
   # Homebrew livecheck - detects new releases automatically
@@ -49,7 +49,7 @@ class Kapsis < Formula
     on_arm do
       # DASHBOARD_DARWIN_ARM64_MARKER_START
       resource "kapsis-dashboard" do
-        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.5/kapsis-dashboard-darwin-arm64"
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-dashboard-darwin-arm64"
         sha256 "21e6af4f84950031765c44e00b0fb4ec62ab8d7ceb9e3881ff140718eefc939d"
       end
       # DASHBOARD_DARWIN_ARM64_MARKER_END
@@ -57,7 +57,7 @@ class Kapsis < Formula
     on_intel do
       # DASHBOARD_DARWIN_X64_MARKER_START
       resource "kapsis-dashboard" do
-        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.5/kapsis-dashboard-darwin-x64"
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-dashboard-darwin-x64"
         sha256 "0f547b69f08022b0fd21df8244a4fdc5c31e17c079e6c3a95927162f9a2a77c2"
       end
       # DASHBOARD_DARWIN_X64_MARKER_END
@@ -67,7 +67,7 @@ class Kapsis < Formula
     on_arm do
       # DASHBOARD_LINUX_ARM64_MARKER_START
       resource "kapsis-dashboard" do
-        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.5/kapsis-dashboard-linux-arm64"
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-dashboard-linux-arm64"
         sha256 "59fc0b36750cdbc2bd253857efb171a522071af06e82e179ec47344e35e198fb"
       end
       # DASHBOARD_LINUX_ARM64_MARKER_END
@@ -75,7 +75,7 @@ class Kapsis < Formula
     on_intel do
       # DASHBOARD_LINUX_X64_MARKER_START
       resource "kapsis-dashboard" do
-        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.5/kapsis-dashboard-linux-x64"
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-dashboard-linux-x64"
         sha256 "72ed9d4d058f012456870c485cc94e25c01baa8a5475899f5e51b65843d52b17"
       end
       # DASHBOARD_LINUX_X64_MARKER_END
@@ -101,16 +101,16 @@ class Kapsis < Formula
     on_arm do
       # KAPSIS_CTL_DARWIN_ARM64_MARKER_START
       resource "kapsis-ctl" do
-        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.1/kapsis-ctl-darwin-arm64"
-        sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-ctl-darwin-arm64"
+        sha256 "6a39f3cf463d08849fe7a0b02c60b9ae41e37ad10e44726535b9e7adcb9ca855"
       end
       # KAPSIS_CTL_DARWIN_ARM64_MARKER_END
     end
     on_intel do
       # KAPSIS_CTL_DARWIN_X64_MARKER_START
       resource "kapsis-ctl" do
-        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.1/kapsis-ctl-darwin-x64"
-        sha256 "0000000000000000000000000000000000000000000000000000000000000000"
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-ctl-darwin-x64"
+        sha256 "ee69c6ce8634f7dd850d5a22d743224b642cfefa6290a6b6ad399e3218733451"
       end
       # KAPSIS_CTL_DARWIN_X64_MARKER_END
     end

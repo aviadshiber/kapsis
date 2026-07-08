@@ -71,6 +71,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Align status/conversation retention, surface response artifacts (#437)
 
+## [2.37.6] - 2026-07-08
+
+### Fixed
+- Package kapsis-ctl for macOS via Homebrew (libexec-only) (#436)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1106,7 +1111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.37.5...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.37.6...HEAD
+[2.37.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.6
 [2.37.5]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.5
 [2.37.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.4
 [2.37.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.3
