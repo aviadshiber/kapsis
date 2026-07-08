@@ -7,6 +7,11 @@
 # previous one via SHA-256, creating an immutable chain that can be verified
 # after the session.
 #
+# Integrity model: this in-container writer is authored by the same process
+# tree the agent controls; treat the chain as tamper-EVIDENT for accidental
+# corruption, not tamper-PROOF against a compromised agent. See issue #439
+# for a host-authored redesign.
+#
 # Features:
 #   - Hash-chained JSONL events (tamper detection)
 #   - Auto-classification of event types
@@ -206,7 +211,11 @@ audit_log_event() {
 
     # Check patterns if pattern detection is available
     if declare -f audit_check_patterns &>/dev/null; then
-        audit_check_patterns "$event_type" "$tool_name" "$sanitized_detail"
+        # Return code intentionally discarded: audit_check_patterns returns 1 for
+        # the common no-alert case, which would otherwise abort this function
+        # (and its caller) under set -e. Any caller that needs the alert signal
+        # must call audit_check_patterns directly, not rely on audit_log_event.
+        audit_check_patterns "$event_type" "$tool_name" "$sanitized_detail" || true
     fi
 }
 
