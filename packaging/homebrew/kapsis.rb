@@ -11,9 +11,9 @@ class Kapsis < Formula
 
   # Stable release - automatically updated by CI on each release
   # RELEASE_VERSION_MARKER_START - Do not remove, used by CI
-  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.37.1.tar.gz"
-  sha256 "c59245852698dda49ccf7464dfdc2932a690b8fefe7536e51f20e9fbaa828265"
-  version "2.37.1"
+  url "https://github.com/aviadshiber/kapsis/archive/refs/tags/v2.37.6.tar.gz"
+  sha256 "be33642bb0f59dcac00dac6b547438ab761e888b1eaa1cf14de8d77e95802c2d"
+  version "2.37.6"
   # RELEASE_VERSION_MARKER_END
 
   # Homebrew livecheck - detects new releases automatically
@@ -49,16 +49,16 @@ class Kapsis < Formula
     on_arm do
       # DASHBOARD_DARWIN_ARM64_MARKER_START
       resource "kapsis-dashboard" do
-        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.1/kapsis-dashboard-darwin-arm64"
-        sha256 "590a9b47dbffe11f9c58a97b9bca2f386eeee0e1c36bafe3abc0a0745db43bd2"
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-dashboard-darwin-arm64"
+        sha256 "21e6af4f84950031765c44e00b0fb4ec62ab8d7ceb9e3881ff140718eefc939d"
       end
       # DASHBOARD_DARWIN_ARM64_MARKER_END
     end
     on_intel do
       # DASHBOARD_DARWIN_X64_MARKER_START
       resource "kapsis-dashboard" do
-        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.1/kapsis-dashboard-darwin-x64"
-        sha256 "f25af2640c6bd69ed325d8c9c4247bca0c7c976339285c63170158d5e0418a32"
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-dashboard-darwin-x64"
+        sha256 "0f547b69f08022b0fd21df8244a4fdc5c31e17c079e6c3a95927162f9a2a77c2"
       end
       # DASHBOARD_DARWIN_X64_MARKER_END
     end
@@ -67,18 +67,52 @@ class Kapsis < Formula
     on_arm do
       # DASHBOARD_LINUX_ARM64_MARKER_START
       resource "kapsis-dashboard" do
-        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.1/kapsis-dashboard-linux-arm64"
-        sha256 "a96c685fb52e4980651f1b23907c643a8fb058cdbfbbc71608925a7fd9ac92f2"
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-dashboard-linux-arm64"
+        sha256 "59fc0b36750cdbc2bd253857efb171a522071af06e82e179ec47344e35e198fb"
       end
       # DASHBOARD_LINUX_ARM64_MARKER_END
     end
     on_intel do
       # DASHBOARD_LINUX_X64_MARKER_START
       resource "kapsis-dashboard" do
-        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.1/kapsis-dashboard-linux-x64"
-        sha256 "97277659e7220cf471e2e2a3f07caced88a5bdf90d2ea102456aff9163de8518"
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-dashboard-linux-x64"
+        sha256 "72ed9d4d058f012456870c485cc94e25c01baa8a5475899f5e51b65843d52b17"
       end
       # DASHBOARD_LINUX_X64_MARKER_END
+    end
+  end
+
+  # kapsis-ctl (issue #266) is a host-side, Podman-socket-touching internal
+  # helper consumed only by scripts/lib/podman-health.sh's macOS-only
+  # auto-heal path (podman-health.sh's `is_linux` early-return in
+  # `maybe_autoheal_podman_vm`, plus launch-agent.sh's additional
+  # `is_macos` gate on that function's only caller). There is no Linux
+  # consumer today, so only darwin-arm64/darwin-x64 resources are declared
+  # here — do not add on_linux blocks without a real, code-backed consumer.
+  #
+  # Staged into libexec/bin/kapsis-ctl (NOT bin/) deliberately: it is not a
+  # supported public command, just an implementation detail that
+  # podman-health.sh discovers via its existing relative-path lookup
+  # (`${_self_dir}/../../bin/kapsis-ctl`, which resolves to
+  # libexec/bin/kapsis-ctl since `install` below sets KAPSIS_LIB to
+  # libexec/scripts/lib for every wrapper). Do not add a bin.install_symlink
+  # for it.
+  on_macos do
+    on_arm do
+      # KAPSIS_CTL_DARWIN_ARM64_MARKER_START
+      resource "kapsis-ctl" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-ctl-darwin-arm64"
+        sha256 "6a39f3cf463d08849fe7a0b02c60b9ae41e37ad10e44726535b9e7adcb9ca855"
+      end
+      # KAPSIS_CTL_DARWIN_ARM64_MARKER_END
+    end
+    on_intel do
+      # KAPSIS_CTL_DARWIN_X64_MARKER_START
+      resource "kapsis-ctl" do
+        url "https://github.com/aviadshiber/kapsis/releases/download/v2.37.6/kapsis-ctl-darwin-x64"
+        sha256 "ee69c6ce8634f7dd850d5a22d743224b642cfefa6290a6b6ad399e3218733451"
+      end
+      # KAPSIS_CTL_DARWIN_X64_MARKER_END
     end
   end
 
@@ -140,6 +174,24 @@ class Kapsis < Formula
       chmod 0755, bin_dir/"kapsis-dashboard"
     end
     bin.install_symlink libexec/"dashboard/bin/kapsis-dashboard"
+
+    # Install the kapsis-ctl binary from the per-platform release asset
+    # selected by the on_macos + on_arm/on_intel resource blocks above.
+    # Staged into libexec/bin/kapsis-ctl (NOT bin/) — it is an internal
+    # helper for podman-health.sh's macOS-only auto-heal path, not a
+    # supported public command. Intentionally no bin.install_symlink.
+    # No Linux resource is declared (no consumer there), so this only
+    # runs on macOS.
+    if OS.mac?
+      resource("kapsis-ctl").stage do
+        ctl_bin_dir = libexec/"bin"
+        ctl_bin_dir.mkpath
+        staged = Dir["kapsis-ctl-*"].first
+        odie "kapsis-ctl resource downloaded but no binary found" unless staged
+        cp staged, ctl_bin_dir/"kapsis-ctl"
+        chmod 0755, ctl_bin_dir/"kapsis-ctl"
+      end
+    end
   end
 
   def caveats
@@ -203,5 +255,19 @@ class Kapsis < Formula
       "kapsis-recovery-action wrapper should be installed"
     assert_match "Usage:",
       shell_output("#{bin}/kapsis-recovery-action --help 2>&1", 0)
+
+    # Verify kapsis-ctl was staged into libexec/bin (macOS only — no Linux
+    # resource is declared, see the on_macos block above), is NOT exposed
+    # as a public bin/ symlink, and its --version smoke check works.
+    if OS.mac?
+      assert_predicate libexec/"bin/kapsis-ctl", :exist?,
+        "kapsis-ctl binary should be staged into libexec/bin"
+      assert_predicate libexec/"bin/kapsis-ctl", :executable?,
+        "kapsis-ctl binary should be executable"
+      refute_predicate bin/"kapsis-ctl", :exist?,
+        "kapsis-ctl must not be exposed as a public bin/ command"
+      assert_match(/\d+\.\d+\.\d+|dev/,
+        shell_output("#{libexec}/bin/kapsis-ctl --version", 0))
+    end
   end
 end

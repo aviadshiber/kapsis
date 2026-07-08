@@ -3028,6 +3028,19 @@ main() {
 
     # Update status with sandbox mode and worktree path now that we know them
     status_init "$project_name" "$AGENT_ID" "$BRANCH" "$SANDBOX_MODE" "${WORKTREE_PATH:-}" || true
+
+    # Detect Podman machine provider (Issue #409): applehv vs libkrun affects
+    # which virtio-fs mitigations are structurally relevant to this host.
+    # Informational only — logs + status.json field, no behavioral branch.
+    if [[ "$BACKEND" == "podman" ]] && is_macos; then
+        local _machine_provider
+        _machine_provider=$(get_podman_machine_provider 2>/dev/null || true)
+        if [[ -n "$_machine_provider" ]]; then
+            log_info "Podman machine provider: $_machine_provider"
+            status_set_machine_provider "$_machine_provider"
+        fi
+    fi
+
     status_phase "preparing" 18 "Sandbox ready" || true
 
     # Podman-specific: generate volume mounts, env vars, secrets env-file

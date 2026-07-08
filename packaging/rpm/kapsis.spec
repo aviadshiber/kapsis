@@ -1,5 +1,5 @@
 Name:           kapsis
-Version:        2.37.1  # RELEASE_VERSION_MARKER - Do not remove, used by CI
+Version:        2.37.6  # RELEASE_VERSION_MARKER - Do not remove, used by CI
 Release:        1%{?dist}
 Summary:        Hermetically isolated AI agent sandbox
 
@@ -140,6 +140,14 @@ chmod 755 %{buildroot}%{_bindir}/kapsis-quick
 # this spec runs. If the binary is absent, the install fails fast so the
 # release artifact is never shipped without the dashboard.
 install -m 755 dashboard/bin/kapsis-dashboard %{buildroot}%{_bindir}/kapsis-dashboard
+
+# kapsis-ctl (issue #266) is intentionally NOT installed here. Its only
+# consumer is scripts/lib/podman-health.sh's macOS-only virtio-fs auto-heal
+# path (is_linux early-return in maybe_autoheal_podman_vm, plus an
+# additional is_macos gate on that function's only caller in
+# launch-agent.sh) — there is no Linux code path that ever invokes it.
+# See packaging/homebrew/kapsis.rb for the macOS-only (libexec-only)
+# packaging of this binary.
 
 %files
 %license LICENSE

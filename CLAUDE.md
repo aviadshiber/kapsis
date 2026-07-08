@@ -156,6 +156,7 @@ kapsis/
 | Audit system | `docs/AUDIT-SYSTEM.md` |
 | Network isolation | `docs/NETWORK-ISOLATION.md` |
 | K8s backend | `docs/K8S-BACKEND.md` |
+| Podman `libkrun`/`krunkit` provider (opt-in, macOS) | `docs/KRUNKIT-PROVIDER.md` |
 | Installation | `docs/INSTALL.md` |
 | Initial setup | `docs/SETUP.md` |
 | Logging & testing | `CONTRIBUTING.md` |
@@ -249,7 +250,7 @@ Status is written as JSON to `~/.kapsis/status/`.
 
 | File | Purpose |
 |------|---------|
-| `cmd/kapsis-ctl/` | **Phases 1–2 — dev/operator tool, not packaged yet.** Read-only queries (`inspect`, `list`, `alive`) + control (`stop`, `logs`, `cp`). Build with `make build-ctl`. MUST NOT be installed inside container images (see issue #266 for the Phase 3 roadmap). |
+| `cmd/kapsis-ctl/` | **Phases 1–2 — packaged for macOS only, via Homebrew, libexec-only (issue #429).** Read-only queries (`inspect`, `list`, `alive`) + control (`stop`, `logs`, `cp`). Build with `make build-ctl`; `--version` is stamped at build time (`-X main.version=...`, `dev` otherwise). Staged into `libexec/bin/kapsis-ctl` by the Homebrew formula — deliberately NOT symlinked into `bin/`, since it's an internal helper for `scripts/lib/podman-health.sh`'s macOS-only auto-heal path, not a supported public command. No RPM/Debian packaging and no Linux build: the only caller (`maybe_autoheal_podman_vm`) early-returns on Linux and is additionally gated behind `is_macos` at its call site, so there is no Linux consumer. MUST NOT be installed inside container images (see issue #266 for the Phase 3 roadmap). |
 | `cmd/kapsis-ctl/podman/client.go` | libpod REST API client — socket discovery, validation, Inspect/List/Alive/Stop/Logs/Archive |
 | `Makefile` | Top-level build targets for `kapsis-ctl` (`build-ctl`, `test-ctl`, `vet-ctl`) |
 | `scripts/launch-agent.sh` | Main entry point — orchestrates config, image, worktree, container |

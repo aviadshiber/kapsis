@@ -14,4 +14,20 @@
 // Last sync added HostEvent for Issue #407 (host-side commit-strip audit
 // sidecar <agent-id>-host-events.jsonl; non-chained, not matched by
 // AUDIT_FILE_RE).
+//
+// PR #435 (Issue #431) touched scripts/lib/audit.sh but is a set -e
+// robustness fix only (guards audit_log_event's internal
+// audit_check_patterns call with `|| true` so its no-alert return code of 1
+// can't abort the caller) plus a doc comment — no event schema or field
+// changed, so nothing here needed updating. This comment satisfies
+// dashboard-sync.yml's file-presence check, which can't distinguish a
+// schema change from a no-op-for-types change.
+//
+// Issue #430 sync: AgentStatus gained transcript_content_missing (defect 2
+// instrumentation) and the new ArtifactEntry type (defect 3, side-channel
+// artifact listing) — both defined in dashboard/shared/src/index.ts.
+//
+// Sync added AgentStatus.machine_provider for Issue #409 (Podman machine
+// hypervisor backend — "applehv"/"libkrun" — detected at launch by
+// scripts/lib/compat.sh::get_podman_machine_provider, informational only).
 export * from "@kapsis/dashboard-shared";

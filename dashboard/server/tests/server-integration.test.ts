@@ -20,6 +20,7 @@ import { CleanupRunner } from "../src/control/cleanup";
 interface Harness {
   url: string;
   token: string;
+  root: string;
   stop: () => void;
 }
 
@@ -53,7 +54,9 @@ async function spawnHarness(opts: { readOnly?: boolean } = {}): Promise<Harness>
   const status = new StatusStore(paths.status); await status.init();
   const audit = new AuditStore(paths.audit);
   const logsS = new LogStore(paths.logs);
-  const conv = new ConversationStore(paths.conversations);
+  // statusDir second arg mirrors the production wiring in src/main.ts so
+  // the /artifacts routes are exercisable at HTTP level.
+  const conv = new ConversationStore(paths.conversations, paths.status);
   const disk = new DiskUsageStore(paths);
   // Tests don't exercise spec/gist by default; pass minimal stubs that 404
   // / return empty so existing test bodies keep working unchanged. The
@@ -79,6 +82,7 @@ async function spawnHarness(opts: { readOnly?: boolean } = {}): Promise<Harness>
   return {
     url,
     token,
+    root,
     stop: () => {
       gistHistory.close();
       sse.close();
@@ -335,6 +339,33 @@ describe("server integration", () => {
       // Re-spawn the default harness for afterEach to tear down cleanly.
       h = await spawnHarness();
     }
+  });
+
+  it("artifacts routes serve whitelisted side-channel artifacts (Issue #430)", async () => {
+    // Seed a response artifact directly in the status dir, exactly where
+    // status-sync.sh mirrors it on the host.
+    await writeFile(join(h.root, "status", "response-agent7.md"), "# final answer");
+    // A status file for the same agent must never be exposed as an artifact.
+    await writeFile(join(h.root, "status", "kapsis-demo-agent7.json"), "{}");
+    const auth = { Authorization: `Bearer ${h.token}` };
+
+    // Auth is required, same as every other /api/v1 route.
+    expect((await fetch(`${h.url}/api/v1/agents/agent7/artifacts`)).status).toBe(401);
+
+    const list = await fetch(`${h.url}/api/v1/agents/agent7/artifacts`, { headers: auth });
+    expect(list.status).toBe(200);
+    const entries = (await list.json()) as Array<{ name: string; kind: string }>;
+    expect(entries.length).toBe(1);
+    expect(entries[0]!.name).toBe("response-agent7.md");
+    expect(entries[0]!.kind).toBe("response");
+
+    const content = await fetch(`${h.url}/api/v1/agents/agent7/artifacts/response-agent7.md`, { headers: auth });
+    expect(content.status).toBe(200);
+    expect(await content.text()).toBe("# final answer");
+
+    // Non-whitelisted basename 404s even though the file exists on disk.
+    const denied = await fetch(`${h.url}/api/v1/agents/agent7/artifacts/kapsis-demo-agent7.json`, { headers: auth });
+    expect(denied.status).toBe(404);
   });
 
   it("CORS preflight is denied (no allow-origin returned)", async () => {

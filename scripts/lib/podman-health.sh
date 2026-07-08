@@ -18,6 +18,12 @@
 [[ -n "${_KAPSIS_PODMAN_HEALTH_LOADED:-}" ]] && return 0
 _KAPSIS_PODMAN_HEALTH_LOADED=1
 
+# One-shot guard so the "kapsis-ctl found but failed" WARN (see
+# count_running_kapsis_containers below) fires at most once per process,
+# even though maybe_autoheal_podman_vm's retry loop (max_retries default 2)
+# can invoke count_running_kapsis_containers multiple times per run.
+_KAPSIS_CTL_FAILED_WARNED=0
+
 # Expect the caller to have already sourced logging.sh, compat.sh, constants.sh.
 # Fallback stubs keep this library usable from probe/test contexts.
 declare -f log_info    &>/dev/null || log_info()    { echo "[INFO] $*"; }
@@ -30,7 +36,7 @@ declare -f is_linux    &>/dev/null || is_linux()    { [[ "$(uname -s)" == "Linux
 # Intentionally trivial: compat.sh (sourced first in all production paths) owns
 # the full implementation including stale-file cleanup (Issue #297).  This stub
 # only fires in isolated test contexts that load podman-health.sh alone.
-declare -f _kill_vfkit_zombie &>/dev/null || _kill_vfkit_zombie() { pkill -9 -f "vfkit.*${1:-podman-machine-default}" &>/dev/null || true; sleep 3; }
+declare -f _kill_vfkit_zombie &>/dev/null || _kill_vfkit_zombie() { pkill -9 -f "(vfkit|krunkit).*${1:-podman-machine-default}" &>/dev/null || true; sleep 3; }
 
 #-------------------------------------------------------------------------------
 # _vfs_timeout_cmd
@@ -296,7 +302,10 @@ count_running_kapsis_containers() {
             echo "$count"
             return 0
         fi
-        log_debug "count_running_kapsis_containers: kapsis-ctl failed, falling back to podman ps"
+        if [[ "$_KAPSIS_CTL_FAILED_WARNED" -eq 0 ]]; then
+            log_warn "count_running_kapsis_containers: kapsis-ctl found but failed, falling back to podman ps"
+            _KAPSIS_CTL_FAILED_WARNED=1
+        fi
     fi
 
     # Fallback: original podman ps approach.

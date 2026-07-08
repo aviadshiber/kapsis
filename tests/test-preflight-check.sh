@@ -653,6 +653,123 @@ test_check_podman_skips_ssh_on_linux() {
 
     assert_equals 0 "$result" "check_podman should pass on Linux (no SSH probe)"
     assert_not_contains "$output" "SSH tunnel" "Should not mention SSH tunnel on Linux"
+    assert_not_contains "$output" "Podman machine provider" \
+        "Should not report machine provider on Linux"
+}
+
+# Behavioral: check_podman reports the detected machine provider (Issue #409)
+test_check_podman_reports_machine_provider() {
+    log_test "Testing check_podman reports the detected Podman machine provider"
+
+    local mock_dir
+    mock_dir=$(mktemp -d)
+
+    cat > "$mock_dir/podman" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "machine" && "${2:-}" == "inspect" ]]; then
+    for arg in "$@"; do
+        if [[ "$arg" == *"{{.State}}"* ]]; then
+            echo "running"
+            exit 0
+        fi
+        if [[ "$arg" == *"{{.VMType}}"* ]]; then
+            echo "libkrun"
+            exit 0
+        fi
+    done
+    echo "{}"
+    exit 0
+fi
+if [[ "${1:-}" == "info" ]]; then
+    echo "host:"
+    exit 0
+fi
+exit 0
+MOCK
+    chmod +x "$mock_dir/podman"
+
+    local test_script="$mock_dir/run-test.sh"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'set -euo pipefail'
+        echo "export PATH=\"$mock_dir:\$PATH\""
+        echo "source \"$KAPSIS_ROOT/scripts/lib/logging.sh\""
+        echo 'log_init "test"'
+        echo "source \"$KAPSIS_ROOT/scripts/lib/compat.sh\""
+        echo "source \"$KAPSIS_ROOT/scripts/lib/constants.sh\""
+        echo '_KAPSIS_OS="Darwin"'
+        echo "source \"$PREFLIGHT_SCRIPT\""
+        echo '_PREFLIGHT_ERRORS=0'
+        echo '_PREFLIGHT_WARNINGS=0'
+        echo 'KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT=2'
+        echo 'check_podman'
+    } > "$test_script"
+    chmod +x "$test_script"
+
+    local output result=0
+    output=$(bash "$test_script" 2>&1) || result=$?
+    rm -rf "$mock_dir"
+
+    assert_equals 0 "$result" "check_podman should pass"
+    assert_contains "$output" "libkrun" "check_podman should report the detected provider"
+}
+
+# Behavioral: provider line is omitted when detection fails on macOS (Issue #409)
+test_check_podman_omits_provider_line_when_undetected() {
+    log_test "Testing check_podman omits provider line when VMType detection fails"
+
+    local mock_dir
+    mock_dir=$(mktemp -d)
+
+    cat > "$mock_dir/podman" <<'MOCK'
+#!/usr/bin/env bash
+if [[ "${1:-}" == "machine" && "${2:-}" == "inspect" ]]; then
+    for arg in "$@"; do
+        if [[ "$arg" == *"{{.State}}"* ]]; then
+            echo "running"
+            exit 0
+        fi
+        if [[ "$arg" == *"{{.VMType}}"* ]]; then
+            # Simulate detection failure (e.g. older podman without VMType)
+            exit 1
+        fi
+    done
+    echo "{}"
+    exit 0
+fi
+if [[ "${1:-}" == "info" ]]; then
+    echo "host:"
+    exit 0
+fi
+exit 0
+MOCK
+    chmod +x "$mock_dir/podman"
+
+    local test_script="$mock_dir/run-test.sh"
+    {
+        echo '#!/usr/bin/env bash'
+        echo 'set -euo pipefail'
+        echo "export PATH=\"$mock_dir:\$PATH\""
+        echo "source \"$KAPSIS_ROOT/scripts/lib/logging.sh\""
+        echo 'log_init "test"'
+        echo "source \"$KAPSIS_ROOT/scripts/lib/compat.sh\""
+        echo "source \"$KAPSIS_ROOT/scripts/lib/constants.sh\""
+        echo '_KAPSIS_OS="Darwin"'
+        echo "source \"$PREFLIGHT_SCRIPT\""
+        echo '_PREFLIGHT_ERRORS=0'
+        echo '_PREFLIGHT_WARNINGS=0'
+        echo 'KAPSIS_PREFLIGHT_SSH_PROBE_TIMEOUT=2'
+        echo 'check_podman'
+    } > "$test_script"
+    chmod +x "$test_script"
+
+    local output result=0
+    output=$(bash "$test_script" 2>&1) || result=$?
+    rm -rf "$mock_dir"
+
+    assert_equals 0 "$result" "check_podman should still pass when provider is undetected"
+    assert_not_contains "$output" "Podman machine provider" \
+        "Should omit provider line when detection returns empty"
 }
 
 #===============================================================================
@@ -698,6 +815,8 @@ main() {
     run_test test_check_podman_passes_on_healthy_ssh
     run_test test_check_podman_recovers_on_retry
     run_test test_check_podman_skips_ssh_on_linux
+    run_test test_check_podman_reports_machine_provider
+    run_test test_check_podman_omits_provider_line_when_undetected
 
     # Summary
     print_summary

@@ -36,6 +36,7 @@ Reclaim disk space and clean up artifacts after agent work.
 | `--snapshots` | Clean per-agent snapshot dirs in `~/.kapsis/snapshots/` (included by default; explicit form for scripting) |
 | `--snapshots-older-than <days>` | Override the default 14-day TTL when cleaning snapshots |
 | `--vm-health` | Check Podman VM health: inode %, disk %, journal size (**macOS only**) |
+| `--include-active` | Bypass the worktree in-use guard (Issue #428) and remove worktrees even if they appear to belong to an active agent. Requires `--force`. **Dangerous** — see [In-Use Guard](#in-use-guard-issue-428) |
 | `--force`, `-f` | Skip confirmation prompts |
 | `--help`, `-h` | Show help message |
 
@@ -73,7 +74,7 @@ Reclaim disk space and clean up artifacts after agent work.
 |----------|----------|--------------|
 | **Worktrees** | `~/.kapsis/worktrees/` | Default |
 | **Sandboxes** | `~/.ai-sandboxes/` | Default |
-| **Status files** | `~/.kapsis/status/` | Default (completed only) |
+| **Status files** | `~/.kapsis/status/` | Default (completed: TTL-based, shares `KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS` with Conversations; non-terminal/zombie: reaped after `KAPSIS_DEFAULT_STATUS_STALE_HOURS`, default 6h) |
 | **Sanitized git** | `~/.kapsis/sanitized-git/` | Default |
 | **Snapshots** | `~/.kapsis/snapshots/` | Default (14-day TTL or `--all`) |
 | **Containers** | Podman | `--all` or `--containers` |
@@ -97,6 +98,48 @@ ls -la ~/.kapsis/worktrees/
 cd ~/project && git worktree prune
 ```
 
+#### In-Use Guard (Issue #428)
+
+`clean_worktrees()` no longer removes a worktree unconditionally — it first
+checks whether the worktree still belongs to an active agent, using a
+proportional-certainty guard (`scripts/lib/worktree-guard.sh`):
+
+1. **Terminal success (`phase: "complete"` with `exit_code: 0`)** — reaped
+   fast, with zero Podman dependency. This is the only unambiguous "safe to
+   reap" signal, so a Podman outage or `podman` being absent from `PATH`
+   never blocks reclaiming these worktrees. A non-zero `exit_code` (e.g. 3 —
+   uncommitted changes remain, or 6 — commit failure, both of which preserve
+   the worktree for manual recovery) or a missing/unparseable `exit_code` is
+   **not** fast-reaped: it falls through to the Podman corroboration and the
+   same age heuristic as step 2.
+2. **Terminal failure (`phase: error/failed/killed`)** — falls back to the
+   same age heuristic as `worktree-manager.sh`'s opportunistic GC: directory
+   mtime vs. `KAPSIS_CLEANUP_WORKTREE_MAX_AGE_HOURS` (default 168h/7 days).
+3. **Ambiguous (`phase: running/initializing/...`, or a missing status
+   file)** — freshness of `status.json`'s `updated_at` against the liveness
+   timeout+grace (`KAPSIS_LIVENESS_TIMEOUT` + `KAPSIS_LIVENESS_GRACE_PERIOD`,
+   default 900s+300s = 1200s) decides "in use" (skipped) vs. "stale" (falls
+   through to step 4).
+4. **Best-effort Podman corroboration** — for stale/ambiguous entries only,
+   a `podman ps --filter label=kapsis.agent-id=<id>` check (timeout-wrapped)
+   can confirm a live container and force a skip. **Fail-open**: if Podman
+   is unreachable, times out, or has no timeout binary available, the check
+   is skipped and the verdict degrades to the age heuristic above — it
+   never blocks reaping unrelated complete-phase worktrees in the same run,
+   and it never forces a "reap" verdict by itself.
+
+Skipped worktrees are reported as `[SKIPPED]` with a reason and are **not**
+counted toward the cleaned-item/space-freed totals.
+
+**Escape hatch:** `--include-active` (requires `--force`) bypasses the guard
+entirely and removes worktrees regardless of phase or heartbeat freshness.
+This is logged at `WARN` and intended only for operators who understand the
+risk of deleting a live agent's uncommitted work:
+
+```bash
+./scripts/kapsis-cleanup.sh --worktrees --include-active --force
+```
+
 ### Sandboxes
 
 Overlay upper directories containing agent file changes. Located in `~/.ai-sandboxes/`.
@@ -105,7 +148,11 @@ These directories may have special permissions from Podman's user namespace mapp
 
 ### Status Files
 
-JSON status files tracking agent progress. Only **completed** status files are cleaned by default. Active agents are preserved.
+JSON status files tracking agent progress.
+
+**Behavior change (Issue #430):** completed status files are no longer deleted immediately — they're retained for `KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS` (default 7 days, the same variable used for the Conversations TTL), so a status.json survives at least as long as its matching `conversations/<id>/` directory. Previously the status file for a completed agent was removed on the very next cleanup run, which could make an agent's conversation directory (still within its own 7-day TTL) appear orphaned in the dashboard.
+
+Status files stuck in a **non-terminal** phase (`starting`, `preparing`, `running`, etc.) for longer than `KAPSIS_DEFAULT_STATUS_STALE_HOURS` (default 6 hours) are treated as zombies — the process that would have advanced or completed them is gone — and are reaped with a `log_warn`. Fresh non-terminal status files (younger than the threshold) are never touched, so active agents are always preserved. This zombie sweep is intentionally much slower than the liveness monitor's own kill/timeout logic (~22 minutes worst case) and never races or duplicates it.
 
 ```bash
 # List status files

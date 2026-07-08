@@ -318,8 +318,8 @@ _podman_ssh_probe() {
 #-------------------------------------------------------------------------------
 _kill_vfkit_zombie() {
     local machine="${1:-podman-machine-default}"
-    declare -f log_warn &>/dev/null && log_warn "Killing vfkit hypervisor for '$machine' (zombie VM recovery)"
-    pkill -9 -f "vfkit.*${machine}" &>/dev/null || true
+    declare -f log_warn &>/dev/null && log_warn "Killing vfkit/krunkit hypervisor for '$machine' (zombie VM recovery)"
+    pkill -9 -f "(vfkit|krunkit).*${machine}" &>/dev/null || true
 
     # Remove stale runtime artefacts left by the hard-killed hypervisor so that
     # the subsequent `podman machine start` does not refuse to start or silently
@@ -342,6 +342,39 @@ _kill_vfkit_zombie() {
     # 3 s for the kernel to fully reap the vfkit process and release any
     # file-descriptor locks before podman machine start re-opens them.
     sleep 3
+}
+
+#-------------------------------------------------------------------------------
+# get_podman_machine_provider [machine]
+#
+# Detects the hypervisor backend ("VMType") of the named Podman machine on
+# macOS: "applehv" (Apple Virtualization.framework, vfkit) or "libkrun"
+# (Hypervisor.framework, krunkit) as of Podman 6.0's default switch (Issue
+# #409). Linux has no machine concept — always empty.
+#
+# This is informational only (logging + status.json), not a behavioral
+# branch: do NOT gate any mitigation on its result without field evidence
+# that libkrun structurally doesn't need it (see Issue #409 follow-ups).
+#
+# Args:
+#   $1 - machine name (default: $KAPSIS_PODMAN_MACHINE or podman-machine-default)
+#
+# Output: provider string on stdout ("applehv", "libkrun", "qemu", etc.) or
+#         empty string if undetected/not applicable. Never fails the caller.
+#-------------------------------------------------------------------------------
+get_podman_machine_provider() {
+    is_linux && return 0
+
+    local machine="${1:-${KAPSIS_PODMAN_MACHINE:-podman-machine-default}}"
+    local provider
+
+    if [[ -n "$_KAPSIS_TIMEOUT_CMD" ]]; then
+        provider=$("$_KAPSIS_TIMEOUT_CMD" 5 podman machine inspect "$machine" --format '{{.VMType}}' 2>/dev/null)
+    else
+        provider=$(podman machine inspect "$machine" --format '{{.VMType}}' 2>/dev/null)
+    fi
+
+    echo "$provider"
 }
 
 #-------------------------------------------------------------------------------
