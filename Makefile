@@ -3,7 +3,8 @@
 # Currently covers kapsis-ctl (Phase 1, issue #266).
 # The K8s operator has its own Makefile under operator/.
 
-GOFLAGS := -trimpath -ldflags="-s -w"
+KAPSIS_VERSION ?= dev
+GOFLAGS := -trimpath -ldflags="-s -w -X main.version=$(KAPSIS_VERSION)"
 CTL_SRC  := ./cmd/kapsis-ctl
 CTL_BIN  := ./bin/kapsis-ctl
 

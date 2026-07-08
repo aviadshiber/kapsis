@@ -703,6 +703,34 @@ test_kill_vfkit_zombie_scoped_to_named_machine() {
     rm -rf "$fake_home"
 }
 
+test_kill_vfkit_zombie_pkill_pattern_matches_krunkit() {
+    log_test "_kill_vfkit_zombie: pkill -f pattern matches krunkit in addition to vfkit (Issue #409)"
+
+    local fake_home
+    fake_home=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-zombie-krunkit.XXXXXX")
+    local argv_log="${fake_home}/pkill.argv"
+
+    # Capture the argv pkill is invoked with, instead of just stubbing return 0.
+    pkill() { printf '%s\n' "$@" > "$argv_log"; return 0; }
+    sleep() { return 0; }
+
+    local saved_xdg="${XDG_DATA_HOME:-}"
+    unset XDG_DATA_HOME
+    HOME="$fake_home" _kill_vfkit_zombie "podman-machine-krunkit-test"
+    [[ -n "$saved_xdg" ]] && XDG_DATA_HOME="$saved_xdg" || true
+
+    unset -f pkill sleep
+
+    local argv
+    argv=$(cat "$argv_log" 2>/dev/null || echo "")
+    rm -rf "$fake_home"
+
+    assert_contains "$argv" "vfkit" "pkill pattern must still match vfkit (applehv)"
+    assert_contains "$argv" "krunkit" "pkill pattern must also match krunkit (libkrun/AVF)"
+    assert_contains "$argv" "(vfkit|krunkit)" "pkill pattern must use an alternation, not a fixed vfkit-only string"
+    assert_contains "$argv" "podman-machine-krunkit-test" "pkill pattern must still be scoped to the target machine name"
+}
+
 #===============================================================================
 # get_podman_machine_provider() TESTS (Issue #409)
 #===============================================================================
@@ -916,6 +944,7 @@ main() {
     run_test test_kill_vfkit_zombie_removes_runtime_files
     run_test test_kill_vfkit_zombie_respects_xdg_data_home
     run_test test_kill_vfkit_zombie_scoped_to_named_machine
+    run_test test_kill_vfkit_zombie_pkill_pattern_matches_krunkit
 
     # get_podman_machine_provider() tests (Issue #409)
     run_test test_get_podman_machine_provider_libkrun

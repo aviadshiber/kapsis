@@ -38,6 +38,10 @@ import (
 	"github.com/aviadshiber/kapsis/ctl/podman"
 )
 
+// version is stamped at build time via -ldflags "-X main.version=...".
+// It defaults to "dev" for local `make build-ctl` builds without ldflags.
+var version = "dev"
+
 func main() {
 	if len(os.Args) < 2 {
 		usage()
@@ -53,7 +57,7 @@ func main() {
 		usage()
 		return
 	case "version", "--version":
-		fmt.Println("kapsis-ctl phase-2 (issue #266)")
+		fmt.Printf("kapsis-ctl %s\n", version)
 		return
 	}
 

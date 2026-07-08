@@ -123,12 +123,33 @@ setup_mock_env() {
     mkdir -p "$TEST_HOME/.kapsis/logs"
     mkdir -p "$TEST_HOME/.claude"
 
-    # Install real hook scripts at the paths inject-status-hooks.sh will write
+    # Install real hook scripts at the paths inject-status-hooks.sh will write.
+    # tool-phase-mapping.sh must ship alongside kapsis-status-hook.sh: it's
+    # sourced from $SCRIPT_DIR (the hook's own directory) and defines
+    # map_tool_to_category(), which main() calls unconditionally before
+    # reaching the audit branch. Without it, kapsis-status-hook.sh aborts
+    # under set -e on the undefined function before ever getting to audit.
     mkdir -p "$KAPSIS_ROOT/hooks"
-    cp "$HOOKS_SRC/kapsis-gist-hook.sh"   "$KAPSIS_ROOT/hooks/"
-    cp "$HOOKS_SRC/kapsis-status-hook.sh" "$KAPSIS_ROOT/hooks/"
-    cp "$HOOKS_SRC/kapsis-stop-hook.sh"   "$KAPSIS_ROOT/hooks/"
+    cp "$HOOKS_SRC/kapsis-gist-hook.sh"     "$KAPSIS_ROOT/hooks/"
+    cp "$HOOKS_SRC/kapsis-status-hook.sh"   "$KAPSIS_ROOT/hooks/"
+    cp "$HOOKS_SRC/kapsis-stop-hook.sh"     "$KAPSIS_ROOT/hooks/"
+    cp "$HOOKS_SRC/tool-phase-mapping.sh"   "$KAPSIS_ROOT/hooks/"
     chmod +x "$KAPSIS_ROOT/hooks/"*.sh
+
+    # Stage audit.sh/audit-patterns.sh (+ their own same-directory dependencies:
+    # logging.sh, json-utils.sh, compat.sh, constants.sh) at $KAPSIS_HOME/lib/,
+    # mirroring the flattened installed-container layout (KAPSIS_HOME=/opt/kapsis,
+    # libs directly under lib/) that kapsis-status-hook.sh's audit branch expects
+    # via `[[ -f "$KAPSIS_HOME/lib/audit.sh" ]]`. audit.sh sources its deps
+    # relative to its own directory, so all of them must be staged together.
+    # Without this, the audit branch is silently skipped (or aborts on a
+    # missing source) in this harness since KAPSIS_HOME here is the repo
+    # root, where libs live under scripts/lib/, not lib/.
+    mkdir -p "$KAPSIS_ROOT/lib"
+    cp "$LIB_DIR/audit.sh" "$LIB_DIR/audit-patterns.sh" \
+       "$LIB_DIR/logging.sh" "$LIB_DIR/json-utils.sh" \
+       "$LIB_DIR/compat.sh" "$LIB_DIR/constants.sh" \
+       "$KAPSIS_ROOT/lib/"
 
     _start_mock_server
 }
@@ -136,9 +157,10 @@ setup_mock_env() {
 cleanup_mock_env() {
     _stop_mock_server
     export HOME="$_ORIG_HOME"
-    rm -rf "${TEST_HOME:-}" "${TEST_WORKSPACE:-}" "$KAPSIS_ROOT/hooks"
+    rm -rf "${TEST_HOME:-}" "${TEST_WORKSPACE:-}" "$KAPSIS_ROOT/hooks" "${KAPSIS_ROOT:?}/lib"
     unset TEST_HOME TEST_WORKSPACE KAPSIS_HOME KAPSIS_LIB
-    unset KAPSIS_STATUS_AGENT_ID KAPSIS_INJECT_GIST KAPSIS_GIST_FILE 2>/dev/null || true
+    unset KAPSIS_STATUS_AGENT_ID KAPSIS_INJECT_GIST KAPSIS_GIST_FILE \
+          KAPSIS_AUDIT_ENABLED KAPSIS_AUDIT_DIR 2>/dev/null || true
     _KAPSIS_INJECT_STATUS_HOOKS_LOADED=""
     # shellcheck disable=SC2034
     export KAPSIS_LOG_TO_FILE="false"
@@ -158,10 +180,17 @@ test_mock_posttooluse_gist_hook_fires() {
 
     local agent_id="mock-e2e-$$"
     local gist_file="$TEST_HOME/.kapsis/gist.txt"
+    local audit_dir="$TEST_HOME/.kapsis/audit"
+    mkdir -p "$audit_dir"
 
     export KAPSIS_STATUS_AGENT_ID="$agent_id"
     export KAPSIS_INJECT_GIST="true"
     export KAPSIS_GIST_FILE="$gist_file"
+    # Exercise the real hook-dispatch path with audit logging enabled — this is
+    # the crash-regression coverage for #431 (audit_log_event previously could
+    # abort kapsis-status-hook.sh under set -e before its mandatory `echo "{}"`).
+    export KAPSIS_AUDIT_ENABLED="true"
+    export KAPSIS_AUDIT_DIR="$audit_dir"
 
     # Seed settings.json with allowedTools so Claude Code doesn't prompt
     printf '{"allowedTools":["Bash"]}\n' > "$TEST_HOME/.claude/settings.json"
@@ -183,6 +212,8 @@ test_mock_posttooluse_gist_hook_fires() {
         KAPSIS_STATUS_AGENT_ID="$agent_id" \
         KAPSIS_INJECT_GIST="true" \
         KAPSIS_GIST_FILE="$gist_file" \
+        KAPSIS_AUDIT_ENABLED="true" \
+        KAPSIS_AUDIT_DIR="$audit_dir" \
         ANTHROPIC_BASE_URL="$ANTHROPIC_BASE_URL" \
         ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
         claude --print \
@@ -197,6 +228,27 @@ test_mock_posttooluse_gist_hook_fires() {
     local gist_content
     gist_content=$(cat "$gist_file")
     assert_not_empty "$gist_content" "gist.txt must not be empty"
+
+    # #431 crash-regression: kapsis-status-hook.sh must have run its audit
+    # branch to completion (not aborted under set -e) and recorded a real
+    # post-genesis tool-use event, not just the genesis session_start line.
+    # kapsis-status-hook.sh calls audit_log_event with event_type="auto", which
+    # audit.sh auto-classifies into a concrete type (e.g. "shell_command") before
+    # writing — "auto" itself never appears in the JSONL. Detect a real
+    # post-genesis event by tool_name instead (genesis events use
+    # tool_name="audit_init"; a real tool call from Claude Code uses the
+    # actual tool name, e.g. "Bash").
+    local audit_files_found="false"
+    local audit_file
+    for audit_file in "$audit_dir"/*.audit.jsonl; do
+        [[ -f "$audit_file" ]] || continue
+        if grep -q '"tool_name":"Bash"' "$audit_file" 2>/dev/null; then
+            audit_files_found="true"
+            break
+        fi
+    done
+    assert_equals "true" "$audit_files_found" \
+        "At least one *.audit.jsonl must contain a real tool-use event (tool_name=Bash) when KAPSIS_AUDIT_ENABLED=true (mock API)"
 
     cleanup_mock_env
 }
