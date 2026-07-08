@@ -859,6 +859,40 @@ EOF
 }
 
 #===============================================================================
+# _kill_vfkit_zombie — vfkit/krunkit alternation pattern (Issue #409)
+#===============================================================================
+
+test_kill_vfkit_zombie_pattern_matches_krunkit() {
+    log_test "_kill_vfkit_zombie's pkill -f pattern matches krunkit in addition to vfkit"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local fake_bin="$tmpdir/bin"
+    mkdir -p "$fake_bin"
+
+    # Fake pkill: record argv, don't actually signal anything.
+    cat > "$fake_bin/pkill" <<EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$@" > "$tmpdir/pkill.argv"
+exit 0
+EOF
+    chmod +x "$fake_bin/pkill"
+
+    bash -c "
+        $(_load_lib_with_macos)
+        PATH=\"$fake_bin:\$PATH\"
+        _kill_vfkit_zombie 'podman-machine-krunkit-test'
+    " &>/dev/null || true
+
+    local argv
+    argv=$(cat "$tmpdir/pkill.argv" 2>/dev/null || echo "")
+    rm -rf "$tmpdir"
+    assert_contains "$argv" "vfkit" "pkill pattern must still match vfkit (applehv)"
+    assert_contains "$argv" "krunkit" "pkill pattern must also match krunkit (libkrun/AVF)"
+    assert_contains "$argv" "(vfkit|krunkit)" "pkill pattern must use an alternation, not a fixed vfkit-only string"
+    assert_contains "$argv" "podman-machine-krunkit-test" "pkill pattern must still be scoped to the target machine name"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -903,6 +937,9 @@ main() {
     run_test test_probe_pulls_image_when_skip_disabled
     run_test test_vfs_timeout_cmd_returns_empty_when_missing
     run_test test_probe_runs_podman_without_timeout_when_tmo_missing
+
+    log_info "=== _kill_vfkit_zombie — vfkit/krunkit alternation (Issue #409) ==="
+    run_test test_kill_vfkit_zombie_pattern_matches_krunkit
 
     print_summary
 }

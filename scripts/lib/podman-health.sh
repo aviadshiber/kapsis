@@ -36,7 +36,7 @@ declare -f is_linux    &>/dev/null || is_linux()    { [[ "$(uname -s)" == "Linux
 # Intentionally trivial: compat.sh (sourced first in all production paths) owns
 # the full implementation including stale-file cleanup (Issue #297).  This stub
 # only fires in isolated test contexts that load podman-health.sh alone.
-declare -f _kill_vfkit_zombie &>/dev/null || _kill_vfkit_zombie() { pkill -9 -f "vfkit.*${1:-podman-machine-default}" &>/dev/null || true; sleep 3; }
+declare -f _kill_vfkit_zombie &>/dev/null || _kill_vfkit_zombie() { pkill -9 -f "(vfkit|krunkit).*${1:-podman-machine-default}" &>/dev/null || true; sleep 3; }
 
 #-------------------------------------------------------------------------------
 # _vfs_timeout_cmd
