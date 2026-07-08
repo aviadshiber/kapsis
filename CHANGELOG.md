@@ -61,6 +61,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Prevent audit_log_event from aborting the status hook under set -e (#435)
 
+## [2.37.4] - 2026-07-08
+
+### Fixed
+- Match krunkit alongside vfkit in hypervisor process patterns (#433)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1096,7 +1101,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.37.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.37.4...HEAD
+[2.37.4]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.4
 [2.37.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.3
 [2.37.2]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.2
 [2.37.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.1
