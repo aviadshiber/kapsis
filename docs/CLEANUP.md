@@ -74,7 +74,7 @@ Reclaim disk space and clean up artifacts after agent work.
 |----------|----------|--------------|
 | **Worktrees** | `~/.kapsis/worktrees/` | Default |
 | **Sandboxes** | `~/.ai-sandboxes/` | Default |
-| **Status files** | `~/.kapsis/status/` | Default (completed only) |
+| **Status files** | `~/.kapsis/status/` | Default (completed: TTL-based, shares `KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS` with Conversations; non-terminal/zombie: reaped after `KAPSIS_DEFAULT_STATUS_STALE_HOURS`, default 6h) |
 | **Sanitized git** | `~/.kapsis/sanitized-git/` | Default |
 | **Snapshots** | `~/.kapsis/snapshots/` | Default (14-day TTL or `--all`) |
 | **Containers** | Podman | `--all` or `--containers` |
@@ -148,7 +148,11 @@ These directories may have special permissions from Podman's user namespace mapp
 
 ### Status Files
 
-JSON status files tracking agent progress. Only **completed** status files are cleaned by default. Active agents are preserved.
+JSON status files tracking agent progress.
+
+**Behavior change (Issue #430):** completed status files are no longer deleted immediately — they're retained for `KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS` (default 7 days, the same variable used for the Conversations TTL), so a status.json survives at least as long as its matching `conversations/<id>/` directory. Previously the status file for a completed agent was removed on the very next cleanup run, which could make an agent's conversation directory (still within its own 7-day TTL) appear orphaned in the dashboard.
+
+Status files stuck in a **non-terminal** phase (`starting`, `preparing`, `running`, etc.) for longer than `KAPSIS_DEFAULT_STATUS_STALE_HOURS` (default 6 hours) are treated as zombies — the process that would have advanced or completed them is gone — and are reaped with a `log_warn`. Fresh non-terminal status files (younger than the threshold) are never touched, so active agents are always preserved. This zombie sweep is intentionally much slower than the liveness monitor's own kill/timeout logic (~22 minutes worst case) and never races or duplicates it.
 
 ```bash
 # List status files

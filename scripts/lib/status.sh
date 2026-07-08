@@ -78,6 +78,13 @@ _KAPSIS_HEARTBEAT_AT=""             # Last heartbeat timestamp from liveness mon
 # Populated for ALL non-zero exits so callers have one field to branch on
 _KAPSIS_ERROR_TYPE=""
 
+# Transcript content-missing flag (Issue #430): set by transcript.sh's
+# transcript_save when the captured transcript matches only known
+# entrypoint/liveness-monitor/dnsmasq boilerplate — i.e. the agent's actual
+# dialogue never made it into the captured buffer. Instrumentation only; see
+# scripts/lib/transcript.sh for the detection heuristic.
+_KAPSIS_TRANSCRIPT_CONTENT_MISSING=""
+
 # Gist rate limiting state (reduce I/O on frequent PostToolUse calls)
 _KAPSIS_GIST_LAST_READ=""        # Epoch timestamp of last gist read
 _KAPSIS_GIST_LAST_MTIME=""       # Last known file mtime
@@ -441,6 +448,18 @@ status_set_error_type() {
     _KAPSIS_ERROR_TYPE="${1:-}"
 }
 
+# Set/clear the transcript content-missing flag (Issue #430)
+# Arguments:
+#   $1 - "true" to flag the captured transcript as boilerplate-only, any
+#        other value (including empty) clears the flag.
+status_set_transcript_content_missing() {
+    if [[ "${1:-}" == "true" ]]; then
+        _KAPSIS_TRANSCRIPT_CONTENT_MISSING="true"
+    else
+        _KAPSIS_TRANSCRIPT_CONTENT_MISSING=""
+    fi
+}
+
 # =============================================================================
 # Agent Gist (Activity Summary)
 # =============================================================================
@@ -622,6 +641,11 @@ _status_write() {
     local error_type_json="null"
     [[ -n "$_KAPSIS_ERROR_TYPE" ]] && error_type_json="\"$_KAPSIS_ERROR_TYPE\""
 
+    # Transcript content-missing field (Issue #430)
+    # shellcheck disable=SC2034  # used in heredoc below
+    local transcript_content_missing_json="null"
+    [[ "$_KAPSIS_TRANSCRIPT_CONTENT_MISSING" == "true" ]] && transcript_content_missing_json="true"
+
     # Build JSON (using heredoc for readability)
     local json
     json=$(cat << EOF
@@ -650,7 +674,8 @@ _status_write() {
   "commit_sha": ${commit_sha_json},
   "uncommitted_files": ${uncommitted_files_json},
   "heartbeat_at": ${heartbeat_json},
-  "error_type": ${error_type_json}
+  "error_type": ${error_type_json},
+  "transcript_content_missing": ${transcript_content_missing_json}
 }
 EOF
 )

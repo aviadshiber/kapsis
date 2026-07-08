@@ -22,4 +22,8 @@
 // changed, so nothing here needed updating. This comment satisfies
 // dashboard-sync.yml's file-presence check, which can't distinguish a
 // schema change from a no-op-for-types change.
+//
+// Issue #430 sync: AgentStatus gained transcript_content_missing (defect 2
+// instrumentation) and the new ArtifactEntry type (defect 3, side-channel
+// artifact listing) — both defined in dashboard/shared/src/index.ts.
 export * from "@kapsis/dashboard-shared";

@@ -525,6 +525,17 @@ clean_sandboxes() {
 }
 
 # Clean status files
+#
+# Lifecycle (Issue #430): status.json for a "complete" agent is retained up to
+# KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS (default 7d) — the SAME env var used by
+# clean_conversations() for the matching conversations/<id>/ dir — so the two
+# stores expire on one shared clock and cannot drift apart again. A status.json
+# stuck in a non-terminal phase (starting/preparing/running) for longer than
+# KAPSIS_DEFAULT_STATUS_STALE_HOURS (default 6h) is a zombie — the process that
+# would have advanced or completed it is gone — and is reaped with a log_warn.
+# 6h gives comfortable margin over the liveness monitor's own caps (~22 min:
+# 900s timeout + 300s grace + 120s completion), so this sweep never races or
+# duplicates liveness-monitor's kill path (see scripts/lib/liveness-monitor.sh).
 clean_status() {
     section "Status Files"
 
@@ -535,6 +546,12 @@ clean_status() {
 
     local count=0
     local total_size=0
+    local ttl_days="${KAPSIS_DEFAULT_CONVERSATIONS_TTL_DAYS:-7}"
+    local ttl_seconds=$((ttl_days * 86400))
+    local stale_hours="${KAPSIS_DEFAULT_STATUS_STALE_HOURS:-6}"
+    local stale_seconds=$((stale_hours * 3600))
+    local now
+    now=$(date +%s)
 
     for status_file in "$STATUS_DIR"/kapsis-*.json; do
         [[ -f "$status_file" ]] || continue
@@ -546,12 +563,38 @@ clean_status() {
             continue
         fi
 
-        # Check if completed (only clean completed status files)
         local phase
         phase=$(grep -o '"phase"[[:space:]]*:[[:space:]]*"[^"]*"' "$status_file" 2>/dev/null | cut -d'"' -f4 || echo "")
-        if [[ "$phase" != "complete" ]] && [[ "$CLEAN_ALL" != "true" ]]; then
-            log_debug "Skipping active status file: $name (phase: $phase)"
-            continue
+
+        if [[ "$CLEAN_ALL" != "true" ]]; then
+            local mtime age
+            mtime=$(get_file_mtime "$status_file" 2>/dev/null) || mtime=""
+            if [[ "$phase" == "complete" ]]; then
+                # Complete: retain until the same TTL used for conversations/.
+                # -le (not -lt) to match clean_conversations() exactly, so the
+                # two lifecycles cannot diverge at the age==TTL boundary.
+                if [[ -z "$mtime" ]]; then
+                    continue
+                fi
+                age=$((now - mtime))
+                if [[ "$age" -le "$ttl_seconds" ]]; then
+                    log_debug "Skipping complete status file within TTL: $name"
+                    continue
+                fi
+            else
+                # Non-terminal: keep unless it's a stale zombie past the
+                # stale-hours threshold.
+                if [[ -z "$mtime" ]]; then
+                    log_debug "Skipping active status file: $name (phase: $phase)"
+                    continue
+                fi
+                age=$((now - mtime))
+                if [[ "$age" -le "$stale_seconds" ]]; then
+                    log_debug "Skipping active status file: $name (phase: $phase)"
+                    continue
+                fi
+                log_warn "Reaping zombie status file (non-terminal phase '$phase' stale for ${age}s > ${stale_seconds}s): $name"
+            fi
         fi
 
         local size
