@@ -180,6 +180,10 @@ Configuration is stored in `configs/tool-phase-mapping.yaml`.
 | 137 | Killed by liveness monitor (SIGKILL) | Check agent for hangs |
 | 143 | Killed by liveness monitor (SIGTERM) | Check agent for hangs |
 
+### Podman Machine Provider (macOS)
+
+`machine_provider` records which Podman machine hypervisor backend the launch detected: `"applehv"` (Apple Virtualization.framework, the `vfkit` process) or `"libkrun"` (Hypervisor.framework, the `krunkit` process — Podman's default since v6.0). It's `null` on Linux, for non-Podman backends, or if detection failed. This field is informational only — it doesn't change Kapsis's behavior — but it explains, for example, why a host on `libkrun` may not need the sleep-prevention/status-mirroring mitigations that exist specifically for `applehv`'s AVF virtio-fs issue (see [Issue #409](https://github.com/aviadshiber/kapsis/issues/409)). See `docs/KRUNKIT-PROVIDER.md` for the opt-in adoption path.
+
 ## Agent Gist (Live Activity Summary)
 
 During long "thinking" periods, the standard status message may become stale. The **gist** feature provides a signaling file that agents can update in real-time to communicate what they're currently working on.

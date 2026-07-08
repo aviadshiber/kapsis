@@ -78,6 +78,9 @@ _KAPSIS_HEARTBEAT_AT=""             # Last heartbeat timestamp from liveness mon
 # Populated for ALL non-zero exits so callers have one field to branch on
 _KAPSIS_ERROR_TYPE=""
 
+# Detected Podman machine hypervisor provider (Issue #409), e.g. "applehv"/"libkrun"
+_KAPSIS_MACHINE_PROVIDER=""
+
 # Transcript content-missing flag (Issue #430): set by transcript.sh's
 # transcript_save when the captured transcript matches only known
 # entrypoint/liveness-monitor/dnsmasq boilerplate — i.e. the agent's actual
@@ -448,6 +451,16 @@ status_set_error_type() {
     _KAPSIS_ERROR_TYPE="${1:-}"
 }
 
+# Set the detected Podman machine hypervisor provider (Issue #409)
+# Informational only — records which virtio-fs backend this run used
+# ("applehv"/"libkrun" on macOS; empty on Linux). Callers detect via
+# get_podman_machine_provider() in compat.sh.
+# Arguments:
+#   $1 - Provider string (e.g. "applehv", "libkrun"), or empty
+status_set_machine_provider() {
+    _KAPSIS_MACHINE_PROVIDER="${1:-}"
+}
+
 # Set/clear the transcript content-missing flag (Issue #430)
 # Arguments:
 #   $1 - "true" to flag the captured transcript as boilerplate-only, any
@@ -641,6 +654,10 @@ _status_write() {
     local error_type_json="null"
     [[ -n "$_KAPSIS_ERROR_TYPE" ]] && error_type_json="\"$_KAPSIS_ERROR_TYPE\""
 
+    # Machine provider field (Issue #409)
+    local machine_provider_json="null"
+    [[ -n "$_KAPSIS_MACHINE_PROVIDER" ]] && machine_provider_json="\"$_KAPSIS_MACHINE_PROVIDER\""
+
     # Transcript content-missing field (Issue #430)
     # shellcheck disable=SC2034  # used in heredoc below
     local transcript_content_missing_json="null"
@@ -675,7 +692,8 @@ _status_write() {
   "uncommitted_files": ${uncommitted_files_json},
   "heartbeat_at": ${heartbeat_json},
   "error_type": ${error_type_json},
-  "transcript_content_missing": ${transcript_content_missing_json}
+  "transcript_content_missing": ${transcript_content_missing_json},
+  "machine_provider": ${machine_provider_json}
 }
 EOF
 )

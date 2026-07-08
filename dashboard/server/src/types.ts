@@ -26,4 +26,8 @@
 // Issue #430 sync: AgentStatus gained transcript_content_missing (defect 2
 // instrumentation) and the new ArtifactEntry type (defect 3, side-channel
 // artifact listing) — both defined in dashboard/shared/src/index.ts.
+//
+// Sync added AgentStatus.machine_provider for Issue #409 (Podman machine
+// hypervisor backend — "applehv"/"libkrun" — detected at launch by
+// scripts/lib/compat.sh::get_podman_machine_provider, informational only).
 export * from "@kapsis/dashboard-shared";
