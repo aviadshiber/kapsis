@@ -1206,10 +1206,28 @@ jobs:
           echo "- Formula version: v${VERSION}" >> $GITHUB_STEP_SUMMARY
           echo "- Tap: [aviadshiber/homebrew-kapsis](https://github.com/aviadshiber/homebrew-kapsis)" >> $GITHUB_STEP_SUMMARY
 
+  # Post-release sanity check: by this point the formula committed to main
+  # points at this release's already-published assets, so brew can actually
+  # install/test/audit it (see homebrew-formula-test.yml's SCOPE comment for
+  # why this can't run pre-release).
+  formula-test:
+    name: Homebrew Formula Test
+    needs: [validate, update-packages]
+    if: needs.update-packages.result == 'success'
+    uses: ./.github/workflows/homebrew-formula-test.yml
+    # update-packages pushes the version-bumped formula as a NEW commit to
+    # main; this run's own triggering ref is the pre-bump commit, so we must
+    # explicitly point at main's tip to validate what was actually just
+    # committed (not the previous release's formula).
+    with:
+      ref: main
+    permissions:
+      contents: read
+
   notify:
     name: Post-Release
     runs-on: ubuntu-latest
-    needs: [validate, release, sign-and-attest, update-packages, sync-homebrew-tap]
+    needs: [validate, release, sign-and-attest, update-packages, sync-homebrew-tap, formula-test]
     if: always() && needs.release.result == 'success'
     steps:
       - name: Release Summary
@@ -1218,6 +1236,7 @@ jobs:
           PACKAGES_STATUS="${{ needs.update-packages.result }}"
           TAP_STATUS="${{ needs.sync-homebrew-tap.result }}"
           SIGN_STATUS="${{ needs.sign-and-attest.result }}"
+          FORMULA_TEST_STATUS="${{ needs.formula-test.result }}"
 
           echo "## Release v$VERSION completed!" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -1244,4 +1263,10 @@ jobs:
             echo "- ⏭️ Homebrew tap sync skipped (no deploy key configured)" >> $GITHUB_STEP_SUMMARY
           else
             echo "- ⚠️ Homebrew tap sync: $TAP_STATUS" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [[ "$FORMULA_TEST_STATUS" == "success" ]]; then
+            echo "- ✅ Homebrew formula install/test/audit passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- ⚠️ Homebrew formula test: $FORMULA_TEST_STATUS" >> $GITHUB_STEP_SUMMARY
           fi
