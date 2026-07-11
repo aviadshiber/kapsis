@@ -50,16 +50,33 @@ concurrency:
 
 permissions:
   contents: write
+  # Read-only: lets the "check" job query the Checks API for the "CI
+  # Success" check-run conclusion on the triggering commit (issue #440),
+  # via the default GITHUB_TOKEN rather than the RELEASE_APP token — the
+  # app's installation permissions aren't governed by this block, and we
+  # don't want the release gate depending on RELEASE_APP also having
+  # Checks:read granted.
+  checks: read
 
 jobs:
   # Check if we should create a release
   check:
     name: Check Release Conditions
     runs-on: ubuntu-latest
-    # Only run if CI succeeded (for workflow_run) or manual trigger (workflow_dispatch)
+    # Run for manual trigger, or any completed CI workflow_run — regardless of
+    # the run's *aggregate* conclusion. We deliberately do NOT gate on
+    # `github.event.workflow_run.conclusion` here (issue #440): that field
+    # reflects ALL jobs in the CI run, including the deliberately-optional
+    # "E2E Tests (live API)" job. When E2E fails but every required job
+    # (including "CI Success") passed, the aggregate conclusion is still
+    # "failure", which used to skip this job entirely and silently swallow
+    # the release with nothing red visible anywhere. Instead we always run
+    # this job for workflow_run events and let the "Check CI Success job
+    # conclusion" step below query the specific "CI Success" check-run —
+    # that's the actual required gate.
     if: >
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success')
+      github.event_name == 'workflow_run'
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
       last_tag: ${{ steps.check.outputs.last_tag }}
@@ -80,9 +97,71 @@ jobs:
           # For workflow_run, checkout the commit that triggered CI
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
 
+      # Issue #440: `github.event.workflow_run.conclusion` aggregates every
+      # job in the triggering CI run, including the deliberately-optional
+      # "E2E Tests (live API)" job (see ci.yml's `ci-success` job, which
+      # marks e2e-tests as not required). That means a stale-token E2E
+      # failure flips the whole workflow_run to "failure" even though the
+      # "CI Success" gate job itself passed — so we must check that specific
+      # check-run's conclusion via the Checks API instead of trusting the
+      # aggregate. workflow_dispatch has no associated CI run, so it always
+      # passes this gate.
+      - name: Check CI Success job conclusion
+        id: ci-success-check
+        if: github.event_name == 'workflow_run'
+        env:
+          # Read-only Checks API call — use the default GITHUB_TOKEN (scoped
+          # via the `checks: read` permission above), not the RELEASE_APP
+          # token. That keeps this gate from depending on RELEASE_APP also
+          # having Checks:read granted (the app token is only needed later,
+          # for the tag push that must trigger downstream workflows).
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          # List check-runs for the triggering commit and find the one named
+          # "CI Success" (the ci.yml job that aggregates all *required*
+          # checks — see ci.yml's ci-success job). Paginate defensively even
+          # though this SHA should have a small, bounded number of check-runs.
+          #
+          # This must never hard-crash the job on API failure — that would
+          # silently block every release until someone notices, recreating
+          # the exact "nothing red visible" failure mode issue #440
+          # complains about, just moved to a different call site. Treat any
+          # API error the same as "not found": loud warning, non-blocking
+          # default of "missing" that the next step treats as a failed gate.
+          CONCLUSION=$(gh api \
+            --paginate \
+            "repos/${{ github.repository }}/commits/${HEAD_SHA}/check-runs" \
+            --jq '.check_runs[] | select(.name == "CI Success") | .conclusion' \
+            2>/tmp/ci-success-check-err | head -1) || {
+            echo "::warning::gh api check-runs call failed for ${HEAD_SHA}: $(cat /tmp/ci-success-check-err 2>/dev/null). Treating 'CI Success' as not-passed."
+            echo "conclusion=missing" >> "$GITHUB_OUTPUT"
+            exit 0
+          }
+
+          if [[ -z "$CONCLUSION" ]]; then
+            echo "::warning::Could not find a 'CI Success' check-run for ${HEAD_SHA}; treating as not-passed."
+            echo "conclusion=missing" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "CI Success check-run conclusion: $CONCLUSION"
+          echo "conclusion=$CONCLUSION" >> "$GITHUB_OUTPUT"
+
       - name: Check release conditions
         id: check
+        env:
+          CI_SUCCESS_CONCLUSION: ${{ steps.ci-success-check.outputs.conclusion }}
         run: |
+          # Gate on the specific "CI Success" check-run conclusion rather
+          # than the aggregate workflow_run.conclusion (issue #440). Skipped
+          # entirely for workflow_dispatch, which has no associated CI run.
+          if [[ "${{ github.event_name }}" == "workflow_run" && "$CI_SUCCESS_CONCLUSION" != "success" ]]; then
+            echo "Skipping: 'CI Success' check-run did not pass (conclusion: ${CI_SUCCESS_CONCLUSION:-unknown})"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
           # Skip if this push was from the release workflow or auto-release itself
           COMMIT_MSG=$(git log -1 --pretty=%B)
           if [[ "$COMMIT_MSG" == *"[skip ci]"* ]] || [[ "$COMMIT_MSG" == *"[auto-release]"* ]]; then
