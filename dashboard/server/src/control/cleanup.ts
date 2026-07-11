@@ -17,6 +17,7 @@ export type CleanupTarget =
   | "worktrees"
   | "volumes"
   | "images"
+  | "prune-dangling"
   | "containers"
   | "logs"
   | "ssh-cache"
@@ -39,6 +40,7 @@ const TARGET_TO_FLAG: Record<Exclude<CleanupTarget, "stale-state">, string> = {
   worktrees: "--worktrees",
   volumes: "--volumes",
   images: "--images",
+  "prune-dangling": "--prune-dangling",
   containers: "--containers",
   logs: "--logs",
   "ssh-cache": "--ssh-cache",
