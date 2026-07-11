@@ -40,9 +40,12 @@ on:
         type: boolean
         default: false
 
-# Prevent concurrent releases
+# Prevent concurrent releases racing against a moved HEAD (issue #441).
+# Keyed on branch so overlapping workflow_run/workflow_dispatch invocations
+# for the same branch are serialized instead of both checking out and
+# tagging from a HEAD that shifted mid-run.
 concurrency:
-  group: auto-release
+  group: auto-release-${{ github.event.workflow_run.head_branch || github.ref_name }}
   cancel-in-progress: false
 
 permissions:
@@ -250,6 +253,61 @@ jobs:
           git push origin "v${NEW_VERSION}"
 
           echo "Created and pushed tag v${NEW_VERSION}"
+
+      # Issue #441: release.yml (on.push.tags) occasionally never fires for a
+      # freshly-pushed tag when two merges/tag-pushes land close together.
+      # Self-heal regardless of root cause: poll for the expected release.yml
+      # run for a few minutes, and if it never shows up, dispatch it directly.
+      #
+      # Best-effort: the tag itself was already created and pushed successfully
+      # by the previous step, so a failure here (e.g. the RELEASE_APP token
+      # lacking Actions read/write scopes) must not fail this job — it should
+      # only be logged loudly so it can be investigated. If `gh` calls below
+      # start failing with permission errors, grant the RELEASE_APP GitHub App
+      # "Actions: Read and write" permission.
+      - name: Verify Release workflow triggered, self-heal if not
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          NEW_VERSION: ${{ steps.newversion.outputs.new_version }}
+        run: |
+          TAG="v${NEW_VERSION}"
+          POLL_ATTEMPTS=18   # 18 * 10s = 3 minutes
+          ATTEMPT=0
+          FOUND="false"
+
+          echo "Polling for a release.yml run triggered by tag ${TAG}..."
+
+          while [[ "$ATTEMPT" -lt "$POLL_ATTEMPTS" ]]; do
+            RUN_COUNT=$(gh run list \
+              --repo "${{ github.repository }}" \
+              --workflow=release.yml \
+              --json headBranch,event \
+              --jq "[.[] | select(.headBranch == \"${TAG}\" and .event == \"push\")] | length") || {
+              echo "::warning::gh run list failed (possibly missing Actions:read permission on RELEASE_APP). Skipping self-heal poll."
+              exit 0
+            }
+
+            if [[ "$RUN_COUNT" -gt 0 ]]; then
+              echo "Found release.yml run for tag ${TAG} after ${ATTEMPT} poll(s)."
+              FOUND="true"
+              break
+            fi
+
+            ATTEMPT=$((ATTEMPT + 1))
+            sleep 10
+          done
+
+          if [[ "$FOUND" != "true" ]]; then
+            echo "No release.yml run detected for tag ${TAG} after ${POLL_ATTEMPTS} polls (~3 min)."
+            echo "Dispatching release.yml manually as a self-heal measure."
+            if ! gh workflow run release.yml \
+              --repo "${{ github.repository }}" \
+              --ref "${TAG}" \
+              -f version="${NEW_VERSION}"; then
+              echo "::warning::Failed to dispatch release.yml for tag ${TAG} (possibly missing Actions:write permission on RELEASE_APP). Manual dispatch required: gh workflow run release.yml --ref ${TAG} -f version=${NEW_VERSION}"
+            fi
+          fi
 
       - name: Release Summary
         run: |
