@@ -155,7 +155,9 @@ build_tools:
   #-----------------------------------------------------------------------------
   protoc:
     enabled: true
-    version: "34.1"
+    # 34.1 never existed on Maven Central (real history is 2.x/3.x then a 4.x
+    # realignment). 3.25.1 matches every configs/build-profiles/*.yaml pin.
+    version: "3.25.1"
     # Pre-cache binaries for both architectures
     cache_binaries: true
     architectures:
@@ -234,6 +236,9 @@ dependency_managers:
   yq:
     version: "4.53.3"
     sha256: "fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4"
+    # arm64 checksum: previously had no override mechanism at all (only amd64
+    # was wired through), so arm64 builds silently skipped verification.
+    sha256_arm64: "578648e463a11c1b6db6010cbf41eafed6bee79466fcffa1bb446672cf7945ea"
 
 #===============================================================================
 # IMAGE CONFIGURATION
