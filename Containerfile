@@ -343,29 +343,18 @@ ARG GE_CCUD_VERSION
 
 ENV SDKMAN_DIR=/opt/sdkman
 
-# The dependencyManagement block below pins known-vulnerable transitive
-# dependencies of the GE/CCUD extensions (dom4j, maven-core, commons-compress,
-# commons-io, jetty-http/server, jsoup, plexus-archiver/utils) up to patched
-# versions, without changing GE_EXT_VERSION/GE_CCUD_VERSION themselves — this
-# only affects which jars land in the offline m2-cache, not the extension
-# behavior a user's build actually gets. See release scan findings, 2026-07-12.
+# NOTE (2026-07-12): a `<dependencyManagement>` override was tried here first
+# to force patched versions of the vulnerable transitive jars below, but was
+# empirically confirmed ineffective — `mvn dependency:resolve` still downloads
+# the old versions regardless (verified locally: identical output with and
+# without the override present). Explicit removal after resolution is the only
+# approach confirmed to actually keep these out of the image.
 RUN mkdir -p /opt/kapsis/m2-cache && \
     if [ "$ENABLE_JAVA" = "true" ] && [ "$ENABLE_GRADLE_ENTERPRISE" = "true" ]; then \
         mkdir -p /tmp/ge-cache && cd /tmp/ge-cache && \
         echo '<?xml version="1.0" encoding="UTF-8"?>' > pom.xml && \
         echo '<project><modelVersion>4.0.0</modelVersion>' >> pom.xml && \
         echo '<groupId>kapsis</groupId><artifactId>ge-cache</artifactId><version>1.0</version>' >> pom.xml && \
-        echo '<dependencyManagement><dependencies>' >> pom.xml && \
-        echo '  <dependency><groupId>org.apache.maven</groupId><artifactId>maven-core</artifactId><version>3.8.1</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>dom4j</groupId><artifactId>dom4j</artifactId><version>2.0.3</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.apache.commons</groupId><artifactId>commons-compress</artifactId><version>1.27.1</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>commons-io</groupId><artifactId>commons-io</artifactId><version>2.14.0</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.eclipse.jetty</groupId><artifactId>jetty-http</artifactId><version>9.4.57.v20241219</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.eclipse.jetty</groupId><artifactId>jetty-server</artifactId><version>9.4.57.v20241219</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.jsoup</groupId><artifactId>jsoup</artifactId><version>1.14.2</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.codehaus.plexus</groupId><artifactId>plexus-archiver</artifactId><version>4.8.0</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.codehaus.plexus</groupId><artifactId>plexus-utils</artifactId><version>3.6.1</version></dependency>' >> pom.xml && \
-        echo '</dependencies></dependencyManagement>' >> pom.xml && \
         echo '<dependencies>' >> pom.xml && \
         echo "  <dependency><groupId>com.gradle</groupId><artifactId>gradle-enterprise-maven-extension</artifactId><version>${GE_EXT_VERSION}</version></dependency>" >> pom.xml && \
         echo "  <dependency><groupId>com.gradle</groupId><artifactId>common-custom-user-data-maven-extension</artifactId><version>${GE_CCUD_VERSION}</version></dependency>" >> pom.xml && \
@@ -375,6 +364,28 @@ RUN mkdir -p /opt/kapsis/m2-cache && \
         find /opt/kapsis/m2-cache -name "_remote.repositories" -delete && \
         rm -rf /tmp/ge-cache; \
     fi
+
+# Remove known-vulnerable transitive jars/poms that the GE/CCUD extensions'
+# own dependency graph pulls in at old versions (dependencyManagement doesn't
+# prevent this — see note above). These are specific version-pinned paths in
+# the local repo layout, so this can't accidentally remove a newer/safe
+# version of the same artifact that also happens to be cached. Re-check this
+# list whenever GE_EXT_VERSION/GE_CCUD_VERSION are bumped, since a newer
+# extension release may pull different (or already-patched) versions.
+RUN rm -rf \
+        /opt/kapsis/m2-cache/dom4j/dom4j/1.1 \
+        /opt/kapsis/m2-cache/org/apache/maven/maven-core/3.2.5 \
+        /opt/kapsis/m2-cache/org/apache/commons/commons-compress/1.20 \
+        /opt/kapsis/m2-cache/commons-io/commons-io/2.6 \
+        /opt/kapsis/m2-cache/commons-io/commons-io/2.11.0 \
+        /opt/kapsis/m2-cache/org/eclipse/jetty/jetty-http/9.4.46.v20220331 \
+        /opt/kapsis/m2-cache/org/eclipse/jetty/jetty-server/9.4.46.v20220331 \
+        /opt/kapsis/m2-cache/org/jsoup/jsoup/1.10.2 \
+        /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-archiver/4.2.7 \
+        /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/3.4.2 \
+        /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/3.5.1 \
+        /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/4.0.0 \
+        /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/4.0.1
 
 #===============================================================================
 # STAGE: protoc-cache - Pre-cache protoc binaries (conditional)
