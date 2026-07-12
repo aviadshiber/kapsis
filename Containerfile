@@ -367,25 +367,63 @@ RUN mkdir -p /opt/kapsis/m2-cache && \
 
 # Remove known-vulnerable transitive jars/poms that the GE/CCUD extensions'
 # own dependency graph pulls in at old versions (dependencyManagement doesn't
-# prevent this — see note above). These are specific version-pinned paths in
-# the local repo layout, so this can't accidentally remove a newer/safe
-# version of the same artifact that also happens to be cached. Re-check this
-# list whenever GE_EXT_VERSION/GE_CCUD_VERSION are bumped, since a newer
-# extension release may pull different (or already-patched) versions.
-RUN rm -rf \
-        /opt/kapsis/m2-cache/dom4j/dom4j/1.1 \
-        /opt/kapsis/m2-cache/org/apache/maven/maven-core/3.2.5 \
-        /opt/kapsis/m2-cache/org/apache/commons/commons-compress/1.20 \
-        /opt/kapsis/m2-cache/commons-io/commons-io/2.6 \
-        /opt/kapsis/m2-cache/commons-io/commons-io/2.11.0 \
-        /opt/kapsis/m2-cache/org/eclipse/jetty/jetty-http/9.4.46.v20220331 \
-        /opt/kapsis/m2-cache/org/eclipse/jetty/jetty-server/9.4.46.v20220331 \
-        /opt/kapsis/m2-cache/org/jsoup/jsoup/1.10.2 \
-        /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-archiver/4.2.7 \
-        /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/3.4.2 \
-        /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/3.5.1 \
-        /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/4.0.0 \
-        /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/4.0.1
+# prevent this — see note above). Source: 2026-07-12 Grype scan of the
+# released image (kapsis issue #451/#452/#454). These are specific
+# version-pinned paths in the local repo layout, so this can't accidentally
+# remove a newer/safe version of the same artifact that also happens to be
+# cached — e.g. commons-io/plexus-utils each get pulled at several different
+# old versions by the GE vs CCUD extensions' independent dependency chains,
+# which is why multiple versions of the same artifact appear below.
+#
+# Scope note: this only prevents these vulnerable jars/poms from being BAKED
+# INTO THE IMAGE (closing the SBOM/image-scan exposure). It does not prevent
+# an agent running with network mode `filtered` or `open` from having Maven
+# transparently re-resolve the identical vulnerable coordinate from the
+# network the next time the GE/CCUD extensions' dependency graph calls for
+# it (isolated-settings.xml is online, not `-o`/offline) — only `network:
+# none` closes that path too. dependencyManagement would be the fix for the
+# network-reachable case as well, but it's confirmed ineffective here (see
+# note above); revisit if that becomes a requirement.
+#
+# Verification below fails the build loudly if a listed path exists but
+# `rm -rf` somehow didn't remove it (catches typos/refactors of this block).
+# A path not existing pre-removal only WARNS rather than fails — verified
+# empirically that this local repo's transitive resolution is not fully
+# deterministic build-to-build (some of these exact old versions are pulled
+# in some runs and not others), so treating "not present this time" as fatal
+# produces spurious CI failures unrelated to any real regression. None of
+# this can detect a version bump introducing a brand-new vulnerable
+# coordinate not listed here — that still requires re-running a
+# vulnerability scan whenever GE_EXT_VERSION/GE_CCUD_VERSION change.
+# tests/test-ge-cache-security.sh re-asserts this same removal against a
+# fully built image, independent of this build-time check.
+RUN if [ "$ENABLE_JAVA" = "true" ] && [ "$ENABLE_GRADLE_ENTERPRISE" = "true" ]; then \
+        for p in \
+            /opt/kapsis/m2-cache/dom4j/dom4j/1.1 \
+            /opt/kapsis/m2-cache/org/apache/maven/maven-core/3.2.5 \
+            /opt/kapsis/m2-cache/org/apache/commons/commons-compress/1.20 \
+            /opt/kapsis/m2-cache/commons-io/commons-io/2.6 \
+            /opt/kapsis/m2-cache/commons-io/commons-io/2.11.0 \
+            /opt/kapsis/m2-cache/org/eclipse/jetty/jetty-http/9.4.46.v20220331 \
+            /opt/kapsis/m2-cache/org/eclipse/jetty/jetty-server/9.4.46.v20220331 \
+            /opt/kapsis/m2-cache/org/jsoup/jsoup/1.10.2 \
+            /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-archiver/4.2.7 \
+            /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/3.4.2 \
+            /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/3.5.1 \
+            /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/4.0.0 \
+            /opt/kapsis/m2-cache/org/codehaus/plexus/plexus-utils/4.0.1 \
+        ; do \
+            if [ ! -d "$p" ]; then \
+                echo "WARNING: expected vulnerable-jar path not present, skipping: $p (Maven's transitive resolution here is not fully deterministic build-to-build — this alone doesn't necessarily mean the list is stale, but re-check after any GE_EXT_VERSION/GE_CCUD_VERSION bump)"; \
+                continue; \
+            fi; \
+            rm -rf "$p"; \
+            if [ -d "$p" ]; then \
+                echo "FATAL: failed to remove vulnerable jar path: $p"; \
+                exit 1; \
+            fi; \
+        done; \
+    fi
 
 #===============================================================================
 # STAGE: protoc-cache - Pre-cache protoc binaries (conditional)
