@@ -311,8 +311,10 @@ for blk in d.get("syscalls", []):
         eperm |= set(blk.get("names", []))
 leaked = DENY & allowed
 missing = DENY - eperm
-# clone/clone3 must remain allowed (process/thread creation)
-core_ok = {"clone","clone3","execve","openat"} <= allowed
+# execve/openat (ordinary process/file syscalls) must remain flatly allowed.
+# clone/clone3 are checked separately below (issue #444: they are now
+# conditionally/never allowed, not flatly allowed).
+core_ok = {"execve","openat"} <= allowed
 if leaked:
     print("LEAK:" + ",".join(sorted(leaked)))
 elif missing:
@@ -325,6 +327,56 @@ PY
 )
     assert_equals "OK" "$verdict" \
         "Hardened profile must deny userns+mount (EPERM) while keeping clone/exec allowed"
+}
+
+# Issue #444: clone(CLONE_NEWUSER) is an alternative path to a nested user
+# namespace that bypasses the unshare/setns/mount denial above. Verify the
+# hardened profile arg-filters clone() (allow only when no CLONE_NEW* flag is
+# set) and denies clone3() outright with ENOSYS (forcing libc fallback to the
+# filtered clone() path), mirroring moby/moby's default seccomp profile.
+test_hardened_profile_filters_clone_namespace_flags() {
+    log_test "Seccomp: hardened profile arg-filters clone(CLONE_NEWUSER) and denies clone3"
+
+    local profile="$KAPSIS_ROOT/security/seccomp/kapsis-default-hardened.json"
+    assert_file_exists "$profile" "Hardened profile must exist"
+
+    local verdict
+    verdict=$(python3 - "$profile" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+NEWNS_MASK = 2114060288  # 0x7E020000: CLONE_NEWNS|NEWCGROUP|NEWUTS|NEWIPC|NEWUSER|NEWPID|NEWNET
+
+clone_rules = [b for b in d.get("syscalls", []) if "clone" in b.get("names", [])]
+clone3_rules = [b for b in d.get("syscalls", []) if "clone3" in b.get("names", [])]
+
+if not clone_rules:
+    print("NO_CLONE_RULE"); sys.exit()
+if any(b.get("action") == "SCMP_ACT_ALLOW" and not b.get("args") for b in clone_rules):
+    print("CLONE_UNFILTERED_ALLOW"); sys.exit()
+
+masked_ok = False
+for b in clone_rules:
+    if b.get("action") != "SCMP_ACT_ALLOW":
+        continue
+    for a in b.get("args", []):
+        if (a.get("op") == "SCMP_CMP_MASKED_EQ" and a.get("value") == NEWNS_MASK
+                and a.get("valueTwo", 0) == 0 and a.get("index") in (0, 1)):
+            masked_ok = True
+if not masked_ok:
+    print("CLONE_MASK_MISSING"); sys.exit()
+
+if not clone3_rules:
+    print("NO_CLONE3_RULE"); sys.exit()
+if any(b.get("action") == "SCMP_ACT_ALLOW" for b in clone3_rules):
+    print("CLONE3_STILL_ALLOWED"); sys.exit()
+if not all(b.get("action") == "SCMP_ACT_ERRNO" and b.get("errnoRet") == 38 for b in clone3_rules):
+    print("CLONE3_WRONG_ERRNO"); sys.exit()
+
+print("OK")
+PY
+)
+    assert_equals "OK" "$verdict" \
+        "clone() must be arg-filtered to deny CLONE_NEW* flags; clone3() must be denied with ENOSYS(38)"
 }
 
 test_seccomp_enabled_by_strict() {
@@ -1057,6 +1109,7 @@ main() {
     run_test test_seccomp_allow_userns_optout
     run_test test_seccomp_master_kill_switch
     run_test test_hardened_profile_denies_userns_mount
+    run_test test_hardened_profile_filters_clone_namespace_flags
     run_test test_seccomp_enabled_by_strict
     run_test test_seccomp_env_override
     run_test test_seccomp_profile_path
