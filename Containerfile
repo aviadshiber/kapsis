@@ -48,7 +48,10 @@ ARG MAVEN_VERSION=3.9.15
 ARG GRADLE_VERSION=9.4.1
 ARG GE_EXT_VERSION=1.20
 ARG GE_CCUD_VERSION=1.12.5
-ARG PROTOC_VERSION=34.1
+# 34.1 never existed on Maven Central (com.google.protobuf:protoc's real
+# version history is 2.x/3.x then a 4.x realignment — no bare "3x.x" line).
+# 3.25.1 matches what every configs/build-profiles/*.yaml already pins.
+ARG PROTOC_VERSION=3.25.1
 
 # System package toggles
 ARG ENABLE_DEV_TOOLS=true
