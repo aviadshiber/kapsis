@@ -877,6 +877,147 @@ test_get_podman_machine_provider_resolves_kapsis_podman_machine() {
 }
 
 #===============================================================================
+# is_podman_machine_active() TESTS (Issue #443)
+#
+# Unlike get_podman_machine_provider() (informational only), this is a
+# behavioral gate, so it must be exercised against a real fake `podman`
+# binary rather than stubbed at the function level (which is what
+# test-security.sh's seccomp-staging tests do further downstream — those
+# validate staging behavior *given* a result, not that this function
+# produces the right result in the first place).
+#===============================================================================
+
+test_is_podman_machine_active_true_when_state_present() {
+    log_test "is_podman_machine_active: true when podman reports a non-empty State"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-active-test.XXXXXX")
+    _provider_make_fake_podman "$tmpdir/podman" \
+        'if [[ "$1" == "machine" && "$2" == "inspect" ]]; then echo "running"; exit 0; fi' \
+        'exit 1'
+
+    (
+        is_macos() { return 0; }
+        PATH="$tmpdir:$PATH"
+        is_podman_machine_active "podman-machine-default"
+    )
+    local result=$?
+
+    rm -rf "$tmpdir"
+    assert_equals "0" "$result" "Should return true (0) when State is non-empty"
+}
+
+test_is_podman_machine_active_false_when_podman_fails() {
+    log_test "is_podman_machine_active: false when podman machine inspect fails"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-active-test.XXXXXX")
+    _provider_make_fake_podman "$tmpdir/podman" 'exit 1'
+
+    (
+        is_macos() { return 0; }
+        PATH="$tmpdir:$PATH"
+        is_podman_machine_active "podman-machine-default"
+    )
+    local result=$?
+
+    rm -rf "$tmpdir"
+    assert_equals "1" "$result" "Should return false (1) when podman reports no State"
+}
+
+test_is_podman_machine_active_false_on_linux_without_invoking_podman() {
+    log_test "is_podman_machine_active: false on non-macOS, without invoking podman"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-active-test.XXXXXX")
+    _provider_make_fake_podman "$tmpdir/podman" 'echo "SHOULD_NOT_BE_CALLED"; exit 0'
+
+    (
+        is_macos() { return 1; }
+        PATH="$tmpdir:$PATH"
+        is_podman_machine_active "podman-machine-default"
+    )
+    local result=$?
+
+    rm -rf "$tmpdir"
+    assert_equals "1" "$result" "Should be false on non-macOS without invoking podman"
+}
+
+test_is_podman_machine_active_fallback_without_timeout_cmd() {
+    log_test "is_podman_machine_active: fallback branch works when no timeout cmd available"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-active-test.XXXXXX")
+    _provider_make_fake_podman "$tmpdir/podman" \
+        'if [[ "$1" == "machine" && "$2" == "inspect" ]]; then echo "running"; exit 0; fi' \
+        'exit 1'
+
+    (
+        is_macos() { return 0; }
+        _KAPSIS_TIMEOUT_CMD=""
+        PATH="$tmpdir:$PATH"
+        is_podman_machine_active "podman-machine-default"
+    )
+    local result=$?
+
+    rm -rf "$tmpdir"
+    assert_equals "0" "$result" "Fallback (no timeout cmd) branch should also detect an active machine"
+}
+
+test_is_podman_machine_active_resolves_kapsis_podman_machine() {
+    log_test "is_podman_machine_active: resolves KAPSIS_PODMAN_MACHINE when called without argument"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-active-test.XXXXXX")
+    _provider_make_fake_podman "$tmpdir/podman" \
+        "printf '%s\n' \"\$@\" > \"$tmpdir/argv\"" \
+        'echo "running"' \
+        'exit 0'
+
+    (
+        is_macos() { return 0; }
+        PATH="$tmpdir:$PATH"
+        KAPSIS_PODMAN_MACHINE="custom-machine"
+        is_podman_machine_active
+    )
+    local result=$?
+
+    local argv=""
+    [[ -f "$tmpdir/argv" ]] && argv=$(cat "$tmpdir/argv")
+    rm -rf "$tmpdir"
+
+    assert_equals "0" "$result" "Should report active for the resolved custom machine"
+    assert_contains "$argv" "custom-machine" "custom-machine should be passed to podman machine inspect"
+}
+
+test_is_podman_machine_active_uses_state_not_vmtype() {
+    log_test "is_podman_machine_active: queries .State (not .VMType, which podman 5.8.2+ omits)"
+
+    local tmpdir
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-active-test.XXXXXX")
+    # Fake podman only understands --format '{{.State}}'; any other format
+    # (e.g. the removed .VMType) returns empty, simulating podman 5.8.2+.
+    _provider_make_fake_podman "$tmpdir/podman" \
+        'if [[ "$1" == "machine" && "$2" == "inspect" ]]; then' \
+        '    for arg in "$@"; do' \
+        '        if [[ "$arg" == *".State"* ]]; then echo "running"; exit 0; fi' \
+        '    done' \
+        '    echo ""; exit 0' \
+        'fi' \
+        'exit 1'
+
+    (
+        is_macos() { return 0; }
+        PATH="$tmpdir:$PATH"
+        is_podman_machine_active "podman-machine-default"
+    )
+    local result=$?
+
+    rm -rf "$tmpdir"
+    assert_equals "0" "$result" "Should detect an active machine via .State even when .VMType would be empty"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -953,6 +1094,14 @@ main() {
     run_test test_get_podman_machine_provider_empty_when_podman_fails
     run_test test_get_podman_machine_provider_fallback_without_timeout_cmd
     run_test test_get_podman_machine_provider_resolves_kapsis_podman_machine
+
+    # is_podman_machine_active() tests (Issue #443)
+    run_test test_is_podman_machine_active_true_when_state_present
+    run_test test_is_podman_machine_active_false_when_podman_fails
+    run_test test_is_podman_machine_active_false_on_linux_without_invoking_podman
+    run_test test_is_podman_machine_active_fallback_without_timeout_cmd
+    run_test test_is_podman_machine_active_resolves_kapsis_podman_machine
+    run_test test_is_podman_machine_active_uses_state_not_vmtype
 
     # Summary
     print_summary

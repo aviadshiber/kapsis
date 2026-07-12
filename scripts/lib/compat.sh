@@ -378,6 +378,50 @@ get_podman_machine_provider() {
 }
 
 #-------------------------------------------------------------------------------
+# is_podman_machine_active [machine]
+#
+# Returns 0 (true) when podman is backed by a macOS podman-machine VM
+# (applehv/libkrun/qemu — any hypervisor provider), 1 (false) otherwise
+# (Linux native rootless, or macOS with no machine configured/reachable).
+#
+# Deliberately does NOT reuse get_podman_machine_provider()'s `.VMType`
+# field — that field has been removed from `podman machine inspect` JSON on
+# at least podman 5.8.2 (verified empirically), which would make this gate
+# silently never fire and reintroduce the exact bug it's meant to prevent.
+# `.State` has been a stable field across podman-machine versions, so we
+# probe that instead: any parseable state means a machine exists and podman
+# is routing through it, which is all this gate needs to know — the VM-type
+# distinction is irrelevant here (every hypervisor provider isolates the
+# guest mount namespace from arbitrary host paths the same way).
+#
+# This is a deliberate behavioral gate (unlike the informational-only
+# get_podman_machine_provider): any VM-backed provider means podman resolves
+# bind-mount / --security-opt path arguments INSIDE the VM's mount
+# namespace, not on the host filesystem. Host paths outside the VM's default
+# mounts (notably a Homebrew Cellar/libexec install tree, which is NOT
+# mounted into the machine) are invisible to podman even though they exist on
+# the host — see issue #443. $HOME (and a few other default locations) ARE
+# mounted into the machine by default.
+#
+# Tests stub this function directly (redefine after sourcing) rather than
+# depending on a real podman machine.
+#-------------------------------------------------------------------------------
+is_podman_machine_active() {
+    is_macos || return 1
+
+    local machine="${1:-${KAPSIS_PODMAN_MACHINE:-podman-machine-default}}"
+    local state
+
+    if [[ -n "$_KAPSIS_TIMEOUT_CMD" ]]; then
+        state=$("$_KAPSIS_TIMEOUT_CMD" 5 podman machine inspect "$machine" --format '{{.State}}' 2>/dev/null)
+    else
+        state=$(podman machine inspect "$machine" --format '{{.State}}' 2>/dev/null)
+    fi
+
+    [[ -n "$state" ]]
+}
+
+#-------------------------------------------------------------------------------
 # _recover_podman_ssh_tunnel [probe_timeout] [max_retries] [retry_delay]
 #
 # Probes the Podman SSH tunnel and attempts recovery if stale (macOS only).
