@@ -286,6 +286,25 @@ test_build_args_generation() {
     assert_contains "$args_string" "JAVA_DEFAULT=17.0.14-zulu" "Should include JAVA_DEFAULT"
 }
 
+test_build_args_yq_arm64_checksum() {
+    log_test "Testing YQ_SHA256_ARM64 is wired into BUILD_ARGS from config"
+
+    if ! check_yq_installed; then
+        return 0
+    fi
+
+    unset _KAPSIS_BUILD_CONFIG_LOADED
+    source "$BUILD_CONFIG_LIB"
+
+    parse_build_config "$CONFIGS_DIR/build-config.yaml"
+
+    local args_string
+    args_string=$(printf '%s ' "${BUILD_ARGS[@]}")
+
+    assert_contains "$args_string" "YQ_SHA256_AMD64=" "Should include YQ_SHA256_AMD64"
+    assert_contains "$args_string" "YQ_SHA256_ARM64=" "Should include YQ_SHA256_ARM64 (previously had no config override at all)"
+}
+
 test_build_args_for_minimal() {
     log_test "Testing BUILD_ARGS for minimal profile"
 
@@ -531,6 +550,7 @@ main() {
 
     # Build args tests
     run_test test_build_args_generation
+run_test test_build_args_yq_arm64_checksum
     run_test test_build_args_for_minimal
 
     # Size estimation tests

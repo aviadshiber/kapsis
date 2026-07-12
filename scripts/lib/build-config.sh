@@ -42,7 +42,7 @@ declare -g DEFAULT_GE_ENABLED="true"
 declare -g DEFAULT_GE_EXT_VERSION="1.20"
 declare -g DEFAULT_GE_CCUD_VERSION="1.12.5"
 declare -g DEFAULT_PROTOC_ENABLED="true"
-declare -g DEFAULT_PROTOC_VERSION="25.1"
+declare -g DEFAULT_PROTOC_VERSION="3.25.1"
 
 # System package defaults
 declare -g DEFAULT_DEV_TOOLS_ENABLED="true"
@@ -54,6 +54,7 @@ declare -g DEFAULT_SECRET_STORE_ENABLED="true"
 # yq defaults
 declare -g DEFAULT_YQ_VERSION="4.44.3"
 declare -g DEFAULT_YQ_SHA256="a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7"
+declare -g DEFAULT_YQ_SHA256_ARM64=""
 
 #===============================================================================
 # PARSED VALUES (populated by parse_build_config)
@@ -88,6 +89,7 @@ declare -g CUSTOM_PACKAGES=""
 
 declare -g YQ_VERSION=""
 declare -g YQ_SHA256=""
+declare -g YQ_SHA256_ARM64=""
 declare -g SDKMAN_SHA256=""
 declare -g NVM_SHA256=""
 
@@ -186,7 +188,7 @@ parse_build_config() {
     GE_CCUD_VERSION=$(yq -r '.build_tools.gradle_enterprise.ccud_version // "1.12.5"' "$config_file")
 
     ENABLE_PROTOC=$(_yq_bool '.build_tools.protoc.enabled' "true" "$config_file")
-    PROTOC_VERSION=$(yq -r '.build_tools.protoc.version // "25.1"' "$config_file")
+    PROTOC_VERSION=$(yq -r '.build_tools.protoc.version // "3.25.1"' "$config_file")
 
     # Parse system packages
     ENABLE_DEV_TOOLS=$(_yq_bool '.system_packages.development.enabled' "true" "$config_file")
@@ -207,6 +209,7 @@ parse_build_config() {
     # Parse yq settings
     YQ_VERSION=$(yq -r '.dependency_managers.yq.version // "4.44.3"' "$config_file")
     YQ_SHA256=$(yq -r '.dependency_managers.yq.sha256 // ""' "$config_file")
+    YQ_SHA256_ARM64=$(yq -r '.dependency_managers.yq.sha256_arm64 // ""' "$config_file")
 
     _generate_build_args
 }
@@ -252,6 +255,7 @@ _apply_defaults() {
 
     YQ_VERSION="$DEFAULT_YQ_VERSION"
     YQ_SHA256="$DEFAULT_YQ_SHA256"
+    YQ_SHA256_ARM64="$DEFAULT_YQ_SHA256_ARM64"
 }
 
 #===============================================================================
@@ -307,6 +311,9 @@ _generate_build_args() {
     # Only add SHA256 if provided
     if [[ -n "$YQ_SHA256" ]]; then
         BUILD_ARGS+=("--build-arg" "YQ_SHA256_AMD64=$YQ_SHA256")
+    fi
+    if [[ -n "$YQ_SHA256_ARM64" ]]; then
+        BUILD_ARGS+=("--build-arg" "YQ_SHA256_ARM64=$YQ_SHA256_ARM64")
     fi
     if [[ -n "$SDKMAN_SHA256" ]]; then
         BUILD_ARGS+=("--build-arg" "SDKMAN_SHA256=$SDKMAN_SHA256")
