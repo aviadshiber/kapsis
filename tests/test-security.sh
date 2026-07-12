@@ -495,19 +495,37 @@ test_seccomp_staging_reuses_unchanged_staged_copy() {
     first_path=$(HOME="$fake_home" get_seccomp_profile "claude")
     assert_file_exists "$first_path" "First staged copy should exist"
 
-    # Make the staging directory read-only. If a second, identical call were
-    # to re-attempt the copy, `cp` would fail with EACCES and the function
-    # would fall back to returning the original (un-staged) source path —
-    # so a matching second_path proves the copy was correctly skipped.
-    chmod 555 "$(dirname "$first_path")"
+    # Make the staged *file itself* read-only (the staging directory stays
+    # writable, so a new file could still be created there). Overwriting an
+    # existing file only requires write permission on the file, not the
+    # directory, so chmod on the directory (as before) could never have
+    # caught a broken "skip when unchanged" optimization -- `cp` would
+    # happily truncate-and-rewrite an owner-writable dest regardless of the
+    # directory's permissions. With the dest file itself read-only, a real
+    # re-copy attempt fails with EACCES, so a matching second_path here
+    # proves the copy was genuinely skipped rather than merely appearing to
+    # succeed either way.
+    chmod 444 "$first_path"
 
     local second_path
     second_path=$(HOME="$fake_home" get_seccomp_profile "claude" 2>/dev/null)
 
-    chmod 755 "$(dirname "$first_path")"
+    chmod 644 "$first_path"
 
     assert_equals "$first_path" "$second_path" \
-        "Repeated calls with an unchanged source should not re-copy (read-only staging dir would break a real copy attempt)"
+        "Repeated calls with an unchanged source should not re-copy (read-only staged file would break a real copy attempt)"
+
+    # Also verify: if the source *does* change, the staged copy IS refreshed
+    # even though this makes the dest read-only along the way -- i.e. the
+    # skip is genuinely content-based (cmp -s), not "never copies again".
+    chmod 644 "$first_path"
+    echo '{"defaultAction": "SCMP_ACT_ERRNO"}' > "$cellar_profile"
+    local third_path
+    third_path=$(HOME="$fake_home" get_seccomp_profile "claude")
+    local third_content
+    third_content=$(cat "$third_path")
+    assert_equals '{"defaultAction": "SCMP_ACT_ERRNO"}' "$third_content" \
+        "Changed source content should be re-staged on the next call"
 }
 
 #===============================================================================
