@@ -28,6 +28,12 @@
 # Ensure we have the KAPSIS_ROOT set
 KAPSIS_ROOT="${KAPSIS_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
+# is_macos / is_podman_machine_active are needed for machine-visibility staging
+# below (issue #443). Source directly rather than relying on caller order —
+# compat.sh is idempotent (source guard) so this is a no-op if already loaded.
+# shellcheck source=lib/compat.sh
+source "${KAPSIS_ROOT}/scripts/lib/compat.sh"
+
 #===============================================================================
 # SECURITY PROFILE DEFINITIONS
 #===============================================================================
@@ -125,9 +131,65 @@ generate_capability_args() {
 # SECCOMP PROFILE MANAGEMENT
 #===============================================================================
 
-# Get the seccomp profile path for an agent
-# Usage: profile=$(get_seccomp_profile "claude")
-get_seccomp_profile() {
+# Stage a security profile (seccomp JSON, etc.) into a machine-visible path
+# when podman is backed by a macOS podman-machine VM. Issue #443: podman
+# resolves --security-opt seccomp=<path> INSIDE the VM's mount namespace, not
+# on the host. $KAPSIS_ROOT can be a Homebrew Cellar/libexec install tree
+# (e.g. /opt/homebrew/Cellar/kapsis/.../security/seccomp/...) which is NOT
+# one of the machine's default mounts, so podman fails with exit 125 even
+# though the file exists on the host. $HOME IS a default machine mount
+# (verified), so profiles already under $HOME need no staging.
+#
+# No-ops (returns the input path unchanged) on Linux, or on macOS when no
+# podman-machine VM is active (e.g. native rootless/Colima with a bind-mount
+# passthrough), or when the path is already under $HOME.
+#
+# Usage: staged_path=$(_stage_profile_for_machine_visibility "$path")
+_stage_profile_for_machine_visibility() {
+    local src="$1"
+
+    [[ -z "$src" ]] && return
+
+    if ! is_podman_machine_active; then
+        echo "$src"
+        return
+    fi
+
+    # Already under a machine-mounted location -- podman can resolve it
+    # inside the VM as-is, no staging needed.
+    if [[ "$src" == "${HOME}"/* ]]; then
+        echo "$src"
+        return
+    fi
+
+    local stage_dir="${HOME}/.kapsis/seccomp"
+    local src_basename
+    src_basename=$(basename "$src")
+    local dest="${stage_dir}/${src_basename}"
+
+    if ! mkdir -p "$stage_dir" 2>/dev/null; then
+        declare -f log_warn &>/dev/null && log_warn "Could not create machine-visible seccomp staging dir '$stage_dir'; passing original path '$src' (may fail inside podman machine, see issue #443)."
+        echo "$src"
+        return
+    fi
+
+    # Copy only when missing or changed, to avoid needless I/O on every launch.
+    if [[ ! -f "$dest" ]] || ! cmp -s "$src" "$dest" 2>/dev/null; then
+        if ! cp "$src" "$dest" 2>/dev/null; then
+            declare -f log_warn &>/dev/null && log_warn "Failed to stage seccomp profile '$src' -> '$dest'; passing original path (may fail inside podman machine, see issue #443)."
+            echo "$src"
+            return
+        fi
+    fi
+
+    echo "$dest"
+}
+
+# Resolve the seccomp profile path for an agent, before machine-visibility
+# staging. Internal helper for get_seccomp_profile() — split out so every
+# return path can be routed through _stage_profile_for_machine_visibility in
+# one place instead of duplicating the staging call at each `return`.
+_resolve_seccomp_profile_path() {
     local agent_name="${1:-}"
     local profile="${KAPSIS_SECURITY_PROFILE:-standard}"
     local seccomp_enabled="${SECURITY_DEFAULTS[${profile}_seccomp]:-false}"
@@ -193,6 +255,19 @@ get_seccomp_profile() {
     if [[ -f "${seccomp_dir}/kapsis-agent-base.json" ]]; then
         echo "${seccomp_dir}/kapsis-agent-base.json"
     fi
+}
+
+# Get the seccomp profile path for an agent, staged into a machine-visible
+# location first if needed (issue #443 — see
+# _stage_profile_for_machine_visibility above).
+# Usage: profile=$(get_seccomp_profile "claude")
+get_seccomp_profile() {
+    local resolved
+    resolved=$(_resolve_seccomp_profile_path "$@")
+
+    [[ -z "$resolved" ]] && return
+
+    _stage_profile_for_machine_visibility "$resolved"
 }
 
 # Generate seccomp arguments for podman
