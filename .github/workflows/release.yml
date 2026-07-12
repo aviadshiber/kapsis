@@ -236,7 +236,7 @@ jobs:
             # (without it grype always exits 0), which the || turns into a
             # warning annotation instead of a job failure.
             echo "Running Grype SBOM scan..."
-            grype "sbom:${SBOM_FILE}" --output table --fail-on high \
+            grype "sbom:${SBOM_FILE}" --config .grype.yaml --output table --fail-on high \
               || echo "::warning::Grype found HIGH/CRITICAL vulnerabilities (or the scan errored) in ${IMAGE} — review before shipping"
 
             echo ""
