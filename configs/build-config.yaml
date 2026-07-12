@@ -228,9 +228,12 @@ system_packages:
 #===============================================================================
 dependency_managers:
   # yq (YAML processor) - required for Kapsis, always installed
+  # v4.53.3: also picks up a newer Go toolchain (1.26.4), fixing the go-stdlib
+  # CVEs grype flagged against the previously pinned v4.52.5 binary (built
+  # with go1.26.1). See release scan findings, 2026-07-12.
   yq:
-    version: "4.52.5"
-    sha256: "75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9"
+    version: "4.53.3"
+    sha256: "fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4"
 
 #===============================================================================
 # IMAGE CONFIGURATION
