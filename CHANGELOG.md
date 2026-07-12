@@ -86,6 +86,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Stage seccomp/AppArmor profiles for machine-visibility on macOS podman-machine (#449)
 
+## [2.38.3] - 2026-07-12
+
+### Fixed
+- Resolve real vulnerability-scan findings, ignore Zulu JDK false positive (#452)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1121,7 +1126,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.38.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.38.3...HEAD
+[2.38.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.38.3
 [2.38.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.38.1
 [2.38.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.38.0
 [2.37.6]: https://github.com/aviadshiber/kapsis/releases/tag/v2.37.6
