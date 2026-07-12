@@ -951,15 +951,21 @@ setup_environment() {
         fi
     fi
 
-    # Pre-populate Maven local repo with GE extensions from image cache
-    # This is needed because the .m2/repository is a named volume that shadows the image contents
+    # Pre-populate Maven local repo with pre-cached Maven extensions/artifacts
+    # from the image cache (configs/build-config.yaml's build_tools.maven_extensions).
+    # This is needed because ~/.m2/repository is a named volume that shadows
+    # the image contents.
     if [[ -d "$KAPSIS_HOME/m2-cache" ]]; then
         local user_m2="$HOME/.m2/repository"
         mkdir -p "$user_m2"
-        # Only copy if GE extension not already present (avoid overwriting on restart)
-        if [[ ! -f "$user_m2/com/gradle/gradle-enterprise-maven-extension/1.20/gradle-enterprise-maven-extension-1.20.jar" ]]; then
+        # Marker file avoids re-copying (and overwriting anything a user's
+        # own build already wrote) on container restart. Generic on purpose —
+        # doesn't need to know which specific artifacts/versions are cached,
+        # unlike checking for one hardcoded jar path would.
+        if [[ ! -f "$user_m2/.kapsis-m2-cache-populated" ]]; then
             cp -r "$KAPSIS_HOME/m2-cache/"* "$user_m2/" 2>/dev/null || true
-            log_info "Gradle Enterprise extension: pre-populated from image cache"
+            touch "$user_m2/.kapsis-m2-cache-populated"
+            log_info "Maven local repo: pre-populated from image cache"
         fi
     fi
 

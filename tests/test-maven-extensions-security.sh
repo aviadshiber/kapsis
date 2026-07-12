@@ -1,39 +1,42 @@
 #!/usr/bin/env bash
 #===============================================================================
-# Test: GE-cache vulnerable transitive jar removal
+# Test: Maven extensions cache — vulnerable transitive jar removal
 #
-# Verifies that the known-vulnerable jars/poms the GE/CCUD Maven extensions
-# transitively pull into /opt/kapsis/m2-cache (dom4j, maven-core, commons-
-# compress, commons-io, jetty-http/server, jsoup, plexus-archiver/utils) are
-# actually absent from a built image, and that the GE extensions themselves
-# are still cached.
+# Verifies that the known-vulnerable jars/poms the DEFAULT configured Maven
+# extensions (Gradle Enterprise + Common Custom User Data, see
+# configs/build-config.yaml's build_tools.maven_extensions) transitively pull
+# into /opt/kapsis/m2-cache are actually absent from a built image, and that
+# the extensions themselves are still cached.
 #
 # This exists because a prior fix attempt (a <dependencyManagement> override
-# in the Containerfile's ge-cache stage) silently failed to work — `mvn
-# dependency:resolve` still downloaded the old vulnerable versions regardless
-# of the override, and that failure was only caught by re-running a
-# vulnerability scan after release, not by any automated check. This test is
-# the regression guard for that failure mode.
+# in the Containerfile's maven-ext-cache stage) silently failed to work —
+# `mvn dependency:resolve` still downloaded the old vulnerable versions
+# regardless of the override, and that failure was only caught by re-running
+# a vulnerability scan after release, not by any automated check. This test
+# is the regression guard for that failure mode.
 #
-# Note: if GE_EXT_VERSION/GE_CCUD_VERSION (Containerfile) are bumped, this
-# list may need updating — a newer extension release can pull different (or
-# already-patched) transitive versions. A passing test here does not by
-# itself prove no NEW vulnerable version was introduced by such a bump; it
-# only guards against regression of the specific versions listed below.
+# Note: build_tools.maven_extensions.extensions/vulnerable_paths is a
+# pluggable list — if you swap in different Maven extensions, this specific
+# path list no longer applies (it's tied to the default GE/CCUD config) and
+# a fresh vulnerability scan is needed to derive a new list. A passing test
+# here only guards against regression of the DEFAULT extensions' known
+# vulnerable versions, not any extension configuration.
 #
 # Prerequisites:
 #   - Podman installed and running
-#   - Kapsis image built with Java + Gradle Enterprise enabled
-#     (KAPSIS_TEST_IMAGE must have ENABLE_JAVA=true, ENABLE_GRADLE_ENTERPRISE=true)
+#   - Kapsis image built with Java + the default Maven extensions enabled
+#     (KAPSIS_TEST_IMAGE must have ENABLE_JAVA=true, ENABLE_MAVEN_EXTENSIONS=true)
 #===============================================================================
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/test-framework.sh"
 
-# Known-vulnerable version paths that must NOT be present in the cache.
-# Keep this list in sync with the Containerfile's ge-cache removal RUN block.
-readonly GE_CACHE_VULNERABLE_PATHS=(
+# Known-vulnerable version paths that must NOT be present in the cache, for
+# the DEFAULT build_tools.maven_extensions config. Keep this list in sync
+# with configs/build-config.yaml's vulnerable_paths (and the Containerfile's
+# MAVEN_EXTENSIONS_VULNERABLE_PATHS default).
+readonly MAVEN_EXT_CACHE_VULNERABLE_PATHS=(
     "/opt/kapsis/m2-cache/dom4j/dom4j/1.1"
     "/opt/kapsis/m2-cache/org/apache/maven/maven-core/3.2.5"
     "/opt/kapsis/m2-cache/org/apache/commons/commons-compress/1.20"
@@ -52,14 +55,14 @@ readonly GE_CACHE_VULNERABLE_PATHS=(
 # =============================================================================
 # Test: none of the known-vulnerable version paths are present
 # =============================================================================
-test_ge_cache_vulnerable_jars_absent() {
+test_maven_ext_cache_vulnerable_jars_absent() {
     if ! skip_if_no_container; then
         return 0
     fi
 
     local failed=0
     local p
-    for p in "${GE_CACHE_VULNERABLE_PATHS[@]}"; do
+    for p in "${MAVEN_EXT_CACHE_VULNERABLE_PATHS[@]}"; do
         local result
         result=$(run_simple_container "test -d '$p' && echo FOUND || echo NOT_FOUND")
         if [[ "$result" == *"FOUND"* && "$result" != *"NOT_FOUND"* ]]; then
@@ -69,18 +72,18 @@ test_ge_cache_vulnerable_jars_absent() {
     done
 
     if [[ "$failed" -eq 0 ]]; then
-        log_info "None of the ${#GE_CACHE_VULNERABLE_PATHS[@]} known-vulnerable GE-cache paths are present"
+        log_info "None of the ${#MAVEN_EXT_CACHE_VULNERABLE_PATHS[@]} known-vulnerable maven-ext-cache paths are present"
         return 0
     fi
     return 1
 }
 
 # =============================================================================
-# Test: the GE/CCUD extensions themselves are still cached (positive check —
-# a build that failed before populating the cache at all would otherwise
-# pass the absence test above by accident)
+# Test: the default extensions (GE + CCUD) themselves are still cached
+# (positive check — a build that failed before populating the cache at all
+# would otherwise pass the absence test above by accident)
 # =============================================================================
-test_ge_cache_extensions_still_present() {
+test_maven_ext_cache_default_extensions_still_present() {
     if ! skip_if_no_container; then
         return 0
     fi
@@ -97,11 +100,11 @@ test_ge_cache_extensions_still_present() {
 
     if [[ "$ge_result" == *"FOUND"* && "$ge_result" != *"NOT_FOUND"* \
         && "$ccud_result" == *"FOUND"* && "$ccud_result" != *"NOT_FOUND"* ]]; then
-        log_info "GE and CCUD extension jars both found in cache"
+        log_info "Default Maven extensions (GE + CCUD) both found in cache"
         return 0
     else
-        skip_test "test_ge_cache_extensions_still_present" \
-            "GE/CCUD extension jars not found - image may not have Gradle Enterprise enabled, or needs rebuild"
+        skip_test "test_maven_ext_cache_default_extensions_still_present" \
+            "Default Maven extensions not found - image may use a non-default extensions list, or need a rebuild"
         return 0
     fi
 }
@@ -109,9 +112,9 @@ test_ge_cache_extensions_still_present() {
 # =============================================================================
 # Run all tests
 # =============================================================================
-print_test_header "GE-Cache Vulnerable Transitive Jar Removal"
+print_test_header "Maven Extensions Cache — Vulnerable Transitive Jar Removal"
 
-run_test test_ge_cache_vulnerable_jars_absent
-run_test test_ge_cache_extensions_still_present
+run_test test_maven_ext_cache_vulnerable_jars_absent
+run_test test_maven_ext_cache_default_extensions_still_present
 
 print_summary

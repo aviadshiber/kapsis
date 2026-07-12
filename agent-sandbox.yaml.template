@@ -198,18 +198,26 @@ maven:
   block_deploy: true
 
 #===============================================================================
-# GRADLE ENTERPRISE / DEVELOCITY SETTINGS
+# MAVEN EXTENSIONS
 #===============================================================================
-gradle_enterprise:
-  # Server URL (customize for your organization)
-  server_url: "https://ge.example.org/"
-
-  # Keep build scans for observability (recommended: true)
-  build_scans_enabled: true
-
-  # Disable remote cache to prevent cross-agent contamination (recommended: true)
-  remote_cache_disabled: true
-
+# There is no `gradle_enterprise:` key here — Kapsis doesn't configure a GE/
+# Develocity server connection or build-scan settings for you. What IS
+# configurable (at build time, in configs/build-config.yaml or a build
+# profile — see docs/BUILD-CONFIGURATION.md) is which Maven extensions get
+# pre-cached into the offline m2 repo, pluggable to any extension:
+#
+#   build_tools:
+#     maven_extensions:
+#       enabled: true
+#       extensions:
+#         - group_id: "com.gradle"
+#           artifact_id: "gradle-enterprise-maven-extension"
+#           version: "1.20"
+#
+# Remote build cache is disabled by a fixed Kapsis default (maven/isolated-
+# settings.xml's kapsis-ge-isolation profile), not something you set here —
+# it only has an effect if your own project's Maven extension is active.
+#
 #===============================================================================
 # SANDBOX BEHAVIOR
 #===============================================================================

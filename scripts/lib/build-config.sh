@@ -38,9 +38,9 @@ declare -g DEFAULT_MAVEN_ENABLED="true"
 declare -g DEFAULT_MAVEN_VERSION="3.9.9"
 declare -g DEFAULT_GRADLE_ENABLED="false"
 declare -g DEFAULT_GRADLE_VERSION="8.5"
-declare -g DEFAULT_GE_ENABLED="true"
-declare -g DEFAULT_GE_EXT_VERSION="1.20"
-declare -g DEFAULT_GE_CCUD_VERSION="1.12.5"
+declare -g DEFAULT_MAVEN_EXTENSIONS_ENABLED="true"
+declare -g DEFAULT_MAVEN_EXTENSIONS='[{"groupId":"com.gradle","artifactId":"gradle-enterprise-maven-extension","version":"1.20"},{"groupId":"com.gradle","artifactId":"common-custom-user-data-maven-extension","version":"1.12.5"}]'
+declare -g DEFAULT_MAVEN_EXTENSIONS_VULNERABLE_PATHS='["dom4j/dom4j/1.1","org/apache/maven/maven-core/3.2.5","org/apache/commons/commons-compress/1.20","commons-io/commons-io/2.6","commons-io/commons-io/2.11.0","org/eclipse/jetty/jetty-http/9.4.46.v20220331","org/eclipse/jetty/jetty-server/9.4.46.v20220331","org/jsoup/jsoup/1.10.2","org/codehaus/plexus/plexus-archiver/4.2.7","org/codehaus/plexus/plexus-utils/3.4.2","org/codehaus/plexus/plexus-utils/3.5.1","org/codehaus/plexus/plexus-utils/4.0.0","org/codehaus/plexus/plexus-utils/4.0.1"]'
 declare -g DEFAULT_PROTOC_ENABLED="true"
 declare -g DEFAULT_PROTOC_VERSION="3.25.1"
 
@@ -74,9 +74,9 @@ declare -g ENABLE_MAVEN=""
 declare -g MAVEN_VERSION=""
 declare -g ENABLE_GRADLE=""
 declare -g GRADLE_VERSION=""
-declare -g ENABLE_GRADLE_ENTERPRISE=""
-declare -g GE_EXT_VERSION=""
-declare -g GE_CCUD_VERSION=""
+declare -g ENABLE_MAVEN_EXTENSIONS=""
+declare -g MAVEN_EXTENSIONS=""
+declare -g MAVEN_EXTENSIONS_VULNERABLE_PATHS=""
 declare -g ENABLE_PROTOC=""
 declare -g PROTOC_VERSION=""
 
@@ -183,9 +183,9 @@ parse_build_config() {
     ENABLE_GRADLE=$(_yq_bool '.build_tools.gradle.enabled' "false" "$config_file")
     GRADLE_VERSION=$(yq -r '.build_tools.gradle.version // "8.5"' "$config_file")
 
-    ENABLE_GRADLE_ENTERPRISE=$(_yq_bool '.build_tools.gradle_enterprise.enabled' "true" "$config_file")
-    GE_EXT_VERSION=$(yq -r '.build_tools.gradle_enterprise.extension_version // "1.20"' "$config_file")
-    GE_CCUD_VERSION=$(yq -r '.build_tools.gradle_enterprise.ccud_version // "1.12.5"' "$config_file")
+    ENABLE_MAVEN_EXTENSIONS=$(_yq_bool '.build_tools.maven_extensions.enabled' "true" "$config_file")
+    MAVEN_EXTENSIONS=$(yq -r '.build_tools.maven_extensions.extensions | (. // []) | [.[] | {"groupId": .group_id, "artifactId": .artifact_id, "version": .version}] | @json' "$config_file" 2>/dev/null || echo "$DEFAULT_MAVEN_EXTENSIONS")
+    MAVEN_EXTENSIONS_VULNERABLE_PATHS=$(yq -r '.build_tools.maven_extensions.vulnerable_paths // [] | @json' "$config_file")
 
     ENABLE_PROTOC=$(_yq_bool '.build_tools.protoc.enabled' "true" "$config_file")
     PROTOC_VERSION=$(yq -r '.build_tools.protoc.version // "3.25.1"' "$config_file")
@@ -239,9 +239,9 @@ _apply_defaults() {
     ENABLE_GRADLE="$DEFAULT_GRADLE_ENABLED"
     GRADLE_VERSION="$DEFAULT_GRADLE_VERSION"
 
-    ENABLE_GRADLE_ENTERPRISE="$DEFAULT_GE_ENABLED"
-    GE_EXT_VERSION="$DEFAULT_GE_EXT_VERSION"
-    GE_CCUD_VERSION="$DEFAULT_GE_CCUD_VERSION"
+    ENABLE_MAVEN_EXTENSIONS="$DEFAULT_MAVEN_EXTENSIONS_ENABLED"
+    MAVEN_EXTENSIONS="$DEFAULT_MAVEN_EXTENSIONS"
+    MAVEN_EXTENSIONS_VULNERABLE_PATHS="$DEFAULT_MAVEN_EXTENSIONS_VULNERABLE_PATHS"
 
     ENABLE_PROTOC="$DEFAULT_PROTOC_ENABLED"
     PROTOC_VERSION="$DEFAULT_PROTOC_VERSION"
@@ -286,14 +286,14 @@ _generate_build_args() {
         # Build tool toggles
         "--build-arg" "ENABLE_MAVEN=$ENABLE_MAVEN"
         "--build-arg" "ENABLE_GRADLE=$ENABLE_GRADLE"
-        "--build-arg" "ENABLE_GRADLE_ENTERPRISE=$ENABLE_GRADLE_ENTERPRISE"
+        "--build-arg" "ENABLE_MAVEN_EXTENSIONS=$ENABLE_MAVEN_EXTENSIONS"
         "--build-arg" "ENABLE_PROTOC=$ENABLE_PROTOC"
 
         # Build tool versions
         "--build-arg" "MAVEN_VERSION=$MAVEN_VERSION"
         "--build-arg" "GRADLE_VERSION=$GRADLE_VERSION"
-        "--build-arg" "GE_EXT_VERSION=$GE_EXT_VERSION"
-        "--build-arg" "GE_CCUD_VERSION=$GE_CCUD_VERSION"
+        "--build-arg" "MAVEN_EXTENSIONS=$MAVEN_EXTENSIONS"
+        "--build-arg" "MAVEN_EXTENSIONS_VULNERABLE_PATHS=$MAVEN_EXTENSIONS_VULNERABLE_PATHS"
         "--build-arg" "PROTOC_VERSION=$PROTOC_VERSION"
 
         # System package toggles
@@ -347,7 +347,7 @@ print_config_summary() {
     echo "Build Tools:"
     echo "  Maven:   ${ENABLE_MAVEN} (version: ${MAVEN_VERSION})"
     echo "  Gradle:  ${ENABLE_GRADLE} (version: ${GRADLE_VERSION})"
-    echo "  GE Ext:  ${ENABLE_GRADLE_ENTERPRISE} (v${GE_EXT_VERSION})"
+    echo "  Maven Extensions: ${ENABLE_MAVEN_EXTENSIONS}"
     echo "  Protoc:  ${ENABLE_PROTOC} (version: ${PROTOC_VERSION})"
     echo ""
     echo "System Packages:"
@@ -376,7 +376,7 @@ estimate_image_size() {
 
     [[ "$ENABLE_MAVEN" == "true" ]] && size_mb=$((size_mb + 50))
     [[ "$ENABLE_GRADLE" == "true" ]] && size_mb=$((size_mb + 100))
-    [[ "$ENABLE_GRADLE_ENTERPRISE" == "true" ]] && size_mb=$((size_mb + 20))
+    [[ "$ENABLE_MAVEN_EXTENSIONS" == "true" ]] && size_mb=$((size_mb + 20))
     [[ "$ENABLE_PROTOC" == "true" ]] && size_mb=$((size_mb + 30))
 
     [[ "$ENABLE_DEV_TOOLS" == "true" ]] && size_mb=$((size_mb + 150))
@@ -411,7 +411,7 @@ export_config_json() {
   "build_tools": {
     "maven": {"enabled": $ENABLE_MAVEN, "version": "$MAVEN_VERSION"},
     "gradle": {"enabled": $ENABLE_GRADLE, "version": "$GRADLE_VERSION"},
-    "gradle_enterprise": {"enabled": $ENABLE_GRADLE_ENTERPRISE, "extension_version": "$GE_EXT_VERSION"},
+    "maven_extensions": {"enabled": $ENABLE_MAVEN_EXTENSIONS, "extensions": $MAVEN_EXTENSIONS},
     "protoc": {"enabled": $ENABLE_PROTOC, "version": "$PROTOC_VERSION"}
   },
   "system_packages": {

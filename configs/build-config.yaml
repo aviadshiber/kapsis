@@ -141,13 +141,45 @@ build_tools:
     version: "8.5"
 
   #-----------------------------------------------------------------------------
-  # Gradle Enterprise Extensions
-  # Pre-cached for offline/network-isolated builds
+  # Maven extensions
+  # Pre-cached into the offline m2 repo for network-isolated builds — Maven
+  # extensions resolve BEFORE settings.xml is processed, so they can't use an
+  # authenticated/allowlisted mirror on first use. Any Maven extension
+  # coordinate can go in `extensions` (not just Gradle Enterprise/Develocity,
+  # the default below). Kapsis only caches these jars — it does not write a
+  # project's own .mvn/extensions.xml; that still comes from the user's repo.
+  #
+  # `vulnerable_paths` is optional: known-vulnerable transitive jars/poms the
+  # configured extensions pull in at old versions, removed from the cache
+  # after resolution (dependencyManagement does not prevent this in
+  # practice). Specific to the `extensions` list above — if you change that
+  # list, re-derive vulnerable_paths from a fresh vulnerability scan rather
+  # than reusing these paths, and clear it if you don't have a scan to base
+  # it on. See docs/BUILD-CONFIGURATION.md for details.
   #-----------------------------------------------------------------------------
-  gradle_enterprise:
+  maven_extensions:
     enabled: true
-    extension_version: "1.20"
-    ccud_version: "1.12.5"
+    extensions:
+      - group_id: "com.gradle"
+        artifact_id: "gradle-enterprise-maven-extension"
+        version: "1.20"
+      - group_id: "com.gradle"
+        artifact_id: "common-custom-user-data-maven-extension"
+        version: "1.12.5"
+    vulnerable_paths:
+      - "dom4j/dom4j/1.1"
+      - "org/apache/maven/maven-core/3.2.5"
+      - "org/apache/commons/commons-compress/1.20"
+      - "commons-io/commons-io/2.6"
+      - "commons-io/commons-io/2.11.0"
+      - "org/eclipse/jetty/jetty-http/9.4.46.v20220331"
+      - "org/eclipse/jetty/jetty-server/9.4.46.v20220331"
+      - "org/jsoup/jsoup/1.10.2"
+      - "org/codehaus/plexus/plexus-archiver/4.2.7"
+      - "org/codehaus/plexus/plexus-utils/3.4.2"
+      - "org/codehaus/plexus/plexus-utils/3.5.1"
+      - "org/codehaus/plexus/plexus-utils/4.0.0"
+      - "org/codehaus/plexus/plexus-utils/4.0.1"
 
   #-----------------------------------------------------------------------------
   # Protocol Buffers (protoc)
