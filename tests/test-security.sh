@@ -75,6 +75,14 @@ reset_security_env() {
     unset KAPSIS_NOEXEC_TMP
     unset KAPSIS_READONLY_ROOT
     unset KAPSIS_REQUIRE_LSM
+
+    # These tests exercise seccomp *profile selection*, not the issue #443
+    # machine-visibility staging behavior (covered separately below) — stub
+    # is_podman_machine_active() to "false" so a real podman machine running
+    # on the dev/CI host never staged-copies the resolved path out from
+    # under an assertion. Redefining a sourced function is the same pattern
+    # used for `id` in test-userns-resolution.sh.
+    is_podman_machine_active() { return 1; }
 }
 
 #===============================================================================
@@ -385,6 +393,139 @@ test_custom_seccomp_profile() {
 
     assert_equals "$custom_profile" "$profile_path" \
         "Should use custom seccomp profile"
+}
+
+#===============================================================================
+# ISSUE #443: MACHINE-VISIBILITY STAGING TESTS
+#
+# On macOS with the podman-machine (applehv/libkrun/qemu) backend, podman
+# resolves --security-opt seccomp=<path> INSIDE the VM's mount namespace.
+# $KAPSIS_ROOT under a Homebrew Cellar/libexec tree is not one of the
+# machine's default mounts, so the resolved profile path must be staged into
+# a machine-visible location ($HOME/.kapsis/seccomp/) before being handed to
+# podman. These tests stub is_podman_machine_active() directly so they run
+# deterministically without a real podman machine.
+#===============================================================================
+
+test_seccomp_staging_noop_when_no_machine() {
+    log_test "Seccomp staging: no-op when no podman machine is active"
+
+    reset_security_env
+    export KAPSIS_SECURITY_PROFILE="standard"
+    is_podman_machine_active() { return 1; }
+
+    local profile_path
+    profile_path=$(get_seccomp_profile "claude")
+
+    assert_equals "${KAPSIS_ROOT}/security/seccomp/kapsis-default-hardened.json" "$profile_path" \
+        "Without an active podman machine, the original resolved path should pass through unchanged"
+}
+
+test_seccomp_staging_noop_when_already_under_home() {
+    log_test "Seccomp staging: no-op when the resolved path is already under \$HOME"
+
+    reset_security_env
+    export KAPSIS_SECURITY_PROFILE="strict"
+    is_podman_machine_active() { return 0; }
+
+    local home_profile_dir="${TEST_TEMP_DIR}/home-profile"
+    mkdir -p "$home_profile_dir"
+    local home_profile="${home_profile_dir}/kapsis-home-seccomp.json"
+    echo '{"defaultAction": "SCMP_ACT_ALLOW"}' > "$home_profile"
+    export KAPSIS_SECCOMP_PROFILE="$home_profile"
+
+    # Simulate the profile already living under $HOME by pointing HOME at
+    # its parent directory for the duration of this call.
+    local profile_path
+    profile_path=$(HOME="$TEST_TEMP_DIR" get_seccomp_profile "claude")
+
+    assert_equals "$home_profile" "$profile_path" \
+        "A profile path already under \$HOME should not be staged/copied"
+}
+
+test_seccomp_staging_copies_when_machine_active() {
+    log_test "Seccomp staging: stages a Homebrew-Cellar-style path into \$HOME/.kapsis/seccomp when a machine is active"
+
+    reset_security_env
+    export KAPSIS_SECURITY_PROFILE="strict"
+    is_podman_machine_active() { return 0; }
+
+    # Simulate a Homebrew Cellar/libexec install path OUTSIDE $HOME.
+    local fake_cellar_dir="${TEST_TEMP_DIR}/opt-homebrew-cellar"
+    mkdir -p "$fake_cellar_dir"
+    local cellar_profile="${fake_cellar_dir}/kapsis-cellar-seccomp.json"
+    echo '{"defaultAction": "SCMP_ACT_ALLOW"}' > "$cellar_profile"
+    export KAPSIS_SECCOMP_PROFILE="$cellar_profile"
+
+    local fake_home="${TEST_TEMP_DIR}/fake-home"
+    mkdir -p "$fake_home"
+
+    local profile_path
+    profile_path=$(HOME="$fake_home" get_seccomp_profile "claude")
+
+    assert_equals "${fake_home}/.kapsis/seccomp/kapsis-cellar-seccomp.json" "$profile_path" \
+        "Should stage the profile into \$HOME/.kapsis/seccomp/"
+    assert_file_exists "$profile_path" \
+        "Staged profile file should exist"
+
+    local original_content staged_content
+    original_content=$(cat "$cellar_profile")
+    staged_content=$(cat "$profile_path")
+    assert_equals "$original_content" "$staged_content" \
+        "Staged profile content should match the original"
+}
+
+test_seccomp_staging_reuses_unchanged_staged_copy() {
+    log_test "Seccomp staging: does not re-copy an already up-to-date staged profile"
+
+    reset_security_env
+    export KAPSIS_SECURITY_PROFILE="strict"
+    is_podman_machine_active() { return 0; }
+
+    local fake_cellar_dir="${TEST_TEMP_DIR}/opt-homebrew-cellar2"
+    mkdir -p "$fake_cellar_dir"
+    local cellar_profile="${fake_cellar_dir}/kapsis-cellar-seccomp2.json"
+    echo '{"defaultAction": "SCMP_ACT_ALLOW"}' > "$cellar_profile"
+    export KAPSIS_SECCOMP_PROFILE="$cellar_profile"
+
+    local fake_home="${TEST_TEMP_DIR}/fake-home2"
+    mkdir -p "$fake_home"
+
+    local first_path
+    first_path=$(HOME="$fake_home" get_seccomp_profile "claude")
+    assert_file_exists "$first_path" "First staged copy should exist"
+
+    # Make the staged *file itself* read-only (the staging directory stays
+    # writable, so a new file could still be created there). Overwriting an
+    # existing file only requires write permission on the file, not the
+    # directory, so chmod on the directory (as before) could never have
+    # caught a broken "skip when unchanged" optimization -- `cp` would
+    # happily truncate-and-rewrite an owner-writable dest regardless of the
+    # directory's permissions. With the dest file itself read-only, a real
+    # re-copy attempt fails with EACCES, so a matching second_path here
+    # proves the copy was genuinely skipped rather than merely appearing to
+    # succeed either way.
+    chmod 444 "$first_path"
+
+    local second_path
+    second_path=$(HOME="$fake_home" get_seccomp_profile "claude" 2>/dev/null)
+
+    chmod 644 "$first_path"
+
+    assert_equals "$first_path" "$second_path" \
+        "Repeated calls with an unchanged source should not re-copy (read-only staged file would break a real copy attempt)"
+
+    # Also verify: if the source *does* change, the staged copy IS refreshed
+    # even though this makes the dest read-only along the way -- i.e. the
+    # skip is genuinely content-based (cmp -s), not "never copies again".
+    chmod 644 "$first_path"
+    echo '{"defaultAction": "SCMP_ACT_ERRNO"}' > "$cellar_profile"
+    local third_path
+    third_path=$(HOME="$fake_home" get_seccomp_profile "claude")
+    local third_content
+    third_content=$(cat "$third_path")
+    assert_equals '{"defaultAction": "SCMP_ACT_ERRNO"}' "$third_content" \
+        "Changed source content should be re-staged on the next call"
 }
 
 #===============================================================================
@@ -1061,6 +1202,12 @@ main() {
     run_test test_seccomp_env_override
     run_test test_seccomp_profile_path
     run_test test_custom_seccomp_profile
+
+    # Podman-machine seccomp staging tests (issue #443)
+    run_test test_seccomp_staging_noop_when_no_machine
+    run_test test_seccomp_staging_noop_when_already_under_home
+    run_test test_seccomp_staging_copies_when_machine_active
+    run_test test_seccomp_staging_reuses_unchanged_staged_copy
 
     # Process isolation tests
     run_test test_process_isolation_standard
