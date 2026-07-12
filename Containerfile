@@ -48,7 +48,10 @@ ARG MAVEN_VERSION=3.9.15
 ARG GRADLE_VERSION=9.4.1
 ARG GE_EXT_VERSION=1.20
 ARG GE_CCUD_VERSION=1.12.5
-ARG PROTOC_VERSION=34.1
+# 34.1 never existed on Maven Central (com.google.protobuf:protoc's real
+# version history is 2.x/3.x then a 4.x realignment — no bare "3x.x" line).
+# 3.25.1 matches what every configs/build-profiles/*.yaml already pins.
+ARG PROTOC_VERSION=3.25.1
 
 # System package toggles
 ARG ENABLE_DEV_TOOLS=true
@@ -59,9 +62,12 @@ ARG ENABLE_SECRET_STORE=true
 ARG CUSTOM_PACKAGES=""
 
 # yq configuration (required for Kapsis)
-ARG YQ_VERSION=4.52.5
-ARG YQ_SHA256_AMD64=75d893a0d5940d1019cb7cdc60001d9e876623852c31cfc6267047bc31149fa9
-ARG YQ_SHA256_ARM64=""
+# v4.53.3: also picks up a newer Go toolchain (1.26.4), fixing the go-stdlib
+# CVEs grype flagged against the previously pinned v4.52.5 binary (built with
+# go1.26.1). See release scan findings, 2026-07-12.
+ARG YQ_VERSION=4.53.3
+ARG YQ_SHA256_AMD64=fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4
+ARG YQ_SHA256_ARM64=578648e463a11c1b6db6010cbf41eafed6bee79466fcffa1bb446672cf7945ea
 
 # Supply chain integrity: SHA256 hashes for install scripts
 ARG SDKMAN_SHA256=""
@@ -337,12 +343,29 @@ ARG GE_CCUD_VERSION
 
 ENV SDKMAN_DIR=/opt/sdkman
 
+# The dependencyManagement block below pins known-vulnerable transitive
+# dependencies of the GE/CCUD extensions (dom4j, maven-core, commons-compress,
+# commons-io, jetty-http/server, jsoup, plexus-archiver/utils) up to patched
+# versions, without changing GE_EXT_VERSION/GE_CCUD_VERSION themselves — this
+# only affects which jars land in the offline m2-cache, not the extension
+# behavior a user's build actually gets. See release scan findings, 2026-07-12.
 RUN mkdir -p /opt/kapsis/m2-cache && \
     if [ "$ENABLE_JAVA" = "true" ] && [ "$ENABLE_GRADLE_ENTERPRISE" = "true" ]; then \
         mkdir -p /tmp/ge-cache && cd /tmp/ge-cache && \
         echo '<?xml version="1.0" encoding="UTF-8"?>' > pom.xml && \
         echo '<project><modelVersion>4.0.0</modelVersion>' >> pom.xml && \
         echo '<groupId>kapsis</groupId><artifactId>ge-cache</artifactId><version>1.0</version>' >> pom.xml && \
+        echo '<dependencyManagement><dependencies>' >> pom.xml && \
+        echo '  <dependency><groupId>org.apache.maven</groupId><artifactId>maven-core</artifactId><version>3.8.1</version></dependency>' >> pom.xml && \
+        echo '  <dependency><groupId>dom4j</groupId><artifactId>dom4j</artifactId><version>2.0.3</version></dependency>' >> pom.xml && \
+        echo '  <dependency><groupId>org.apache.commons</groupId><artifactId>commons-compress</artifactId><version>1.27.1</version></dependency>' >> pom.xml && \
+        echo '  <dependency><groupId>commons-io</groupId><artifactId>commons-io</artifactId><version>2.14.0</version></dependency>' >> pom.xml && \
+        echo '  <dependency><groupId>org.eclipse.jetty</groupId><artifactId>jetty-http</artifactId><version>9.4.57.v20241219</version></dependency>' >> pom.xml && \
+        echo '  <dependency><groupId>org.eclipse.jetty</groupId><artifactId>jetty-server</artifactId><version>9.4.57.v20241219</version></dependency>' >> pom.xml && \
+        echo '  <dependency><groupId>org.jsoup</groupId><artifactId>jsoup</artifactId><version>1.14.2</version></dependency>' >> pom.xml && \
+        echo '  <dependency><groupId>org.codehaus.plexus</groupId><artifactId>plexus-archiver</artifactId><version>4.8.0</version></dependency>' >> pom.xml && \
+        echo '  <dependency><groupId>org.codehaus.plexus</groupId><artifactId>plexus-utils</artifactId><version>3.6.1</version></dependency>' >> pom.xml && \
+        echo '</dependencies></dependencyManagement>' >> pom.xml && \
         echo '<dependencies>' >> pom.xml && \
         echo "  <dependency><groupId>com.gradle</groupId><artifactId>gradle-enterprise-maven-extension</artifactId><version>${GE_EXT_VERSION}</version></dependency>" >> pom.xml && \
         echo "  <dependency><groupId>com.gradle</groupId><artifactId>common-custom-user-data-maven-extension</artifactId><version>${GE_CCUD_VERSION}</version></dependency>" >> pom.xml && \
