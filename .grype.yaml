@@ -1,0 +1,23 @@
+---
+# Grype ignore rules for the image vulnerability scan in
+# .github/workflows/release.yml ("Sign images, generate SBOMs, and scan").
+#
+# Only add entries here for CONFIRMED false positives or explicitly accepted
+# risk, with a dated, verifiable reason — this file silently suppresses
+# findings, so it must not become a dumping ground for "investigate later."
+ignore:
+  - package:
+      name: zulu
+      version: 1.8.0_422
+    reason: >-
+      False positive, verified 2026-07-12. Grype types this package as
+      UnknownPackage (not a proper Java-version comparator) and matches it
+      against CVEs from 2016-2019 whose "fixed-in" targets (e.g. 1.8.0_211)
+      use much older update numbers than the installed 1.8.0_422 — it cannot
+      tell that a higher update number supersedes those old fixes. The
+      installed build reports as "Zulu 8.80.0.17-CA (build 1.8.0_422-b05)",
+      part of Azul's 2025-01-21 CPU release train, years after every listed
+      CVE's fix threshold. Scoped to this exact version (configs/build-
+      profiles/java8-legacy.yaml, Containerfile JAVA_VERSIONS) so a future
+      Zulu 8 bump re-surfaces findings for review instead of being silently
+      suppressed forever.
