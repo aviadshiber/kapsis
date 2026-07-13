@@ -1,8 +1,8 @@
 #===============================================================================
 # Kapsis Build Profile: Java Development
 #
-# Java + Maven + Gradle Enterprise extensions.
-# Optimized for Java/Spring development (Taboola default).
+# Java + Maven + Maven extensions (default: Gradle Enterprise/Develocity).
+# Optimized for Java/Spring development.
 # Estimated size: ~1.5GB
 #
 # Use case: Java backend services, Spring Boot applications

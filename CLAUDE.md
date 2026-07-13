@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Kapsis is a **hermetically isolated AI agent sandbox** (v2.34.2) for running multiple AI coding agents (Claude Code, Codex CLI, Aider, Gemini CLI) in parallel with complete isolation via Podman rootless containers, Copy-on-Write filesystems, and DNS-based network filtering.
+Kapsis is a **hermetically isolated AI agent sandbox** for running multiple AI coding agents (Claude Code, Codex CLI, Aider, Gemini CLI) in parallel with complete isolation via Podman rootless containers, Copy-on-Write filesystems, and DNS-based network filtering. Current version: see `VERSION` (or the latest GitHub Release) — released on every merge to `main`, so any version noted here would be stale within days.
 
 ### Core Isolation Guarantees
 
@@ -47,45 +47,10 @@ kapsis/
 │   ├── setup-homebrew-tap-sync.sh  # Homebrew tap sync setup
 │   ├── setup-package-repos.sh  # Package repository setup
 │   ├── setup-release-app.sh    # Release app setup
-│   ├── lib/                    # Shared libraries (sourced, not executed)
-│   │   ├── logging.sh          # Centralized logging with file rotation
-│   │   ├── status.sh           # JSON status reporting to ~/.kapsis/status/
-│   │   ├── agent-types.sh      # Agent type definitions
-│   │   ├── constants.sh        # Central constants (paths, patterns, modes)
-│   │   ├── compat.sh           # Cross-platform macOS/Linux helpers
-│   │   ├── security.sh         # Security hardening & capability management
-│   │   ├── dns-filter.sh       # DNS-based network filtering
-│   │   ├── dns-pin.sh          # DNS IP pinning
-│   │   ├── config-verifier.sh  # YAML config validation
-│   │   ├── filter-agent-config.sh  # Agent config filtering
-│   │   ├── git-remote-utils.sh # GitHub/GitLab/Bitbucket helpers
-│   │   ├── ssh-keychain.sh     # SSH host key verification
-│   │   ├── ssh-config-compat.sh # SSH config portability across environments
-│   │   ├── secret-store.sh     # OS keychain integration
-│   │   ├── json-utils.sh       # JSON parsing utilities
-│   │   ├── sanitize-files.sh   # File sanitization & homoglyph detection
-│   │   ├── validate-scope.sh   # Filesystem scope validation
-│   │   ├── version.sh          # Version management
-│   │   ├── progress-display.sh # TTY progress visualization
-│   │   ├── progress-monitor.sh # Progress tracking
-│   │   ├── inject-status-hooks.sh # Status hook injection
-│   │   ├── inject-lsp-config.sh   # LSP configuration injection
-│   │   ├── inject-plugin-hooks.sh # Plugin hook injection (Claude Code plugins)
-│   │   ├── build-config.sh     # Build configuration parser
-│   │   ├── atomic-copy.sh      # Atomic file copy operations
-│   │   ├── audit.sh            # Audit trail recording
-│   │   ├── audit-patterns.sh   # Audit pattern detection
-│   │   ├── liveness-monitor.sh # Container liveness monitoring
-│   │   ├── podman-health.sh    # Podman VM health probe & auto-heal (macOS)
-│   │   ├── vfkit-watchdog.sh   # Host-side vfkit hypervisor watchdog (macOS, Issue #303)
-│   │   ├── exec-channel-watchdog.sh # Host-side podman exec channel watchdog (macOS, Issue #382)
-│   │   ├── status-sync.sh      # Volume→host status mirror worker (macOS)
-│   │   ├── status.py           # Python status helpers
-│   │   ├── transcript.sh       # Conversation transcript persistence (Issue #390)
-│   │   ├── spec-store.sh       # Task spec persistence for dashboard/status consumers
-│   │   ├── launch-lock.sh      # Serialized sandbox setup (macOS AVF virtio-fs race, #375)
-│   │   ├── rewrite-plugin-paths.sh # Plugin path rewriting
-│   │   └── k8s-config.sh       # K8s config translator (Docker→K8s format)
+│   ├── lib/                    # Shared libraries (sourced, not executed) —
+│   │                           #   see the Key Files table below for the
+│   │                           #   important ones, `ls scripts/lib/` for
+│   │                           #   the full current list (it grows often)
 │   ├── backends/               # Backend implementations
 │   │   ├── podman.sh           # Podman backend (default)
 │   │   └── k8s.sh              # Kubernetes backend (AgentRequest CRD)
@@ -105,12 +70,13 @@ kapsis/
 │   ├── network-allowlist.yaml  # DNS filtering allowlist
 │   ├── tool-phase-mapping.yaml # Tool lifecycle mapping
 │   └── k8s/                    # K8s backend configs and examples
-├── tests/                      # 111 test files using tests/lib/test-framework.sh
+├── tests/                      # Test files using tests/lib/test-framework.sh
+│                               #   (`ls tests/test-*.sh | wc -l` for current count)
 │   ├── run-all-tests.sh        # Test runner with category filtering
 │   └── test-*.sh               # Individual test scripts
-├── docs/                       # Extended documentation (18 guides + designs/)
+├── docs/                       # Extended documentation — see Documentation Map below
 │   ├── designs/                # Design documents (agent-profiles-architecture.md)
-│   └── *.md                    # Reference guides (see Documentation Map below)
+│   └── *.md                    # Reference guides
 ├── cmd/
 │   └── kapsis-ctl/             # Host-side Podman query/control binary (Phases 1–2, issue #266)
 │       ├── go.mod              # Separate module — stdlib-only, no operator deps
@@ -287,13 +253,14 @@ Status is written as JSON to `~/.kapsis/status/`.
 
 ## Config Resolution Order
 
-When `--config` is not specified, configuration is resolved in this order:
+When `--config` is not specified, `scripts/launch-agent.sh` resolves configuration in this order (first existing file wins):
 
 1. `./agent-sandbox.yaml` (current directory)
-2. `./.kapsis/config.yaml` (project directory)
-3. `<project>/.kapsis/config.yaml` (inside target project)
-4. `~/.config/kapsis/default.yaml` (user home)
-5. Built-in defaults
+2. `./.kapsis/config.yaml` (current directory)
+3. `<project>/agent-sandbox.yaml` (inside the target project)
+4. `<project>/.kapsis/config.yaml` (inside the target project)
+5. `~/.config/kapsis/default.yaml` (user home)
+6. Built-in defaults
 
 ## Test Categories
 
@@ -400,7 +367,7 @@ The PR should either:
 1. Extend `dashboard/server/` to read/expose the new data, and `dashboard/ui/` to render it, or
 2. Open a follow-up GitHub issue tagged `dashboard-sync` if the surface change is large enough to warrant a separate PR.
 
-The TypeScript mirror of the status schema lives at `dashboard/server/src/types.ts` (`AgentStatus` interface) — keep it in lockstep with `scripts/lib/status.sh`. CI enforces this via `.github/workflows/dashboard-sync.yml`.
+The TypeScript mirror of the status schema — the `AgentStatus` interface — actually lives in `dashboard/shared/src/index.ts`; `dashboard/server/src/types.ts` only re-exports it (`export * from "@kapsis/dashboard-shared"`). Edit the `shared` package, not `server/src/types.ts` directly. Keep it in lockstep with `scripts/lib/status.sh`. CI enforces this via `.github/workflows/dashboard-sync.yml`.
 
 ## Release Artifact Rule
 
@@ -430,6 +397,22 @@ For shell scripts, prefer adding them to `scripts/` so the existing `cp -r scrip
 7. **GNU-only flags** — code must work on both macOS and Linux
 8. **Bare arithmetic** — `((x++))` fails under `set -e` when result is 0; use `((x++)) || true`
 9. **Working on main** — always use feature branches
+10. **Organization-specific data in shared/tracked files** — see "Personal/Organization Configuration Separation" below
+
+## Personal/Organization Configuration Separation
+
+Kapsis is a general-purpose, publicly-shared tool. Any file that is tracked by git (i.e. not covered by `.gitignore`) must stay organization-agnostic: no real internal hostnames, employer names, personal usernames/emails, or product/team codenames. This applies to config defaults, code comments, doc examples, and test fixtures alike — a comment naming an employer is just as much a leak as a hardcoded internal domain in a config file.
+
+**Where personal/organization config belongs instead:**
+- `configs/*-personal.yaml` and `configs/aviad-*.yaml` are gitignored (see `.gitignore`) — put real internal hostnames, tokens-adjacent identifiers, and org-specific tuning there, and reference them via `--config` or your own `agent-sandbox.yaml` (also gitignored).
+- If a mechanism is currently hardcoded to one specific vendor/tool/organization's needs (e.g. a single company's Maven extension, a single Bitbucket Server domain), prefer making it configurable/pluggable (env var, YAML list, etc.) with a generic default, rather than hardcoding the specific case into shared code. See `build_tools.maven_extensions` in `configs/build-config.yaml` for the pattern, and `KAPSIS_BITBUCKET_SERVER_HOSTS` in `scripts/lib/git-remote-utils.sh` for a small env-var-based example.
+
+**In docs and test fixtures, use these placeholders instead of anything real:**
+- Hostnames: `git.example.com`, `artifactory.example.com`, `ci.example.com`
+- Usernames/accounts: `jon.d` (not `${USER}` — not reliably evaluated in every config context this repo has; not a real teammate's name either)
+- Service/product names: generic terms (`bitbucket-token`, `bitbucket-ci-bot`) rather than a real internal service or product codename
+
+Before committing a change to a shared/tracked file, grep the diff for your own username, employer name, and known internal domains — the same way you'd check for accidentally-committed secrets.
 
 ## Commit Artifact Filtering (Issue #391)
 
@@ -462,46 +445,20 @@ KAPSIS_PUSH_FALLBACK: cd /path/to/worktree && git push -u origin branch-name
 | 5 | Agent completed but process hung (Issue #257) | Liveness monitor kills + status.json phase is "complete" |
 | 6 | Commit failure (Issue #256) | Post-container `git commit` error, `commit_status: "failed"` |
 
-## Mount Failure Detection (Issues #248, #276)
+## Mount Failure Detection (Issues #248, #276, #303)
 
-Exit code 4 surfaces virtio-fs mount drops across the full agent lifecycle:
+Exit code 4 surfaces virtio-fs mount drops (macOS Virtualization.framework bug) across the full agent lifecycle — pre-launch host probe, container-startup probe, mid-run liveness probe, and a host-side vfkit watchdog (needed because the in-container probe can get stuck in an uninterruptible D-state when FUSE dies). Named-volume status storage and `caffeinate` sleep-prevention reduce how often this triggers on macOS.
 
-- **Pre-launch (host, Issue #276)** — `scripts/lib/podman-health.sh` spins up a short-lived probe container on macOS and verifies a bind mount is writable. On failure, auto-heals by restarting the Podman VM when no other kapsis containers are running; otherwise fails fast with exit 4 and a clear remediation message.
-- **Container startup (Issue #276)** — `probe_mount_readiness()` in `scripts/entrypoint.sh` writes and unlinks a sentinel file under `/workspace` immediately before `exec`ing the agent command. Catches virtio-fs degradation that happens during the seconds of container setup. Emits the `KAPSIS_MOUNT_FAILURE:` sentinel to stderr (bypasses `/kapsis-status/` in case that's also affected) and exits 4 directly.
-- **Mid-run (Issue #248)** — the liveness monitor in `scripts/lib/liveness-monitor.sh` periodically probes `/workspace`. On confirmed drop it emits the sentinel and SIGTERMs the agent.
-
-Host-side in `scripts/launch-agent.sh`, the `KAPSIS_MOUNT_FAILURE:` sentinel in container output overrides the exit code to 4 for signal exits (143/137) and for bash-redirect exits (1). Exit 0 is never overridden.
-
-**Storage isolation (Issue #276, macOS only)** — `/kapsis-status/` is backed by a per-agent Podman named volume (`kapsis-${AGENT_ID}-status`) instead of a host bind mount. Named volumes live inside the Podman VM and survive virtio-fs degradation, so agent status writes never fail mid-run. A host-side worker (`scripts/lib/status-sync.sh`) mirrors volume contents into `~/.kapsis/status/` every 5s so `kapsis-status.sh --watch` consumers continue to work unchanged. Linux keeps the direct bind mount.
-
-**Sleep prevention (Issue #276, macOS only)** — `caffeinate -i -s` runs as a background process for the duration of the agent session, preventing macOS idle and system sleep. Since virtio-fs degradation is triggered by sleep/wake cycles, preventing sleep eliminates the root cause. Controlled by `prevent_sleep: true` in `agent-sandbox.yaml` or `KAPSIS_PREVENT_SLEEP=false` env var. Enabled by default.
-
-**vfkit watchdog (Issue #303, macOS only)** — A host-side bash watchdog polls the vfkit hypervisor every 5s; if vfkit exits, writes a host-only sentinel file under `$TMPDIR` (NOT bind-mounted into the container — forgery-resistant), writes `exit_code=4` + `error_type=mount_failure` to status.json within ~10s, and SIGTERMs the agent's `podman run` process (pattern anchored to `kapsis-${AGENT_ID}` with a BSD-portable boundary). The post-container override upgrades any non-zero EXIT_CODE to 4 only when both the host-only sentinel exists AND status.json reports mount_failure (or sentinel alone if status.json failed to write). Exit 0 is always preserved. Replaces the in-container liveness probe for the vfkit-exit case specifically — that probe is unreliable here because FUSE syscalls put it in `TASK_UNINTERRUPTIBLE` (D-state) and `SIGKILL` cannot interrupt it, so detection takes ~188s instead of the intended ~55s. Implementation in `scripts/lib/vfkit-watchdog.sh`. Controlled by `KAPSIS_VFKIT_WATCHDOG_ENABLED` (default `true`) and `KAPSIS_VFKIT_WATCHDOG_INTERVAL` (default `5` seconds).
+Breadcrumb — implementation and exact current thresholds live in, not repeated here:
+`scripts/lib/podman-health.sh`, `scripts/entrypoint.sh` (`probe_mount_readiness()`), `scripts/lib/liveness-monitor.sh`, `scripts/lib/vfkit-watchdog.sh`, `scripts/lib/status-sync.sh`, `scripts/launch-agent.sh` (exit-code override logic). Config: `prevent_sleep`, `KAPSIS_VFKIT_WATCHDOG_ENABLED`, `KAPSIS_VFKIT_WATCHDOG_INTERVAL`.
 
 Recovery when auto-heal is refused or fails: `podman machine stop && podman machine start`, then re-run.
 
 ## Hung Agent Detection (Issue #257)
 
-Liveness monitoring is **enabled by default** (timeout: 900s). It detects hung agents via three signals: `updated_at` staleness, process tree I/O activity, and TCP connection quality (active data-in-flight vs. idle keepalive) providing two-tier grace periods. When all signals are exhausted and time caps are exceeded, the agent is killed.
+Liveness monitoring is **enabled by default**. It kills agents that stop making progress, judged by `updated_at` staleness, descendant-process I/O activity, and TCP connection quality (active vs. idle, with different grace periods for each). Exit code 5 means the agent finished its work but the process itself hung afterward.
 
-Key features:
-- **Descendant I/O monitoring**: Sums I/O across all container processes, not just PID 1
-- **Post-completion short timeout**: 120s unconditionally when agent reports done but process hasn't exited
-- **Two-tier API grace**: Active connections (data in flight) get up to 10 min soft grace; idle connections get up to 3 min hard grace — both capped, eliminating the old 30-minute deaf period
-- **Auto-diagnostics**: Captures process tree, FDs, TCP connections before kill
-- **Exit code 5**: Written when agent completed work but process hung (e.g., stuck MCP server or tool call)
-
-Configuration in `agent-sandbox.yaml`:
-```yaml
-liveness:
-  enabled: true            # default: true
-  timeout: 900             # default: 900s
-  completion_timeout: 120  # default: 120s (post-completion)
-  grace_period: 300        # default: 300s
-  check_interval: 30       # default: 30s
-  api_soft_skip: 20        # default: 20 cycles = 10 min (active connection grace)
-  api_hard_skip: 6         # default: 6 cycles = 3 min (idle connection grace)
-```
+Breadcrumb — exact current defaults/thresholds live in `scripts/lib/liveness-monitor.sh`'s header comment, not repeated here. Configurable per-agent under `liveness:` in `agent-sandbox.yaml` (`enabled`, `timeout`, `completion_timeout`, `grace_period`, `check_interval`, `api_soft_skip`, `api_hard_skip`).
 
 ## Agent Partial Completion (Issue #260)
 
@@ -514,13 +471,7 @@ When a container exits non-zero but the agent's work was successfully committed,
 
 ## Commit Failure Detection (Issue #256)
 
-Exit code 6 indicates the post-container `git commit` command failed. The agent DID produce file changes, but they could not be committed (e.g., pre-commit hook failure, git permission issue, empty diff after filtering). The worktree is preserved with staged changes for manual recovery.
-
-Key features:
-- **Full error capture**: `git commit` stderr/stdout is logged on failure (no longer swallowed)
-- **Worktree preservation**: Worktree is kept intact with recovery instructions
-- **Opt-in hook bypass**: Set `KAPSIS_COMMIT_NO_VERIFY=true` to skip pre-commit hooks in post-container context
-- **Structured error type**: `status.json` field `error_type` is `"commit_failure"` and `commit_status` is `"failed"`
+Exit code 6 means the agent produced file changes but the post-container `git commit` itself failed (pre-commit hook failure, permission issue, empty diff after filtering). The worktree is preserved with staged changes rather than discarded. `status.json` reports `error_type: "commit_failure"`. Set `KAPSIS_COMMIT_NO_VERIFY=true` to skip pre-commit hooks in the post-container context if that's the cause.
 
 Recovery:
 ```bash

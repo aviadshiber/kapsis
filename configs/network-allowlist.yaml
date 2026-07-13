@@ -32,8 +32,8 @@ network:
       - dev.azure.com
       - ssh.dev.azure.com
       - "*.visualstudio.com"
-      # Taboola internal
-      - git.taboolasyndication.com
+      # Add your organization's self-hosted Git host here, e.g.:
+      # - git.example.com
 
     # Package registries
     registries:
@@ -124,10 +124,11 @@ network:
       # - api.perplexity.ai      # Perplexity
 
     # Custom/corporate hosts (add your internal registries here)
-    custom:
-      - artifactory.taboolasyndication.com
-      - artifactory-build.taboolasyndication.com
-      - ci.taboolasyndication.com
+    custom: []
+      # Examples:
+      # - artifactory.example.com
+      # - artifactory-build.example.com
+      # - ci.example.com
 
   # DNS servers to use for resolving allowed domains
   # These are only used when a domain is in the allowlist
