@@ -40,14 +40,35 @@ ARG GO_VERSION=1.26.2
 # Build tool toggles
 ARG ENABLE_MAVEN=true
 ARG ENABLE_GRADLE=false
-ARG ENABLE_GRADLE_ENTERPRISE=true
+ARG ENABLE_MAVEN_EXTENSIONS=true
 ARG ENABLE_PROTOC=true
 
 # Build tool versions
 ARG MAVEN_VERSION=3.9.15
 ARG GRADLE_VERSION=9.4.1
-ARG GE_EXT_VERSION=1.20
-ARG GE_CCUD_VERSION=1.12.5
+
+# Maven extensions to pre-cache into the offline m2 repo (JSON array of
+# {groupId, artifactId, version}; see JAVA_VERSIONS above for the same
+# array-via-jq convention). Pre-caching matters because Maven extensions
+# resolve BEFORE settings.xml is processed, so they can't use an
+# authenticated/allowlisted mirror on first use in a network-isolated agent.
+# Kapsis only caches these jars — it does NOT write a project's own
+# .mvn/extensions.xml; that still comes from the user's own repo. Default
+# below is Gradle Enterprise/Develocity + its Common Custom User Data
+# extension (this project's own usage), but any Maven extension coordinate
+# can be substituted via configs/build-config.yaml's
+# build_tools.maven_extensions.extensions list.
+ARG MAVEN_EXTENSIONS='[{"groupId":"com.gradle","artifactId":"gradle-enterprise-maven-extension","version":"1.20"},{"groupId":"com.gradle","artifactId":"common-custom-user-data-maven-extension","version":"1.12.5"}]'
+
+# Known-vulnerable transitive jars/poms the artifacts above pull in at old
+# versions (dependencyManagement does not prevent this in practice — see the
+# maven-ext-cache stage below). JSON array of paths relative to the m2 cache
+# root. This list is specific to the MAVEN_EXTENSIONS default above; if you
+# change that list, re-derive this one from a fresh vulnerability scan rather
+# than assuming it still applies (configs/build-config.yaml's
+# build_tools.maven_extensions.vulnerable_paths is the config-driven
+# equivalent, and is empty by default for any non-default extension list).
+ARG MAVEN_EXTENSIONS_VULNERABLE_PATHS='["dom4j/dom4j/1.1","org/apache/maven/maven-core/3.2.5","org/apache/commons/commons-compress/1.20","commons-io/commons-io/2.6","commons-io/commons-io/2.11.0","org/eclipse/jetty/jetty-http/9.4.46.v20220331","org/eclipse/jetty/jetty-server/9.4.46.v20220331","org/jsoup/jsoup/1.10.2","org/codehaus/plexus/plexus-archiver/4.2.7","org/codehaus/plexus/plexus-utils/3.4.2","org/codehaus/plexus/plexus-utils/3.5.1","org/codehaus/plexus/plexus-utils/4.0.0","org/codehaus/plexus/plexus-utils/4.0.1"]'
 # 34.1 never existed on Maven Central (com.google.protobuf:protoc's real
 # version history is 2.x/3.x then a 4.x realignment — no bare "3x.x" line).
 # 3.25.1 matches what every configs/build-profiles/*.yaml already pins.
@@ -332,48 +353,85 @@ RUN if [ "$ENABLE_GO" = "true" ]; then \
     fi
 
 #===============================================================================
-# STAGE: ge-cache - Pre-cache Gradle Enterprise extensions (conditional)
+# STAGE: maven-ext-cache - Pre-cache configured Maven extensions (conditional)
 #===============================================================================
-FROM java-installer AS ge-cache
+FROM java-installer AS maven-ext-cache
 
 ARG ENABLE_JAVA
-ARG ENABLE_GRADLE_ENTERPRISE
-ARG GE_EXT_VERSION
-ARG GE_CCUD_VERSION
+ARG ENABLE_MAVEN_EXTENSIONS
+ARG MAVEN_EXTENSIONS
+ARG MAVEN_EXTENSIONS_VULNERABLE_PATHS
 
 ENV SDKMAN_DIR=/opt/sdkman
 
-# The dependencyManagement block below pins known-vulnerable transitive
-# dependencies of the GE/CCUD extensions (dom4j, maven-core, commons-compress,
-# commons-io, jetty-http/server, jsoup, plexus-archiver/utils) up to patched
-# versions, without changing GE_EXT_VERSION/GE_CCUD_VERSION themselves — this
-# only affects which jars land in the offline m2-cache, not the extension
-# behavior a user's build actually gets. See release scan findings, 2026-07-12.
+# NOTE (2026-07-12): a `<dependencyManagement>` override was tried here first
+# to force patched versions of the vulnerable transitive jars below, but was
+# empirically confirmed ineffective — `mvn dependency:resolve` still downloads
+# the old versions regardless (verified locally: identical output with and
+# without the override present). Explicit removal after resolution is the only
+# approach confirmed to actually keep these out of the image.
 RUN mkdir -p /opt/kapsis/m2-cache && \
-    if [ "$ENABLE_JAVA" = "true" ] && [ "$ENABLE_GRADLE_ENTERPRISE" = "true" ]; then \
-        mkdir -p /tmp/ge-cache && cd /tmp/ge-cache && \
+    if [ "$ENABLE_JAVA" = "true" ] && [ "$ENABLE_MAVEN_EXTENSIONS" = "true" ]; then \
+        mkdir -p /tmp/maven-ext-cache && cd /tmp/maven-ext-cache && \
         echo '<?xml version="1.0" encoding="UTF-8"?>' > pom.xml && \
         echo '<project><modelVersion>4.0.0</modelVersion>' >> pom.xml && \
-        echo '<groupId>kapsis</groupId><artifactId>ge-cache</artifactId><version>1.0</version>' >> pom.xml && \
-        echo '<dependencyManagement><dependencies>' >> pom.xml && \
-        echo '  <dependency><groupId>org.apache.maven</groupId><artifactId>maven-core</artifactId><version>3.8.1</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>dom4j</groupId><artifactId>dom4j</artifactId><version>2.0.3</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.apache.commons</groupId><artifactId>commons-compress</artifactId><version>1.27.1</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>commons-io</groupId><artifactId>commons-io</artifactId><version>2.14.0</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.eclipse.jetty</groupId><artifactId>jetty-http</artifactId><version>9.4.57.v20241219</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.eclipse.jetty</groupId><artifactId>jetty-server</artifactId><version>9.4.57.v20241219</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.jsoup</groupId><artifactId>jsoup</artifactId><version>1.14.2</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.codehaus.plexus</groupId><artifactId>plexus-archiver</artifactId><version>4.8.0</version></dependency>' >> pom.xml && \
-        echo '  <dependency><groupId>org.codehaus.plexus</groupId><artifactId>plexus-utils</artifactId><version>3.6.1</version></dependency>' >> pom.xml && \
-        echo '</dependencies></dependencyManagement>' >> pom.xml && \
+        echo '<groupId>kapsis</groupId><artifactId>maven-ext-cache</artifactId><version>1.0</version>' >> pom.xml && \
         echo '<dependencies>' >> pom.xml && \
-        echo "  <dependency><groupId>com.gradle</groupId><artifactId>gradle-enterprise-maven-extension</artifactId><version>${GE_EXT_VERSION}</version></dependency>" >> pom.xml && \
-        echo "  <dependency><groupId>com.gradle</groupId><artifactId>common-custom-user-data-maven-extension</artifactId><version>${GE_CCUD_VERSION}</version></dependency>" >> pom.xml && \
+        echo "$MAVEN_EXTENSIONS" | jq -r '.[] | "<dependency><groupId>" + .groupId + "</groupId><artifactId>" + .artifactId + "</artifactId><version>" + .version + "</version></dependency>"' >> pom.xml && \
         echo '</dependencies></project>' >> pom.xml && \
         bash -c 'source $SDKMAN_DIR/bin/sdkman-init.sh && \
             mvn -B dependency:resolve dependency:resolve-plugins -Dmaven.repo.local=/opt/kapsis/m2-cache' && \
         find /opt/kapsis/m2-cache -name "_remote.repositories" -delete && \
-        rm -rf /tmp/ge-cache; \
+        rm -rf /tmp/maven-ext-cache; \
+    fi
+
+# Remove known-vulnerable transitive jars/poms that the configured extensions'
+# own dependency graph pulls in at old versions (dependencyManagement doesn't
+# prevent this — see note above). MAVEN_EXTENSIONS_VULNERABLE_PATHS is
+# specific to whatever MAVEN_EXTENSIONS currently is — if you change the
+# extensions list, this list needs re-deriving from a fresh vulnerability
+# scan, it does not update itself. These are exact version-pinned paths in
+# the local repo layout, so this can't accidentally remove a newer/safe
+# version of the same artifact that also happens to be cached — the default
+# list has several different old versions of the same artifact (e.g.
+# commons-io, plexus-utils) because the GE and CCUD extensions' independent
+# dependency chains each pull their own old version.
+#
+# Scope note: this only prevents these vulnerable jars/poms from being BAKED
+# INTO THE IMAGE (closing the SBOM/image-scan exposure). It does not prevent
+# an agent running with network mode `filtered` or `open` from having Maven
+# transparently re-resolve the identical vulnerable coordinate from the
+# network the next time the configured extensions' dependency graph calls
+# for it (isolated-settings.xml is online, not `-o`/offline) — only
+# `network: none` closes that path too. dependencyManagement would be the
+# fix for the network-reachable case as well, but it's confirmed ineffective
+# here (see note above); revisit if that becomes a requirement.
+#
+# Verification below fails the build loudly if a listed path exists but
+# `rm -rf` somehow didn't remove it (catches typos/refactors of this block).
+# A path not existing pre-removal only WARNS rather than fails — verified
+# empirically that this local repo's transitive resolution is not fully
+# deterministic build-to-build (some of these exact old versions are pulled
+# in some runs and not others), so treating "not present this time" as fatal
+# produces spurious CI failures unrelated to any real regression. None of
+# this can detect a version bump introducing a brand-new vulnerable
+# coordinate not listed here — that still requires re-running a
+# vulnerability scan whenever MAVEN_EXTENSIONS changes.
+# tests/test-maven-extensions-security.sh re-asserts this same removal
+# against a fully built image, independent of this build-time check.
+RUN if [ "$ENABLE_JAVA" = "true" ] && [ "$ENABLE_MAVEN_EXTENSIONS" = "true" ]; then \
+        for rel in $(echo "$MAVEN_EXTENSIONS_VULNERABLE_PATHS" | jq -r '.[]'); do \
+            p="/opt/kapsis/m2-cache/$rel"; \
+            if [ ! -d "$p" ]; then \
+                echo "WARNING: expected vulnerable-jar path not present, skipping: $p (Maven's transitive resolution here is not fully deterministic build-to-build — this alone doesn't necessarily mean the list is stale, but re-check after any MAVEN_EXTENSIONS change)"; \
+                continue; \
+            fi; \
+            rm -rf "$p"; \
+            if [ -d "$p" ]; then \
+                echo "FATAL: failed to remove vulnerable jar path: $p"; \
+                exit 1; \
+            fi; \
+        done; \
     fi
 
 #===============================================================================
@@ -437,10 +495,10 @@ COPY --from=rust-installer /opt/cargo /opt/cargo
 # Copy Go (conditional)
 COPY --from=go-installer /opt/go /opt/go
 
-# Copy GE cache
-COPY --from=ge-cache /opt/kapsis/m2-cache /opt/kapsis/m2-cache
+# Copy pre-cached Maven extensions
+COPY --from=maven-ext-cache /opt/kapsis/m2-cache /opt/kapsis/m2-cache
 
-# Copy protoc cache (merge with GE cache)
+# Copy protoc cache (merge with Maven extensions cache)
 COPY --from=protoc-cache /opt/kapsis/m2-protoc /opt/kapsis/m2-cache
 
 # Set up environment variables

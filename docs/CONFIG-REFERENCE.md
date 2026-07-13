@@ -87,14 +87,23 @@ build_tools:
     enabled: false
     version: "8.5"
 
-  gradle_enterprise:
+  # Maven extensions pre-cached into the offline m2 repo. Pluggable — see the
+  # dedicated "Maven Extensions" section below for the full schema and how
+  # to substitute a different extension.
+  maven_extensions:
     enabled: true
-    extension_version: "1.20"
-    ccud_version: "1.12.5"
+    extensions:
+      - group_id: "com.gradle"
+        artifact_id: "gradle-enterprise-maven-extension"
+        version: "1.20"
+      - group_id: "com.gradle"
+        artifact_id: "common-custom-user-data-maven-extension"
+        version: "1.12.5"
+    vulnerable_paths: []
 
   protoc:
     enabled: true
-    version: "25.1"
+    version: "3.25.1"
 
 system_packages:
   development:
@@ -425,32 +434,49 @@ environment:
     # from DOCKER_ARTIFACTORY_TOKEN - do NOT set them manually
 
 #===============================================================================
-# GRADLE ENTERPRISE / DEVELOCITY
+# MAVEN EXTENSIONS (build-time only — not an agent-sandbox.yaml key)
 #===============================================================================
-gradle_enterprise:
-  # GE/Develocity server URL
-  server_url: "https://gradle-enterprise.company.com/"
-
-  # Keep build scans for observability
-  # Default: true
-  build_scans_enabled: true
-
-  # Disable remote build cache
-  # Default: true (RECOMMENDED for isolation)
-  remote_cache_disabled: true
-
-# NOTE: The Gradle Enterprise Maven extension is pre-cached in the container
-# image during build. This is necessary because Maven extensions resolve
-# BEFORE settings.xml is processed, so they cannot use authenticated mirrors.
+# There is no `gradle_enterprise:` (or similar) key in agent-sandbox.yaml —
+# Kapsis does not configure a Gradle Enterprise/Develocity server connection,
+# build-scan publishing, or remote-cache settings for you. What Kapsis
+# actually does, and what's actually configurable, is narrower:
 #
-# The pre-cached extensions are automatically copied to the user's
-# .m2/repository at container startup by entrypoint.sh.
+# 1. Pre-caching (build-time, configs/build-config.yaml or a build profile —
+#    see docs/BUILD-CONFIGURATION.md's "Maven Extensions" section):
+#      build_tools:
+#        maven_extensions:
+#          enabled: true
+#          extensions:
+#            - group_id: "com.gradle"
+#              artifact_id: "gradle-enterprise-maven-extension"
+#              version: "1.20"
+#            - group_id: "com.gradle"
+#              artifact_id: "common-custom-user-data-maven-extension"
+#              version: "1.12.5"
+#    This resolves the listed extensions (and transitive deps) into the
+#    image's offline m2 cache, then entrypoint.sh copies them into the
+#    agent's ~/.m2/repository at container startup — necessary because Maven
+#    extensions resolve BEFORE settings.xml is processed, so they can't use
+#    an authenticated/allowlisted mirror on first use. This is pluggable to
+#    any Maven extension, not just Gradle Enterprise/Develocity. Kapsis does
+#    NOT write your project's .mvn/extensions.xml — that still has to
+#    declare the extension(s) you actually want active, same as any other
+#    Maven project.
 #
-# Currently pre-cached versions:
-#   - com.gradle:gradle-enterprise-maven-extension:1.20
-#   - com.gradle:common-custom-user-data-maven-extension:1.12.5
+# 2. Remote build cache disabled (fixed default, not configurable via
+#    agent-sandbox.yaml): maven/isolated-settings.xml activates a
+#    `kapsis-ge-isolation` profile setting
+#    `gradle.enterprise.buildCache.remote.enabled=false` and
+#    `gradle.cache.remote.enabled=false` (local cache and build-scan
+#    publishing stay enabled). This only has an effect if your own project
+#    actually has the Gradle Enterprise extension active — it's a property
+#    that extension reads, not something Kapsis enforces independently.
 #
-# To update versions, modify the ARGs in Containerfile and rebuild the image.
+# If you need a specific GE/Develocity server URL or other extension
+# behavior, configure it the same way you would outside Kapsis: your
+# project's own .mvn/extensions.xml + pom.xml properties, or the extension's
+# own environment variables (e.g. via agent-sandbox.yaml's `environment.set`
+# if it needs to be injected — see the Environment Variables section above).
 
 #===============================================================================
 # PROTOBUF/PROTOC SUPPORT
@@ -1106,6 +1132,8 @@ environment:
     BITBUCKET_TOKEN:
       service: "my-bitbucket-token"
       account: "${USER}"
+    # Example only — keychain works the same for any secret name your own
+    # build/tooling needs (not something Kapsis interprets specially).
     GRADLE_ENTERPRISE_ACCESS_KEY:
       service: "gradle-enterprise-key"
 
@@ -1127,11 +1155,6 @@ maven:
   mirror_url: "https://artifactory.company.com/maven-virtual"
   block_remote_snapshots: true
   block_deploy: true
-
-gradle_enterprise:
-  server_url: "https://ge.company.com/"
-  build_scans_enabled: true
-  remote_cache_disabled: true
 
 sandbox:
   upper_dir_base: /data/ai-sandboxes
