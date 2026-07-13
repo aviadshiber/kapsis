@@ -727,6 +727,15 @@ git:
     # Default: origin
     remote: origin
 
+  # Explicit provider override for PR-URL generation — only needed for
+  # self-hosted/undetectable hosts (public hosts auto-detect with zero
+  # config). One of: github, gitlab, bitbucket, bitbucket-server, azure-devops.
+  # provider: bitbucket-server
+
+  # Escape hatch for any other provider — full URL template with
+  # {base_url}, {repo_path}, {branch} placeholders. Overrides `provider`.
+  # pr_url_template: "{base_url}/{repo_path}/pull-requests/new?source={branch}"
+
     # Commit message template
     # Available placeholders (substituted at launch time):
     #   {task}      - Task description (from --task or spec filename)

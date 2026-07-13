@@ -30,4 +30,11 @@
 // Sync added AgentStatus.machine_provider for Issue #409 (Podman machine
 // hypervisor backend — "applehv"/"libkrun" — detected at launch by
 // scripts/lib/compat.sh::get_podman_machine_provider, informational only).
+//
+// PR #456 (explicit git.provider config) touched scripts/lib/status.sh to
+// escape pr_url through the existing _status_json_escape helper (JSON
+// injection fix) — no field added/removed/renamed, AgentStatus.pr_url's
+// type (string | null, defined in dashboard/shared/src/index.ts) is
+// unchanged. No schema change here; this comment satisfies dashboard-
+// sync.yml's file-presence check.
 export * from "@kapsis/dashboard-shared";

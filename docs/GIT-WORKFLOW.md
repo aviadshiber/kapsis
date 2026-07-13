@@ -447,13 +447,32 @@ eval "$fork_cmd"
 
 ## PR URL Generation
 
-Kapsis automatically generates PR/MR URLs for:
+Kapsis automatically generates PR/MR URLs for public hosts — no configuration needed:
 
 | Platform | URL Format |
 |----------|------------|
 | GitHub | `https://github.com/{org}/{repo}/compare/{branch}?expand=1` |
 | GitLab | `https://gitlab.com/{org}/{repo}/-/merge_requests/new?merge_request[source_branch]={branch}` |
-| Bitbucket | `https://bitbucket.org/{org}/{repo}/pull-requests/new?source={branch}` |
+| Bitbucket Cloud | `https://bitbucket.org/{org}/{repo}/pull-requests/new?source={branch}` |
+| Bitbucket Server (self-hosted, `bitbucket` in hostname) | `{host}/{project}/{repo}/pull-requests/new?source={branch}` |
+
+### Self-hosted or unrecognized hosts
+
+A self-hosted server at an arbitrary custom domain (Bitbucket Server without "bitbucket" in its hostname, Azure DevOps, self-hosted GitLab, Gitea, etc.) can't be reliably auto-detected from the URL alone. Set an explicit provider in your config's `git:` section:
+
+```yaml
+git:
+  provider: bitbucket-server   # github | gitlab | bitbucket | bitbucket-server | azure-devops
+```
+
+For a provider not in that list, use a URL template instead (takes priority over `provider` if both are set):
+
+```yaml
+git:
+  pr_url_template: "{base_url}/{repo_path}/pull-requests/new?source={branch}"
+```
+
+Both are optional — omit them entirely and public-host auto-detection works exactly as before.
 
 ## Troubleshooting
 

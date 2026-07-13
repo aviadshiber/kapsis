@@ -405,7 +405,7 @@ Kapsis is a general-purpose, publicly-shared tool. Any file that is tracked by g
 
 **Where personal/organization config belongs instead:**
 - `configs/*-personal.yaml` and `configs/aviad-*.yaml` are gitignored (see `.gitignore`) — put real internal hostnames, tokens-adjacent identifiers, and org-specific tuning there, and reference them via `--config` or your own `agent-sandbox.yaml` (also gitignored).
-- If a mechanism is currently hardcoded to one specific vendor/tool/organization's needs (e.g. a single company's Maven extension, a single Bitbucket Server domain), prefer making it configurable/pluggable (env var, YAML list, etc.) with a generic default, rather than hardcoding the specific case into shared code. See `build_tools.maven_extensions` in `configs/build-config.yaml` for the pattern, and `KAPSIS_BITBUCKET_SERVER_HOSTS` in `scripts/lib/git-remote-utils.sh` for a small env-var-based example.
+- If a mechanism is currently hardcoded to one specific vendor/tool/organization's needs (e.g. a single company's Maven extension, a single Bitbucket Server domain), prefer making it configurable/pluggable with a generic default, rather than hardcoding the specific case into shared code. See `build_tools.maven_extensions` in `configs/build-config.yaml` for the pattern, and the `git.provider` / `git.pr_url_template` config keys (`scripts/lib/git-remote-utils.sh`, `docs/GIT-WORKFLOW.md`) for a smaller example — an explicit config key beats a pattern-matched hostname list, and the feature itself stays non-opt-in (auto-detection for public hosts is unaffected either way).
 
 **In docs and test fixtures, use these placeholders instead of anything real:**
 - Hostnames: `git.example.com`, `artifactory.example.com`, `ci.example.com`
