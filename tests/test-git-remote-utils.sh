@@ -86,7 +86,7 @@ test_detect_bitbucket_server() {
     local result
     result=$(detect_git_provider "https://git.mycompany.internal/scm/proj/repo.git")
 
-    assert_equals "unknown" "$result" "Self-hosted host without 'bitbucket' in the name and no KAPSIS_BITBUCKET_SERVER_HOSTS override should be unknown"
+    assert_equals "unknown" "$result" "Self-hosted host without 'bitbucket' in the name and no KAPSIS_GIT_PROVIDER override should be unknown"
 }
 
 test_detect_git_provider_explicit_override() {
@@ -418,6 +418,71 @@ test_generate_pr_url_unknown() {
     assert_equals "" "$result" "Should return empty for unknown provider"
 }
 
+test_generate_pr_url_azure_devops_org_at_https_remote() {
+    log_test "generate_pr_url: normalizes org@ userinfo HTTPS Azure DevOps remote (the real default Clone-button form)"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        generate_pr_url "https://myorg@dev.azure.com/myorg/myproject/_git/myrepo" "feature/x")
+
+    assert_equals "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequestcreate?sourceRef=feature/x" "$result" \
+        "org@ userinfo prefix must be stripped and the URL built from the remaining path"
+}
+
+test_generate_pr_url_azure_devops_malformed_https_remote() {
+    log_test "generate_pr_url: rejects malformed HTTPS Azure DevOps remote (wrong segment shape)"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        generate_pr_url "https://dev.azure.com/onlyorg" "feature/x")
+
+    assert_equals "" "$result" \
+        "HTTPS remote missing project/_git/repo segments must not produce a plausible-but-wrong URL"
+}
+
+test_generate_pr_url_azure_devops_malformed_ssh_remote() {
+    log_test "generate_pr_url: rejects malformed SSH Azure DevOps remote (only 2 segments)"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        generate_pr_url "git@ssh.dev.azure.com:v3/org/repo" "feature/x")
+
+    assert_equals "" "$result" \
+        "SSH remote with only org/repo (missing project segment) must not produce a plausible-but-wrong URL"
+}
+
+test_generate_pr_url_rejects_javascript_scheme_template() {
+    log_test "generate_pr_url: scheme-validation guard rejects javascript: URL produced by a malicious template"
+
+    local result
+    result=$(KAPSIS_GIT_PR_URL_TEMPLATE='javascript:alert({branch})' \
+        generate_pr_url "https://github.com/owner/repo.git" "feature/x")
+
+    assert_equals "" "$result" \
+        "A template that resolves to a non-http(s) scheme must be rejected as empty, not surfaced as a clickable link"
+}
+
+test_generate_pr_url_rejects_schemeless_template() {
+    log_test "generate_pr_url: scheme-validation guard rejects scheme-less URL produced by a malicious/malformed template"
+
+    local result
+    result=$(KAPSIS_GIT_PR_URL_TEMPLATE='{repo_path}/pr?src={branch}' \
+        generate_pr_url "https://github.com/owner/repo.git" "feature/x")
+
+    assert_equals "" "$result" \
+        "A template that resolves to a scheme-less string must be rejected as empty"
+}
+
+test_git_remote_utils_double_source_does_not_abort() {
+    log_test "git-remote-utils.sh: sourcing twice in the same shell does not abort (readonly-redeclaration guard)"
+
+    local result
+    result=$(bash -c "set -euo pipefail; source '$KAPSIS_ROOT/scripts/lib/git-remote-utils.sh'; source '$KAPSIS_ROOT/scripts/lib/git-remote-utils.sh'; echo OK")
+
+    assert_equals "OK" "$result" \
+        "Double-sourcing must not abort due to a bare 'readonly' redeclaration of _KAPSIS_VALID_GIT_PROVIDERS"
+}
+
 #===============================================================================
 # get_pr_term() TESTS
 #===============================================================================
@@ -505,6 +570,12 @@ main() {
     run_test test_generate_pr_url_provider_and_template_both_set_template_wins
     run_test test_generate_pr_url_empty_template_falls_through_to_provider
     run_test test_generate_pr_url_unknown
+    run_test test_generate_pr_url_azure_devops_org_at_https_remote
+    run_test test_generate_pr_url_azure_devops_malformed_https_remote
+    run_test test_generate_pr_url_azure_devops_malformed_ssh_remote
+    run_test test_generate_pr_url_rejects_javascript_scheme_template
+    run_test test_generate_pr_url_rejects_schemeless_template
+    run_test test_git_remote_utils_double_source_does_not_abort
 
     # get_pr_term tests
     run_test test_get_pr_term_github

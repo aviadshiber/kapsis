@@ -141,8 +141,27 @@ _generate_azure_devops_pr_url() {
     local remote_url="$1"
     local branch="$2"
 
-    if [[ "$remote_url" == https://dev.azure.com/* ]]; then
-        echo "${remote_url%.git}/pullrequestcreate?sourceRef=${branch}"
+    # HTTPS-style: https://dev.azure.com/org/project/_git/repo
+    #          or: https://org@dev.azure.com/org/project/_git/repo
+    # (the org@ userinfo prefix is Azure DevOps' actual default Clone-button
+    # form for most users - tolerate and strip it)
+    if [[ "$remote_url" =~ ^https://([^@/]+@)?dev\.azure\.com/(.+)$ ]]; then
+        local az_path="${BASH_REMATCH[2]%.git}"
+
+        # Require the {org}/{project}/_git/{repo} shape (4 segments, with a
+        # literal _git as the 3rd) - anything else is not a well-formed
+        # Azure DevOps HTTPS remote and must not be turned into a
+        # plausible-looking-but-wrong URL. Mirrors the SSH branch's
+        # segment-count validation below.
+        if [[ "$az_path" =~ ^([^/]+)/([^/]+)/_git/([^/]+)$ ]]; then
+            local https_org="${BASH_REMATCH[1]}"
+            local https_project="${BASH_REMATCH[2]}"
+            local https_repo="${BASH_REMATCH[3]}"
+            echo "https://dev.azure.com/${https_org}/${https_project}/_git/${https_repo}/pullrequestcreate?sourceRef=${branch}"
+            return 0
+        fi
+
+        echo ""
         return 0
     fi
 
