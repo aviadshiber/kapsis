@@ -15,6 +15,24 @@
 #   generate_pr_url       - Generate PR/MR creation URL for any provider
 #===============================================================================
 
+# Self-hosted Bitbucket Server instances at a custom domain (one that
+# doesn't contain the word "bitbucket") aren't caught by the generic
+# substring check in detect_git_provider. Set KAPSIS_BITBUCKET_SERVER_HOSTS
+# to a comma-separated list of such hostnames (e.g. in your shell profile or
+# agent-sandbox.yaml's environment.set) to have them detected as
+# bitbucket-server rather than falling through to "unknown".
+# Usage: _url_matches_extra_bitbucket_server_host "$url"
+_url_matches_extra_bitbucket_server_host() {
+    local url="$1"
+    local host
+    IFS=',' read -ra _kapsis_bb_hosts <<< "${KAPSIS_BITBUCKET_SERVER_HOSTS:-}"
+    for host in "${_kapsis_bb_hosts[@]}"; do
+        host="${host// /}"
+        [[ -n "$host" ]] && [[ "$url" == *"$host"* ]] && return 0
+    done
+    return 1
+}
+
 # Detect git provider from remote URL
 # Usage: detect_git_provider "$remote_url"
 # Returns: github|gitlab|bitbucket|bitbucket-server|unknown
@@ -27,8 +45,11 @@ detect_git_provider() {
         echo "gitlab"
     elif [[ "$url" == *"bitbucket.org"* ]]; then
         echo "bitbucket"
-    elif [[ "$url" == *"bitbucket"* ]] || [[ "$url" == *"git.taboolasyndication.com"* ]]; then
-        # Bitbucket Server / self-hosted (includes Taboola's instance)
+    elif [[ "$url" == *"bitbucket"* ]] || _url_matches_extra_bitbucket_server_host "$url"; then
+        # Bitbucket Server / self-hosted: the "bitbucket" substring check
+        # above only catches instances that keep that word in their hostname.
+        # Self-hosted instances at a custom domain need an explicit opt-in —
+        # see KAPSIS_BITBUCKET_SERVER_HOSTS below.
         echo "bitbucket-server"
     else
         echo "unknown"

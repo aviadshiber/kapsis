@@ -84,9 +84,18 @@ test_detect_bitbucket_server() {
     log_test "detect_git_provider: identifies Bitbucket Server from self-hosted URL"
 
     local result
-    result=$(detect_git_provider "https://git.taboolasyndication.com/scm/proj/repo.git")
+    result=$(detect_git_provider "https://git.mycompany.internal/scm/proj/repo.git")
 
-    assert_equals "bitbucket-server" "$result" "Should detect bitbucket-server from Taboola URL"
+    assert_equals "unknown" "$result" "Self-hosted host without 'bitbucket' in the name and no KAPSIS_BITBUCKET_SERVER_HOSTS override should be unknown"
+}
+
+test_detect_bitbucket_server_via_extra_hosts_env() {
+    log_test "detect_git_provider: identifies self-hosted Bitbucket Server via KAPSIS_BITBUCKET_SERVER_HOSTS"
+
+    local result
+    result=$(KAPSIS_BITBUCKET_SERVER_HOSTS="git.mycompany.internal" detect_git_provider "https://git.mycompany.internal/scm/proj/repo.git")
+
+    assert_equals "bitbucket-server" "$result" "Should detect bitbucket-server once the host is added to KAPSIS_BITBUCKET_SERVER_HOSTS"
 }
 
 test_detect_bitbucket_server_ssh() {
@@ -142,7 +151,7 @@ test_extract_repo_path_bitbucket_server() {
     log_test "extract_repo_path: extracts from Bitbucket Server URL"
 
     local result
-    result=$(extract_repo_path "https://git.taboolasyndication.com/scm/proj/repo.git")
+    result=$(extract_repo_path "https://git.mycompany.internal/scm/proj/repo.git")
 
     assert_equals "proj/repo" "$result" "Should extract project/repo from Bitbucket Server"
 }
@@ -195,9 +204,9 @@ test_extract_base_url_bitbucket_server() {
     log_test "extract_base_url: extracts from Bitbucket Server URL"
 
     local result
-    result=$(extract_base_url "https://git.taboolasyndication.com/scm/proj/repo.git")
+    result=$(extract_base_url "https://git.mycompany.internal/scm/proj/repo.git")
 
-    assert_equals "https://git.taboolasyndication.com" "$result" "Should extract self-hosted domain"
+    assert_equals "https://git.mycompany.internal" "$result" "Should extract self-hosted domain"
 }
 
 #===============================================================================
@@ -297,9 +306,9 @@ test_generate_pr_url_bitbucket_server() {
     log_test "generate_pr_url: generates correct Bitbucket Server PR URL"
 
     local result
-    result=$(generate_pr_url "https://git.taboolasyndication.com/scm/proj/repo.git" "DEV-123-feature")
+    result=$(generate_pr_url "https://bitbucket.mycompany.internal/scm/proj/repo.git" "DEV-123-feature")
 
-    assert_equals "https://git.taboolasyndication.com/proj/repo/pull-requests/new?source=DEV-123-feature" "$result" \
+    assert_equals "https://bitbucket.mycompany.internal/proj/repo/pull-requests/new?source=DEV-123-feature" "$result" \
         "Should generate Bitbucket Server PR URL"
 }
 
@@ -358,6 +367,7 @@ main() {
     run_test test_detect_bitbucket_cloud_https
     run_test test_detect_bitbucket_cloud_ssh
     run_test test_detect_bitbucket_server
+    run_test test_detect_bitbucket_server_via_extra_hosts_env
     run_test test_detect_bitbucket_server_ssh
     run_test test_detect_unknown_provider
 

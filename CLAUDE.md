@@ -430,6 +430,22 @@ For shell scripts, prefer adding them to `scripts/` so the existing `cp -r scrip
 7. **GNU-only flags** — code must work on both macOS and Linux
 8. **Bare arithmetic** — `((x++))` fails under `set -e` when result is 0; use `((x++)) || true`
 9. **Working on main** — always use feature branches
+10. **Organization-specific data in shared/tracked files** — see "Personal/Organization Configuration Separation" below
+
+## Personal/Organization Configuration Separation
+
+Kapsis is a general-purpose, publicly-shared tool. Any file that is tracked by git (i.e. not covered by `.gitignore`) must stay organization-agnostic: no real internal hostnames, employer names, personal usernames/emails, or product/team codenames. This applies to config defaults, code comments, doc examples, and test fixtures alike — a comment naming an employer is just as much a leak as a hardcoded internal domain in a config file.
+
+**Where personal/organization config belongs instead:**
+- `configs/*-personal.yaml` and `configs/aviad-*.yaml` are gitignored (see `.gitignore`) — put real internal hostnames, tokens-adjacent identifiers, and org-specific tuning there, and reference them via `--config` or your own `agent-sandbox.yaml` (also gitignored).
+- If a mechanism is currently hardcoded to one specific vendor/tool/organization's needs (e.g. a single company's Maven extension, a single Bitbucket Server domain), prefer making it configurable/pluggable (env var, YAML list, etc.) with a generic default, rather than hardcoding the specific case into shared code. See `build_tools.maven_extensions` in `configs/build-config.yaml` for the pattern, and `KAPSIS_BITBUCKET_SERVER_HOSTS` in `scripts/lib/git-remote-utils.sh` for a small env-var-based example.
+
+**In docs and test fixtures, use these placeholders instead of anything real:**
+- Hostnames: `git.example.com`, `artifactory.example.com`, `ci.example.com`
+- Usernames/accounts: `jon.d` (not `${USER}` — not reliably evaluated in every config context this repo has; not a real teammate's name either)
+- Service/product names: generic terms (`bitbucket-token`, `bitbucket-ci-bot`) rather than a real internal service or product codename
+
+Before committing a change to a shared/tracked file, grep the diff for your own username, employer name, and known internal domains — the same way you'd check for accidentally-committed secrets.
 
 ## Commit Artifact Filtering (Issue #391)
 

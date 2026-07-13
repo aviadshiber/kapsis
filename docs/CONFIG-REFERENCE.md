@@ -113,7 +113,7 @@ system_packages:
 | Profile | Est. Size | Languages | Best For |
 |---------|-----------|-----------|----------|
 | `minimal` | ~500MB | None | Shell scripts, basic tasks |
-| `java-dev` | ~1.5GB | Java 17/8 | Taboola Java development |
+| `java-dev` | ~1.5GB | Java 17/8 | General Java/Maven development |
 | `java8-legacy` | ~1.3GB | Java 8 only | Legacy Java 8 projects |
 | `full-stack` | ~2.1GB | Java, Node.js, Python | Multi-language projects |
 | `backend-go` | ~1.2GB | Go, Python | Go microservices |
@@ -267,15 +267,15 @@ environment:
     # Example: Token for Go CLI tools using 99designs/keyring (bkt, etc.)
     BKT_CREDENTIAL:
       service: "bkt"
-      account: "host/git.taboolasyndication.com/token"
+      account: "host/git.example.com/token"
       keyring_collection: "bkt"  # Store in 'bkt' collection with profile attribute
 
     # Example: Different macOS account and D-Bus profile key (Issue #176)
     BKT_CREDENTIAL_V2:
-      service: "bitbucket-deeperdive-bot"
-      account: "aviad.s"                                    # macOS Keychain account lookup
+      service: "bitbucket-ci-bot"
+      account: "jon.d"                                      # macOS Keychain account lookup
       keyring_collection: "bkt"                              # D-Bus collection label
-      keyring_profile: "host/git.taboolasyndication.com/token"  # D-Bus profile key
+      keyring_profile: "host/git.example.com/token"  # D-Bus profile key
 
   # Variables to pass from host to container
   # Values are taken from host environment
@@ -1239,7 +1239,7 @@ environment:
   keychain:
     BKT_CREDENTIAL:
       service: "bkt"                                    # macOS keychain service name
-      account: "host/git.taboolasyndication.com/token"  # keychain account / keyring key
+      account: "host/git.example.com/token"             # keychain account / keyring key
       keyring_collection: "bkt"                         # D-Bus collection label
 ```
 
@@ -1259,16 +1259,16 @@ When the macOS Keychain account name differs from the D-Bus profile key expected
 environment:
   keychain:
     BKT_CREDENTIAL:
-      service: "bitbucket-deeperdive-bot"                       # macOS keychain service name
-      account: "aviad.s"                                        # macOS keychain account (host lookup)
+      service: "bitbucket-ci-bot"                       # macOS keychain service name
+      account: "jon.d"                                  # macOS keychain account (host lookup)
       keyring_collection: "bkt"                                 # D-Bus collection label
-      keyring_profile: "host/git.taboolasyndication.com/token"  # D-Bus profile key
+      keyring_profile: "host/git.example.com/token"  # D-Bus profile key
 ```
 
 **How it works:**
-1. The secret is retrieved from macOS Keychain using `service` + `account` (i.e., `"bitbucket-deeperdive-bot"` + `"aviad.s"`)
+1. The secret is retrieved from macOS Keychain using `service` + `account` (i.e., `"bitbucket-ci-bot"` + `"jon.d"`)
 2. Inside the container, `kapsis-ss-inject` creates the named collection if needed
-3. The secret is stored with `{"profile": "host/git.taboolasyndication.com/token"}` attribute
+3. The secret is stored with `{"profile": "host/git.example.com/token"}` attribute
 4. Go tools find the secret via their standard `profile` attribute lookup
 
 **Without `keyring_profile`:** The `account` field is used as both the host keychain lookup account and the D-Bus profile key (the original behavior from Issue #170).
@@ -1283,10 +1283,10 @@ When host `~/.gitconfig` is mounted into containers, macOS-specific credential h
 environment:
   keychain:
     BITBUCKET_TOKEN:
-      service: "taboola-bitbucket"
-      account: "aviad.s"
+      service: "bitbucket-token"
+      account: "jon.d"
       inject_to: "secret_store"
-      git_credential_for: "git.taboolasyndication.com"  # git host to serve credentials for
+      git_credential_for: "git.example.com"  # git host to serve credentials for
 
     GITHUB_TOKEN:
       service: "github-pat"

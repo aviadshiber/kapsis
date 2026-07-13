@@ -399,10 +399,10 @@ environment:
   keychain:
     BKT_TOKEN:
       service: "bkt"
-      account: "aviad.s"
+      account: "jon.d"
       inject_to: "secret_store"
       keyring_collection: "bkt"
-      keyring_profile: "host/git.taboolasyndication.com/token"
+      keyring_profile: "host/git.example.com/token"
     NO_PROFILE:
       service: "plain"
       account: "myaccount"
@@ -415,7 +415,7 @@ EOF
 
     rm -f "$test_config"
 
-    assert_contains "$parsed" "BKT_TOKEN|bkt|aviad.s||0600|secret_store|bkt|host/git.taboolasyndication.com/token" \
+    assert_contains "$parsed" "BKT_TOKEN|bkt|jon.d||0600|secret_store|bkt|host/git.example.com/token" \
         "keyring_profile should appear as 8th field"
     assert_contains "$parsed" "NO_PROFILE|plain|myaccount||0600|secret_store|plain-coll|" \
         "missing keyring_profile should be empty 8th field"
