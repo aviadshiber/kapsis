@@ -440,6 +440,33 @@ test_config_fork_workflow_parsing() {
     assert_equals "$fallback" "fork" "Fork fallback should be 'fork' by default"
 }
 
+test_config_git_provider_parsing() {
+    log_test "Testing git.provider / git.pr_url_template config parsing with yq"
+
+    if ! command -v yq &>/dev/null; then
+        log_info "yq not installed, skipping config parsing test"
+        return 0
+    fi
+
+    local config_file="$KAPSIS_ROOT/configs/claude.yaml"
+    if [[ ! -f "$config_file" ]]; then
+        log_warn "Config file not found: $config_file"
+        return 0
+    fi
+
+    # claude.yaml's example is commented out (no override needed for GitHub),
+    # so both keys resolve to the empty-string default via `// ""`.
+    local provider
+    provider=$(yq -r '.git.provider // ""' "$config_file")
+    assert_equals "" "$provider" \
+        "git.provider should be absent/empty in the example config (GitHub auto-detects fine)"
+
+    local template
+    template=$(yq -r '.git.pr_url_template // ""' "$config_file")
+    assert_equals "" "$template" \
+        "git.pr_url_template should be absent/empty in the example config"
+}
+
 #===============================================================================
 # TEST CASES: Attribution Templates
 #===============================================================================
@@ -771,6 +798,7 @@ main() {
     # Config parsing tests
     run_test test_config_co_authors_parsing
     run_test test_config_fork_workflow_parsing
+    run_test test_config_git_provider_parsing
 
     # Attribution tests
     run_test test_config_attribution_parsing
