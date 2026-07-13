@@ -16,7 +16,12 @@
 #===============================================================================
 
 # Valid values for KAPSIS_GIT_PROVIDER (explicit override — see below).
-readonly _KAPSIS_VALID_GIT_PROVIDERS="github gitlab bitbucket bitbucket-server azure-devops"
+# Guarded against redeclaration: this file may be sourced more than once in
+# the same shell (e.g. by multiple libs/tests that each source it), and a
+# bare `readonly` would abort with "readonly variable" on the second source.
+if [[ -z "${_KAPSIS_VALID_GIT_PROVIDERS:-}" ]]; then
+    readonly _KAPSIS_VALID_GIT_PROVIDERS="github gitlab bitbucket bitbucket-server azure-devops"
+fi
 
 # Detect git provider from remote URL.
 #
