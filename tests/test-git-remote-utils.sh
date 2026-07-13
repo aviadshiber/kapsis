@@ -365,6 +365,50 @@ test_generate_pr_url_azure_devops() {
         "Should generate Azure DevOps PR URL"
 }
 
+test_generate_pr_url_azure_devops_ssh_remote() {
+    log_test "generate_pr_url: normalizes SSH-style Azure DevOps remote to https PR URL"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        generate_pr_url "git@ssh.dev.azure.com:v3/myorg/myproject/myrepo" "feature/x")
+
+    assert_equals "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequestcreate?sourceRef=feature/x" "$result" \
+        "SSH-style Azure DevOps remote (v3/org/project/repo, no _git segment) must be normalized to the https PR-creation URL"
+}
+
+test_detect_git_provider_azure_devops_no_override_is_unknown() {
+    log_test "detect_git_provider: unmodified dev.azure.com URL with no override is unknown (pins that Azure needs the explicit override)"
+
+    local result
+    result=$(unset KAPSIS_GIT_PROVIDER; detect_git_provider "https://dev.azure.com/myorg/myproject/_git/myrepo")
+
+    assert_equals "unknown" "$result" \
+        "Azure DevOps URLs must NOT auto-detect - KAPSIS_GIT_PROVIDER override is genuinely required"
+}
+
+test_generate_pr_url_provider_and_template_both_set_template_wins() {
+    log_test "generate_pr_url: KAPSIS_GIT_PR_URL_TEMPLATE takes priority over KAPSIS_GIT_PROVIDER when both are set"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        KAPSIS_GIT_PR_URL_TEMPLATE='{base_url}/{repo_path}/newPR?src={branch}' \
+        generate_pr_url "https://git.mycompany.internal/scm/proj/repo.git" "feature/x")
+
+    assert_equals "https://git.mycompany.internal/proj/repo/newPR?src=feature/x" "$result" \
+        "Template must win over provider-based generation when both env vars are set simultaneously"
+}
+
+test_generate_pr_url_empty_template_falls_through_to_provider() {
+    log_test "generate_pr_url: explicitly empty KAPSIS_GIT_PR_URL_TEMPLATE behaves identically to unset (falls through to provider-based generation)"
+
+    local result
+    result=$(KAPSIS_GIT_PR_URL_TEMPLATE="" \
+        generate_pr_url "https://github.com/owner/repo.git" "feature/x")
+
+    assert_equals "https://github.com/owner/repo/compare/feature/x?expand=1" "$result" \
+        "Empty-string template must not be treated as 'set' - the [[ -n ... ]] guard should fall through to provider-based generation"
+}
+
 test_generate_pr_url_unknown() {
     log_test "generate_pr_url: returns empty for unknown provider"
 
@@ -424,6 +468,7 @@ main() {
     run_test test_detect_git_provider_explicit_override_invalid_value_ignored
     run_test test_detect_git_provider_no_override_still_autodetects
     run_test test_detect_git_provider_azure_devops
+    run_test test_detect_git_provider_azure_devops_no_override_is_unknown
     run_test test_detect_bitbucket_server_ssh
     run_test test_detect_unknown_provider
 
@@ -456,6 +501,9 @@ main() {
     run_test test_generate_pr_url_bitbucket_server
     run_test test_generate_pr_url_template_override
     run_test test_generate_pr_url_azure_devops
+    run_test test_generate_pr_url_azure_devops_ssh_remote
+    run_test test_generate_pr_url_provider_and_template_both_set_template_wins
+    run_test test_generate_pr_url_empty_template_falls_through_to_provider
     run_test test_generate_pr_url_unknown
 
     # get_pr_term tests

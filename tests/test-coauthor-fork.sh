@@ -467,6 +467,83 @@ test_config_git_provider_parsing() {
         "git.pr_url_template should be absent/empty in the example config"
 }
 
+test_config_git_provider_parsing_with_values_set() {
+    log_test "Testing git.provider / git.pr_url_template config parsing when actually SET (not just the empty-default fallback)"
+
+    if ! command -v yq &>/dev/null; then
+        log_info "yq not installed, skipping config parsing test"
+        return 0
+    fi
+
+    local tmp_config
+    tmp_config=$(mktemp)
+    cat > "$tmp_config" <<'EOF'
+git:
+  provider: bitbucket-server
+  pr_url_template: "{base_url}/{repo_path}/pull-requests/new?source={branch}"
+EOF
+
+    local provider
+    provider=$(yq -r '.git.provider // ""' "$tmp_config")
+    assert_equals "bitbucket-server" "$provider" \
+        "yq should extract the real git.provider value, not the empty-default fallback"
+
+    local template
+    template=$(yq -r '.git.pr_url_template // ""' "$tmp_config")
+    assert_equals "{base_url}/{repo_path}/pull-requests/new?source={branch}" "$template" \
+        "yq should extract the real git.pr_url_template value, not the empty-default fallback"
+
+    rm -f "$tmp_config"
+}
+
+test_config_git_provider_env_export_wiring() {
+    log_test "Testing launch-agent.sh's actual parse_config() wiring exports GIT_PROVIDER/GIT_PR_URL_TEMPLATE (not just git-remote-utils.sh functions in isolation)"
+
+    if ! command -v yq &>/dev/null; then
+        log_info "yq not installed, skipping config wiring test"
+        return 0
+    fi
+
+    local tmp_config
+    tmp_config=$(mktemp)
+    cat > "$tmp_config" <<'EOF'
+git:
+  provider: bitbucket-server
+  pr_url_template: "{base_url}/{repo_path}/pull-requests/new?source={branch}"
+EOF
+
+    # launch-agent.sh's CONFIG_FILE/AGENT_ID globals are initialized at
+    # top-level source time, so they must be set AFTER sourcing (parse_config
+    # itself is safe to call in isolation - it only reads $CONFIG_FILE/$AGENT_ID
+    # and sets GIT_PROVIDER/GIT_PR_URL_TEMPLATE among other globals; it does
+    # not perform I/O or invoke podman/git). Run in a subshell so we don't leak
+    # launch-agent.sh's globals/traps into the test runner's own process.
+    local output
+    output=$(bash -c '
+        set -euo pipefail
+        SCRIPT_DIR="'"$KAPSIS_ROOT"'/scripts"
+        KAPSIS_ROOT="'"$KAPSIS_ROOT"'"
+        # shellcheck disable=SC1090
+        source "$SCRIPT_DIR/launch-agent.sh"
+        CONFIG_FILE="'"$tmp_config"'"
+        AGENT_ID="test-agent"
+        parse_config
+        echo "GIT_PROVIDER=${GIT_PROVIDER}"
+        echo "GIT_PR_URL_TEMPLATE=${GIT_PR_URL_TEMPLATE}"
+    ' 2>/dev/null)
+
+    rm -f "$tmp_config"
+
+    local provider template
+    provider=$(echo "$output" | grep '^GIT_PROVIDER=' | cut -d= -f2-)
+    template=$(echo "$output" | grep '^GIT_PR_URL_TEMPLATE=' | cut -d= -f2-)
+
+    assert_equals "bitbucket-server" "$provider" \
+        "parse_config() should set GIT_PROVIDER from the git.provider config key via the real launch-agent.sh wiring"
+    assert_equals "{base_url}/{repo_path}/pull-requests/new?source={branch}" "$template" \
+        "parse_config() should set GIT_PR_URL_TEMPLATE from the git.pr_url_template config key via the real launch-agent.sh wiring"
+}
+
 #===============================================================================
 # TEST CASES: Attribution Templates
 #===============================================================================
@@ -799,6 +876,8 @@ main() {
     run_test test_config_co_authors_parsing
     run_test test_config_fork_workflow_parsing
     run_test test_config_git_provider_parsing
+run_test test_config_git_provider_parsing_with_values_set
+run_test test_config_git_provider_env_export_wiring
 
     # Attribution tests
     run_test test_config_attribution_parsing
