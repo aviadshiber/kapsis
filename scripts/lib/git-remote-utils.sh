@@ -121,6 +121,55 @@ is_github_repo() {
     [[ "$url" == *"github.com"* ]]
 }
 
+# Generate Azure DevOps PR-creation URL, normalizing SSH-style remotes.
+#
+# Azure DevOps PR-creation URLs always use the
+# https://dev.azure.com/{org}/{project}/_git/{repo} shape, regardless of the
+# remote's clone protocol. SSH-style remotes use a different path shape
+# (v3/{org}/{project}/{repo}, no _git segment) that must be translated. Since
+# extract_base_url/extract_repo_path don't fit Azure's 3-segment path shape,
+# this is handled as a dedicated helper rather than the generic case branch.
+#
+# Usage: _generate_azure_devops_pr_url "$remote_url" "$branch"
+# Returns: PR creation URL, or empty string if the remote shape is unrecognized
+_generate_azure_devops_pr_url() {
+    local remote_url="$1"
+    local branch="$2"
+
+    if [[ "$remote_url" == https://dev.azure.com/* ]]; then
+        echo "${remote_url%.git}/pullrequestcreate?sourceRef=${branch}"
+        return 0
+    fi
+
+    # SSH-style: git@ssh.dev.azure.com:v3/org/project/repo
+    #        or: ssh://git@ssh.dev.azure.com/v3/org/project/repo
+    local ssh_path=""
+    if [[ "$remote_url" =~ ^git@ssh\.dev\.azure\.com:v3/(.+)$ ]]; then
+        ssh_path="${BASH_REMATCH[1]}"
+    elif [[ "$remote_url" =~ ^ssh://git@ssh\.dev\.azure\.com/v3/(.+)$ ]]; then
+        ssh_path="${BASH_REMATCH[1]}"
+    fi
+
+    if [[ -n "$ssh_path" ]]; then
+        ssh_path="${ssh_path%.git}"
+
+        # Require exactly 3 non-empty path segments (org/project/repo) -
+        # anything shorter or longer is not a well-formed Azure DevOps SSH
+        # remote and must not be turned into a plausible-looking-but-wrong URL.
+        if [[ "$ssh_path" =~ ^([^/]+)/([^/]+)/([^/]+)$ ]]; then
+            local org="${BASH_REMATCH[1]}"
+            local project="${BASH_REMATCH[2]}"
+            local repo="${BASH_REMATCH[3]}"
+            echo "https://dev.azure.com/${org}/${project}/_git/${repo}/pullrequestcreate?sourceRef=${branch}"
+            return 0
+        fi
+    fi
+
+    # Unrecognized Azure DevOps remote shape - return empty rather than a
+    # broken URL.
+    echo ""
+}
+
 # Generate PR/MR creation URL for any supported provider.
 #
 # Checks $KAPSIS_GIT_PR_URL_TEMPLATE first — a full escape hatch for any
@@ -129,8 +178,13 @@ is_github_repo() {
 # back to the built-in per-provider formats (which respect
 # KAPSIS_GIT_PROVIDER via detect_git_provider) when unset.
 #
+# The returned value is validated to start with http:// or https:// —
+# a malicious/malformed template (or an unrecognized remote shape) is
+# rejected as an empty string rather than surfaced as a clickable link,
+# since this value is stored in status.json and rendered by the dashboard.
+#
 # Usage: generate_pr_url "$remote_url" "$branch"
-# Returns: PR creation URL or empty string if unsupported
+# Returns: PR creation URL or empty string if unsupported/invalid
 generate_pr_url() {
     local remote_url="$1"
     local branch="$2"
@@ -139,39 +193,48 @@ generate_pr_url() {
     repo_path=$(extract_repo_path "$remote_url")
     base_url=$(extract_base_url "$remote_url")
 
+    local result=""
+
     if [[ -n "${KAPSIS_GIT_PR_URL_TEMPLATE:-}" ]]; then
         local template="$KAPSIS_GIT_PR_URL_TEMPLATE"
         template="${template//\{base_url\}/$base_url}"
         template="${template//\{repo_path\}/$repo_path}"
         template="${template//\{branch\}/$branch}"
-        echo "$template"
-        return 0
+        result="$template"
+    else
+        local provider
+        provider=$(detect_git_provider "$remote_url")
+
+        case "$provider" in
+            github)
+                result="https://github.com/${repo_path}/compare/${branch}?expand=1"
+                ;;
+            gitlab)
+                result="https://gitlab.com/${repo_path}/-/merge_requests/new?merge_request[source_branch]=${branch}"
+                ;;
+            bitbucket)
+                result="https://bitbucket.org/${repo_path}/pull-requests/new?source=${branch}"
+                ;;
+            bitbucket-server)
+                result="${base_url}/${repo_path}/pull-requests/new?source=${branch}"
+                ;;
+            azure-devops)
+                result=$(_generate_azure_devops_pr_url "$remote_url" "$branch")
+                ;;
+            *)
+                # Unknown provider - return empty
+                result=""
+                ;;
+        esac
     fi
 
-    local provider
-    provider=$(detect_git_provider "$remote_url")
+    # Safety net: only ever surface http(s) URLs (rejects javascript:, data:,
+    # and other dangerous schemes a malicious pr_url_template could produce).
+    if [[ -n "$result" && ! "$result" =~ ^https?:// ]]; then
+        result=""
+    fi
 
-    case "$provider" in
-        github)
-            echo "https://github.com/${repo_path}/compare/${branch}?expand=1"
-            ;;
-        gitlab)
-            echo "https://gitlab.com/${repo_path}/-/merge_requests/new?merge_request[source_branch]=${branch}"
-            ;;
-        bitbucket)
-            echo "https://bitbucket.org/${repo_path}/pull-requests/new?source=${branch}"
-            ;;
-        bitbucket-server)
-            echo "${base_url}/${repo_path}/pull-requests/new?source=${branch}"
-            ;;
-        azure-devops)
-            echo "${remote_url%.git}/pullrequestcreate?sourceRef=${branch}"
-            ;;
-        *)
-            # Unknown provider - return empty
-            echo ""
-            ;;
-    esac
+    echo "$result"
 }
 
 # Get PR terminology for provider (PR vs MR)
