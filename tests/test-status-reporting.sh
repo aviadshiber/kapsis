@@ -235,6 +235,36 @@ here'
     cleanup_status_test
 }
 
+test_status_complete_escapes_pr_url() {
+    log_test "Status complete escapes special characters in pr_url (JSON-injection guard)"
+
+    setup_status_test
+
+    status_init "test-project" "1" "" "worktree" ""
+    status_complete 0 "" 'https://example.com/pr?x="injected"&y=\end'
+
+    local status_file="$TEST_STATUS_DIR/kapsis-test-project-1.json"
+
+    # Verify JSON is still valid despite the raw quote/backslash characters
+    if python3 -c "import json; json.load(open('$status_file'))" 2>/dev/null; then
+        log_info "  JSON is valid after escaping pr_url"
+    else
+        log_fail "Status file contains invalid JSON after pr_url with quotes/backslash"
+        cleanup_status_test
+        return 1
+    fi
+
+    local content
+    content=$(cat "$status_file")
+
+    # The raw unescaped quote must not appear as an unescaped sequence -
+    # only the escaped \" form should be present.
+    assert_not_contains "$content" 'x="injected"' "Unescaped quote must not appear raw in status.json"
+    assert_contains "$content" 'x=\"injected\"' "Escaped \\\" sequence must be present instead"
+
+    cleanup_status_test
+}
+
 test_status_atomic_write() {
     log_test "Status writes are atomic"
 
@@ -793,6 +823,7 @@ main() {
     run_test test_status_complete_failure
     run_test test_status_timestamps
     run_test test_status_json_escaping
+    run_test test_status_complete_escapes_pr_url
     run_test test_status_atomic_write
     run_test test_status_multiple_agents
     run_test test_status_disabled
