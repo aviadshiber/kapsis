@@ -15,29 +15,36 @@
 #   generate_pr_url       - Generate PR/MR creation URL for any provider
 #===============================================================================
 
-# Self-hosted Bitbucket Server instances at a custom domain (one that
-# doesn't contain the word "bitbucket") aren't caught by the generic
-# substring check in detect_git_provider. Set KAPSIS_BITBUCKET_SERVER_HOSTS
-# to a comma-separated list of such hostnames (e.g. in your shell profile or
-# agent-sandbox.yaml's environment.set) to have them detected as
-# bitbucket-server rather than falling through to "unknown".
-# Usage: _url_matches_extra_bitbucket_server_host "$url"
-_url_matches_extra_bitbucket_server_host() {
-    local url="$1"
-    local host
-    IFS=',' read -ra _kapsis_bb_hosts <<< "${KAPSIS_BITBUCKET_SERVER_HOSTS:-}"
-    for host in "${_kapsis_bb_hosts[@]}"; do
-        host="${host// /}"
-        [[ -n "$host" ]] && [[ "$url" == *"$host"* ]] && return 0
-    done
-    return 1
-}
+# Valid values for KAPSIS_GIT_PROVIDER (explicit override — see below).
+readonly _KAPSIS_VALID_GIT_PROVIDERS="github gitlab bitbucket bitbucket-server azure-devops"
 
-# Detect git provider from remote URL
+# Detect git provider from remote URL.
+#
+# Checks $KAPSIS_GIT_PROVIDER first (an explicit override — see
+# scripts/launch-agent.sh, which populates it from the git.provider config
+# key). This is required for self-hosted instances: public hosts
+# (github.com, gitlab.com, bitbucket.org) have fixed, pattern-matchable
+# hostnames, but a self-hosted server at an arbitrary custom domain (e.g.
+# Bitbucket Server, Azure DevOps, self-hosted GitLab) gives no reliable
+# hint from the URL alone. Auto-detection for the public hosts remains the
+# default with zero configuration — the override is optional, not required.
+#
 # Usage: detect_git_provider "$remote_url"
-# Returns: github|gitlab|bitbucket|bitbucket-server|unknown
+# Returns: github|gitlab|bitbucket|bitbucket-server|azure-devops|unknown
 detect_git_provider() {
     local url="$1"
+
+    if [[ -n "${KAPSIS_GIT_PROVIDER:-}" ]]; then
+        local provider
+        for provider in $_KAPSIS_VALID_GIT_PROVIDERS; do
+            if [[ "$KAPSIS_GIT_PROVIDER" == "$provider" ]]; then
+                echo "$provider"
+                return 0
+            fi
+        done
+        # Invalid value — fall through to auto-detection rather than
+        # silently misrouting PR-URL generation.
+    fi
 
     if [[ "$url" == *"github.com"* ]]; then
         echo "github"
@@ -45,11 +52,7 @@ detect_git_provider() {
         echo "gitlab"
     elif [[ "$url" == *"bitbucket.org"* ]]; then
         echo "bitbucket"
-    elif [[ "$url" == *"bitbucket"* ]] || _url_matches_extra_bitbucket_server_host "$url"; then
-        # Bitbucket Server / self-hosted: the "bitbucket" substring check
-        # above only catches instances that keep that word in their hostname.
-        # Self-hosted instances at a custom domain need an explicit opt-in —
-        # see KAPSIS_BITBUCKET_SERVER_HOSTS below.
+    elif [[ "$url" == *"bitbucket"* ]]; then
         echo "bitbucket-server"
     else
         echo "unknown"
@@ -118,17 +121,35 @@ is_github_repo() {
     [[ "$url" == *"github.com"* ]]
 }
 
-# Generate PR/MR creation URL for any supported provider
+# Generate PR/MR creation URL for any supported provider.
+#
+# Checks $KAPSIS_GIT_PR_URL_TEMPLATE first — a full escape hatch for any
+# provider Kapsis doesn't have built-in URL-format knowledge for (Gitea,
+# etc.). Supports {base_url}, {repo_path}, {branch} placeholders. Falls
+# back to the built-in per-provider formats (which respect
+# KAPSIS_GIT_PROVIDER via detect_git_provider) when unset.
+#
 # Usage: generate_pr_url "$remote_url" "$branch"
 # Returns: PR creation URL or empty string if unsupported
 generate_pr_url() {
     local remote_url="$1"
     local branch="$2"
 
-    local provider repo_path base_url
-
-    provider=$(detect_git_provider "$remote_url")
+    local repo_path base_url
     repo_path=$(extract_repo_path "$remote_url")
+    base_url=$(extract_base_url "$remote_url")
+
+    if [[ -n "${KAPSIS_GIT_PR_URL_TEMPLATE:-}" ]]; then
+        local template="$KAPSIS_GIT_PR_URL_TEMPLATE"
+        template="${template//\{base_url\}/$base_url}"
+        template="${template//\{repo_path\}/$repo_path}"
+        template="${template//\{branch\}/$branch}"
+        echo "$template"
+        return 0
+    fi
+
+    local provider
+    provider=$(detect_git_provider "$remote_url")
 
     case "$provider" in
         github)
@@ -141,8 +162,10 @@ generate_pr_url() {
             echo "https://bitbucket.org/${repo_path}/pull-requests/new?source=${branch}"
             ;;
         bitbucket-server)
-            base_url=$(extract_base_url "$remote_url")
             echo "${base_url}/${repo_path}/pull-requests/new?source=${branch}"
+            ;;
+        azure-devops)
+            echo "${remote_url%.git}/pullrequestcreate?sourceRef=${branch}"
             ;;
         *)
             # Unknown provider - return empty

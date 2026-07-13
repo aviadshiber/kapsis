@@ -89,13 +89,44 @@ test_detect_bitbucket_server() {
     assert_equals "unknown" "$result" "Self-hosted host without 'bitbucket' in the name and no KAPSIS_BITBUCKET_SERVER_HOSTS override should be unknown"
 }
 
-test_detect_bitbucket_server_via_extra_hosts_env() {
-    log_test "detect_git_provider: identifies self-hosted Bitbucket Server via KAPSIS_BITBUCKET_SERVER_HOSTS"
+test_detect_git_provider_explicit_override() {
+    log_test "detect_git_provider: KAPSIS_GIT_PROVIDER overrides pattern matching entirely"
 
     local result
-    result=$(KAPSIS_BITBUCKET_SERVER_HOSTS="git.mycompany.internal" detect_git_provider "https://git.mycompany.internal/scm/proj/repo.git")
+    result=$(KAPSIS_GIT_PROVIDER="bitbucket-server" detect_git_provider "https://git.mycompany.internal/scm/proj/repo.git")
 
-    assert_equals "bitbucket-server" "$result" "Should detect bitbucket-server once the host is added to KAPSIS_BITBUCKET_SERVER_HOSTS"
+    assert_equals "bitbucket-server" "$result" \
+        "Explicit KAPSIS_GIT_PROVIDER should be returned regardless of URL shape"
+}
+
+test_detect_git_provider_explicit_override_invalid_value_ignored() {
+    log_test "detect_git_provider: invalid KAPSIS_GIT_PROVIDER falls back to pattern matching"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="not-a-real-provider" detect_git_provider "https://github.com/foo/bar.git")
+
+    assert_equals "github" "$result" \
+        "Invalid override value must not suppress correct auto-detection"
+}
+
+test_detect_git_provider_no_override_still_autodetects() {
+    log_test "detect_git_provider: auto-detection still works with no override set (non-opt-in default)"
+
+    local result
+    result=$(unset KAPSIS_GIT_PROVIDER; detect_git_provider "https://gitlab.com/foo/bar.git")
+
+    assert_equals "gitlab" "$result" \
+        "Public-host auto-detection must work with zero configuration"
+}
+
+test_detect_git_provider_azure_devops() {
+    log_test "detect_git_provider: identifies Azure DevOps via explicit provider (no auto-detect pattern exists for it)"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" detect_git_provider "https://dev.azure.com/myorg/myproject/_git/myrepo")
+
+    assert_equals "azure-devops" "$result" \
+        "Azure DevOps requires explicit provider (URL shape doesn't auto-detect reliably)"
 }
 
 test_detect_bitbucket_server_ssh() {
@@ -312,6 +343,28 @@ test_generate_pr_url_bitbucket_server() {
         "Should generate Bitbucket Server PR URL"
 }
 
+test_generate_pr_url_template_override() {
+    log_test "generate_pr_url: KAPSIS_GIT_PR_URL_TEMPLATE overrides provider-based generation"
+
+    local result
+    result=$(KAPSIS_GIT_PR_URL_TEMPLATE='{base_url}/{repo_path}/newPR?src={branch}' \
+        generate_pr_url "https://git.mycompany.internal/scm/proj/repo.git" "feature/x")
+
+    assert_equals "https://git.mycompany.internal/proj/repo/newPR?src=feature/x" "$result" \
+        "Template placeholders {base_url}/{repo_path}/{branch} must be substituted"
+}
+
+test_generate_pr_url_azure_devops() {
+    log_test "generate_pr_url: generates correct Azure DevOps PR URL"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        generate_pr_url "https://dev.azure.com/myorg/myproject/_git/myrepo" "feature/x")
+
+    assert_equals "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequestcreate?sourceRef=feature/x" "$result" \
+        "Should generate Azure DevOps PR URL"
+}
+
 test_generate_pr_url_unknown() {
     log_test "generate_pr_url: returns empty for unknown provider"
 
@@ -367,7 +420,10 @@ main() {
     run_test test_detect_bitbucket_cloud_https
     run_test test_detect_bitbucket_cloud_ssh
     run_test test_detect_bitbucket_server
-    run_test test_detect_bitbucket_server_via_extra_hosts_env
+    run_test test_detect_git_provider_explicit_override
+    run_test test_detect_git_provider_explicit_override_invalid_value_ignored
+    run_test test_detect_git_provider_no_override_still_autodetects
+    run_test test_detect_git_provider_azure_devops
     run_test test_detect_bitbucket_server_ssh
     run_test test_detect_unknown_provider
 
@@ -398,6 +454,8 @@ main() {
     run_test test_generate_pr_url_gitlab
     run_test test_generate_pr_url_bitbucket_cloud
     run_test test_generate_pr_url_bitbucket_server
+    run_test test_generate_pr_url_template_override
+    run_test test_generate_pr_url_azure_devops
     run_test test_generate_pr_url_unknown
 
     # get_pr_term tests
