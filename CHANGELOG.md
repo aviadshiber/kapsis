@@ -91,6 +91,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Resolve real vulnerability-scan findings, ignore Zulu JDK false positive (#452)
 
+## [3.0.0] - 2026-07-13
+
+### BREAKING CHANGES
+- Refactor(build)!: make Maven extension pre-caching pluggable + fix vulnerable transitive jars (#454)
+
+### Changed
+- Remove org-specific data from public repo, add CLAUDE.md rule (#455)
+- Refactor(build)!: make Maven extension pre-caching pluggable + fix vulnerable transitive jars (#454)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1126,7 +1135,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v2.38.3...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.0.0...HEAD
+[3.0.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.0.0
 [2.38.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.38.3
 [2.38.1]: https://github.com/aviadshiber/kapsis/releases/tag/v2.38.1
 [2.38.0]: https://github.com/aviadshiber/kapsis/releases/tag/v2.38.0
