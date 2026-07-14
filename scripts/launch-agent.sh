@@ -943,6 +943,12 @@ parse_config() {
         GIT_ATTRIBUTION_COMMIT_RAW=$(yq -r '.git.attribution.commit' "$CONFIG_FILE" 2>/dev/null | sed 's/[[:space:]]*$//' || echo "null")
         GIT_ATTRIBUTION_PR_RAW=$(yq -r '.git.attribution.pr' "$CONFIG_FILE" 2>/dev/null | sed 's/[[:space:]]*$//' || echo "null")
 
+        # Explicit git provider override — see scripts/lib/git-remote-utils.sh's
+        # detect_git_provider()/generate_pr_url() for how these are consumed.
+        # Optional; auto-detection for public hosts is unaffected either way.
+        GIT_PROVIDER=$(yq -r '.git.provider // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        GIT_PR_URL_TEMPLATE=$(yq -r '.git.pr_url_template // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+
         # Parse fork workflow settings
         GIT_FORK_ENABLED=$(yq -r '.git.fork_workflow.enabled // "false"' "$CONFIG_FILE")
         GIT_FORK_FALLBACK=$(yq -r '.git.fork_workflow.fallback // "fork"' "$CONFIG_FILE")
@@ -2284,6 +2290,16 @@ generate_env_vars() {
     export KAPSIS_ATTRIBUTION_COMMIT="${GIT_ATTRIBUTION_COMMIT:-}"
     export KAPSIS_ATTRIBUTION_PR="${GIT_ATTRIBUTION_PR:-}"
     export KAPSIS_AGENT_TYPE="${agent_type}"
+
+    # Same host+container dual-export pattern as KAPSIS_ATTRIBUTION_* above.
+    if [[ -n "${GIT_PROVIDER:-}" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_GIT_PROVIDER=${GIT_PROVIDER}")
+        export KAPSIS_GIT_PROVIDER="${GIT_PROVIDER}"
+    fi
+    if [[ -n "${GIT_PR_URL_TEMPLATE:-}" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_GIT_PR_URL_TEMPLATE=${GIT_PR_URL_TEMPLATE}")
+        export KAPSIS_GIT_PR_URL_TEMPLATE="${GIT_PR_URL_TEMPLATE}"
+    fi
 
     # Mode-specific variables
     if [[ "$SANDBOX_MODE" == "worktree" ]]; then
