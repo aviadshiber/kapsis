@@ -260,10 +260,10 @@ does **not** close it, because the capabilities are re-granted inside the
 agent-created namespace.
 
 **Mitigation.** The default profile for `standard` (and `strict`/`paranoid`) is
-`security/seccomp/kapsis-default-hardened.json` — the verbatim upstream
+`security/seccomp/kapsis-default-hardened.json` — based on the upstream
 containers/common default profile (so it keeps *all* of upstream's protections
-and 7-architecture coverage) with the following family **denied, returning
-`EPERM`**:
+and 7-architecture coverage), with the following family **denied, returning
+`EPERM`**, plus an additional `clone`/`clone3` hardening described below:
 
 | Syscall | Why denied |
 |---------|-----------|
@@ -281,17 +281,34 @@ sandboxing libraries, language test harnesses) see a clean "operation not
 permitted" and degrade gracefully, rather than the whole process being
 SIGSYS-killed.
 
-**Residual: `clone`/`clone3`.** These remain allowed — they are the basis of
-*all* process and thread creation (`fork`/`pthread_create`), so denying them
-breaks everything. In principle `clone(CLONE_NEWUSER)` is an alternative path to a
-nested userns; argument-filtering it in static OCI seccomp JSON is impractical
-(the flag is a bitmask in a register and portable matching across `clone`/`clone3`
-arg layouts is fragile). The **load-bearing** escalation path is
-`unshare(CLONE_NEWUSER)` followed by `mount`/`fsconfig`, and *both ends are
-denied*: even if an agent reaches a nested userns via `clone`, the `mount`/
-`fsconfig`/`setns` family is still `EPERM`. `clone(CLONE_NEWUSER)` is therefore
-left to the complementary defenses — rootless user-namespace remapping
-(`--userns=keep-id`), `--cap-drop=ALL`, and `--security-opt no-new-privileges`.
+**`clone`/`clone3`: argument-filtered, not flatly allowed (issue #444).** `clone`
+is the basis of *all* process and thread creation (`fork`/`pthread_create`), so
+denying it outright breaks everything — but `clone(CLONE_NEWUSER)` (and the
+other `CLONE_NEW*` flags) is an alternative path to a nested userns that doesn't
+go through `unshare`. An earlier version of this document claimed
+argument-filtering `clone` in static OCI seccomp JSON was impractical ("the flag
+is a bitmask in a register and portable matching across `clone`/`clone3` arg
+layouts is fragile") — that claim was wrong: moby/Docker's own default profile
+does exactly this, portably, and has for years. Kapsis's hardened profile now
+does the same:
+- `clone` is allowed only when `(flags & CLONE_NEWNS|NEWCGROUP|NEWUTS|NEWIPC|NEWUSER|NEWPID|NEWNET) == 0`, via an `SCMP_CMP_MASKED_EQ` arg rule (index 0 on
+  most architectures, index 1 on s390/s390x, where the first two `clone` args
+  are swapped) — ordinary `fork`/`pthread_create` still work; any
+  namespace-creating `clone` call falls through to the profile's `defaultAction`.
+- `clone3` cannot be argument-filtered the same way — its flags live in a
+  `clone_args` struct passed by pointer, which seccomp cannot dereference — so
+  it is denied with `SCMP_ACT_ERRNO` / `ENOSYS` (errno 38). Runtimes and glibc
+  respond to `clone3`'s `ENOSYS` by transparently falling back to the
+  arg-filtered `clone` path above, so legitimate callers are unaffected while
+  the direct `clone3(CLONE_NEWUSER)` bypass is closed.
+
+This is defense-in-depth on top of the **load-bearing** escalation path, which
+remains fully denied regardless: `unshare(CLONE_NEWUSER)` followed by
+`mount`/`fsconfig`, where *both ends are denied* — even before this change, a
+nested userns reached via `clone` still hit `EPERM` on the `mount`/`fsconfig`/
+`setns` family. The complementary defenses (rootless user-namespace remapping
+via `--userns=keep-id`, `--cap-drop=ALL`, `--security-opt no-new-privileges`)
+still apply on top of both layers.
 
 **Known breakage (use the opt-out).** Workloads that legitimately need nested user
 namespaces or mounts will break under the default and must opt out:
