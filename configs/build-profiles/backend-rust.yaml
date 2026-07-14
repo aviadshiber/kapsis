@@ -40,7 +40,7 @@ build_tools:
   gradle:
     enabled: false
 
-  gradle_enterprise:
+  maven_extensions:
     enabled: false
 
   protoc:

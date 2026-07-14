@@ -84,7 +84,7 @@ declare -A DEPENDENCIES=(
     ["go"]="languages.go.enabled"
     ["maven"]="build_tools.maven.enabled"
     ["gradle"]="build_tools.gradle.enabled"
-    ["gradle_enterprise"]="build_tools.gradle_enterprise.enabled"
+    ["maven_extensions"]="build_tools.maven_extensions.enabled"
     ["protoc"]="build_tools.protoc.enabled"
     ["development"]="system_packages.development.enabled"
     ["shells"]="system_packages.shells.enabled"
@@ -146,7 +146,7 @@ ${BOLD}Profiles:${NC}
 
 ${BOLD}Dependency Names:${NC}
   java, nodejs, python, rust, go
-  maven, gradle, gradle_enterprise, protoc
+  maven, gradle, maven_extensions, protoc
   development, shells, utilities, overlay
 
 ${BOLD}Examples:${NC}
@@ -291,7 +291,7 @@ list_dependencies() {
         echo "  Languages:"
         echo "    java, nodejs, python, rust, go"
         echo "  Build Tools:"
-        echo "    maven, gradle, gradle_enterprise, protoc"
+        echo "    maven, gradle, maven_extensions, protoc"
         echo "  System Packages:"
         echo "    development, shells, utilities, overlay"
     fi
@@ -461,7 +461,7 @@ apply_json_input() {
     fi
 
     # Build tools
-    for tool in maven gradle gradle_enterprise protoc; do
+    for tool in maven gradle maven_extensions protoc; do
         local enabled
         enabled=$(jq -r ".build_tools.$tool.enabled // empty" "$json_file")
         if [[ -n "$enabled" ]]; then
@@ -879,7 +879,7 @@ build_tools_menu() {
     echo "├─────────────────────────────────────────────────────────────────────┤"
     printf "│  [${CYAN}1${NC}] Maven              %-43s │\n" "[$([[ $ENABLE_MAVEN == true ]] && echo "${GREEN}ENABLED${NC}" || echo "${RED}disabled${NC}")]"
     printf "│  [${CYAN}2${NC}] Gradle             %-43s │\n" "[$([[ $ENABLE_GRADLE == true ]] && echo "${GREEN}ENABLED${NC}" || echo "${RED}disabled${NC}")]"
-    printf "│  [${CYAN}3${NC}] Gradle Enterprise  %-43s │\n" "[$([[ $ENABLE_GRADLE_ENTERPRISE == true ]] && echo "${GREEN}ENABLED${NC}" || echo "${RED}disabled${NC}")]"
+    printf "│  [${CYAN}3${NC}] Maven Extensions   %-43s │\n" "[$([[ $ENABLE_MAVEN_EXTENSIONS == true ]] && echo "${GREEN}ENABLED${NC}" || echo "${RED}disabled${NC}")]"
     printf "│  [${CYAN}4${NC}] Protoc             %-43s │\n" "[$([[ $ENABLE_PROTOC == true ]] && echo "${GREEN}ENABLED${NC}" || echo "${RED}disabled${NC}")]"
     echo "│                                                                     │"
     echo "│  [${CYAN}B${NC}] Back to main menu                                              │"
@@ -891,7 +891,7 @@ build_tools_menu() {
     case "${choice,,}" in
         1) toggle_dependency "maven" ;;
         2) toggle_dependency "gradle" ;;
-        3) toggle_dependency "gradle_enterprise" ;;
+        3) toggle_dependency "maven_extensions" ;;
         4) toggle_dependency "protoc" ;;
         b) return ;;
         *) echo "${RED}Invalid option.${NC}"; read -r ;;

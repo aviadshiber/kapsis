@@ -12,7 +12,7 @@ The fastest way to customize your build is to use a predefined profile:
 # Build a minimal image (~500MB) - base container only
 ./scripts/build-image.sh --profile minimal
 
-# Build for Java development (~1.5GB) - Java, Maven, Gradle Enterprise
+# Build for Java development (~1.5GB) - Java, Maven, Maven extensions
 ./scripts/build-image.sh --profile java-dev
 
 # Build a full-stack image (~2.1GB) - Java, Node.js, Python
@@ -32,9 +32,9 @@ Use `--dry-run` to see what would be built without actually building:
 | Profile | Est. Size | With Claude | Languages | Build Tools | Best For |
 |---------|-----------|-------------|-----------|-------------|----------|
 | `minimal` | ~240MB | ~450MB | None | None | Shell scripts, basic tasks |
-| `java-dev` | ~1.9GB | ~2.1GB | Java 17/8 | Maven, GE, protoc | Taboola Java development |
-| `java8-legacy` | ~800MB | ~1.0GB | Java 8 only | Maven, GE, protoc | Legacy Java 8 projects |
-| `full-stack` | ~2.1GB | ~2.3GB | Java, Node.js, Python | Maven, GE, protoc | Multi-language projects |
+| `java-dev` | ~1.9GB | ~2.1GB | Java 17/8 | Maven, Maven Ext, protoc | General Java/Maven development |
+| `java8-legacy` | ~800MB | ~1.0GB | Java 8 only | Maven, Maven Ext, protoc | Legacy Java 8 projects |
+| `full-stack` | ~2.1GB | ~2.3GB | Java, Node.js, Python | Maven, Maven Ext, protoc | Multi-language projects |
 | `backend-go` | ~1.2GB | ~1.4GB | Go, Python | protoc | Go microservices |
 | `backend-rust` | ~1.4GB | ~1.6GB | Rust, Python | protoc | Rust backend services |
 | `ml-python` | ~1.8GB | ~2.0GB | Python, Node.js, Rust | None | ML/AI development |
@@ -99,14 +99,27 @@ build_tools:
     enabled: false
     version: "8.5"
 
-  gradle_enterprise:
+  # Maven extensions pre-cached into the offline m2 repo. Pluggable — any
+  # Maven extension coordinate can go here, not just the default below
+  # (Gradle Enterprise/Develocity + its Common Custom User Data extension).
+  # See the "Maven Extensions" section further down for details.
+  maven_extensions:
     enabled: true
-    extension_version: "1.20"
-    ccud_version: "1.12.5"
+    extensions:
+      - group_id: "com.gradle"
+        artifact_id: "gradle-enterprise-maven-extension"
+        version: "1.20"
+      - group_id: "com.gradle"
+        artifact_id: "common-custom-user-data-maven-extension"
+        version: "1.12.5"
+    # Optional: known-vulnerable transitive jars/poms to remove from the
+    # cache after resolution. Specific to the extensions list above — if you
+    # change it, re-derive this from a fresh vulnerability scan.
+    vulnerable_paths: []
 
   protoc:
     enabled: true
-    version: "25.1"
+    version: "3.25.1"
 
 system_packages:
   development:
@@ -251,6 +264,36 @@ Via CLI:
 ./scripts/configure-deps.sh --set languages.java.default_version="21.0.6-zulu"
 ```
 
+## Maven Extensions
+
+Maven extensions (`.mvn/extensions.xml` in a Maven project) resolve **before** `settings.xml` is processed, so they can't use an authenticated or DNS-allowlisted mirror on first use. Kapsis works around this by pre-caching configured extension jars (and their transitive dependencies) into the image at build time, then copying them into the agent's `~/.m2/repository` at container startup — Kapsis only pre-populates the cache, it does **not** write `.mvn/extensions.xml` itself; that still comes from the user's own project.
+
+This is fully pluggable — the default configuration below is Gradle Enterprise/Develocity + its Common Custom User Data extension (this project's own usage), but `extensions` accepts any Maven extension coordinate:
+
+```yaml
+build_tools:
+  maven_extensions:
+    enabled: true
+    extensions:
+      - group_id: "com.gradle"
+        artifact_id: "gradle-enterprise-maven-extension"
+        version: "1.20"
+      - group_id: "com.gradle"
+        artifact_id: "common-custom-user-data-maven-extension"
+        version: "1.12.5"
+      # Add your own extension here, e.g.:
+      # - group_id: "org.example"
+      #   artifact_id: "some-other-maven-extension"
+      #   version: "2.0.0"
+    vulnerable_paths:
+      - "dom4j/dom4j/1.1"
+      # ... (see configs/build-config.yaml for the full default list)
+```
+
+`vulnerable_paths` is optional and best-effort: it lists known-vulnerable transitive jars/poms (paths relative to the m2 cache root, e.g. `groupId-with-slashes/artifactId/version`) that the configured extensions' own dependency graph pulls in at old versions, to be removed from the cache after resolution — `dependencyManagement` overrides do not reliably prevent Maven from downloading these regardless of the extension's declared version. **This list is specific to whichever `extensions` you configure.** If you swap in a different set of extensions (or bump a version), the default `vulnerable_paths` no longer applies — re-run a vulnerability scan (e.g. Grype/Trivy against a built image) to derive a new list, or leave it empty if you don't need this remediation. Set to `[]` (or omit) for no automatic removal.
+
+If you don't need any pre-cached Maven extensions, set `enabled: false` — no jars are resolved or cached, and no cache is copied at container startup.
+
 ## Building Agent Images
 
 Agent-specific images combine a build profile (languages/tools) with an agent profile (AI agent installation).
@@ -382,11 +425,11 @@ build_tools:
     enabled: false
   gradle:
     enabled: false
-  gradle_enterprise:
+  maven_extensions:
     enabled: false
   protoc:
     enabled: true
-    version: "25.1"
+    version: "3.25.1"
 
 system_packages:
   development:

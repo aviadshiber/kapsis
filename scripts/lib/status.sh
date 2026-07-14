@@ -600,7 +600,11 @@ _status_write() {
     [[ -n "$error" ]] && error_json="\"$escaped_error\""
 
     local pr_url_json="null"
-    [[ -n "$pr_url" ]] && pr_url_json="\"$pr_url\""
+    if [[ -n "$pr_url" ]]; then
+        local escaped_pr_url
+        escaped_pr_url=$(_status_json_escape "$pr_url")
+        pr_url_json="\"$escaped_pr_url\""
+    fi
 
     local branch_json="null"
     [[ -n "$_KAPSIS_STATUS_BRANCH" ]] && branch_json="\"$escaped_branch\""
