@@ -121,7 +121,7 @@ test_parse_java_dev_profile() {
     # Verify Java development settings
     assert_equals "true" "$ENABLE_JAVA" "Java should be enabled in java-dev"
     assert_equals "true" "$ENABLE_MAVEN" "Maven should be enabled in java-dev"
-    assert_equals "true" "$ENABLE_GRADLE_ENTERPRISE" "GE should be enabled in java-dev"
+    assert_equals "true" "$ENABLE_MAVEN_EXTENSIONS" "Maven extensions should be enabled in java-dev"
     assert_equals "false" "$ENABLE_NODEJS" "Node.js should be disabled in java-dev"
     assert_equals "false" "$ENABLE_RUST" "Rust should be disabled in java-dev"
 }

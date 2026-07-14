@@ -84,9 +84,49 @@ test_detect_bitbucket_server() {
     log_test "detect_git_provider: identifies Bitbucket Server from self-hosted URL"
 
     local result
-    result=$(detect_git_provider "https://git.taboolasyndication.com/scm/proj/repo.git")
+    result=$(detect_git_provider "https://git.mycompany.internal/scm/proj/repo.git")
 
-    assert_equals "bitbucket-server" "$result" "Should detect bitbucket-server from Taboola URL"
+    assert_equals "unknown" "$result" "Self-hosted host without 'bitbucket' in the name and no KAPSIS_GIT_PROVIDER override should be unknown"
+}
+
+test_detect_git_provider_explicit_override() {
+    log_test "detect_git_provider: KAPSIS_GIT_PROVIDER overrides pattern matching entirely"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="bitbucket-server" detect_git_provider "https://git.mycompany.internal/scm/proj/repo.git")
+
+    assert_equals "bitbucket-server" "$result" \
+        "Explicit KAPSIS_GIT_PROVIDER should be returned regardless of URL shape"
+}
+
+test_detect_git_provider_explicit_override_invalid_value_ignored() {
+    log_test "detect_git_provider: invalid KAPSIS_GIT_PROVIDER falls back to pattern matching"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="not-a-real-provider" detect_git_provider "https://github.com/foo/bar.git")
+
+    assert_equals "github" "$result" \
+        "Invalid override value must not suppress correct auto-detection"
+}
+
+test_detect_git_provider_no_override_still_autodetects() {
+    log_test "detect_git_provider: auto-detection still works with no override set (non-opt-in default)"
+
+    local result
+    result=$(unset KAPSIS_GIT_PROVIDER; detect_git_provider "https://gitlab.com/foo/bar.git")
+
+    assert_equals "gitlab" "$result" \
+        "Public-host auto-detection must work with zero configuration"
+}
+
+test_detect_git_provider_azure_devops() {
+    log_test "detect_git_provider: identifies Azure DevOps via explicit provider (no auto-detect pattern exists for it)"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" detect_git_provider "https://dev.azure.com/myorg/myproject/_git/myrepo")
+
+    assert_equals "azure-devops" "$result" \
+        "Azure DevOps requires explicit provider (URL shape doesn't auto-detect reliably)"
 }
 
 test_detect_bitbucket_server_ssh() {
@@ -142,7 +182,7 @@ test_extract_repo_path_bitbucket_server() {
     log_test "extract_repo_path: extracts from Bitbucket Server URL"
 
     local result
-    result=$(extract_repo_path "https://git.taboolasyndication.com/scm/proj/repo.git")
+    result=$(extract_repo_path "https://git.mycompany.internal/scm/proj/repo.git")
 
     assert_equals "proj/repo" "$result" "Should extract project/repo from Bitbucket Server"
 }
@@ -195,9 +235,9 @@ test_extract_base_url_bitbucket_server() {
     log_test "extract_base_url: extracts from Bitbucket Server URL"
 
     local result
-    result=$(extract_base_url "https://git.taboolasyndication.com/scm/proj/repo.git")
+    result=$(extract_base_url "https://git.mycompany.internal/scm/proj/repo.git")
 
-    assert_equals "https://git.taboolasyndication.com" "$result" "Should extract self-hosted domain"
+    assert_equals "https://git.mycompany.internal" "$result" "Should extract self-hosted domain"
 }
 
 #===============================================================================
@@ -297,10 +337,76 @@ test_generate_pr_url_bitbucket_server() {
     log_test "generate_pr_url: generates correct Bitbucket Server PR URL"
 
     local result
-    result=$(generate_pr_url "https://git.taboolasyndication.com/scm/proj/repo.git" "DEV-123-feature")
+    result=$(generate_pr_url "https://bitbucket.mycompany.internal/scm/proj/repo.git" "DEV-123-feature")
 
-    assert_equals "https://git.taboolasyndication.com/proj/repo/pull-requests/new?source=DEV-123-feature" "$result" \
+    assert_equals "https://bitbucket.mycompany.internal/proj/repo/pull-requests/new?source=DEV-123-feature" "$result" \
         "Should generate Bitbucket Server PR URL"
+}
+
+test_generate_pr_url_template_override() {
+    log_test "generate_pr_url: KAPSIS_GIT_PR_URL_TEMPLATE overrides provider-based generation"
+
+    local result
+    result=$(KAPSIS_GIT_PR_URL_TEMPLATE='{base_url}/{repo_path}/newPR?src={branch}' \
+        generate_pr_url "https://git.mycompany.internal/scm/proj/repo.git" "feature/x")
+
+    assert_equals "https://git.mycompany.internal/proj/repo/newPR?src=feature/x" "$result" \
+        "Template placeholders {base_url}/{repo_path}/{branch} must be substituted"
+}
+
+test_generate_pr_url_azure_devops() {
+    log_test "generate_pr_url: generates correct Azure DevOps PR URL"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        generate_pr_url "https://dev.azure.com/myorg/myproject/_git/myrepo" "feature/x")
+
+    assert_equals "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequestcreate?sourceRef=feature/x" "$result" \
+        "Should generate Azure DevOps PR URL"
+}
+
+test_generate_pr_url_azure_devops_ssh_remote() {
+    log_test "generate_pr_url: normalizes SSH-style Azure DevOps remote to https PR URL"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        generate_pr_url "git@ssh.dev.azure.com:v3/myorg/myproject/myrepo" "feature/x")
+
+    assert_equals "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequestcreate?sourceRef=feature/x" "$result" \
+        "SSH-style Azure DevOps remote (v3/org/project/repo, no _git segment) must be normalized to the https PR-creation URL"
+}
+
+test_detect_git_provider_azure_devops_no_override_is_unknown() {
+    log_test "detect_git_provider: unmodified dev.azure.com URL with no override is unknown (pins that Azure needs the explicit override)"
+
+    local result
+    result=$(unset KAPSIS_GIT_PROVIDER; detect_git_provider "https://dev.azure.com/myorg/myproject/_git/myrepo")
+
+    assert_equals "unknown" "$result" \
+        "Azure DevOps URLs must NOT auto-detect - KAPSIS_GIT_PROVIDER override is genuinely required"
+}
+
+test_generate_pr_url_provider_and_template_both_set_template_wins() {
+    log_test "generate_pr_url: KAPSIS_GIT_PR_URL_TEMPLATE takes priority over KAPSIS_GIT_PROVIDER when both are set"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        KAPSIS_GIT_PR_URL_TEMPLATE='{base_url}/{repo_path}/newPR?src={branch}' \
+        generate_pr_url "https://git.mycompany.internal/scm/proj/repo.git" "feature/x")
+
+    assert_equals "https://git.mycompany.internal/proj/repo/newPR?src=feature/x" "$result" \
+        "Template must win over provider-based generation when both env vars are set simultaneously"
+}
+
+test_generate_pr_url_empty_template_falls_through_to_provider() {
+    log_test "generate_pr_url: explicitly empty KAPSIS_GIT_PR_URL_TEMPLATE behaves identically to unset (falls through to provider-based generation)"
+
+    local result
+    result=$(KAPSIS_GIT_PR_URL_TEMPLATE="" \
+        generate_pr_url "https://github.com/owner/repo.git" "feature/x")
+
+    assert_equals "https://github.com/owner/repo/compare/feature/x?expand=1" "$result" \
+        "Empty-string template must not be treated as 'set' - the [[ -n ... ]] guard should fall through to provider-based generation"
 }
 
 test_generate_pr_url_unknown() {
@@ -310,6 +416,71 @@ test_generate_pr_url_unknown() {
     result=$(generate_pr_url "https://unknown.server.local/repo.git" "branch")
 
     assert_equals "" "$result" "Should return empty for unknown provider"
+}
+
+test_generate_pr_url_azure_devops_org_at_https_remote() {
+    log_test "generate_pr_url: normalizes org@ userinfo HTTPS Azure DevOps remote (the real default Clone-button form)"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        generate_pr_url "https://myorg@dev.azure.com/myorg/myproject/_git/myrepo" "feature/x")
+
+    assert_equals "https://dev.azure.com/myorg/myproject/_git/myrepo/pullrequestcreate?sourceRef=feature/x" "$result" \
+        "org@ userinfo prefix must be stripped and the URL built from the remaining path"
+}
+
+test_generate_pr_url_azure_devops_malformed_https_remote() {
+    log_test "generate_pr_url: rejects malformed HTTPS Azure DevOps remote (wrong segment shape)"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        generate_pr_url "https://dev.azure.com/onlyorg" "feature/x")
+
+    assert_equals "" "$result" \
+        "HTTPS remote missing project/_git/repo segments must not produce a plausible-but-wrong URL"
+}
+
+test_generate_pr_url_azure_devops_malformed_ssh_remote() {
+    log_test "generate_pr_url: rejects malformed SSH Azure DevOps remote (only 2 segments)"
+
+    local result
+    result=$(KAPSIS_GIT_PROVIDER="azure-devops" \
+        generate_pr_url "git@ssh.dev.azure.com:v3/org/repo" "feature/x")
+
+    assert_equals "" "$result" \
+        "SSH remote with only org/repo (missing project segment) must not produce a plausible-but-wrong URL"
+}
+
+test_generate_pr_url_rejects_javascript_scheme_template() {
+    log_test "generate_pr_url: scheme-validation guard rejects javascript: URL produced by a malicious template"
+
+    local result
+    result=$(KAPSIS_GIT_PR_URL_TEMPLATE='javascript:alert({branch})' \
+        generate_pr_url "https://github.com/owner/repo.git" "feature/x")
+
+    assert_equals "" "$result" \
+        "A template that resolves to a non-http(s) scheme must be rejected as empty, not surfaced as a clickable link"
+}
+
+test_generate_pr_url_rejects_schemeless_template() {
+    log_test "generate_pr_url: scheme-validation guard rejects scheme-less URL produced by a malicious/malformed template"
+
+    local result
+    result=$(KAPSIS_GIT_PR_URL_TEMPLATE='{repo_path}/pr?src={branch}' \
+        generate_pr_url "https://github.com/owner/repo.git" "feature/x")
+
+    assert_equals "" "$result" \
+        "A template that resolves to a scheme-less string must be rejected as empty"
+}
+
+test_git_remote_utils_double_source_does_not_abort() {
+    log_test "git-remote-utils.sh: sourcing twice in the same shell does not abort (readonly-redeclaration guard)"
+
+    local result
+    result=$(bash -c "set -euo pipefail; source '$KAPSIS_ROOT/scripts/lib/git-remote-utils.sh'; source '$KAPSIS_ROOT/scripts/lib/git-remote-utils.sh'; echo OK")
+
+    assert_equals "OK" "$result" \
+        "Double-sourcing must not abort due to a bare 'readonly' redeclaration of _KAPSIS_VALID_GIT_PROVIDERS"
 }
 
 #===============================================================================
@@ -358,6 +529,11 @@ main() {
     run_test test_detect_bitbucket_cloud_https
     run_test test_detect_bitbucket_cloud_ssh
     run_test test_detect_bitbucket_server
+    run_test test_detect_git_provider_explicit_override
+    run_test test_detect_git_provider_explicit_override_invalid_value_ignored
+    run_test test_detect_git_provider_no_override_still_autodetects
+    run_test test_detect_git_provider_azure_devops
+    run_test test_detect_git_provider_azure_devops_no_override_is_unknown
     run_test test_detect_bitbucket_server_ssh
     run_test test_detect_unknown_provider
 
@@ -388,7 +564,18 @@ main() {
     run_test test_generate_pr_url_gitlab
     run_test test_generate_pr_url_bitbucket_cloud
     run_test test_generate_pr_url_bitbucket_server
+    run_test test_generate_pr_url_template_override
+    run_test test_generate_pr_url_azure_devops
+    run_test test_generate_pr_url_azure_devops_ssh_remote
+    run_test test_generate_pr_url_provider_and_template_both_set_template_wins
+    run_test test_generate_pr_url_empty_template_falls_through_to_provider
     run_test test_generate_pr_url_unknown
+    run_test test_generate_pr_url_azure_devops_org_at_https_remote
+    run_test test_generate_pr_url_azure_devops_malformed_https_remote
+    run_test test_generate_pr_url_azure_devops_malformed_ssh_remote
+    run_test test_generate_pr_url_rejects_javascript_scheme_template
+    run_test test_generate_pr_url_rejects_schemeless_template
+    run_test test_git_remote_utils_double_source_does_not_abort
 
     # get_pr_term tests
     run_test test_get_pr_term_github

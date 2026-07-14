@@ -176,7 +176,7 @@ test_validator_accepts_simple() {
 
 test_validator_accepts_dotted_name() {
     log_test "validate_author_format accepts dotted names"
-    assert_equals "0" "$(run_validator "Aviad Shiber <aviad.s@taboola.com>")" \
+    assert_equals "0" "$(run_validator "Jon Doe <jon.d@example.com>")" \
         "Should accept names with dots"
 }
 

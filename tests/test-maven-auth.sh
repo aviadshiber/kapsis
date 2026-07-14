@@ -4,7 +4,7 @@
 #
 # Verifies that Maven authentication is properly configured:
 # - DOCKER_ARTIFACTORY_TOKEN decoding into username/password
-# - Gradle Enterprise extension pre-population from image cache
+# - Maven extensions cache pre-population (default: Gradle Enterprise + CCUD)
 # - Maven mirror URL environment variable substitution
 #===============================================================================
 
@@ -98,12 +98,13 @@ test_invalid_token_handled_gracefully() {
     assert_contains "$output" "PASS=unset" "Invalid token should not set password"
 }
 
-test_ge_extension_prepopulated() {
-    log_test "Testing Gradle Enterprise extension is pre-populated from image cache"
+test_maven_extensions_prepopulated() {
+    log_test "Testing default Maven extensions (GE) are pre-populated from image cache"
 
     setup_container_test "maven-auth-ge"
 
-    # Check that GE extension jar exists in user's .m2/repository
+    # Check that the default extension's jar exists in user's .m2/repository
+    # (build_tools.maven_extensions.extensions' default — see configs/build-config.yaml)
     local output
     output=$(run_simple_container 'ls -la ~/.m2/repository/com/gradle/gradle-enterprise-maven-extension/1.20/*.jar 2>/dev/null && echo "GE_FOUND=yes" || echo "GE_FOUND=no"' \
         --name "$CONTAINER_TEST_ID" -v "kapsis-test-m2:/home/developer/.m2/repository") || true
@@ -111,11 +112,11 @@ test_ge_extension_prepopulated() {
     cleanup_container_test
     podman volume rm kapsis-test-m2 2>/dev/null || true
 
-    assert_contains "$output" "GE_FOUND=yes" "Gradle Enterprise extension should be pre-populated"
+    assert_contains "$output" "GE_FOUND=yes" "Default Maven extension should be pre-populated"
 }
 
-test_ge_extension_entrypoint_log() {
-    log_test "Testing entrypoint logs GE extension pre-population"
+test_maven_extensions_entrypoint_log() {
+    log_test "Testing entrypoint logs Maven extensions cache pre-population"
 
     setup_container_test "maven-auth-ge-log"
 
@@ -126,7 +127,7 @@ test_ge_extension_entrypoint_log() {
     cleanup_container_test
     podman volume rm kapsis-test-m2-log 2>/dev/null || true
 
-    assert_contains "$output" "Gradle Enterprise extension" "Entrypoint should log GE pre-population"
+    assert_contains "$output" "Maven local repo: pre-populated from image cache" "Entrypoint should log Maven extensions cache pre-population"
 }
 
 test_maven_mirror_url_substitution() {
@@ -279,9 +280,9 @@ main() {
     run_test test_invalid_token_handled_gracefully
     run_test test_entrypoint_logs_token_decoding
 
-    # Run tests - GE Extension
-    run_test test_ge_extension_prepopulated
-    run_test test_ge_extension_entrypoint_log
+    # Run tests - Maven Extensions Cache
+    run_test test_maven_extensions_prepopulated
+    run_test test_maven_extensions_entrypoint_log
 
     # Run tests - Maven Settings
     run_test test_maven_mirror_url_substitution
