@@ -113,6 +113,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Arg-filter clone() namespace flags, deny clone3() with ENOSYS (#450)
 
+## [3.2.1] - 2026-07-14
+
+### Changed
+- Add Homebrew formula install/test/audit job (#442) (#445)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1148,7 +1153,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.1...HEAD
+[3.2.1]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.1
 [3.2.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.0
 [3.1.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.1.0
 [3.0.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.0.0
