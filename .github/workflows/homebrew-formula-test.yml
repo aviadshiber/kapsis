@@ -1,0 +1,65 @@
+name: Homebrew Formula Test
+
+# Validates that packaging/homebrew/kapsis.rb is actually installable and passes
+# `brew audit`/`brew test`, rather than relying solely on the static grep checks
+# in tests/test-ctl-packaging.sh (see issue #442).
+#
+# SCOPE / LIMITATION:
+#   The formula's per-platform binary `resource` blocks (e.g. kapsis-ctl,
+#   kapsis-dashboard) point at GitHub Release assets for the version already
+#   committed in the formula (`version "X.Y.Z"` + matching sha256s). Those
+#   assets only exist for versions that have already been released — there is
+#   no release artifact yet for whatever is about to ship in the current PR.
+#   This job therefore installs/audits the CURRENTLY COMMITTED formula as-is
+#   (i.e. the latest already-released version), which is exactly what would
+#   be shipped to users right now. It does NOT attempt to simulate installing
+#   an unreleased version, since the required release assets don't exist yet.
+#   It still catches the real failure mode this issue is about: a Ruby syntax
+#   error or a broken `install`/`test do` block in the formula, which would
+#   otherwise ship silently since only static grep validates it today.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'packaging/homebrew/kapsis.rb'
+  pull_request:
+    paths:
+      - 'packaging/homebrew/kapsis.rb'
+  # Allow release.yml to invoke this as a post-release sanity check once the
+  # new version's release assets exist. `ref` lets the caller point at the
+  # post-version-bump commit on main (the reusable-workflow default would
+  # otherwise resolve to the *triggering* commit of the caller run, which for
+  # release.yml is the pre-bump commit — i.e. the previous release's formula).
+  workflow_call:
+    inputs:
+      ref:
+        description: 'Git ref to check out (defaults to the calling workflow''s ref)'
+        required: false
+        type: string
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  formula-test:
+    name: Install & Audit Formula
+    runs-on: macos-latest
+    steps:
+      - name: Checkout kapsis
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: brew install --build-from-source
+        run: |
+          brew install --formula --build-from-source ./packaging/homebrew/kapsis.rb
+
+      - name: brew test
+        run: |
+          brew test kapsis
+
+      - name: brew audit --strict
+        run: |
+          brew audit --strict --formula ./packaging/homebrew/kapsis.rb

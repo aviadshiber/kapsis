@@ -105,6 +105,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - Explicit provider config replaces hostname pattern-matching (#456)
 
+## [3.2.0] - 2026-07-14
+
+### Added
+- Expose --prune-dangling cleanup target (#446)
+
+### Fixed
+- Arg-filter clone() namespace flags, deny clone3() with ENOSYS (#450)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1140,7 +1148,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.1.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.0...HEAD
+[3.2.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.0
 [3.1.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.1.0
 [3.0.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.0.0
 [2.38.3]: https://github.com/aviadshiber/kapsis/releases/tag/v2.38.3

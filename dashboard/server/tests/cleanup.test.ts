@@ -41,6 +41,11 @@ describe("buildArgv", () => {
       .toEqual(["/x.sh", "--worktrees", "--volumes", "--images", "--logs", "--force"]);
   });
 
+  it("maps prune-dangling to --prune-dangling", () => {
+    expect(buildArgv("/x.sh", ["prune-dangling"], false))
+      .toEqual(["/x.sh", "--prune-dangling", "--force"]);
+  });
+
   it("stale-state runs the script bare (no per-target flag)", () => {
     // The real kapsis-cleanup.sh, when invoked with no target flags, runs its
     // default block (worktrees + sandboxes + status + sanitized-git + audit +
