@@ -11,6 +11,7 @@ const TARGETS = [
   { id: "worktrees", label: "Worktrees only", help: "Removes git worktrees from completed agents (--worktrees)." },
   { id: "volumes", label: "Podman volumes", help: "Removes per-agent named volumes. Forces dependency re-download." },
   { id: "images", label: "Podman images", help: "Removes unused kapsis-* container images." },
+  { id: "prune-dangling", label: "Dangling layers", help: "Prunes only dangling (<none>:<none>) build layers — cheap, in-use-safe, recommended for cron/housekeepers." },
   { id: "containers", label: "Podman containers", help: "Removes exited or wedged kapsis-* containers." },
   { id: "logs", label: "Launcher logs", help: "Removes rotated ~/.kapsis/logs/*.log files." },
   { id: "ssh-cache", label: "SSH cache", help: "Removes cached SSH known_hosts entries used by the launcher." },

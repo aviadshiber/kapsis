@@ -472,8 +472,8 @@ agent:
 environment:
   keychain:
     BKT_TOKEN:
-      service: "taboola-bitbucket"
-      account: "aviad.s"
+      service: "bitbucket-token"
+      account: "jon.d"
       inject_to: "secret_store"
       keyring_collection: "bkt"
       keyring_profile: "host/git.example.com/token"
@@ -492,7 +492,7 @@ EOF
 
     rm -f "$test_config"
 
-    assert_contains "$parsed" "BKT_TOKEN|taboola-bitbucket|aviad.s||0600|secret_store|bkt|host/git.example.com/token|git.example.com" \
+    assert_contains "$parsed" "BKT_TOKEN|bitbucket-token|jon.d||0600|secret_store|bkt|host/git.example.com/token|git.example.com" \
         "git_credential_for should be parsed as 9th field for BKT_TOKEN"
     assert_contains "$parsed" "GH_TOKEN|github-pat|testuser||0600|secret_store|||github.com" \
         "git_credential_for should be parsed as 9th field for GH_TOKEN"

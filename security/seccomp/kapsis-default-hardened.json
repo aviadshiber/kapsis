@@ -76,6 +76,62 @@
     },
     {
       "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {
+          "index": 0,
+          "value": 2114060288,
+          "valueTwo": 0,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Issue #444: allow clone() only when it creates NO new namespace (flags & CLONE_NEW* == 0) - ordinary fork()/pthread_create() still work, but clone(CLONE_NEWUSER) and friends fall through to defaultAction. Mirrors moby/moby's default seccomp profile. Excludes s390/s390x, where the flags arg is at index 1 (register layout differs).",
+      "includes": {},
+      "excludes": {
+        "arches": [
+          "s390",
+          "s390x"
+        ]
+      }
+    },
+    {
+      "names": [
+        "clone"
+      ],
+      "action": "SCMP_ACT_ALLOW",
+      "args": [
+        {
+          "index": 1,
+          "value": 2114060288,
+          "valueTwo": 0,
+          "op": "SCMP_CMP_MASKED_EQ"
+        }
+      ],
+      "comment": "Issue #444: s390/s390x variant of the clone() namespace-flag filter above - these arches swap the first two clone() args, so flags is arg index 1, not 0.",
+      "includes": {
+        "arches": [
+          "s390",
+          "s390x"
+        ]
+      },
+      "excludes": {}
+    },
+    {
+      "names": [
+        "clone3"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "args": [],
+      "comment": "Issue #444: clone3()'s flags live in a struct pointed to by its sole argument, which seccomp cannot dereference, so it can't be arg-filtered like clone() above. Deny with ENOSYS (not EPERM) so glibc/runtime callers transparently retry via the filtered clone() path instead of hard-failing - the standard moby/Docker trick.",
+      "errnoRet": 38,
+      "errno": "ENOSYS",
+      "includes": {},
+      "excludes": {}
+    },
+    {
+      "names": [
         "bdflush",
         "cachestat",
         "futex_requeue",
@@ -145,8 +201,6 @@
         "clock_gettime64",
         "clock_nanosleep",
         "clock_nanosleep_time64",
-        "clone",
-        "clone3",
         "close",
         "close_range",
         "connect",
