@@ -87,3 +87,14 @@ system_packages:
   secret_store:
     enabled: true
   custom: []
+
+# yq pin — kept in sync with configs/build-config.yaml. Without this section the
+# profile fell back to build-config.sh's stale 4.44.3 default while the
+# Containerfile's arm64 ARG default is for 4.53.3, so arm64 builds failed the
+# checksum ("yq arm64 checksum mismatch"). 4.53.3 shas verified against the
+# published GitHub release.
+dependency_managers:
+  yq:
+    version: "4.53.3"
+    sha256: "fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4"
+    sha256_arm64: "578648e463a11c1b6db6010cbf41eafed6bee79466fcffa1bb446672cf7945ea"
