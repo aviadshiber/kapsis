@@ -964,7 +964,12 @@ setup_environment() {
         # unlike checking for one hardcoded jar path would.
         if [[ ! -f "$user_m2/.kapsis-m2-cache-populated" ]]; then
             cp -r "$KAPSIS_HOME/m2-cache/"* "$user_m2/" 2>/dev/null || true
-            touch "$user_m2/.kapsis-m2-cache-populated"
+            # Guard the marker touch: under `set -euo pipefail` an unwritable
+            # cache dir (e.g. an image/volume uid mismatch) would abort the whole
+            # entrypoint and exit 1 *before the agent starts* — turning a benign
+            # cache hiccup into a total agent failure. Degrade to a warning instead.
+            touch "$user_m2/.kapsis-m2-cache-populated" 2>/dev/null \
+                || log_warn "Maven cache marker not writable ($user_m2) — skipping; cache may re-populate next run"
             log_info "Maven local repo: pre-populated from image cache"
         fi
     fi
