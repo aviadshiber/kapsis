@@ -24,24 +24,12 @@ updates:
         patterns:
           - "*"
 
-  # npm CI tooling — tracks @anthropic-ai/claude-code version pin used in
-  # integration-tests and e2e-tests jobs.  Requires a package.json in the
-  # .github/ directory listing the pin as a devDependency.
-  - package-ecosystem: "npm"
-    directory: "/.github"
-    schedule:
-      interval: "weekly"
-      day: "monday"
-      time: "09:00"
-      timezone: "UTC"
-    commit-message:
-      prefix: "ci(deps)"
-    labels:
-      - "dependencies"
-      - "ci"
-    reviewers:
-      - "aviadshiber"
-    open-pull-requests-limit: 3
+  # NOTE: the @anthropic-ai/claude-code pin is NOT tracked here anymore.
+  # Dependabot's npm updater cannot update that package (it fails every run with
+  # `dependency_file_not_supported` / HTTP 400 "invalid or unauthorized changes"
+  # and never once opened a bump PR). It is now handled by the dedicated
+  # .github/workflows/bump-claude-code.yml workflow, which polls the registry and
+  # opens a PR updating .github/package.json + the ci.yml pins in lockstep.
 
   # Container/Docker dependencies (if Containerfile has versioned images)
   - package-ecosystem: "docker"
