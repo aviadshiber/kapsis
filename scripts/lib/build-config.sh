@@ -51,10 +51,14 @@ declare -g DEFAULT_UTILITIES_ENABLED="true"
 declare -g DEFAULT_OVERLAY_ENABLED="true"
 declare -g DEFAULT_SECRET_STORE_ENABLED="true"
 
-# yq defaults
-declare -g DEFAULT_YQ_VERSION="4.44.3"
-declare -g DEFAULT_YQ_SHA256="a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7"
-declare -g DEFAULT_YQ_SHA256_ARM64=""
+# yq defaults — keep in sync with the Containerfile ARG defaults and
+# configs/build-config.yaml. These are the single source of truth: the
+# config-file parser below falls back to them when a profile omits a yq pin, so
+# a profile without a dependency_managers.yq section (most of them) gets a
+# consistent, checksum-matching version instead of a stale hardcoded default.
+declare -g DEFAULT_YQ_VERSION="4.53.3"
+declare -g DEFAULT_YQ_SHA256="fa52a4e758c63d38299163fbdd1edfb4c4963247918bf9c1c5d31d84789eded4"
+declare -g DEFAULT_YQ_SHA256_ARM64="578648e463a11c1b6db6010cbf41eafed6bee79466fcffa1bb446672cf7945ea"
 
 #===============================================================================
 # PARSED VALUES (populated by parse_build_config)
@@ -206,10 +210,13 @@ parse_build_config() {
         return 1
     fi
 
-    # Parse yq settings
-    YQ_VERSION=$(yq -r '.dependency_managers.yq.version // "4.44.3"' "$config_file")
-    YQ_SHA256=$(yq -r '.dependency_managers.yq.sha256 // ""' "$config_file")
-    YQ_SHA256_ARM64=$(yq -r '.dependency_managers.yq.sha256_arm64 // ""' "$config_file")
+    # Parse yq settings. Fall back to the DEFAULT_YQ_* single source of truth
+    # (not hardcoded literals) so a profile that omits a dependency_managers.yq
+    # section still gets a version whose checksum matches the Containerfile ARG
+    # defaults — otherwise arm64 builds fail "yq arm64 checksum mismatch".
+    YQ_VERSION=$(yq -r ".dependency_managers.yq.version // \"$DEFAULT_YQ_VERSION\"" "$config_file")
+    YQ_SHA256=$(yq -r ".dependency_managers.yq.sha256 // \"$DEFAULT_YQ_SHA256\"" "$config_file")
+    YQ_SHA256_ARM64=$(yq -r ".dependency_managers.yq.sha256_arm64 // \"$DEFAULT_YQ_SHA256_ARM64\"" "$config_file")
 
     _generate_build_args
 }
