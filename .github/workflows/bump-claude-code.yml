@@ -1,0 +1,113 @@
+# Keeps the pinned @anthropic-ai/claude-code CLI version fresh.
+#
+# Replaces the Dependabot npm ecosystem entry that watched .github/package.json:
+# Dependabot's npm updater fails on this package with `dependency_file_not_supported`
+# / HTTP 400 "invalid or unauthorized changes" and has never once opened a bump PR.
+# This job polls the registry directly and bumps all three lockstep locations the
+# CI "Assert claude-code pin consistent" check enforces:
+#   1. .github/package.json  devDependencies["@anthropic-ai/claude-code"]
+#   2. .github/workflows/ci.yml  two `npm install -g @anthropic-ai/claude-code@X.Y.Z` literals
+name: Bump claude-code CLI pin
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"   # Mondays 09:00 UTC (matches the old Dependabot cadence)
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: bump-claude-code
+  cancel-in-progress: true
+
+jobs:
+  bump:
+    name: Bump claude-code pin
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Harden runner
+        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+
+      - name: Resolve current vs latest version
+        id: v
+        run: |
+          set -euo pipefail
+          current=$(jq -r '.devDependencies["@anthropic-ai/claude-code"]' .github/package.json)
+          latest=$(npm view @anthropic-ai/claude-code version)
+          if [[ -z "$latest" || "$latest" == "undefined" ]]; then
+            echo "::error::Could not resolve latest @anthropic-ai/claude-code version"
+            exit 1
+          fi
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+          if [[ "$current" == "$latest" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Already on latest ($current) — nothing to do."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "Bump: $current -> $latest"
+          fi
+
+      - name: Apply bump (package.json + ci.yml)
+        if: steps.v.outputs.changed == 'true'
+        env:
+          LATEST: ${{ steps.v.outputs.latest }}
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp)
+          jq --arg v "$LATEST" \
+            '.devDependencies["@anthropic-ai/claude-code"]=$v' \
+            .github/package.json > "$tmp"
+          mv "$tmp" .github/package.json
+          # Bump the pinned literals (digit-anchored, so the `@${pkg_version}`
+          # reference on the assertion line is left untouched).
+          sed -i -E "s#(@anthropic-ai/claude-code@)[0-9][0-9.]*#\1${LATEST}#g" \
+            .github/workflows/ci.yml
+          # Mirror the CI consistency check: exactly two `install -g` pins must match.
+          n=$(grep -cF "npm install -g @anthropic-ai/claude-code@${LATEST}" .github/workflows/ci.yml || echo 0)
+          if [[ "$n" -ne 2 ]]; then
+            echo "::error::Expected 2 ci.yml pins at ${LATEST}, found ${n} — aborting"
+            exit 1
+          fi
+
+      - name: Open / refresh bump PR
+        if: steps.v.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          LATEST: ${{ steps.v.outputs.latest }}
+          CURRENT: ${{ steps.v.outputs.current }}
+        run: |
+          set -euo pipefail
+          branch="chore/bump-claude-code"
+          title="ci(deps): bump @anthropic-ai/claude-code to ${LATEST}"
+          body=$(printf '%s\n' \
+            "Automated bump of the pinned Claude Code CLI version." \
+            "" \
+            "\`${CURRENT}\` → \`${LATEST}\`" \
+            "" \
+            "Updates \`.github/package.json\` and both \`npm install -g @anthropic-ai/claude-code@X.Y.Z\` literals in \`.github/workflows/ci.yml\` in lockstep, so the config-validation pin-consistency check stays green." \
+            "" \
+            "_Replaces the Dependabot npm watcher, which could not update this package (\`dependency_file_not_supported\` / HTTP 400)._")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$branch"
+          git add .github/package.json .github/workflows/ci.yml
+          git commit -m "ci(deps): bump @anthropic-ai/claude-code ${CURRENT} -> ${LATEST}"
+          git push -f origin "$branch"
+          existing=$(gh pr list --head "$branch" --state open --json number --jq '.[0].number // empty')
+          if [[ -n "$existing" ]]; then
+            gh pr edit "$existing" --title "$title" --body "$body"
+            echo "Refreshed existing PR #${existing}"
+          else
+            gh pr create --base main --head "$branch" --title "$title" --body "$body"
+          fi
+          # Labels are best-effort (must pre-exist); never fail the run over them.
+          gh pr edit "$branch" --add-label dependencies --add-label ci || true
