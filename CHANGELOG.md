@@ -118,6 +118,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Add Homebrew formula install/test/audit job (#442) (#445)
 
+## [3.2.2] - 2026-07-22
+
+### Fixed
+- Guard maven cache-marker touch so a cache hiccup can't kill the agent (#460)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1153,7 +1158,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.2...HEAD
+[3.2.2]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.2
 [3.2.1]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.1
 [3.2.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.0
 [3.1.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.1.0
