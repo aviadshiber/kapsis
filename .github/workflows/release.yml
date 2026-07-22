@@ -41,7 +41,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Determine version
         id: version
@@ -60,7 +60,7 @@ jobs:
     needs: validate
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y shellcheck jq
@@ -81,7 +81,7 @@ jobs:
     needs: validate
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Install dependencies
         run: |
@@ -144,7 +144,7 @@ jobs:
       id-token: write     # keyless OIDC signing via Sigstore Fulcio
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Install cosign
         run: |
@@ -285,8 +285,8 @@ jobs:
       VERSION: ${{ needs.validate.outputs.version }}
       OUT_NAME: kapsis-ctl-${{ matrix.target }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: cmd/kapsis-ctl/go.mod
           # No go.sum — stdlib-only module (mirrors ci.yml's go-build job).
@@ -329,7 +329,7 @@ jobs:
     needs: [validate, test, sign-and-attest, compile-dashboard, compile-ctl]
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Create source tarball
         env:
@@ -547,7 +547,7 @@ jobs:
           cat release_notes.md
 
       - name: Create Release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b  # v2
+        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228  # v2
         with:
           tag_name: v${{ needs.validate.outputs.version }}
           name: Kapsis v${{ needs.validate.outputs.version }}
@@ -598,7 +598,7 @@ jobs:
 
       - name: Checkout code
         if: steps.check-app.outputs.configured == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
         with:
           ref: main
           # Use GitHub App token to bypass branch protection when pushing
@@ -1142,7 +1142,7 @@ jobs:
     if: needs.update-packages.result == 'success'
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
         with:
           ref: main
           # Need to fetch the updated formula from main

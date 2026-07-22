@@ -31,7 +31,7 @@ jobs:
       scripts: ${{ steps.determine.outputs.scripts }}
       container: ${{ steps.determine.outputs.container }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
         with:
           # Need >1 ref to compare against HEAD's first parent for the
           # per-push dashboard-only override below.
@@ -128,7 +128,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Install ShellCheck
         run: sudo apt-get update && sudo apt-get install -y shellcheck
@@ -176,7 +176,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Verify base image digest pinning
         run: |
@@ -263,7 +263,7 @@ jobs:
             echo "$unpinned"
             echo ""
             echo "Actions must be pinned to commit SHAs for security."
-            echo "Example: uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6"
+            echo "Example: uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6"
             exit 1
           fi
           echo "✓ All GitHub Actions are pinned to commit SHAs"
@@ -276,7 +276,7 @@ jobs:
     if: needs.changes.outputs.scripts == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Install dependencies
         run: |
@@ -316,7 +316,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Install test dependencies
         run: |
@@ -359,7 +359,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Install dependencies
         run: |
@@ -438,7 +438,7 @@ jobs:
     permissions: {}
     steps:
       - name: Harden runner — block egress except API endpoints
-        uses: step-security/harden-runner@9af89fc71515a100421586dfdb3dc9c984fbf411  # v2.19.4
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920  # v2.20.0
         with:
           egress-policy: block
           # If any allowed domain is wrong, switch egress-policy to `audit` to
@@ -472,7 +472,7 @@ jobs:
 
       - name: Checkout code
         if: steps.oauth.outputs.has_token == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
         with:
           persist-credentials: false
 
@@ -513,7 +513,7 @@ jobs:
     if: needs.changes.outputs.container == 'true'
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Configure git for tests
         run: |
@@ -624,10 +624,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Set up Go
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: cmd/kapsis-ctl/go.mod
           # No go.sum — stdlib-only module. setup-go@v6 hard-fails the cache
