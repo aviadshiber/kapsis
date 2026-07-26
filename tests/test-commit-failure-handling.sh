@@ -308,10 +308,15 @@ test_commit_changes_returns_1_on_security_violation() {
     setup_test_repo "security-violation"
     cd "$TEST_REPO"
 
-    # Stage a legitimate file and a literal ~ path (tilde not expanded in container)
+    # Stage a legitimate file and a literal ~ path (tilde not expanded in container).
+    # Do NOT change these to $HOME — that would write outside TEST_REPO and
+    # defeat the security check under test (which asserts detection of a
+    # literal, unexpanded "~" path).
     echo "real agent output" > agent-result.txt
     mkdir -p "~"
+    # shellcheck disable=SC2088 # intentional literal ~, see comment above
     echo "oops" > "~/leaked"
+    # shellcheck disable=SC2088 # intentional literal ~, see comment above
     git add agent-result.txt "~/leaked"
 
     local exit_code=0
