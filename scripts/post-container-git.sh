@@ -536,13 +536,30 @@ commit_changes() {
     # losing the agent's real work with no retry path. Filtering them out of the
     # staging source means validate_staged_files's .kapsis/ check is now just a
     # harmless backstop that should never actually trip.
+    #
+    # ".kapsis/" is a RESERVED worktree-internal directory; a target repo must not
+    # version-control its own directory of that name. It is excluded via THREE
+    # separate mechanisms whose syntaxes differ — keep them in sync if the name
+    # ever changes: (1) the defensive `git reset -- .kapsis/` above, (2) the
+    # `grep -v '^\.kapsis/'` filter just below, and (3) the `:(exclude).kapsis/`
+    # pathspec on the git-add-A fallback. validate_staged_files()'s own
+    # `^\.kapsis/` check is a 4th, final backstop.
     log_info "Staging changes..."
-    local changed_files
-    changed_files=$(git status --porcelain | cut -c4- | grep -v '^\.kapsis/' || true)
+    # Capture porcelain ONCE. The staged_count==0 branch below needs to tell an
+    # ephemeral-only .kapsis/ run (nothing substantive to commit) apart from a
+    # genuine staging failure, and both must read the same snapshot.
+    local porcelain
+    porcelain=$(git status --porcelain)
+    local changed_files=""
+    if [[ -n "$porcelain" ]]; then
+        changed_files=$(printf '%s\n' "$porcelain" | cut -c4- | grep -v '^\.kapsis/' || true)
+    fi
 
+    # expected_count counts only the non-.kapsis/ files we intend to stage, so a
+    # pure-.kapsis worktree yields 0 (and the fallback below never spuriously fires).
     local expected_count=0
     if [[ -n "$changed_files" ]]; then
-        expected_count=$(echo "$changed_files" | wc -l | tr -d ' ')
+        expected_count=$(printf '%s\n' "$changed_files" | wc -l | tr -d ' ')
         while IFS= read -r f; do
             [[ -n "$f" ]] && git add -- "$f" 2>/dev/null || true
         done <<< "$changed_files"
@@ -561,8 +578,19 @@ commit_changes() {
         log_info "Staged $staged_count file(s) after git add -A fallback"
     fi
 
-    # If still nothing staged, log diagnostic state and bail
+    # If still nothing staged, decide between two very different outcomes:
+    #   - Only .kapsis/ internal files changed → ephemeral-only, NOT an error.
+    #     Route to the graceful rc=2 path (the caller reports "no substantive
+    #     changes"), the same as the post-sanitize guard further down. Without
+    #     this, a do-nothing agent run that only wrote gist progress would
+    #     dead-end as "Commit failed" — the very class of failure this fix
+    #     removed for the mixed real-work+.kapsis case.
+    #   - Real (non-.kapsis) files existed but none staged → genuine failure (rc 1).
     if [[ "$staged_count" -eq 0 ]]; then
+        if [[ -z "$changed_files" && -n "$porcelain" ]]; then
+            log_info "Only .kapsis/ internal files changed — nothing substantive to commit"
+            return 2
+        fi
         log_error "Failed to stage any files. Diagnostic state:"
         log_error "  git status --porcelain: $(git status --porcelain | head -10)"
         log_error "  git diff --stat: $(git diff --stat | tail -5)"
