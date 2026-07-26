@@ -517,16 +517,32 @@ commit_changes() {
     # unverified sentinel blocks are preserved and flagged.
     strip_kapsis_injections "$worktree_path" "$agent_id"
 
+    # Defensively unstage any .kapsis/ paths already present in the index.
+    # sync_index_from_container() runs before this function and copies the
+    # container's index verbatim, which can already have .kapsis/ files staged
+    # (e.g. the agent's own gist progress writes). Clear them here so the
+    # staging step below never has to deal with them via the fallback path.
+    git reset -q -- .kapsis/ 2>/dev/null || true
+
     # Stage changes: prefer explicit paths (targeted), fallback to git add -A (#211)
     # Uses cut -c4- to strip the 2-char status + space prefix from porcelain output,
     # which correctly handles filenames with spaces (awk $2 would truncate them).
+    #
+    # Never stage Kapsis's own internal files under .kapsis/ (agent gist progress,
+    # README, etc.). These live at the worktree root and are untracked whenever the
+    # target repo's .gitignore has no .kapsis/ entry. Staging them here used to be
+    # the root cause of a dead-end abort: validate_staged_files would later detect
+    # them as suspicious, unstage them, and abort the ENTIRE commit — silently
+    # losing the agent's real work with no retry path. Filtering them out of the
+    # staging source means validate_staged_files's .kapsis/ check is now just a
+    # harmless backstop that should never actually trip.
     log_info "Staging changes..."
-    local expected_count
-    expected_count=$(git status --porcelain | wc -l | tr -d ' ')
-
     local changed_files
-    changed_files=$(git status --porcelain | cut -c4-)
+    changed_files=$(git status --porcelain | cut -c4- | grep -v '^\.kapsis/' || true)
+
+    local expected_count=0
     if [[ -n "$changed_files" ]]; then
+        expected_count=$(echo "$changed_files" | wc -l | tr -d ' ')
         while IFS= read -r f; do
             [[ -n "$f" ]] && git add -- "$f" 2>/dev/null || true
         done <<< "$changed_files"
@@ -536,10 +552,11 @@ commit_changes() {
     staged_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
     log_info "Staged $staged_count file(s) via explicit paths"
 
-    # Fallback: if explicit staging missed some files, try git add -A
+    # Fallback: if explicit staging missed some files, try git add -A.
+    # Excludes .kapsis/ for the same reason as the explicit-path loop above.
     if [[ "$staged_count" -lt "$expected_count" ]]; then
         log_warn "Only staged $staged_count of $expected_count files — falling back to git add -A"
-        git add -A
+        git add -A -- . ':(exclude).kapsis/'
         staged_count=$(git diff --cached --name-only | wc -l | tr -d ' ')
         log_info "Staged $staged_count file(s) after git add -A fallback"
     fi

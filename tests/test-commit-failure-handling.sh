@@ -296,16 +296,23 @@ HOOKEOF
 }
 
 test_commit_changes_returns_1_on_security_violation() {
-    log_test "commit_changes() returns 1 when staged .kapsis/ or tilde files are detected"
+    log_test "commit_changes() returns 1 when staged literal ~ files are detected"
+
+    # Regression note: this used to stage a .kapsis/ internal file to exercise
+    # the security-abort path. That is no longer correct: commit_changes now
+    # never stages .kapsis/ in the first place (see
+    # test_dot_kapsis_never_staged_and_commit_succeeds below), so this test was
+    # updated to use a literal "~" path, which is still a genuine, always-fatal
+    # security violation.
 
     setup_test_repo "security-violation"
     cd "$TEST_REPO"
 
-    # Stage a legitimate file and a .kapsis/ internal file
+    # Stage a legitimate file and a literal ~ path (tilde not expanded in container)
     echo "real agent output" > agent-result.txt
-    mkdir -p .kapsis
-    echo '{"phase":"running"}' > .kapsis/status.json
-    git add agent-result.txt .kapsis/status.json
+    mkdir -p "~"
+    echo "oops" > "~/leaked"
+    git add agent-result.txt "~/leaked"
 
     local exit_code=0
     commit_changes "$TEST_REPO" "feat: test security abort" "agent-test" "" || exit_code=$?
@@ -318,7 +325,7 @@ test_commit_changes_returns_1_on_security_violation() {
         return 1
     fi
 
-    # The legitimate file should still be staged (only .kapsis/ was removed)
+    # The legitimate file should still be staged (only the ~ path was removed)
     local still_staged
     still_staged=$(git diff --cached --name-only | grep "^agent-result.txt" || echo "")
     if [[ -z "$still_staged" ]]; then
@@ -327,7 +334,74 @@ test_commit_changes_returns_1_on_security_violation() {
         return 1
     fi
 
-    log_info "  ✓ Legitimate files remain staged; .kapsis/ removed before abort"
+    log_info "  ✓ Legitimate files remain staged; ~ path removed before abort"
+    cleanup_test_repo
+}
+
+test_dot_kapsis_never_staged_and_commit_succeeds() {
+    log_test "commit_changes() never stages .kapsis/ and commits real work successfully (regression)"
+
+    # Root-cause regression test for the exit-6 dead-end bug: post-container
+    # staging used to sweep in Kapsis's own .kapsis/ internal files (README.md,
+    # gist.txt) alongside the agent's real changes. validate_staged_files would
+    # then detect them, unstage them, and ABORT THE WHOLE COMMIT — silently
+    # losing the agent's real work with no retry path (exit code 6).
+    #
+    # The fix stages "via explicit paths" from git status --porcelain but
+    # filters out .kapsis/ up front, so those files are never staged and
+    # validate_staged_files's .kapsis/ check never has anything to trip on.
+
+    setup_test_repo "dot-kapsis-fix"
+    cd "$TEST_REPO"
+
+    # Simulate a real agent run: legitimate work plus Kapsis's own internal
+    # files written into the worktree (untracked, since the repo's .gitignore
+    # has no .kapsis/ entry).
+    echo "real fix" > bugfix.txt
+    mkdir -p .kapsis
+    echo "# Kapsis" > .kapsis/README.md
+    echo '{"phase":"done"}' > .kapsis/gist.txt
+
+    # Do NOT pre-stage anything — commit_changes does its own staging via
+    # explicit paths from `git status --porcelain`, which is exactly where the
+    # original bug lived.
+
+    local exit_code=0
+    commit_changes "$TEST_REPO" "feat: test dot-kapsis exclusion" "agent-test" "" || exit_code=$?
+
+    if [[ $exit_code -ne 0 ]]; then
+        log_fail "commit_changes returned $exit_code, expected 0 (commit should succeed)"
+        cleanup_test_repo
+        return 1
+    fi
+    log_info "  ✓ commit_changes succeeded (exit 0) instead of dead-ending"
+
+    # The commit must exist and contain the real file, not .kapsis/.
+    local committed_files
+    committed_files=$(git show --name-only --pretty=format: HEAD)
+
+    if ! echo "$committed_files" | grep -q "^bugfix.txt$"; then
+        log_fail "bugfix.txt was not committed"
+        cleanup_test_repo
+        return 1
+    fi
+    log_info "  ✓ Legitimate file (bugfix.txt) was committed"
+
+    if echo "$committed_files" | grep -q "^\.kapsis/"; then
+        log_fail ".kapsis/ files were committed — they must never be staged"
+        cleanup_test_repo
+        return 1
+    fi
+    log_info "  ✓ .kapsis/ files were never staged/committed"
+
+    # .kapsis/ files should remain on disk, untouched, just not tracked.
+    if [[ ! -f "$TEST_REPO/.kapsis/gist.txt" ]]; then
+        log_fail ".kapsis/gist.txt should still exist on disk (only staging is excluded, not the files)"
+        cleanup_test_repo
+        return 1
+    fi
+    log_info "  ✓ .kapsis/ files remain on disk, just untracked"
+
     cleanup_test_repo
 }
 
@@ -372,6 +446,7 @@ main() {
     # Behavioral tests (use real git repo)
     run_test test_commit_changes_returns_1_on_failure
     run_test test_commit_changes_returns_1_on_security_violation
+    run_test test_dot_kapsis_never_staged_and_commit_succeeds
 
     # Print summary
     print_summary
