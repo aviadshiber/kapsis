@@ -317,6 +317,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        with:
+          # Full history + tags: the version-management tests resolve the current
+          # version via `git describe --tags`. The default shallow (depth=1)
+          # checkout has no tags, so describe returns a stale ancestor tag and the
+          # --downgrade tests fail with "no older version found". See version.sh
+          # get_current_version().
+          fetch-depth: 0
 
       - name: Install test dependencies
         run: |
