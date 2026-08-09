@@ -85,8 +85,11 @@ Nothing in this lib references a git provider — it operates on *content*, whic
 
 **Layer 1 — in-container gate (honest / compromised-content agent).**
 - The agent pushes normally in-container. A kapsis-installed `pre-push` hook (fail-closed) runs
-  `validate_commit_range`; violations → non-zero → push blocked. A companion `pre-commit` may run
-  the mutating strip/exclude so commits are clean before they exist (optional ergonomic layer).
+  `validate_commit_range`; violations → non-zero → push blocked with a clear message, and the agent
+  fixes the content and retries. **Validate-and-reject only — no `pre-commit` auto-strip.** The
+  mutating strip/exclude (`strip_kapsis_injections`, `.kapsis/` exclusion) runs only on the host
+  fallback path, where kapsis controls the commit; in-container we never rewrite the agent's commit,
+  we reject it.
 - Hooks come from a **kapsis-owned, read-only-mounted** hooks dir referenced via `core.hooksPath`;
   the repo's own `hooks/` is never consulted, so a hook the agent plants during its run **never
   executes** (preserves today's `core.hooksPath=/dev/null` security intent).
@@ -100,8 +103,14 @@ Nothing in this lib references a git provider — it operates on *content*, whic
   `git -c core.hooksPath=…`, or a direct authenticated push), so it is not the guarantee. After
   the run, the host re-validates the landed commit with the same shared lib:
   - clean → accept;
-  - **dirty or integrity anomaly → fail-closed: the host declines/rolls back the remote branch**
-    (delete the just-pushed branch / revert) and marks the run failed.
+  - **dirty or integrity anomaly → fail-closed** remediation chosen by branch provenance, then the
+    run is marked failed:
+    - branch **created by this run** → **delete** the remote branch (nothing pre-existing to keep);
+    - branch **pre-existed** → **restore it to its pre-run remote tip** (reset/revert the ref to the
+      SHA captured at setup) — never delete a branch we did not create.
+    Kapsis already distinguishes these at worktree creation (`create_worktree` logs *"Tracking
+    existing remote branch …"* for pre-existing vs. creating new); record that provenance plus the
+    pre-run remote SHA at setup so the backstop can remediate exactly.
 - The host is also the fallback **pusher** when the in-container push did not happen (sentinel
   absent): it sanitizes (shared lib) then pushes, exactly as today.
 
@@ -111,7 +120,8 @@ Nothing in this lib references a git provider — it operates on *content*, whic
 if sentinel present AND remote HEAD == sentinel SHA:
     host re-validates landed commit
         clean         -> accept (in-container push is authoritative)
-        dirty/anomaly -> FAIL-CLOSED: rollback remote branch + fail run
+        dirty/anomaly -> FAIL-CLOSED: remediate by provenance (delete if run-created,
+                         else restore to pre-run SHA) + fail run
 else:                       # in-container push didn't happen
     host sanitizes + pushes (fallback)  # fail-closed on sanitization failure
 ```
@@ -146,9 +156,11 @@ Extend `tests/test-post-container-git.sh` and `tests/test-sanitized-git-objects.
 - The `entrypoint.sh:1938` short-circuit + the false comment are present on `main` too — this fix
   targets both.
 
-## Open questions
+## Resolved decisions (review 2026-08-09)
 
-1. Layer 1 granularity: `pre-push` validate only, or add the `pre-commit` auto-strip? (Leaning
-   pre-push-only first; add auto-strip if reject-and-retry UX is annoying.)
-2. Rollback mechanism for Layer 2: delete the remote branch vs push a revert. Delete is simplest
-   when the branch was created by this run; revert is safer if the branch pre-existed.
+1. **Layer 1 = `pre-push` validate-and-reject only** — no `pre-commit` auto-strip. In-container we
+   reject dirty commits and let the agent fix + retry; the mutating strip/exclude runs only on the
+   host fallback path where kapsis owns the commit.
+2. **Layer 2 rollback is provenance-based** — delete the remote branch if this run created it;
+   otherwise restore it to its pre-run remote tip (SHA captured at setup). Never delete a branch we
+   did not create. Provenance + pre-run SHA are recorded at worktree setup.
