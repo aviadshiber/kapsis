@@ -1,16 +1,20 @@
 # Worktree-mode in-container push (primary) with fail-closed sanitization
 
-Status: proposed (v2 — revised after ensemble review 2026-08-09)
+Status: proposed (v3 — architecture B, after two ensemble rounds 2026-08-09)
 Date: 2026-08-09
 Author: aviad.s (with Claude)
 
+> Title retained for continuity. **v3 changes the architecture:** in-container git becomes usable by
+> the agent for **commit / diff / verify**, but the credentialed **push + PR + validation happen on
+> the host** — see "Architecture decision" below for why the literal in-container push was dropped.
+
 ## Problem
 
-In **worktree sandbox mode** (the auto-detected default), in-container git is non-functional, so
-the agent cannot commit, push, or open a PR from inside the container. The push only happens on the
-host after the container exits (`post-container-git.sh`). Production symptom (Slack bot, DEV-230844):
-the agent reports *"in-container git non-functional … git status/add/commit/push all fail. I could
-not commit or open a PR"*; the host safety net pushes the branch but **no PR is opened**.
+In **worktree sandbox mode** (the auto-detected default), in-container git is non-functional: the
+agent cannot commit, diff, verify, or open a PR from inside the container. Production symptom (Slack
+bot, DEV-230844): the agent reports *"in-container git non-functional … git status/add/commit/push
+all fail. I could not commit or open a PR"*; the host safety net pushes the branch but **no PR is
+opened**, so the user sees a failed `/dev` run.
 
 ### Root cause (verified against v3.2.4 == origin/main)
 
@@ -21,204 +25,160 @@ if [[ "$sandbox_mode" == "worktree" ]] || setup_worktree_git; then
 ```
 
 `setup_worktree_git()` is the only place `export GIT_DIR="$CONTAINER_GIT_PATH"` (the mounted
-sanitized `.git-safe`) happens (entrypoint.sh:780). `[[ … == "worktree" ]] ||` short-circuits, so it
-is never called in worktree mode → `GIT_DIR` unset → the agent's git reads `/workspace/.git` (a
+sanitized `.git-safe`) happens (entrypoint.sh:780). The `[[ … == "worktree" ]] ||` short-circuits, so
+it is never called in worktree mode → `GIT_DIR` unset → the agent's git reads `/workspace/.git` (a
 worktree pointer to a host path absent in the container) → all git ops fail. Two further blockers:
 the sanitized git is mounted `:ro` (launch-agent.sh:1598) and its `objects` is a read-only symlink to
 the parent object DB (worktree-manager.sh:526), so commits have nowhere to write.
 
-Historically, **overlay mode** pushed in-container via a `post_exit_git` EXIT trap over a writable
-CoW git — but that path does a bare `git add -A` with **no sanitization** (entrypoint.sh:1118); the
-guardrails (`strip_kapsis_injections`, `.kapsis/` exclusion, `sanitize_staged_files`,
-`build_coauthor_trailers`) live only host-side in `post-container-git.sh`.
+## Architecture decision (why host-side push, not in-container)
 
-**Correction (ensemble claim-verifier):** worktree mode does **not** disable hooks via
-`core.hooksPath=/dev/null` today — that is gated behind `KAPSIS_DISABLE_HOOKS=true` in the overlay
-path only. What actually prevents hooks in worktree mode today is the **empty, `:ro` hooks dir**
-(worktree-manager.sh:484). This matters: making the git dir writable (below) would let an
-agent-planted hook execute unless we handle it explicitly.
+Two ensemble rounds evaluated a pivot that pushed from inside the container via a post-agent-exit
+finalize. Two independent, verified findings killed the literal in-container **push**:
+
+1. **It can't fire on the failure modes we're fixing.** A post-exit finalize can't run when the
+   liveness monitor **SIGKILLs PID 1** (SIGKILL tears down the PID namespace) or when the
+   **virtio-fs mount drops** (the filesystem is gone). DEV-230844 — the motivating incident — *was* a
+   liveness SIGKILL. (Also: an EXIT trap never runs because `entrypoint.sh:2053` `exec "$@"` replaces
+   the shell; overlay's `post_exit_git` trap has been dead for the same reason, so "overlay pushed
+   in-container" was never actually true.)
+2. **Consequence:** because the in-container push can't cover those cases, a fully-capable **host**
+   push + PR + validate path must exist regardless. An in-container credentialed push would then be
+   an unreliable, harder-to-secure **duplicate** of a host path we're forced to build anyway (and
+   running a credentialed push inside a container the agent controlled adds credential-exfil surface
+   — a defense-in-depth concern beyond our honest-agent threat model).
+
+**Decision (B):** make in-container git **writable so the agent can commit / diff / verify** (this
+fixes the reported dead-git symptom), and do the credentialed **push + PR + validation on the host**,
+where creds live safely and the code always runs. This does **not** push from inside the container.
 
 ## Goals
 
-1. Worktree mode commits and **pushes inside the container** as the primary path.
-2. Host commit/push becomes a **fallback** (in-container finalize didn't run / push didn't land).
-3. **Sanitization (mutating) always precedes any push**, on both paths.
-4. **Fail-closed**: any content that lands on the remote is validated by a component the agent
-   cannot bypass; dirty content → run fails and the remote is remediated. Never a silent bad push.
-5. **Provider-agnostic**: no hardcoded git provider in kapsis core. Reuse the repo's own `origin`
-   and the container's configured credentials; PR creation is delegated (see §E).
+1. The agent has **working git inside the container** (status/diff/add/commit/log) for its own
+   workflow and verification. No dead-git.
+2. The host reliably **commits the final worktree state, sanitizes, validates, pushes, and triggers
+   PR creation** — every worktree-mode `/dev` run ends with a pushed branch and (if configured) a PR.
+3. **Sanitization + validation always precede the push**, fail-closed: unfixable/unexpected content
+   → do **not** push, fail the run (nothing lands, so no rollback needed).
+4. **Provider-agnostic**: reuse the repo's own `origin` + host credentials; PR creation delegated to
+   an optional user-configured post-push hook.
 
 ## Non-goals
 
-- Cryptographic tamper-proofing against a *fully adversarial* agent inside the container. A single
-  container is one trust domain; the authoritative guarantee is the **host** re-validation (§D),
-  outside the container.
-- Hardcoding PR creation for any provider (delegated to a post-push hook, §E).
+- Pushing from inside the container (dropped — see Architecture decision).
+- PR creation logic in kapsis core (delegated to the post-push hook).
+- Defending against a fully adversarial in-container agent (honest-but-content-compromised is the
+  threat model; the host is outside the agent's trust domain and is authoritative).
 
 ## Design
 
-### Pivot (post-ensemble): kapsis finalize pushes; the agent never pushes
+### A. Writable in-container git (for the agent's commit/diff/verify)
 
-The agent only **edits files** (and may commit locally). It has **no push credentials during its
-run**. After the agent exits, a kapsis-controlled **in-container finalize** step (an EXIT-trap,
-registered in worktree mode too) performs the mutating sanitization, the canonical commit, and the
-push. This closes the ensemble's three soundness holes at once: the mutating gist-strip runs
-in-container before the pushed commit (Goal 3), there is no client-side hook to bypass, and
-credentials exist only in the finalize phase.
-
-### A. Make worktree-mode in-container git writable (plumbing)
-
-1. `entrypoint.sh:1938` — run `setup_worktree_git` in worktree mode so `GIT_DIR` is exported
-   (restructure so the function always runs when `sandbox_mode == worktree`); fix the false
+1. `entrypoint.sh:1938` — run `setup_worktree_git` in worktree mode so `GIT_DIR="/workspace/.git-safe"`
+   is exported (restructure so the function runs whenever `sandbox_mode == worktree`); fix the false
    "git is already set up by host" comment.
-2. `launch-agent.sh` `generate_volume_mounts_worktree` — mount the sanitized git **rw**.
+2. `launch-agent.sh` `generate_volume_mounts_worktree` — mount the sanitized git **rw** so the agent
+   can stage/commit locally. Objects mount stays `:ro`.
 3. `worktree-manager.sh` `prepare_sanitized_git` — writable local `objects/` + `objects/info/alternates`
-   → `$CONTAINER_OBJECTS_PATH` (parent DB borrowed read-only; new objects land locally). Push
-   negotiates the object delta over the wire, so a missing `refs/remotes/origin/<branch>` does not
-   break push (confirmed by review).
-   - **Objects/repoint impact (ensemble C3):** the host `repoint_sanitized_git_objects()`
-     (launch-agent.sh:3635-3667) currently rewrites the RO symlink to the host path for host use. The
-     host **fallback** operates on the **real worktree gitdir** (not the sanitized dir), so it does
-     not depend on the sanitized dir's objects; update/retire `repoint_*` accordingly and cover with
-     tests (§Testing). The sanitized dir's alternate is validated at finalize (no agent-added
-     alternates; §Security).
+   → `$CONTAINER_OBJECTS_PATH` (parent DB borrowed read-only; new objects land locally), replacing
+   the read-only symlink, so in-container `git commit` works.
+4. The sanitized git config has **no credential helper** (unchanged) and kapsis injects no push
+   creds into it → the agent's git works locally but cannot push. The agent's commits live in the
+   ephemeral sanitized GIT_DIR and are for its own use; the **authoritative** commit is the host's
+   (from the final worktree file state), so nothing depends on the agent's commits surviving.
 
-### B. Shared, provider-agnostic, self-contained sanitization library
+### B. Host: sanitize → validate → commit → push → PR (hardened `post-container-git.sh`)
 
-Extract into a lib sourced by both host and container. It must be **self-contained in-container** —
-no host-only deps (`$TMPDIR`, host provenance):
-- `strip_kapsis_injections` (mutating — removes kapsis's own `KAPSIS_GIST` block and rogue variants),
-- `.kapsis/` + `.git-safe/` + `.git-objects/` staging exclusion — **case-insensitive** (APFS),
-- `sanitize_staged_files` (invisible-char scan; reject on unfixable),
-- `build_coauthor_trailers`,
-- `validate_range <base>..<tip>` — a pure predicate over an **explicit commit range** (never whole
-  history) used by the host backstop.
+The host path already commits+pushes from the real worktree gitdir. Harden it:
 
-### C. In-container finalize (primary path)
+1. **Mutating sanitize** (existing `strip_kapsis_injections`, `.kapsis/`/`.git-safe/`/`.git-objects/`
+   exclusion, `sanitize_staged_files`) — make the exclusion **case-insensitive** (the container runs
+   on a case-sensitive Linux FS, so `.Kapsis/` created in-container is a distinct path today's
+   case-sensitive `grep '^\.kapsis/'` / `:(exclude).kapsis/` would miss and push).
+2. **Clean tree, don't inherit a crafted index** — build the committed tree only from the sanitized
+   worktree (rebuild the index rather than trusting whatever index state exists), and **validate file
+   modes**: reject unexpected symlinks (`120000`), gitlinks/`.gitmodules` (`160000`), and exec-bit
+   flips on non-scripts. (Ensemble: `git add`/index can smuggle mode entries past a content-only
+   sanitizer — real on the host path too.)
+3. **Fail-closed**: if sanitize/validate finds unfixable/unexpected content → do **not** push; fail
+   the run with a clear reason. Because the host is the sole pusher and validates *before* pushing,
+   nothing dirty ever lands → no rollback / CAS / force-with-lease required.
+4. **Fetch-before-push / reconcile** — replace the bare `git push --set-upstream`
+   (post-container-git.sh:845) with fetch + non-fast-forward handling; never blind-push a divergent
+   SHA (avoids the "committed locally, push rejected, no PR" failure).
+5. **Post-push PR hook** (§C) after a verified push.
 
-Registered as an EXIT trap in worktree mode; runs after the agent process exits:
-1. `git reset --soft <base>` to drop any agent commits, so the pushed commit is kapsis-authored and
-   clean regardless of what the agent staged/committed.
-2. Mutating sanitize on the working tree/index: `strip_kapsis_injections`, exclude `.kapsis/` etc.,
-   `sanitize_staged_files` (**fail-closed** on unfixable content — abort finalize, leave to host).
-3. Canonical commit (kapsis message + co-author trailers), **hooks disabled explicitly**
-   (`-c core.hooksPath= --no-verify`), so no agent-planted hook runs.
-4. Configure credentials **ephemerally** (§F), then `git push` the refspec.
-5. On success: write a sentinel (pushed SHA + remote ref — an *optimization hint*, not proof), then
-   invoke the optional **post-push hook** (§E). Finally scrub credentials (§F).
+### C. PR creation — provider-pluggable host-side post-push hook
 
-The agent's own `git push` cannot reach the remote during its run (no credentials), so it fails fast
-and locally; dev-workflow guidance will note that kapsis finalizes the push.
+kapsis does not create PRs. After a verified push, the host invokes an **optional** user-configured
+command, e.g. `git.post_push_hook` in the agent config, with env (`KAPSIS_REMOTE_BRANCH`,
+`KAPSIS_BASE_BRANCH`, pushed SHA). Runs **on the host** (creds host-side; not in the agent
+container). The Slack bot config supplies its `bkt`/`gh pr create` command; unset = no PR (today's
+behavior). **Hook-failure handling:** a failed hook is surfaced (status + non-zero run outcome / a
+clear "pushed but PR-creation failed: <reason>" message), never silently swallowed — otherwise the
+original "branch pushed, no PR" symptom returns invisibly. Env values are agent-influenced → the hook
+contract requires callers to quote and never `eval`; kapsis passes values via env only, never builds
+a shell string.
 
-### D. Host: always-revalidate backstop + reconciling fallback (fail-closed)
+### D. Observability
 
-The host runs after the container exits. It does **not** trust the sentinel as a gate — it inspects
-the **actual remote state**:
-
-```
-git fetch origin <remote_branch>
-if remote has commits beyond the pre-run tip (i.e. something landed):
-    validate_range <pre_run_tip>..<remote_tip>        # FULL range, every commit
-        clean   -> accept (in-container push authoritative)
-        dirty   -> FAIL-CLOSED remediate (see below) + fail run
-    if sentinel present but remote_tip != sentinel SHA -> ANOMALY -> treat as dirty
-else:                                                  # nothing landed in-container
-    host fallback: sanitize(mutate) worktree + commit + fetch/reconcile + push
-        (fetch-before-push; if remote diverged, do NOT blind-push a divergent SHA — reconcile or fail)
-```
-
-**Fail-closed remediation, provenance-based, with compare-and-swap (ensemble H2/C1):**
-- branch **created by this run** → delete the remote branch **only if** its tip still equals the SHA
-  we pushed (`git push --force-with-lease=<ref>:<pushed_sha> origin :<ref>` semantics);
-- branch **pre-existed** → restore to the pre-run tip **only if** the current tip equals the SHA we
-  pushed (`--force-with-lease`); if it advanced (concurrent legit push), do **not** clobber — fail
-  the run and alert.
-- Provenance (`created_by_run` bool) and the pre-run remote SHA are captured at worktree setup and
-  persisted host-side (status JSON), since `create_worktree` only logs them today.
-
-This makes Layer-2 validation **unconditional** over the full landed range and rollback **safe under
-concurrency** — the two holes the ensemble flagged as CRITICAL.
-
-### E. PR creation — provider-pluggable post-push hook (delegated)
-
-kapsis does not create PRs. After a successful push, the finalize (and the host fallback) invoke an
-**optional** user-configured command, e.g. `git.post_push_hook` in the agent config, with env
-(`KAPSIS_REMOTE_BRANCH`, `KAPSIS_BASE_BRANCH`, pushed SHA). The Slack bot config supplies its
-`bkt/gh pr create` command; unset = no PR (today's behavior). Provider logic stays entirely in
-user config.
-
-### F. Credential hygiene (ensemble H5)
-
-- Push credentials are present **only** during the finalize push (and host fallback), never during
-  the agent's run.
-- Never persist an auth-embedded URL into the sanitized/worktree git config; use an ephemeral
-  credential helper / `GIT_CONFIG_COUNT` env or `-c credential.helper=…` scoped to the push
-  invocation; unset afterward.
-- Keep the token out of the sentinel, reflog, and captured logs (push with `--quiet`, no
-  `set -x`, redact URLs in logs).
+Status records which path/outcome occurred: `commit_status`, `push_status`, and a new
+`pr_hook_status` (skipped / ok / failed:<reason>) + the resulting PR URL when the hook emits one, so
+the bot/user can see whether the run truly produced a PR.
 
 ## Security / threat model
 
-- **Covered:** an *honest* agent whose content got compromised (prompt-injection writing rogue
-  `KAPSIS_GIST` / invisible chars / `.kapsis/` leakage). The finalize mutating-strip removes it
-  before the pushed commit; the host re-validates the full landed range and fails closed on anything
-  dirty — including a bypass push, because host validation is unconditional on remote state.
-- **Not covered in-container:** a fully adversarial agent with the push token. But the agent has
-  **no token during its run** (§F), and the **host** (outside the container) is the authoritative
-  validator/remediator — so even a token exfiltrated from the finalize phase cannot land unvalidated
-  content without the host catching and rolling it back.
-- Writable `$GIT_DIR`: hooks are disabled during finalize (§C); the agent-run keeps the empty hooks
-  dir and we do not rely on a client-side hook as a gate. `objects/info/alternates` is validated at
-  finalize (exactly one expected alternate; reject others). Parent-history exposure via the RO
-  objects mount is inherent to worktree mode today (unchanged).
-- Layer-2 is a **validate-and-remediate** backstop; it rejects/rolls back, it does not "repair"
-  (wording corrected from v1).
+- **Threat covered:** honest agent, content compromised (prompt-injection writing rogue
+  `KAPSIS_GIST` / invisible chars / `.kapsis/` leakage / crafted file modes). The **host** sanitizes
+  and validates before pushing; nothing dirty lands. The host is outside the container's trust
+  domain and always runs.
+- Writable in-container git only affects the throwaway per-agent sanitized dir; parent objects stay
+  read-only (alternates). No push credentials are placed in the container. The credentialed push and
+  PR hook run on the host, so the in-container-exfil surface of a credentialed push is avoided
+  entirely.
+- `objects/info/alternates` is validated host-side before the host reads objects (exactly one
+  expected entry; reject symlinked/relative/extra entries).
 
 ## Testing
 
-Add a **fake-remote harness** (a local bare repo as `origin`) so in-container finalize push and host
-backstop are testable without a real provider. Extend `tests/test-post-container-git.sh` and
-`tests/test-sanitized-git-objects.sh`:
-- worktree in-container git writable: `GIT_DIR` set, commit succeeds, new objects in local objects
-  dir; parent objects dir stays read-only; alternates has exactly the expected entry.
-- finalize mutating-strip removes an injected `KAPSIS_GIST` block from `CLAUDE.md`; excludes
-  `.kapsis/` (incl. `.KAPSIS/` on case-insensitive FS); rejects invisible chars (fail-closed).
-- finalize push lands on the fake remote; sentinel written; post-push hook invoked with correct env;
-  credentials absent from config/reflog/logs afterward.
-- host backstop: dirty landed commit → fail-closed rollback via `--force-with-lease`; concurrent
-  advance (tip ≠ pushed SHA) → does NOT clobber, run fails.
-- host fallback (in-container push didn't land): fetch-before-push; divergent remote → no blind
-  non-ff push.
-- validate range bounded to `base..tip` (no whole-history scan) incl. first-push (no remote branch).
-- provider-agnostic: push uses the repo's own `origin`; no hardcoded host; post-push hook unset = no
-  PR, run still succeeds.
+Extend `tests/test-post-container-git.sh`, `tests/test-sanitized-git-objects.sh`; add a fake-remote
+harness (local bare repo as `origin`) for push/PR-hook coverage:
+- worktree in-container git writable: `GIT_DIR` set, `git commit` succeeds, new objects in local
+  objects dir; parent objects dir stays read-only; alternates has exactly the expected entry.
+- host sanitize removes an injected `KAPSIS_GIST` block; excludes `.kapsis/` incl. `.Kapsis/`
+  (case-insensitive); rejects invisible chars (fail-closed → no push).
+- host validate rejects a staged symlink / gitlink / exec-bit-flip (fail-closed → no push).
+- host fetch-before-push: divergent remote → reconcile / no blind non-ff push.
+- post-push hook: invoked with correct env on success; unset = no PR, run still succeeds; hook
+  failure → `pr_hook_status=failed` + non-silent surfacing.
+- provider-agnostic: push uses the repo's own `origin`; no hardcoded host.
 
 ## Rollout
 
 - Land on `main`; cut a patch release. The Slack bot runs the Homebrew build (currently 3.2.4); it
-  picks this up via `kapsis --upgrade` + `restart-bot.sh`.
-- Back-compat: document behavior for in-flight worktrees created by the old version at upgrade time.
-- Network: the git host must be in the agent's egress allowlist for in-container push (already true
-  for the bot; note for general users).
+  picks this up via `kapsis --upgrade` + `restart-bot.sh`, and its config gains a `post_push_hook`
+  invoking `bkt/gh pr create`.
+- Back-compat: in-flight worktrees from the old version still get host commit+push at upgrade.
+- Network: the git host must be in the agent's egress allowlist (already true for the bot) — though
+  in B only in-container *read/commit* needs it locally; push is host-side.
 
 ## Resolved decisions
 
-1. **Pivot adopted:** kapsis in-container **finalize pushes**; the agent never pushes (no creds in
-   its run). Replaces v1's "agent pushes."
-2. **Sanitization is mutating, in-container, before the pushed commit** (finalize strip/exclude).
-   Replaces v1's "pre-push validate-only" (which would fail every `CLAUDE.md` run due to kapsis's own
-   gist injection).
-3. **Layer-2 host backstop is unconditional** over the full landed range (sentinel is a hint, not a
-   trigger); **rollback uses compare-and-swap** (`--force-with-lease`) and is provenance-based
-   (delete if run-created, else restore to pre-run tip; never clobber a concurrent advance).
-4. **PR creation** stays out of kapsis core — delegated to an optional provider-pluggable
-   **post-push hook** (bot config supplies `bkt/gh`).
+1. **Architecture B:** writable in-container git for the agent's commit/diff/verify; credentialed
+   **push + PR + validation on the host**. (Reverses the earlier in-container-push pivot after two
+   ensemble rounds showed it can't fire on SIGKILL/mount-drop and would duplicate a mandatory host
+   path.)
+2. **Fail-closed = don't push** (host validates before pushing); no rollback/CAS/force-with-lease.
+3. **PR creation** delegated to an optional provider-pluggable **host-side** post-push hook; failures
+   surfaced, never silent.
+4. Host hardening carried over from the review regardless of architecture: clean-index/mode
+   validation, case-insensitive `.kapsis` exclusion, fetch-before-push, alternates validation.
 
-## Ensemble review log (2026-08-09)
+## Ensemble review log (2026-08-09, 2 rounds)
 
-Addressed: C1 unconditional full-range host re-validation (§D); C2 mutating in-container strip (§C);
-C3 objects/repoint handling (§A); H1 fetch-before-push fallback (§D); H2 CAS rollback (§D); H3 hooks
-handled via finalize-disable + no client-side gate (§C/Security); H4 post-push PR hook (§E); H5
-credential hygiene (§F); plus medium items: fake-remote harness, self-contained shared lib,
-case-insensitive exclusion, bounded validate range, egress note, alternates validation, over-claim
-wording.
+Round 1 (v1→v2): C1 unconditional validation, C2 mutating strip, C3 objects, H1 fetch-before-push,
+H2 CAS rollback, H3 hooks, H4 PR hook, H5 creds, plus mediums. Round 2 (v2 re-review): confirmed C1/
+C2/H1 resolved; found the finalize-EXIT-trap is dead (`exec`), SIGKILL/mount-drop defeat in-container
+finalize, and credentialed-push-in-container exfil surface → **architecture pivot to B**. Surviving
+hardening folded into §B (clean index + mode validation; fetch-before-push; case-insensitive
+exclusion; alternates validation). Rollback/CAS/force-with-lease **removed** as unnecessary under B.
