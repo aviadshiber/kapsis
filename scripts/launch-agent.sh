@@ -1593,9 +1593,12 @@ generate_volume_mounts_worktree() {
     # Mount worktree directly (no overlay needed!)
     VOLUME_MOUNTS+=("-v" "${WORKTREE_PATH}:/workspace")
 
-    # Mount sanitized git at $CONTAINER_GIT_PATH, replacing the worktree's .git file
-    # This makes git work without needing GIT_DIR environment variable
-    VOLUME_MOUNTS+=("-v" "${SANITIZED_GIT_PATH}:${CONTAINER_GIT_PATH}:ro")
+    # Mount sanitized git at $CONTAINER_GIT_PATH, replacing the worktree's .git file.
+    # Read-WRITE so the in-container agent can stage/commit into the sanitized
+    # GIT_DIR (setup_worktree_git exports GIT_DIR here). New commit objects land in
+    # the writable objects/ dir created by prepare_sanitized_git via
+    # objects/info/alternates; the parent object DB below stays :ro.
+    VOLUME_MOUNTS+=("-v" "${SANITIZED_GIT_PATH}:${CONTAINER_GIT_PATH}")
 
     # Mount objects directory read-only
     VOLUME_MOUNTS+=("-v" "${OBJECTS_PATH}:${CONTAINER_OBJECTS_PATH}:ro")
