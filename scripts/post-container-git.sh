@@ -855,6 +855,32 @@ push_changes() {
     local local_commit
     local_commit=$(git rev-parse HEAD 2>/dev/null)
 
+    # Fetch-before-push divergence guard: if the remote branch has advanced beyond
+    # our base (someone else pushed), a bare push would either non-fast-forward
+    # reject with a confusing error or, worse, be forced. Detect divergence and
+    # fail-closed with a clear reason + a manual fallback command, rather than
+    # emitting the bare-push failure that stranded work as "committed, no PR".
+    local _fetch_timeout="${KAPSIS_FETCH_TIMEOUT:-60}"
+    GIT_TERMINAL_PROMPT=0 timeout "$_fetch_timeout" git fetch "$remote" "$remote_branch" 2>/dev/null || true
+    local _remote_tip=""
+    _remote_tip=$(git rev-parse -q --verify FETCH_HEAD 2>/dev/null || true)
+    if [[ -z "$_remote_tip" ]]; then
+        _remote_tip=$(git rev-parse -q --verify "refs/remotes/${remote}/${remote_branch}" 2>/dev/null || true)
+    fi
+    if [[ -n "$_remote_tip" ]]; then
+        local _base
+        _base=$(git merge-base HEAD "$_remote_tip" 2>/dev/null || echo "")
+        # Divergence = remote tip is not an ancestor of HEAD (i.e. base != remote tip).
+        if [[ "$_base" != "$_remote_tip" ]]; then
+            log_error "Remote ${remote}/${remote_branch} advanced beyond our base — refusing non-fast-forward push"
+            log_error "  remote tip: ${_remote_tip}"
+            log_error "  local head: ${local_commit}"
+            status_set_push_info "diverged" "$local_commit" "$_remote_tip"
+            status_set_push_fallback "$worktree_path" "$remote" "$branch" "$remote_branch"
+            return 1
+        fi
+    fi
+
     # Use refspec to push local branch to (potentially different) remote branch.
     # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers.
     # timeout guards against credential helper hangs (Issue #227).

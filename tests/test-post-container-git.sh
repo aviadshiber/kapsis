@@ -297,6 +297,37 @@ test_accept_clean_regular_file() {
 }
 
 #===============================================================================
+# TEST CASES: push_changes fetch-before-push (Task 5)
+#===============================================================================
+
+test_push_refuses_non_fast_forward() {
+    log_test "push_changes: refuse non-fast-forward when remote advanced"
+    local up; up=$(mktemp -d); ( cd "$up"; git init -q --bare -b main )
+    local a; a=$(mktemp -d)
+    ( cd "$a"; git init -q -b main; git config user.email a@b.c; git config user.name a
+      git remote add origin "$up"; echo 1 > f; git add -A; git commit -qm base; git push -q origin main )
+    # advance origin/main from another clone (real descendant, so it truly advances)
+    local b; b=$(mktemp -d); git clone -q "$up" "$b"
+    ( cd "$b"; git config user.email a@b.c; git config user.name a; echo 2 > f; git add -A
+      git commit -qm adv; git push -q origin main )
+    # 'a' makes a divergent commit on its now-stale base
+    ( cd "$a"; echo 3 > g; git add -A; git commit -qm local )
+    assert_command_fails "( push_changes '$a' origin main )" "divergent remote must not be blind-pushed"
+    rm -rf "$up" "$a" "$b"
+}
+
+test_push_fast_forward_succeeds() {
+    log_test "push_changes: fast-forward push succeeds"
+    local up; up=$(mktemp -d); ( cd "$up"; git init -q --bare -b main )
+    local a; a=$(mktemp -d)
+    ( cd "$a"; git init -q -b main; git config user.email a@b.c; git config user.name a
+      git remote add origin "$up"; echo 1 > f; git add -A; git commit -qm base; git push -q origin main
+      echo 2 > f; git add -A; git commit -qm next )
+    assert_command_succeeds "( push_changes '$a' origin main )" "fast-forward push should succeed"
+    rm -rf "$up" "$a"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -322,6 +353,10 @@ main() {
     run_test test_reject_symlink_entry
     run_test test_reject_gitlink_entry
     run_test test_accept_clean_regular_file
+
+    log_info "=== push_changes fetch-before-push ==="
+    run_test test_push_refuses_non_fast_forward
+    run_test test_push_fast_forward_succeeds
 
     # Print summary
     print_summary
