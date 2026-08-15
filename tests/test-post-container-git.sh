@@ -257,6 +257,46 @@ test_sync_index_cache_tree_rebuild() {
 }
 
 #===============================================================================
+# TEST CASES: validate_staged_files hardening (Task 4)
+#===============================================================================
+
+_mk_repo() {
+    local r; r=$(mktemp -d)
+    ( cd "$r"; git init -q; git config user.email a@b.c; git config user.name a )
+    echo "$r"
+}
+
+test_reject_uppercase_kapsis_dir() {
+    log_test "validate_staged_files: reject .Kapsis/ (case-insensitive)"
+    local r; r=$(_mk_repo); mkdir -p "$r/.Kapsis"; echo x > "$r/.Kapsis/f"
+    ( cd "$r"; git add -A -f >/dev/null 2>&1 )
+    assert_command_fails "validate_staged_files '$r'" ".Kapsis/ must be rejected (case-insensitive)"
+    rm -rf "$r"
+}
+
+test_reject_symlink_entry() {
+    log_test "validate_staged_files: reject staged symlink (mode 120000)"
+    local r; r=$(_mk_repo); ( cd "$r"; ln -s /etc/passwd link; git add -A >/dev/null 2>&1 )
+    assert_command_fails "validate_staged_files '$r'" "symlink (120000) must be rejected"
+    rm -rf "$r"
+}
+
+test_reject_gitlink_entry() {
+    log_test "validate_staged_files: reject staged gitlink (mode 160000)"
+    local r; r=$(_mk_repo)
+    ( cd "$r"; git update-index --add --cacheinfo 160000,1234567890123456789012345678901234567890,sub >/dev/null 2>&1 )
+    assert_command_fails "validate_staged_files '$r'" "gitlink (160000) must be rejected"
+    rm -rf "$r"
+}
+
+test_accept_clean_regular_file() {
+    log_test "validate_staged_files: accept a clean regular file"
+    local r; r=$(_mk_repo); echo hi > "$r/normal.txt"; ( cd "$r"; git add -A >/dev/null 2>&1 )
+    assert_command_succeeds "validate_staged_files '$r'" "clean regular file must pass"
+    rm -rf "$r"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -276,6 +316,12 @@ main() {
     run_test test_sync_index_no_git
     run_test test_sync_index_no_index_in_sanitized
     run_test test_sync_index_cache_tree_rebuild
+
+    log_info "=== validate_staged_files hardening ==="
+    run_test test_reject_uppercase_kapsis_dir
+    run_test test_reject_symlink_entry
+    run_test test_reject_gitlink_entry
+    run_test test_accept_clean_regular_file
 
     # Print summary
     print_summary

@@ -124,7 +124,9 @@ validate_staged_files() {
 
     # Check for .kapsis/ internal files
     local kapsis_files
-    kapsis_files=$(git diff --cached --name-only 2>/dev/null | grep "^\.kapsis/" || true)
+    # Case-insensitive: the container FS is case-sensitive, so `.Kapsis/` is a
+    # distinct path a case-sensitive filter would miss and commit.
+    kapsis_files=$(git diff --cached --name-only 2>/dev/null | grep -iE "^\.kapsis/" || true)
     if [[ -n "$kapsis_files" ]]; then
         log_warn "Found staged .kapsis/ internal files (should be ignored):"
         while IFS= read -r f; do
@@ -141,7 +143,7 @@ validate_staged_files() {
     # repo size doubles (entire object DB ships as tracked files).
     # Regression: products PR #102836.
     local kapsis_mount_files
-    kapsis_mount_files=$(git diff --cached --name-only 2>/dev/null | grep -E "^\.git-(safe|objects)/" || true)
+    kapsis_mount_files=$(git diff --cached --name-only 2>/dev/null | grep -iE "^\.git-(safe|objects)/" || true)
     if [[ -n "$kapsis_mount_files" ]]; then
         log_warn "Found staged Kapsis git-mount files (should be ignored):"
         while IFS= read -r f; do
@@ -164,6 +166,22 @@ validate_staged_files() {
             log_warn "  - $path (submodule)"
             suspicious_files+=("$path")
         done <<< "$submodule_refs"
+        has_security_issues=1
+    fi
+
+    # Check for symlink entries (mode 120000). A crafted symlink (e.g. a file
+    # pointing at /etc/passwd) can be smuggled through the index past content-only
+    # sanitizers. The NEW mode is the 2nd field of `git diff --cached --raw`.
+    local symlink_refs
+    symlink_refs=$(git diff --cached --raw 2>/dev/null | awk '{print $2}' | grep -E "^120000$" || true)
+    if [[ -n "$symlink_refs" ]]; then
+        log_warn "Found staged symlink entries (mode 120000) — rejecting:"
+        while IFS= read -r line; do
+            local spath
+            spath=$(echo "$line" | awk '{print $NF}')
+            log_warn "  - $spath (symlink)"
+            suspicious_files+=("$spath")
+        done < <(git diff --cached --raw 2>/dev/null | awk '$2=="120000"')
         has_security_issues=1
     fi
 
