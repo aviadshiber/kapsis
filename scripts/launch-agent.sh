@@ -3649,12 +3649,20 @@ repoint_sanitized_git_objects() {
         return 0
     fi
 
-    # Only re-point if objects is a symlink or doesn't exist yet
-    if [[ -L "$sanitized_git/objects" ]] || [[ ! -e "$sanitized_git/objects" ]]; then
+    # Current model: objects is a writable dir with a git alternate borrowing the
+    # parent object DB. Re-point the alternate from the container path (used inside
+    # the container) to the host objects path so host-side git (status, index sync)
+    # can resolve objects after the container exits. The agent's newly-written
+    # objects remain in the local objects dir and are preserved.
+    if [[ -f "$sanitized_git/objects/info/alternates" ]]; then
+        printf '%s\n' "$objects_path" > "$sanitized_git/objects/info/alternates"
+        log_debug "Re-pointed sanitized git objects alternate -> $objects_path"
+    # Legacy model: objects is a symlink to the container path (or absent).
+    elif [[ -L "$sanitized_git/objects" ]] || [[ ! -e "$sanitized_git/objects" ]]; then
         ln -sfn "$objects_path" "$sanitized_git/objects"
-        log_debug "Re-pointed sanitized git objects: $sanitized_git/objects -> $objects_path"
+        log_debug "Re-pointed sanitized git objects symlink -> $objects_path"
     else
-        log_warn "sanitized git objects is not a symlink — skipping re-point"
+        log_warn "sanitized git objects is neither an alternate nor a symlink — skipping re-point"
     fi
 }
 

@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 #===============================================================================
-# Tests for Sanitized Git Objects Symlink Fix (Issue #219)
+# Tests for Sanitized Git Objects (writable dir + alternate) — Architecture B.
 #
-# Verifies that the objects symlink in sanitized-git directories is re-pointed
-# from the container path (/workspace/.git-objects) to the host path after
-# container exit, so post-container git operations can access objects.
+# The sanitized-git objects store is a WRITABLE local dir that borrows the parent
+# object DB read-only via objects/info/alternates (so in-container `git commit`
+# can write new objects). After container exit the host re-points the alternate
+# from the container path (/workspace/.git-objects) to the host objects path.
 #
-# Tests exercise the production repoint_sanitized_git_objects() function
-# sourced from launch-agent.sh.
+# Exercises the production repoint_sanitized_git_objects() (launch-agent.sh) and
+# _prepare_objects_alternate() (worktree-manager.sh).
 #
 # Run: ./tests/test-sanitized-git-objects.sh
 #===============================================================================
@@ -18,271 +19,162 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/lib/test-framework.sh"
 
 LIB_DIR="$KAPSIS_ROOT/scripts/lib"
-
-# Source constants for CONTAINER_OBJECTS_PATH
 source "$LIB_DIR/constants.sh"
 
-# Source the production function we're testing
-# repoint_sanitized_git_objects() is defined in launch-agent.sh
-# We need logging stubs since launch-agent.sh expects them
+# Logging stubs expected by the extracted production functions
 if ! type log_debug &>/dev/null; then
     log_debug() { :; }
     log_warn() { echo "[WARN] $*" >&2; }
 fi
-# Extract just the function from launch-agent.sh
+# Extract the production functions under test (avoids sourcing whole scripts)
 eval "$(sed -n '/^repoint_sanitized_git_objects()/,/^}/p' "$KAPSIS_ROOT/scripts/launch-agent.sh")"
+eval "$(sed -n '/^_prepare_objects_alternate()/,/^}/p' "$KAPSIS_ROOT/scripts/worktree-manager.sh")"
+
+_alt() { cat "$1/objects/info/alternates" 2>/dev/null; }  # read alternate line
 
 setup_test_env() {
     TEST_DIR=$(mktemp -d)
-    # Simulate a project with .git/objects
     mkdir -p "$TEST_DIR/project/.git/objects/pack"
     echo "test-object" > "$TEST_DIR/project/.git/objects/test.obj"
-
-    # Simulate sanitized git directory with container-path symlink
+    # sanitized git dir with a container-path alternate (as prepared in-container)
     mkdir -p "$TEST_DIR/sanitized-git/abc123"
-    ln -sfn "$CONTAINER_OBJECTS_PATH" "$TEST_DIR/sanitized-git/abc123/objects"
+    _prepare_objects_alternate "$TEST_DIR/sanitized-git/abc123" "$CONTAINER_OBJECTS_PATH"
 }
+cleanup_test_env() { [[ -n "${TEST_DIR:-}" ]] && rm -rf "$TEST_DIR"; TEST_DIR=""; }
 
-cleanup_test_env() {
-    [[ -n "${TEST_DIR:-}" ]] && rm -rf "$TEST_DIR"
-    TEST_DIR=""
-}
-
-#===============================================================================
-# TEST: Basic path re-pointing via production function
-#===============================================================================
-
-test_repoint_via_production_function() {
-    log_test "Testing repoint_sanitized_git_objects() re-points symlink"
+#=== prepare: objects is a writable dir + alternate (not a symlink) ============
+test_prepare_creates_writable_objects_with_alternate() {
+    log_test "prepare: objects is a writable dir with an alternate (not a symlink)"
     setup_test_env
+    local sg="$TEST_DIR/sanitized-git/abc123"
+    assert_dir_exists "$sg/objects" "objects must be a real directory"
+    assert_true "[[ ! -L \"$sg/objects\" ]]" "objects must NOT be a symlink"
+    assert_dir_exists "$sg/objects/pack" "objects/pack must exist for new packs"
+    assert_equals "$CONTAINER_OBJECTS_PATH" "$(_alt "$sg")" "alternate points at parent objects"
+    cleanup_test_env
+}
 
-    local sanitized="$TEST_DIR/sanitized-git/abc123"
+#=== functional: in-container commit writes objects locally, parent stays RO ===
+test_in_container_commit_writes_locally() {
+    log_test "functional: commit via alternate writes new objects locally"
+    local root; root=$(mktemp -d)
+    ( cd "$root"; git init -q parent && cd parent && git config user.email a@b.c \
+        && git config user.name a && echo hello > f && git add f && git commit -qm base )
+    local parent_obj="$root/parent/.git/objects"
+    mkdir -p "$root/sg/refs/heads"; printf 'ref: refs/heads/main\n' > "$root/sg/HEAD"
+    _prepare_objects_alternate "$root/sg" "$parent_obj"
+    chmod -R a-w "$parent_obj"                    # parent objects read-only
+    mkdir -p "$root/wt"; echo world > "$root/wt/g"
+    local rc=0
+    GIT_DIR="$root/sg" GIT_WORK_TREE="$root/wt" git add g >/dev/null 2>&1 || rc=$?
+    GIT_DIR="$root/sg" GIT_WORK_TREE="$root/wt" \
+        git -c user.email=a@b.c -c user.name=a commit -qm "in-sandbox" >/dev/null 2>&1 || rc=$?
+    chmod -R u+w "$parent_obj" 2>/dev/null || true
+    assert_equals "0" "$rc" "commit against RO parent (via alternate) must succeed"
+    local n
+    n=$(find "$root/sg/objects" -type f \( -name '*.pack' -o -path '*/[0-9a-f][0-9a-f]/*' \) 2>/dev/null | wc -l | tr -d ' ')
+    assert_true "[[ $n -ge 1 ]]" "new commit objects must land in the local objects dir"
+    rm -rf "$root"
+}
+
+#=== repoint: rewrite the alternate from container path to host path ===========
+test_repoint_rewrites_alternate_to_host() {
+    log_test "repoint: alternate rewritten container-path -> host-path"
+    setup_test_env
+    local sg="$TEST_DIR/sanitized-git/abc123"
     local host_objects="$TEST_DIR/project/.git/objects"
-
-    # Before: symlink points to container path
-    local before
-    before=$(readlink "$sanitized/objects")
-    assert_equals "$CONTAINER_OBJECTS_PATH" "$before" "Before: should point to container path"
-
-    # Call production function
-    repoint_sanitized_git_objects "$sanitized" "$host_objects"
-
-    # After: symlink points to host path
-    local after
-    after=$(readlink "$sanitized/objects")
-    assert_equals "$host_objects" "$after" "After: should point to host objects path"
-
-    # Verify the symlink target exists and is accessible
-    assert_true "[[ -d \"$sanitized/objects\" ]]" "Symlink target should be a valid directory"
-    assert_true "[[ -f \"$sanitized/objects/test.obj\" ]]" "Should be able to read through symlink"
-
+    assert_equals "$CONTAINER_OBJECTS_PATH" "$(_alt "$sg")" "before: container path"
+    repoint_sanitized_git_objects "$sg" "$host_objects"
+    assert_equals "$host_objects" "$(_alt "$sg")" "after: host objects path"
     cleanup_test_env
 }
 
-#===============================================================================
-# TEST: Skip when sanitized git directory doesn't exist
-#===============================================================================
-
-test_skip_when_no_sanitized_git() {
-    log_test "Testing skip when sanitized git directory doesn't exist"
+test_repoint_idempotent() {
+    log_test "repoint: idempotent when alternate already host path"
     setup_test_env
-
-    local sanitized="$TEST_DIR/sanitized-git/abc123"
-
-    # Call production function with nonexistent sanitized git
-    repoint_sanitized_git_objects "/nonexistent/path" "$TEST_DIR/project/.git/objects"
-
-    # Original symlink should be unchanged
-    local current
-    current=$(readlink "$sanitized/objects")
-    assert_equals "$CONTAINER_OBJECTS_PATH" "$current" "Should remain unchanged when sanitized git missing"
-
+    local sg="$TEST_DIR/sanitized-git/abc123"
+    local host_objects="$TEST_DIR/project/.git/objects"
+    repoint_sanitized_git_objects "$sg" "$host_objects"
+    repoint_sanitized_git_objects "$sg" "$host_objects"
+    assert_equals "$host_objects" "$(_alt "$sg")" "stays host objects path"
     cleanup_test_env
 }
-
-#===============================================================================
-# TEST: Skip when objects_path is empty
-#===============================================================================
-
-test_skip_when_no_objects_path() {
-    log_test "Testing skip when objects_path is empty"
-    setup_test_env
-
-    local sanitized="$TEST_DIR/sanitized-git/abc123"
-
-    # Call production function with empty objects path
-    repoint_sanitized_git_objects "$sanitized" ""
-
-    # Original symlink should be unchanged (no kapsis-meta fallback)
-    local current
-    current=$(readlink "$sanitized/objects")
-    assert_equals "$CONTAINER_OBJECTS_PATH" "$current" "Should remain unchanged when objects_path empty"
-
-    cleanup_test_env
-}
-
-#===============================================================================
-# TEST: Fallback to kapsis-meta when objects_path empty
-#===============================================================================
 
 test_fallback_to_kapsis_meta() {
-    log_test "Testing fallback to HOST_OBJECTS_PATH from kapsis-meta"
+    log_test "repoint: falls back to HOST_OBJECTS_PATH from kapsis-meta"
     setup_test_env
-
-    local sanitized="$TEST_DIR/sanitized-git/abc123"
+    local sg="$TEST_DIR/sanitized-git/abc123"
     local host_objects="$TEST_DIR/project/.git/objects"
-
-    # Write kapsis-meta with HOST_OBJECTS_PATH
-    cat > "$sanitized/kapsis-meta" << EOF
-# Kapsis Sanitized Git Metadata
-WORKTREE_PATH=/tmp/test-worktree
-PROJECT_PATH=$TEST_DIR/project
-PARENT_GIT=$TEST_DIR/project/.git
+    cat > "$sg/kapsis-meta" << EOF
 AGENT_ID=abc123
 BRANCH=test-branch
 HOST_OBJECTS_PATH=$host_objects
 EOF
-
-    # Call production function with empty objects_path — should fall back to kapsis-meta
-    repoint_sanitized_git_objects "$sanitized" ""
-
-    local after
-    after=$(readlink "$sanitized/objects")
-    assert_equals "$host_objects" "$after" "Should fall back to HOST_OBJECTS_PATH from kapsis-meta"
-
+    repoint_sanitized_git_objects "$sg" ""
+    assert_equals "$host_objects" "$(_alt "$sg")" "alternate from kapsis-meta"
     cleanup_test_env
 }
 
-#===============================================================================
-# TEST: kapsis-meta contains HOST_OBJECTS_PATH (production write)
-#===============================================================================
+#=== guard conditions =========================================================
+test_skip_when_no_sanitized_git() {
+    log_test "repoint: skip when sanitized git dir missing"
+    setup_test_env
+    local sg="$TEST_DIR/sanitized-git/abc123"
+    repoint_sanitized_git_objects "/nonexistent/path" "$TEST_DIR/project/.git/objects"
+    assert_equals "$CONTAINER_OBJECTS_PATH" "$(_alt "$sg")" "unchanged when target missing"
+    cleanup_test_env
+}
 
+test_skip_when_no_objects_path() {
+    log_test "repoint: skip when objects_path empty and no kapsis-meta"
+    setup_test_env
+    local sg="$TEST_DIR/sanitized-git/abc123"
+    repoint_sanitized_git_objects "$sg" ""
+    assert_equals "$CONTAINER_OBJECTS_PATH" "$(_alt "$sg")" "unchanged when objects_path empty"
+    cleanup_test_env
+}
+
+#=== legacy symlink still handled =============================================
+test_repoint_legacy_symlink() {
+    log_test "repoint: legacy symlink form still re-pointed"
+    setup_test_env
+    local sg="$TEST_DIR/sanitized-git/abc123"
+    local host_objects="$TEST_DIR/project/.git/objects"
+    rm -rf "$sg/objects"; ln -sfn "$CONTAINER_OBJECTS_PATH" "$sg/objects"
+    repoint_sanitized_git_objects "$sg" "$host_objects"
+    assert_equals "$host_objects" "$(readlink "$sg/objects")" "legacy symlink re-pointed to host"
+    cleanup_test_env
+}
+
+#=== metadata =================================================================
 test_kapsis_meta_written_by_production() {
-    log_test "Testing prepare_sanitized_git writes HOST_OBJECTS_PATH to kapsis-meta"
-
-    # Verify the production source contains the HOST_OBJECTS_PATH line
+    log_test "prepare writes HOST_OBJECTS_PATH to kapsis-meta"
     local wm_source="$KAPSIS_ROOT/scripts/worktree-manager.sh"
     local grep_result
     grep_result=$(grep "HOST_OBJECTS_PATH=" "$wm_source" 2>/dev/null || echo "")
-    assert_contains "$grep_result" "HOST_OBJECTS_PATH=" "worktree-manager.sh should write HOST_OBJECTS_PATH"
-    assert_contains "$grep_result" '.git/objects' "HOST_OBJECTS_PATH should reference .git/objects"
+    assert_contains "$grep_result" "HOST_OBJECTS_PATH=" "worktree-manager.sh writes HOST_OBJECTS_PATH"
+    assert_contains "$grep_result" '.git/objects' "HOST_OBJECTS_PATH references .git/objects"
 }
-
-#===============================================================================
-# TEST: Container path symlink is dangling on host
-#===============================================================================
-
-test_container_symlink_is_dangling() {
-    log_test "Testing container path symlink is dangling on host"
-    setup_test_env
-
-    local sanitized="$TEST_DIR/sanitized-git/abc123"
-
-    # The container path should not exist on the host
-    assert_true "[[ ! -e \"$sanitized/objects\" ]]" "Container path symlink should be dangling on host"
-    assert_true "[[ -L \"$sanitized/objects\" ]]" "Should still be a symlink (just dangling)"
-
-    cleanup_test_env
-}
-
-#===============================================================================
-# TEST: Objects symlink absent (fresh sanitized-git dir)
-#===============================================================================
-
-test_repoint_when_symlink_absent() {
-    log_test "Testing re-point when objects symlink doesn't exist yet"
-    setup_test_env
-
-    local sanitized="$TEST_DIR/sanitized-git/abc123"
-    local host_objects="$TEST_DIR/project/.git/objects"
-
-    # Remove the symlink entirely
-    rm -f "$sanitized/objects"
-    assert_true "[[ ! -e \"$sanitized/objects\" ]]" "Symlink should not exist"
-
-    # Call production function — should create the symlink
-    repoint_sanitized_git_objects "$sanitized" "$host_objects"
-
-    local after
-    after=$(readlink "$sanitized/objects")
-    assert_equals "$host_objects" "$after" "Should create new symlink to host objects"
-
-    cleanup_test_env
-}
-
-#===============================================================================
-# TEST: Idempotent re-point (already correct)
-#===============================================================================
-
-test_repoint_idempotent() {
-    log_test "Testing re-point is safe when symlink already correct"
-    setup_test_env
-
-    local sanitized="$TEST_DIR/sanitized-git/abc123"
-    local host_objects="$TEST_DIR/project/.git/objects"
-
-    # Set up symlink already pointing to host path
-    ln -sfn "$host_objects" "$sanitized/objects"
-
-    # Call production function — should be a no-op
-    repoint_sanitized_git_objects "$sanitized" "$host_objects"
-
-    local after
-    after=$(readlink "$sanitized/objects")
-    assert_equals "$host_objects" "$after" "Should remain pointing to host objects"
-    assert_true "[[ -d \"$sanitized/objects\" ]]" "Should still resolve to directory"
-
-    cleanup_test_env
-}
-
-#===============================================================================
-# TEST: Real directory (not symlink) is not replaced
-#===============================================================================
-
-test_skip_when_objects_is_real_directory() {
-    log_test "Testing skip when objects is a real directory (not symlink)"
-    setup_test_env
-
-    local sanitized="$TEST_DIR/sanitized-git/abc123"
-    local host_objects="$TEST_DIR/project/.git/objects"
-
-    # Replace symlink with a real directory
-    rm -f "$sanitized/objects"
-    mkdir -p "$sanitized/objects"
-    echo "real-file" > "$sanitized/objects/real.obj"
-
-    # Call production function — should skip (not a symlink)
-    repoint_sanitized_git_objects "$sanitized" "$host_objects"
-
-    # Should still be a real directory, not a symlink
-    assert_true "[[ -d \"$sanitized/objects\" ]]" "Should still be a directory"
-    assert_true "[[ ! -L \"$sanitized/objects\" ]]" "Should NOT be a symlink"
-    assert_true "[[ -f \"$sanitized/objects/real.obj\" ]]" "Original contents should be preserved"
-
-    cleanup_test_env
-}
-
-#===============================================================================
-# MAIN
-#===============================================================================
 
 main() {
-    print_test_header "Sanitized Git Objects Symlink (Issue #219)"
+    print_test_header "Sanitized Git Objects (writable dir + alternate)"
 
-    log_info "=== Symlink Re-pointing ==="
-    run_test test_repoint_via_production_function
-    run_test test_container_symlink_is_dangling
-    run_test test_repoint_when_symlink_absent
+    log_info "=== Prepare + functional commit ==="
+    run_test test_prepare_creates_writable_objects_with_alternate
+    run_test test_in_container_commit_writes_locally
+
+    log_info "=== Alternate re-pointing ==="
+    run_test test_repoint_rewrites_alternate_to_host
     run_test test_repoint_idempotent
+    run_test test_fallback_to_kapsis_meta
+    run_test test_repoint_legacy_symlink
 
     log_info "=== Guard Conditions ==="
     run_test test_skip_when_no_sanitized_git
     run_test test_skip_when_no_objects_path
-    run_test test_skip_when_objects_is_real_directory
 
     log_info "=== Metadata ==="
     run_test test_kapsis_meta_written_by_production
-    run_test test_fallback_to_kapsis_meta
 
     print_summary
 }
