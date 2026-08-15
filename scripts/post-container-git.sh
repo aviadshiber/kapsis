@@ -893,8 +893,16 @@ push_changes() {
         # Verify the push actually succeeded
         echo ""
         if verify_push "$worktree_path" "$remote" "$remote_branch"; then
-            # Show PR instructions only after verified push
-            show_pr_instructions "$worktree_path" "$remote_branch"
+            # After a verified push: run the provider-pluggable PR hook if
+            # configured, else fall back to printing PR instructions (legacy).
+            if [[ -n "${KAPSIS_POST_PUSH_HOOK:-}" ]]; then
+                local _pushed_sha
+                _pushed_sha=$(git rev-parse HEAD 2>/dev/null)
+                run_post_push_hook "$worktree_path" "$remote_branch" "${KAPSIS_BASE_BRANCH:-}" "$_pushed_sha" "$KAPSIS_POST_PUSH_HOOK"
+            else
+                status_set_pr_hook_info "skipped"
+                show_pr_instructions "$worktree_path" "$remote_branch"
+            fi
             return 0
         else
             log_error "Push reported success but verification failed!"
@@ -928,6 +936,45 @@ export PR_URL=""
 
 # Display PR creation instructions with URL
 # Uses generate_pr_url from git-remote-utils.sh
+# Provider-agnostic PR-creation seam. Runs a user-configured command on the HOST
+# after a verified push. kapsis knows nothing about gh/bkt/glab — the command is
+# supplied by config (git.post_push_hook). Agent-influenced values are passed via
+# env ONLY (never interpolated into the command string); the hook contract requires
+# it to quote and never eval. The hook command itself comes from trusted config.
+# Failures are surfaced via pr_hook_status (never swallowed): the push already
+# succeeded, so we do not fail the whole run, but a failed hook is recorded and a
+# non-silent warning is logged so "pushed but no PR" can't happen invisibly.
+# Sets globals: PR_URL (if the hook prints a URL on stdout), and via
+# status_set_pr_hook_info the pr_hook_status field.
+run_post_push_hook() {
+    local worktree_path="$1" remote_branch="$2" base_branch="$3" pushed_sha="$4" hook_cmd="$5"
+    if [[ -z "$hook_cmd" ]]; then
+        status_set_pr_hook_info "skipped"
+        return 0
+    fi
+    local remote_url
+    remote_url=$(cd "$worktree_path" && git remote get-url origin 2>/dev/null || echo "")
+    local out rc=0
+    out=$(cd "$worktree_path" && \
+        KAPSIS_REMOTE_BRANCH="$remote_branch" KAPSIS_BASE_BRANCH="$base_branch" \
+        KAPSIS_PUSHED_SHA="$pushed_sha" KAPSIS_REMOTE_URL="$remote_url" \
+        bash -c "$hook_cmd" 2>&1) || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        status_set_pr_hook_info "ok"
+        local url
+        url=$(printf '%s\n' "$out" | grep -oE 'https?://[^[:space:]]+' | tail -1 || true)
+        if [[ -n "$url" ]]; then
+            PR_URL="$url"
+            echo "  Post-push hook created PR: $url"
+        fi
+        return 0
+    fi
+    status_set_pr_hook_info "failed:exit${rc}"
+    log_error "post_push_hook failed (exit $rc). Branch was pushed but PR creation did NOT succeed:"
+    printf '%s\n' "$out" | tail -3 | while IFS= read -r _l; do log_error "  $_l"; done
+    return 0   # push already succeeded; surface the failure, don't fail the run
+}
+
 show_pr_instructions() {
     local worktree_path="$1"
     local branch="$2"

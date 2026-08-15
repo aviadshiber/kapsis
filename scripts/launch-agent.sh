@@ -917,6 +917,12 @@ parse_config() {
         GIT_REMOTE=$(yq -r '.git.auto_push.remote // "origin"' "$CONFIG_FILE")
         GIT_COMMIT_MSG=$(yq -r '.git.auto_push.commit_message // "feat: AI agent changes"' "$CONFIG_FILE")
 
+        # Provider-pluggable post-push hook (PR creation etc.). Runs on the HOST
+        # after a verified push (see run_post_push_hook in post-container-git.sh).
+        # kapsis stays provider-agnostic — the command is supplied by config.
+        KAPSIS_POST_PUSH_HOOK=$(yq -r '.git.post_push_hook // ""' "$CONFIG_FILE")
+        export KAPSIS_POST_PUSH_HOOK
+
         # Parse co-authors (newline-separated list). Each entry is run through
         # validate_author_format to block multi-line / shell-metachar injection
         # via .kapsis/config.yaml (security review of PR #416). Invalid entries
@@ -3724,6 +3730,8 @@ post_container_worktree() {
         # writes to the same shell's _KAPSIS_COMMIT_STATUS variable, which is read later
         # by status_get_commit_status in the FINAL_EXIT_CODE logic (Issue #256)
         source "$post_container_script"
+        # Expose the base branch to the host post-push hook (run_post_push_hook).
+        export KAPSIS_BASE_BRANCH="${BASE_BRANCH:-}"
         # post_container_git sets PR_URL global variable
         # Capture return code to prevent set -e from killing the function (Issue #256)
         # CRITICAL: This || capture is inseparable from the outer || capture at the

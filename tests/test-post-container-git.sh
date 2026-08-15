@@ -328,6 +328,39 @@ test_push_fast_forward_succeeds() {
 }
 
 #===============================================================================
+# TEST CASES: post-push PR hook (Task 6)
+#===============================================================================
+
+test_post_push_hook_invoked_with_env() {
+    log_test "run_post_push_hook: invoked with env, captures PR URL"
+    local r; r=$(_mk_repo)
+    local out; out=$(mktemp)
+    local hook="printf 'BRANCH=%s SHA=%s\n' \"\$KAPSIS_REMOTE_BRANCH\" \"\$KAPSIS_PUSHED_SHA\" > $out; echo https://pr.example/1"
+    PR_URL=""; _KAPSIS_PR_HOOK_STATUS=""
+    run_post_push_hook "$r" "feature/x" "main" "deadbeef" "$hook"
+    assert_equals "ok" "${_KAPSIS_PR_HOOK_STATUS:-}" "hook status ok"
+    assert_file_contains "$out" "BRANCH=feature/x SHA=deadbeef" "hook received env"
+    assert_equals "https://pr.example/1" "${PR_URL:-}" "PR_URL captured from hook stdout"
+    rm -rf "$r" "$out"
+}
+
+test_post_push_hook_unset_skips() {
+    log_test "run_post_push_hook: empty command => skipped"
+    _KAPSIS_PR_HOOK_STATUS=""
+    run_post_push_hook "/tmp" "feature/x" "main" "deadbeef" ""
+    assert_equals "skipped" "${_KAPSIS_PR_HOOK_STATUS:-}" "unset hook = skipped"
+}
+
+test_post_push_hook_failure_surfaced() {
+    log_test "run_post_push_hook: hook failure is surfaced, not swallowed"
+    local r; r=$(_mk_repo)
+    _KAPSIS_PR_HOOK_STATUS=""
+    run_post_push_hook "$r" "feature/x" "main" "deadbeef" "exit 3"
+    assert_matches "${_KAPSIS_PR_HOOK_STATUS:-}" "^failed:" "hook failure surfaced as failed:*"
+    rm -rf "$r"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -357,6 +390,11 @@ main() {
     log_info "=== push_changes fetch-before-push ==="
     run_test test_push_refuses_non_fast_forward
     run_test test_push_fast_forward_succeeds
+
+    log_info "=== post-push PR hook ==="
+    run_test test_post_push_hook_invoked_with_env
+    run_test test_post_push_hook_unset_skips
+    run_test test_post_push_hook_failure_surfaced
 
     # Print summary
     print_summary
