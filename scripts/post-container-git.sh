@@ -727,7 +727,7 @@ commit_changes() {
                          GIT_COMMITTER_EMAIL="$KAPSIS_COMMITTER_EMAIL" \
                          GIT_AUTHOR_NAME="$KAPSIS_COMMITTER_NAME" \
                          GIT_AUTHOR_EMAIL="$KAPSIS_COMMITTER_EMAIL" \
-                         git commit $_no_verify_flag -m "$full_message" 2>&1) || _commit_exit=$?
+                         git -c core.hooksPath=/dev/null commit $_no_verify_flag -m "$full_message" 2>&1) || _commit_exit=$?
     else
         _commit_output=$(git commit $_no_verify_flag -m "$full_message" 2>&1) || _commit_exit=$?
     fi

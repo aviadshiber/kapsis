@@ -30,6 +30,7 @@ fi
 eval "$(sed -n '/^repoint_sanitized_git_objects()/,/^}/p' "$KAPSIS_ROOT/scripts/launch-agent.sh")"
 eval "$(sed -n '/^_prepare_objects_alternate()/,/^}/p' "$KAPSIS_ROOT/scripts/worktree-manager.sh")"
 eval "$(sed -n '/^_neutralize_sanitized_git_hooks()/,/^}/p' "$KAPSIS_ROOT/scripts/launch-agent.sh")"
+eval "$(sed -n '/^_restore_real_worktree_gitpointer()/,/^}/p' "$KAPSIS_ROOT/scripts/launch-agent.sh")"
 
 _alt() { cat "$1/objects/info/alternates" 2>/dev/null; }  # read alternate line
 
@@ -177,6 +178,40 @@ test_neutralize_removes_planted_hooks_and_hookspath() {
     rm -rf "$sg"
 }
 
+#=== security: restore real gitdir pointer defeats an agent repoint (#467) =====
+test_restore_gitpointer_defeats_repoint_rce() {
+    log_test "restore: repointed /workspace/.git is forced back to real gitdir (no host hook exec)"
+    local root; root=$(mktemp -d)
+    local proj="$root/project"
+    ( cd "$root"; git init -q -b main project; cd project; git config user.email a@b.c; git config user.name a; echo x > f; git add -A; git commit -qm base )
+    # Real worktree created by kapsis (git worktree add).
+    local wt="$root/wt-agent1"
+    ( cd "$proj"; git worktree add -q -b feature/x "$wt" >/dev/null 2>&1 )
+    local real_gitdir; real_gitdir="$proj/.git/worktrees/$(basename "$wt")"
+    assert_dir_exists "$real_gitdir" "real gitdir exists after worktree add"
+
+    # Simulate a compromised agent: repoint /workspace/.git at an evil gitdir whose
+    # post-commit hook would run on the host.
+    local evil="$root/evil-gitdir"; mkdir -p "$evil/hooks"
+    cp "$real_gitdir/HEAD" "$evil/HEAD" 2>/dev/null || echo "ref: refs/heads/feature/x" > "$evil/HEAD"
+    printf '%s\n' "$(cat "$real_gitdir/commondir" 2>/dev/null || echo ../..)" > "$evil/commondir"
+    local pwned="$root/PWNED"
+    printf '#!/bin/sh\ntouch "%s"\n' "$pwned" > "$evil/hooks/post-commit"; chmod +x "$evil/hooks/post-commit"
+    printf 'gitdir: %s\n' "$evil" > "$wt/.git"
+
+    # Host hardening runs before any host git op.
+    _restore_real_worktree_gitpointer "$wt" "$proj"
+
+    # Pointer must be back to the real gitdir, not the evil one.
+    assert_file_contains "$wt/.git" "gitdir: $real_gitdir" "pointer restored to real gitdir"
+    assert_file_not_contains "$wt/.git" "$evil" "evil gitdir no longer referenced"
+
+    # A host commit must resolve the real gitdir → the evil post-commit hook must NOT fire.
+    ( cd "$wt"; echo y > g; git add -A; git -c core.hooksPath=/dev/null commit -qm host >/dev/null 2>&1 )
+    assert_file_not_exists "$pwned" "evil post-commit hook must NOT run on the host"
+    rm -rf "$root"
+}
+
 #=== metadata =================================================================
 test_kapsis_meta_written_by_production() {
     log_test "prepare writes HOST_OBJECTS_PATH to kapsis-meta"
@@ -207,6 +242,7 @@ main() {
     log_info "=== Security hardening ==="
     run_test test_repoint_refuses_symlinked_info
     run_test test_neutralize_removes_planted_hooks_and_hookspath
+    run_test test_restore_gitpointer_defeats_repoint_rce
 
     log_info "=== Metadata ==="
     run_test test_kapsis_meta_written_by_production

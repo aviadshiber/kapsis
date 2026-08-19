@@ -3682,6 +3682,30 @@ repoint_sanitized_git_objects() {
     fi
 }
 
+# Restore the worktree's /workspace/.git pointer to the REAL, host-side gitdir
+# before the host runs any git op. The worktree root is mounted read-write into the
+# container, so a compromised agent can repoint /workspace/.git at an
+# agent-controlled gitdir (e.g. the sanitized .git-safe, or a dir under the
+# worktree) whose config/hooks then execute on the HOST when kapsis does
+# `cd "$worktree" && git ...`. The real gitdir ($PROJECT_PATH/.git/worktrees/<name>)
+# is NOT mounted into the container, so forcing the pointer back to it makes host
+# git resolve only the trusted (non-agent-writable) config/hooks. Fixes #467.
+_restore_real_worktree_gitpointer() {
+    local worktree_path="${1:-${WORKTREE_PATH:-}}"
+    local project_path="${2:-${PROJECT_PATH:-}}"
+    [[ -z "$worktree_path" || -z "$project_path" ]] && return 0
+    local name real_gitdir
+    name=$(basename "$worktree_path")
+    real_gitdir="$project_path/.git/worktrees/$name"
+    if [[ -d "$real_gitdir" ]]; then
+        # Overwrite unconditionally (a no-op for an untampered pointer).
+        printf 'gitdir: %s\n' "$real_gitdir" > "$worktree_path/.git"
+        log_debug "Restored worktree git pointer -> $real_gitdir (anti-tamper, #467)"
+    else
+        log_warn "Real worktree gitdir not found ($real_gitdir) — leaving .git pointer as-is"
+    fi
+}
+
 # Strip any agent-planted hook / core.hooksPath from the (rw-mounted) sanitized
 # git dir before the host runs git ops. Defense-in-depth for the writable-git
 # change; a no-op when the dir/config is absent.
@@ -3703,12 +3727,15 @@ post_container_worktree() {
     # Declare unconditionally so cleanup guard and return always have a defined value (Issue #256)
     local _pcg_rc=0
 
+    # Anti-tamper (issue #467): before ANY host git op, force /workspace/.git back
+    # to the real, host-side gitdir so a repointed pointer can't make host git
+    # resolve an agent-controlled config/hook. Must run first.
+    _restore_real_worktree_gitpointer "$WORKTREE_PATH" "$PROJECT_PATH"
+
     # Defense-in-depth: the sanitized git dir is mounted rw for the agent's
     # in-container git, so the agent could have planted a hook in its hooks/ dir or
-    # a core.hooksPath in its config. Neutralize both BEFORE any host git op that
-    # might resolve GIT_DIR into the sanitized dir, so no agent-planted hook fires
-    # on the host. (This closes the plant surface opened by the rw mount; the
-    # broader "host must not trust /workspace/.git" hardening is tracked separately.)
+    # a core.hooksPath in its config. Neutralize both before host git ops so no
+    # agent-planted hook fires on the host even if something resolves into it.
     _neutralize_sanitized_git_hooks "$SANITIZED_GIT_PATH"
 
     # Re-point sanitized git objects symlink BEFORE any git operations (#219)
