@@ -3661,8 +3661,18 @@ repoint_sanitized_git_objects() {
     # can resolve objects after the container exits. The agent's newly-written
     # objects remain in the local objects dir and are preserved.
     if [[ -f "$sanitized_git/objects/info/alternates" ]]; then
-        printf '%s\n' "$objects_path" > "$sanitized_git/objects/info/alternates"
-        log_debug "Re-pointed sanitized git objects alternate -> $objects_path"
+        # Harden against a symlinked alternates file: the agent had write access to
+        # the sanitized dir during its run and could have replaced this file with a
+        # symlink to an arbitrary host path; a bare `>` would then clobber that host
+        # file. Refuse a symlinked info/ dir and rm -f the target so the redirect
+        # writes a fresh regular file in place.
+        if [[ -L "$sanitized_git/objects/info" ]]; then
+            log_warn "sanitized objects/info is a symlink — skipping re-point (possible tampering)"
+        else
+            rm -f "$sanitized_git/objects/info/alternates" 2>/dev/null || true
+            printf '%s\n' "$objects_path" > "$sanitized_git/objects/info/alternates"
+            log_debug "Re-pointed sanitized git objects alternate -> $objects_path"
+        fi
     # Legacy model: objects is a symlink to the container path (or absent).
     elif [[ -L "$sanitized_git/objects" ]] || [[ ! -e "$sanitized_git/objects" ]]; then
         ln -sfn "$objects_path" "$sanitized_git/objects"
@@ -3672,12 +3682,34 @@ repoint_sanitized_git_objects() {
     fi
 }
 
+# Strip any agent-planted hook / core.hooksPath from the (rw-mounted) sanitized
+# git dir before the host runs git ops. Defense-in-depth for the writable-git
+# change; a no-op when the dir/config is absent.
+_neutralize_sanitized_git_hooks() {
+    local sanitized_git="${1:-${SANITIZED_GIT_PATH:-}}"
+    [[ -z "$sanitized_git" || ! -d "$sanitized_git" ]] && return 0
+    if [[ -d "$sanitized_git/hooks" && ! -L "$sanitized_git/hooks" ]]; then
+        find "$sanitized_git/hooks" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+    fi
+    if [[ -f "$sanitized_git/config" && ! -L "$sanitized_git/config" ]]; then
+        git config --file "$sanitized_git/config" --unset-all core.hooksPath 2>/dev/null || true
+    fi
+}
+
 post_container_worktree() {
     log_debug "Processing worktree post-container operations..."
     log_debug "  WORKTREE_PATH=$WORKTREE_PATH"
 
     # Declare unconditionally so cleanup guard and return always have a defined value (Issue #256)
     local _pcg_rc=0
+
+    # Defense-in-depth: the sanitized git dir is mounted rw for the agent's
+    # in-container git, so the agent could have planted a hook in its hooks/ dir or
+    # a core.hooksPath in its config. Neutralize both BEFORE any host git op that
+    # might resolve GIT_DIR into the sanitized dir, so no agent-planted hook fires
+    # on the host. (This closes the plant surface opened by the rw mount; the
+    # broader "host must not trust /workspace/.git" hardening is tracked separately.)
+    _neutralize_sanitized_git_hooks "$SANITIZED_GIT_PATH"
 
     # Re-point sanitized git objects symlink BEFORE any git operations (#219)
     # Must happen first so git status and sync_index_from_container work correctly

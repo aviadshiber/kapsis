@@ -29,6 +29,7 @@ fi
 # Extract the production functions under test (avoids sourcing whole scripts)
 eval "$(sed -n '/^repoint_sanitized_git_objects()/,/^}/p' "$KAPSIS_ROOT/scripts/launch-agent.sh")"
 eval "$(sed -n '/^_prepare_objects_alternate()/,/^}/p' "$KAPSIS_ROOT/scripts/worktree-manager.sh")"
+eval "$(sed -n '/^_neutralize_sanitized_git_hooks()/,/^}/p' "$KAPSIS_ROOT/scripts/launch-agent.sh")"
 
 _alt() { cat "$1/objects/info/alternates" 2>/dev/null; }  # read alternate line
 
@@ -146,6 +147,36 @@ test_repoint_legacy_symlink() {
     cleanup_test_env
 }
 
+#=== security: repoint refuses symlinked info/ (no host-file clobber) =========
+test_repoint_refuses_symlinked_info() {
+    log_test "repoint: symlinked objects/info is refused (no clobber of host file)"
+    setup_test_env
+    local sg="$TEST_DIR/sanitized-git/abc123"
+    local host_objects="$TEST_DIR/project/.git/objects"
+    # Agent replaces objects/info with a symlink to a sensitive host file.
+    local victim="$TEST_DIR/victim.txt"; echo "PRECIOUS" > "$victim"
+    rm -rf "$sg/objects/info"; ln -sfn "$TEST_DIR" "$sg/objects/info"
+    # Point the (symlinked) alternates target at the victim so a naive `>` clobbers it.
+    ln -sfn "$victim" "$sg/objects/info/alternates" 2>/dev/null || true
+    repoint_sanitized_git_objects "$sg" "$host_objects"
+    assert_file_contains "$victim" "PRECIOUS" "host file must NOT be clobbered via symlinked info/"
+    cleanup_test_env
+}
+
+#=== security: neutralize agent-planted hooks/config before host git ops =======
+test_neutralize_removes_planted_hooks_and_hookspath() {
+    log_test "neutralize: strips planted hooks + core.hooksPath from sanitized dir"
+    local sg; sg=$(mktemp -d)
+    mkdir -p "$sg/hooks"
+    printf '#!/bin/sh\necho pwned\n' > "$sg/hooks/pre-commit"; chmod +x "$sg/hooks/pre-commit"
+    git config --file "$sg/config" core.hooksPath /evil 2>/dev/null || printf '[core]\n\thooksPath = /evil\n' > "$sg/config"
+    _neutralize_sanitized_git_hooks "$sg"
+    assert_file_not_exists "$sg/hooks/pre-commit" "planted hook must be removed"
+    local hp; hp=$(git config --file "$sg/config" --get core.hooksPath 2>/dev/null || echo "")
+    assert_equals "" "$hp" "core.hooksPath must be unset"
+    rm -rf "$sg"
+}
+
 #=== metadata =================================================================
 test_kapsis_meta_written_by_production() {
     log_test "prepare writes HOST_OBJECTS_PATH to kapsis-meta"
@@ -172,6 +203,10 @@ main() {
     log_info "=== Guard Conditions ==="
     run_test test_skip_when_no_sanitized_git
     run_test test_skip_when_no_objects_path
+
+    log_info "=== Security hardening ==="
+    run_test test_repoint_refuses_symlinked_info
+    run_test test_neutralize_removes_planted_hooks_and_hookspath
 
     log_info "=== Metadata ==="
     run_test test_kapsis_meta_written_by_production

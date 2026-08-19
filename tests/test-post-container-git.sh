@@ -327,6 +327,23 @@ test_push_fast_forward_succeeds() {
     rm -rf "$up" "$a"
 }
 
+test_push_first_push_new_branch_succeeds() {
+    # The most common kapsis case: a brand-new branch not yet on the remote. The
+    # fetch of a non-existent remote branch fails, so the divergence guard must
+    # SKIP (not falsely refuse) and let the first push create the branch.
+    log_test "push_changes: first push of a new branch succeeds (guard skips)"
+    local up; up=$(mktemp -d); ( cd "$up"; git init -q --bare -b main )
+    local a; a=$(mktemp -d)
+    ( cd "$a"; git init -q -b feature/new; git config user.email a@b.c; git config user.name a
+      git remote add origin "$up"; echo 1 > f; git add -A; git commit -qm work )
+    assert_command_succeeds "( push_changes '$a' origin feature/new )" "first push of new branch should succeed"
+    # And it actually landed on the remote. cd into the bare repo first: an earlier
+    # test may have left the shell cwd in a since-deleted tmp dir, which would make a
+    # bare `git ls-remote` fail on "cannot access current directory" (not our bug).
+    assert_command_succeeds "( cd '$up' && git ls-remote --exit-code --heads . feature/new )" "new branch exists on remote"
+    rm -rf "$up" "$a"
+}
+
 #===============================================================================
 # TEST CASES: post-push PR hook (Task 6)
 #===============================================================================
@@ -390,6 +407,7 @@ main() {
     log_info "=== push_changes fetch-before-push ==="
     run_test test_push_refuses_non_fast_forward
     run_test test_push_fast_forward_succeeds
+    run_test test_push_first_push_new_branch_succeeds
 
     log_info "=== post-push PR hook ==="
     run_test test_post_push_hook_invoked_with_env

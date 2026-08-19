@@ -861,23 +861,31 @@ push_changes() {
     # fail-closed with a clear reason + a manual fallback command, rather than
     # emitting the bare-push failure that stranded work as "committed, no PR".
     local _fetch_timeout="${KAPSIS_FETCH_TIMEOUT:-60}"
-    GIT_TERMINAL_PROMPT=0 timeout "$_fetch_timeout" git fetch "$remote" "$remote_branch" 2>/dev/null || true
-    local _remote_tip=""
-    _remote_tip=$(git rev-parse -q --verify FETCH_HEAD 2>/dev/null || true)
-    if [[ -z "$_remote_tip" ]]; then
-        _remote_tip=$(git rev-parse -q --verify "refs/remotes/${remote}/${remote_branch}" 2>/dev/null || true)
+    local _fetch_ok=0
+    if GIT_TERMINAL_PROMPT=0 timeout "$_fetch_timeout" git fetch "$remote" -- "$remote_branch" 2>/dev/null; then
+        _fetch_ok=1
     fi
-    if [[ -n "$_remote_tip" ]]; then
-        local _base
-        _base=$(git merge-base HEAD "$_remote_tip" 2>/dev/null || echo "")
-        # Divergence = remote tip is not an ancestor of HEAD (i.e. base != remote tip).
-        if [[ "$_base" != "$_remote_tip" ]]; then
-            log_error "Remote ${remote}/${remote_branch} advanced beyond our base — refusing non-fast-forward push"
-            log_error "  remote tip: ${_remote_tip}"
-            log_error "  local head: ${local_commit}"
-            status_set_push_info "diverged" "$local_commit" "$_remote_tip"
-            status_set_push_fallback "$worktree_path" "$remote" "$branch" "$remote_branch"
-            return 1
+    # Only evaluate divergence when the fetch ACTUALLY succeeded. On failure we do
+    # NOT fall back to refs/remotes/<branch> — that shared ref is not refreshed by a
+    # failed fetch, so a stale tip could falsely refuse a legitimate push or mask a
+    # real divergence. A failed fetch (incl. the common case of a brand-new branch
+    # that doesn't exist on the remote yet) simply skips the guard; the push below
+    # then proceeds (first push) or surfaces any genuine non-fast-forward itself.
+    if [[ "$_fetch_ok" -eq 1 ]]; then
+        local _remote_tip=""
+        _remote_tip=$(git rev-parse -q --verify FETCH_HEAD 2>/dev/null || true)
+        if [[ -n "$_remote_tip" ]]; then
+            local _base
+            _base=$(git merge-base HEAD "$_remote_tip" 2>/dev/null || echo "")
+            # Divergence = remote tip is not an ancestor of HEAD (i.e. base != remote tip).
+            if [[ "$_base" != "$_remote_tip" ]]; then
+                log_error "Remote ${remote}/${remote_branch} advanced beyond our base — refusing non-fast-forward push"
+                log_error "  remote tip: ${_remote_tip}"
+                log_error "  local head: ${local_commit}"
+                status_set_push_info "diverged" "$local_commit" "$_remote_tip"
+                status_set_push_fallback "$worktree_path" "$remote" "$branch" "$remote_branch"
+                return 1
+            fi
         fi
     fi
 
