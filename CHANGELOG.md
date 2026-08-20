@@ -133,6 +133,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Never stage .kapsis/ internal files during post-container commit (exit 6 dead-end) (#463)
 
+## [3.2.5] - 2026-08-20
+
+### Changed
+- Release v3.2.5
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1168,7 +1173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.4...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.5...HEAD
+[3.2.5]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.5
 [3.2.4]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.4
 [3.2.3]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.3
 [3.2.2]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.2
