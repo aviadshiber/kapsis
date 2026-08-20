@@ -124,7 +124,9 @@ validate_staged_files() {
 
     # Check for .kapsis/ internal files
     local kapsis_files
-    kapsis_files=$(git diff --cached --name-only 2>/dev/null | grep "^\.kapsis/" || true)
+    # Case-insensitive: the container FS is case-sensitive, so `.Kapsis/` is a
+    # distinct path a case-sensitive filter would miss and commit.
+    kapsis_files=$(git diff --cached --name-only 2>/dev/null | grep -iE "^\.kapsis/" || true)
     if [[ -n "$kapsis_files" ]]; then
         log_warn "Found staged .kapsis/ internal files (should be ignored):"
         while IFS= read -r f; do
@@ -141,7 +143,7 @@ validate_staged_files() {
     # repo size doubles (entire object DB ships as tracked files).
     # Regression: products PR #102836.
     local kapsis_mount_files
-    kapsis_mount_files=$(git diff --cached --name-only 2>/dev/null | grep -E "^\.git-(safe|objects)/" || true)
+    kapsis_mount_files=$(git diff --cached --name-only 2>/dev/null | grep -iE "^\.git-(safe|objects)/" || true)
     if [[ -n "$kapsis_mount_files" ]]; then
         log_warn "Found staged Kapsis git-mount files (should be ignored):"
         while IFS= read -r f; do
@@ -164,6 +166,22 @@ validate_staged_files() {
             log_warn "  - $path (submodule)"
             suspicious_files+=("$path")
         done <<< "$submodule_refs"
+        has_security_issues=1
+    fi
+
+    # Check for symlink entries (mode 120000). A crafted symlink (e.g. a file
+    # pointing at /etc/passwd) can be smuggled through the index past content-only
+    # sanitizers. The NEW mode is the 2nd field of `git diff --cached --raw`.
+    local symlink_refs
+    symlink_refs=$(git diff --cached --raw 2>/dev/null | awk '{print $2}' | grep -E "^120000$" || true)
+    if [[ -n "$symlink_refs" ]]; then
+        log_warn "Found staged symlink entries (mode 120000) — rejecting:"
+        while IFS= read -r line; do
+            local spath
+            spath=$(echo "$line" | awk '{print $NF}')
+            log_warn "  - $spath (symlink)"
+            suspicious_files+=("$spath")
+        done < <(git diff --cached --raw 2>/dev/null | awk '$2=="120000"')
         has_security_issues=1
     fi
 
@@ -709,7 +727,7 @@ commit_changes() {
                          GIT_COMMITTER_EMAIL="$KAPSIS_COMMITTER_EMAIL" \
                          GIT_AUTHOR_NAME="$KAPSIS_COMMITTER_NAME" \
                          GIT_AUTHOR_EMAIL="$KAPSIS_COMMITTER_EMAIL" \
-                         git commit $_no_verify_flag -m "$full_message" 2>&1) || _commit_exit=$?
+                         git -c core.hooksPath=/dev/null commit $_no_verify_flag -m "$full_message" 2>&1) || _commit_exit=$?
     else
         _commit_output=$(git commit $_no_verify_flag -m "$full_message" 2>&1) || _commit_exit=$?
     fi
@@ -837,6 +855,40 @@ push_changes() {
     local local_commit
     local_commit=$(git rev-parse HEAD 2>/dev/null)
 
+    # Fetch-before-push divergence guard: if the remote branch has advanced beyond
+    # our base (someone else pushed), a bare push would either non-fast-forward
+    # reject with a confusing error or, worse, be forced. Detect divergence and
+    # fail-closed with a clear reason + a manual fallback command, rather than
+    # emitting the bare-push failure that stranded work as "committed, no PR".
+    local _fetch_timeout="${KAPSIS_FETCH_TIMEOUT:-60}"
+    local _fetch_ok=0
+    if GIT_TERMINAL_PROMPT=0 timeout "$_fetch_timeout" git fetch "$remote" -- "$remote_branch" 2>/dev/null; then
+        _fetch_ok=1
+    fi
+    # Only evaluate divergence when the fetch ACTUALLY succeeded. On failure we do
+    # NOT fall back to refs/remotes/<branch> — that shared ref is not refreshed by a
+    # failed fetch, so a stale tip could falsely refuse a legitimate push or mask a
+    # real divergence. A failed fetch (incl. the common case of a brand-new branch
+    # that doesn't exist on the remote yet) simply skips the guard; the push below
+    # then proceeds (first push) or surfaces any genuine non-fast-forward itself.
+    if [[ "$_fetch_ok" -eq 1 ]]; then
+        local _remote_tip=""
+        _remote_tip=$(git rev-parse -q --verify FETCH_HEAD 2>/dev/null || true)
+        if [[ -n "$_remote_tip" ]]; then
+            local _base
+            _base=$(git merge-base HEAD "$_remote_tip" 2>/dev/null || echo "")
+            # Divergence = remote tip is not an ancestor of HEAD (i.e. base != remote tip).
+            if [[ "$_base" != "$_remote_tip" ]]; then
+                log_error "Remote ${remote}/${remote_branch} advanced beyond our base — refusing non-fast-forward push"
+                log_error "  remote tip: ${_remote_tip}"
+                log_error "  local head: ${local_commit}"
+                status_set_push_info "diverged" "$local_commit" "$_remote_tip"
+                status_set_push_fallback "$worktree_path" "$remote" "$branch" "$remote_branch"
+                return 1
+            fi
+        fi
+    fi
+
     # Use refspec to push local branch to (potentially different) remote branch.
     # GIT_TERMINAL_PROMPT=0 prevents interactive prompts in non-TTY containers.
     # timeout guards against credential helper hangs (Issue #227).
@@ -849,8 +901,16 @@ push_changes() {
         # Verify the push actually succeeded
         echo ""
         if verify_push "$worktree_path" "$remote" "$remote_branch"; then
-            # Show PR instructions only after verified push
-            show_pr_instructions "$worktree_path" "$remote_branch"
+            # After a verified push: run the provider-pluggable PR hook if
+            # configured, else fall back to printing PR instructions (legacy).
+            if [[ -n "${KAPSIS_POST_PUSH_HOOK:-}" ]]; then
+                local _pushed_sha
+                _pushed_sha=$(git rev-parse HEAD 2>/dev/null)
+                run_post_push_hook "$worktree_path" "$remote_branch" "${KAPSIS_BASE_BRANCH:-}" "$_pushed_sha" "$KAPSIS_POST_PUSH_HOOK"
+            else
+                status_set_pr_hook_info "skipped"
+                show_pr_instructions "$worktree_path" "$remote_branch"
+            fi
             return 0
         else
             log_error "Push reported success but verification failed!"
@@ -884,6 +944,45 @@ export PR_URL=""
 
 # Display PR creation instructions with URL
 # Uses generate_pr_url from git-remote-utils.sh
+# Provider-agnostic PR-creation seam. Runs a user-configured command on the HOST
+# after a verified push. kapsis knows nothing about gh/bkt/glab — the command is
+# supplied by config (git.post_push_hook). Agent-influenced values are passed via
+# env ONLY (never interpolated into the command string); the hook contract requires
+# it to quote and never eval. The hook command itself comes from trusted config.
+# Failures are surfaced via pr_hook_status (never swallowed): the push already
+# succeeded, so we do not fail the whole run, but a failed hook is recorded and a
+# non-silent warning is logged so "pushed but no PR" can't happen invisibly.
+# Sets globals: PR_URL (if the hook prints a URL on stdout), and via
+# status_set_pr_hook_info the pr_hook_status field.
+run_post_push_hook() {
+    local worktree_path="$1" remote_branch="$2" base_branch="$3" pushed_sha="$4" hook_cmd="$5"
+    if [[ -z "$hook_cmd" ]]; then
+        status_set_pr_hook_info "skipped"
+        return 0
+    fi
+    local remote_url
+    remote_url=$(cd "$worktree_path" && git remote get-url origin 2>/dev/null || echo "")
+    local out rc=0
+    out=$(cd "$worktree_path" && \
+        KAPSIS_REMOTE_BRANCH="$remote_branch" KAPSIS_BASE_BRANCH="$base_branch" \
+        KAPSIS_PUSHED_SHA="$pushed_sha" KAPSIS_REMOTE_URL="$remote_url" \
+        bash -c "$hook_cmd" 2>&1) || rc=$?
+    if [[ $rc -eq 0 ]]; then
+        status_set_pr_hook_info "ok"
+        local url
+        url=$(printf '%s\n' "$out" | grep -oE 'https?://[^[:space:]]+' | tail -1 || true)
+        if [[ -n "$url" ]]; then
+            PR_URL="$url"
+            echo "  Post-push hook created PR: $url"
+        fi
+        return 0
+    fi
+    status_set_pr_hook_info "failed:exit${rc}"
+    log_error "post_push_hook failed (exit $rc). Branch was pushed but PR creation did NOT succeed:"
+    printf '%s\n' "$out" | tail -3 | while IFS= read -r _l; do log_error "  $_l"; done
+    return 0   # push already succeeded; surface the failure, don't fail the run
+}
+
 show_pr_instructions() {
     local worktree_path="$1"
     local branch="$2"

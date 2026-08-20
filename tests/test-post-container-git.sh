@@ -257,6 +257,127 @@ test_sync_index_cache_tree_rebuild() {
 }
 
 #===============================================================================
+# TEST CASES: validate_staged_files hardening (Task 4)
+#===============================================================================
+
+_mk_repo() {
+    local r; r=$(mktemp -d)
+    ( cd "$r"; git init -q; git config user.email a@b.c; git config user.name a )
+    echo "$r"
+}
+
+test_reject_uppercase_kapsis_dir() {
+    log_test "validate_staged_files: reject .Kapsis/ (case-insensitive)"
+    local r; r=$(_mk_repo); mkdir -p "$r/.Kapsis"; echo x > "$r/.Kapsis/f"
+    ( cd "$r"; git add -A -f >/dev/null 2>&1 )
+    assert_command_fails "validate_staged_files '$r'" ".Kapsis/ must be rejected (case-insensitive)"
+    rm -rf "$r"
+}
+
+test_reject_symlink_entry() {
+    log_test "validate_staged_files: reject staged symlink (mode 120000)"
+    local r; r=$(_mk_repo); ( cd "$r"; ln -s /etc/passwd link; git add -A >/dev/null 2>&1 )
+    assert_command_fails "validate_staged_files '$r'" "symlink (120000) must be rejected"
+    rm -rf "$r"
+}
+
+test_reject_gitlink_entry() {
+    log_test "validate_staged_files: reject staged gitlink (mode 160000)"
+    local r; r=$(_mk_repo)
+    ( cd "$r"; git update-index --add --cacheinfo 160000,1234567890123456789012345678901234567890,sub >/dev/null 2>&1 )
+    assert_command_fails "validate_staged_files '$r'" "gitlink (160000) must be rejected"
+    rm -rf "$r"
+}
+
+test_accept_clean_regular_file() {
+    log_test "validate_staged_files: accept a clean regular file"
+    local r; r=$(_mk_repo); echo hi > "$r/normal.txt"; ( cd "$r"; git add -A >/dev/null 2>&1 )
+    assert_command_succeeds "validate_staged_files '$r'" "clean regular file must pass"
+    rm -rf "$r"
+}
+
+#===============================================================================
+# TEST CASES: push_changes fetch-before-push (Task 5)
+#===============================================================================
+
+test_push_refuses_non_fast_forward() {
+    log_test "push_changes: refuse non-fast-forward when remote advanced"
+    local up; up=$(mktemp -d); ( cd "$up"; git init -q --bare -b main )
+    local a; a=$(mktemp -d)
+    ( cd "$a"; git init -q -b main; git config user.email a@b.c; git config user.name a
+      git remote add origin "$up"; echo 1 > f; git add -A; git commit -qm base; git push -q origin main )
+    # advance origin/main from another clone (real descendant, so it truly advances)
+    local b; b=$(mktemp -d); git clone -q "$up" "$b"
+    ( cd "$b"; git config user.email a@b.c; git config user.name a; echo 2 > f; git add -A
+      git commit -qm adv; git push -q origin main )
+    # 'a' makes a divergent commit on its now-stale base
+    ( cd "$a"; echo 3 > g; git add -A; git commit -qm local )
+    assert_command_fails "( push_changes '$a' origin main )" "divergent remote must not be blind-pushed"
+    rm -rf "$up" "$a" "$b"
+}
+
+test_push_fast_forward_succeeds() {
+    log_test "push_changes: fast-forward push succeeds"
+    local up; up=$(mktemp -d); ( cd "$up"; git init -q --bare -b main )
+    local a; a=$(mktemp -d)
+    ( cd "$a"; git init -q -b main; git config user.email a@b.c; git config user.name a
+      git remote add origin "$up"; echo 1 > f; git add -A; git commit -qm base; git push -q origin main
+      echo 2 > f; git add -A; git commit -qm next )
+    assert_command_succeeds "( push_changes '$a' origin main )" "fast-forward push should succeed"
+    rm -rf "$up" "$a"
+}
+
+test_push_first_push_new_branch_succeeds() {
+    # The most common kapsis case: a brand-new branch not yet on the remote. The
+    # fetch of a non-existent remote branch fails, so the divergence guard must
+    # SKIP (not falsely refuse) and let the first push create the branch.
+    log_test "push_changes: first push of a new branch succeeds (guard skips)"
+    local up; up=$(mktemp -d); ( cd "$up"; git init -q --bare -b main )
+    local a; a=$(mktemp -d)
+    ( cd "$a"; git init -q -b feature/new; git config user.email a@b.c; git config user.name a
+      git remote add origin "$up"; echo 1 > f; git add -A; git commit -qm work )
+    assert_command_succeeds "( push_changes '$a' origin feature/new )" "first push of new branch should succeed"
+    # And it actually landed on the remote. cd into the bare repo first: an earlier
+    # test may have left the shell cwd in a since-deleted tmp dir, which would make a
+    # bare `git ls-remote` fail on "cannot access current directory" (not our bug).
+    assert_command_succeeds "( cd '$up' && git ls-remote --exit-code --heads . feature/new )" "new branch exists on remote"
+    rm -rf "$up" "$a"
+}
+
+#===============================================================================
+# TEST CASES: post-push PR hook (Task 6)
+#===============================================================================
+
+test_post_push_hook_invoked_with_env() {
+    log_test "run_post_push_hook: invoked with env, captures PR URL"
+    local r; r=$(_mk_repo)
+    local out; out=$(mktemp)
+    local hook="printf 'BRANCH=%s SHA=%s\n' \"\$KAPSIS_REMOTE_BRANCH\" \"\$KAPSIS_PUSHED_SHA\" > $out; echo https://pr.example/1"
+    PR_URL=""; _KAPSIS_PR_HOOK_STATUS=""
+    run_post_push_hook "$r" "feature/x" "main" "deadbeef" "$hook"
+    assert_equals "ok" "${_KAPSIS_PR_HOOK_STATUS:-}" "hook status ok"
+    assert_file_contains "$out" "BRANCH=feature/x SHA=deadbeef" "hook received env"
+    assert_equals "https://pr.example/1" "${PR_URL:-}" "PR_URL captured from hook stdout"
+    rm -rf "$r" "$out"
+}
+
+test_post_push_hook_unset_skips() {
+    log_test "run_post_push_hook: empty command => skipped"
+    _KAPSIS_PR_HOOK_STATUS=""
+    run_post_push_hook "/tmp" "feature/x" "main" "deadbeef" ""
+    assert_equals "skipped" "${_KAPSIS_PR_HOOK_STATUS:-}" "unset hook = skipped"
+}
+
+test_post_push_hook_failure_surfaced() {
+    log_test "run_post_push_hook: hook failure is surfaced, not swallowed"
+    local r; r=$(_mk_repo)
+    _KAPSIS_PR_HOOK_STATUS=""
+    run_post_push_hook "$r" "feature/x" "main" "deadbeef" "exit 3"
+    assert_matches "${_KAPSIS_PR_HOOK_STATUS:-}" "^failed:" "hook failure surfaced as failed:*"
+    rm -rf "$r"
+}
+
+#===============================================================================
 # MAIN
 #===============================================================================
 
@@ -276,6 +397,22 @@ main() {
     run_test test_sync_index_no_git
     run_test test_sync_index_no_index_in_sanitized
     run_test test_sync_index_cache_tree_rebuild
+
+    log_info "=== validate_staged_files hardening ==="
+    run_test test_reject_uppercase_kapsis_dir
+    run_test test_reject_symlink_entry
+    run_test test_reject_gitlink_entry
+    run_test test_accept_clean_regular_file
+
+    log_info "=== push_changes fetch-before-push ==="
+    run_test test_push_refuses_non_fast_forward
+    run_test test_push_fast_forward_succeeds
+    run_test test_push_first_push_new_branch_succeeds
+
+    log_info "=== post-push PR hook ==="
+    run_test test_post_push_hook_invoked_with_env
+    run_test test_post_push_hook_unset_skips
+    run_test test_post_push_hook_failure_surfaced
 
     # Print summary
     print_summary

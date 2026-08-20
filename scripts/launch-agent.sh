@@ -917,6 +917,12 @@ parse_config() {
         GIT_REMOTE=$(yq -r '.git.auto_push.remote // "origin"' "$CONFIG_FILE")
         GIT_COMMIT_MSG=$(yq -r '.git.auto_push.commit_message // "feat: AI agent changes"' "$CONFIG_FILE")
 
+        # Provider-pluggable post-push hook (PR creation etc.). Runs on the HOST
+        # after a verified push (see run_post_push_hook in post-container-git.sh).
+        # kapsis stays provider-agnostic — the command is supplied by config.
+        KAPSIS_POST_PUSH_HOOK=$(yq -r '.git.post_push_hook // ""' "$CONFIG_FILE")
+        export KAPSIS_POST_PUSH_HOOK
+
         # Parse co-authors (newline-separated list). Each entry is run through
         # validate_author_format to block multi-line / shell-metachar injection
         # via .kapsis/config.yaml (security review of PR #416). Invalid entries
@@ -1593,9 +1599,12 @@ generate_volume_mounts_worktree() {
     # Mount worktree directly (no overlay needed!)
     VOLUME_MOUNTS+=("-v" "${WORKTREE_PATH}:/workspace")
 
-    # Mount sanitized git at $CONTAINER_GIT_PATH, replacing the worktree's .git file
-    # This makes git work without needing GIT_DIR environment variable
-    VOLUME_MOUNTS+=("-v" "${SANITIZED_GIT_PATH}:${CONTAINER_GIT_PATH}:ro")
+    # Mount sanitized git at $CONTAINER_GIT_PATH, replacing the worktree's .git file.
+    # Read-WRITE so the in-container agent can stage/commit into the sanitized
+    # GIT_DIR (setup_worktree_git exports GIT_DIR here). New commit objects land in
+    # the writable objects/ dir created by prepare_sanitized_git via
+    # objects/info/alternates; the parent object DB below stays :ro.
+    VOLUME_MOUNTS+=("-v" "${SANITIZED_GIT_PATH}:${CONTAINER_GIT_PATH}")
 
     # Mount objects directory read-only
     VOLUME_MOUNTS+=("-v" "${OBJECTS_PATH}:${CONTAINER_OBJECTS_PATH}:ro")
@@ -3646,12 +3655,68 @@ repoint_sanitized_git_objects() {
         return 0
     fi
 
-    # Only re-point if objects is a symlink or doesn't exist yet
-    if [[ -L "$sanitized_git/objects" ]] || [[ ! -e "$sanitized_git/objects" ]]; then
+    # Current model: objects is a writable dir with a git alternate borrowing the
+    # parent object DB. Re-point the alternate from the container path (used inside
+    # the container) to the host objects path so host-side git (status, index sync)
+    # can resolve objects after the container exits. The agent's newly-written
+    # objects remain in the local objects dir and are preserved.
+    if [[ -f "$sanitized_git/objects/info/alternates" ]]; then
+        # Harden against a symlinked alternates file: the agent had write access to
+        # the sanitized dir during its run and could have replaced this file with a
+        # symlink to an arbitrary host path; a bare `>` would then clobber that host
+        # file. Refuse a symlinked info/ dir and rm -f the target so the redirect
+        # writes a fresh regular file in place.
+        if [[ -L "$sanitized_git/objects/info" ]]; then
+            log_warn "sanitized objects/info is a symlink — skipping re-point (possible tampering)"
+        else
+            rm -f "$sanitized_git/objects/info/alternates" 2>/dev/null || true
+            printf '%s\n' "$objects_path" > "$sanitized_git/objects/info/alternates"
+            log_debug "Re-pointed sanitized git objects alternate -> $objects_path"
+        fi
+    # Legacy model: objects is a symlink to the container path (or absent).
+    elif [[ -L "$sanitized_git/objects" ]] || [[ ! -e "$sanitized_git/objects" ]]; then
         ln -sfn "$objects_path" "$sanitized_git/objects"
-        log_debug "Re-pointed sanitized git objects: $sanitized_git/objects -> $objects_path"
+        log_debug "Re-pointed sanitized git objects symlink -> $objects_path"
     else
-        log_warn "sanitized git objects is not a symlink — skipping re-point"
+        log_warn "sanitized git objects is neither an alternate nor a symlink — skipping re-point"
+    fi
+}
+
+# Restore the worktree's /workspace/.git pointer to the REAL, host-side gitdir
+# before the host runs any git op. The worktree root is mounted read-write into the
+# container, so a compromised agent can repoint /workspace/.git at an
+# agent-controlled gitdir (e.g. the sanitized .git-safe, or a dir under the
+# worktree) whose config/hooks then execute on the HOST when kapsis does
+# `cd "$worktree" && git ...`. The real gitdir ($PROJECT_PATH/.git/worktrees/<name>)
+# is NOT mounted into the container, so forcing the pointer back to it makes host
+# git resolve only the trusted (non-agent-writable) config/hooks. Fixes #467.
+_restore_real_worktree_gitpointer() {
+    local worktree_path="${1:-${WORKTREE_PATH:-}}"
+    local project_path="${2:-${PROJECT_PATH:-}}"
+    [[ -z "$worktree_path" || -z "$project_path" ]] && return 0
+    local name real_gitdir
+    name=$(basename "$worktree_path")
+    real_gitdir="$project_path/.git/worktrees/$name"
+    if [[ -d "$real_gitdir" ]]; then
+        # Overwrite unconditionally (a no-op for an untampered pointer).
+        printf 'gitdir: %s\n' "$real_gitdir" > "$worktree_path/.git"
+        log_debug "Restored worktree git pointer -> $real_gitdir (anti-tamper, #467)"
+    else
+        log_warn "Real worktree gitdir not found ($real_gitdir) — leaving .git pointer as-is"
+    fi
+}
+
+# Strip any agent-planted hook / core.hooksPath from the (rw-mounted) sanitized
+# git dir before the host runs git ops. Defense-in-depth for the writable-git
+# change; a no-op when the dir/config is absent.
+_neutralize_sanitized_git_hooks() {
+    local sanitized_git="${1:-${SANITIZED_GIT_PATH:-}}"
+    [[ -z "$sanitized_git" || ! -d "$sanitized_git" ]] && return 0
+    if [[ -d "$sanitized_git/hooks" && ! -L "$sanitized_git/hooks" ]]; then
+        find "$sanitized_git/hooks" -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true
+    fi
+    if [[ -f "$sanitized_git/config" && ! -L "$sanitized_git/config" ]]; then
+        git config --file "$sanitized_git/config" --unset-all core.hooksPath 2>/dev/null || true
     fi
 }
 
@@ -3661,6 +3726,17 @@ post_container_worktree() {
 
     # Declare unconditionally so cleanup guard and return always have a defined value (Issue #256)
     local _pcg_rc=0
+
+    # Anti-tamper (issue #467): before ANY host git op, force /workspace/.git back
+    # to the real, host-side gitdir so a repointed pointer can't make host git
+    # resolve an agent-controlled config/hook. Must run first.
+    _restore_real_worktree_gitpointer "$WORKTREE_PATH" "$PROJECT_PATH"
+
+    # Defense-in-depth: the sanitized git dir is mounted rw for the agent's
+    # in-container git, so the agent could have planted a hook in its hooks/ dir or
+    # a core.hooksPath in its config. Neutralize both before host git ops so no
+    # agent-planted hook fires on the host even if something resolves into it.
+    _neutralize_sanitized_git_hooks "$SANITIZED_GIT_PATH"
 
     # Re-point sanitized git objects symlink BEFORE any git operations (#219)
     # Must happen first so git status and sync_index_from_container work correctly
@@ -3713,6 +3789,8 @@ post_container_worktree() {
         # writes to the same shell's _KAPSIS_COMMIT_STATUS variable, which is read later
         # by status_get_commit_status in the FINAL_EXIT_CODE logic (Issue #256)
         source "$post_container_script"
+        # Expose the base branch to the host post-push hook (run_post_push_hook).
+        export KAPSIS_BASE_BRANCH="${BASE_BRANCH:-}"
         # post_container_git sets PR_URL global variable
         # Capture return code to prevent set -e from killing the function (Issue #256)
         # CRITICAL: This || capture is inseparable from the outer || capture at the
