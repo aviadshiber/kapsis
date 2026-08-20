@@ -35,7 +35,12 @@ export interface AgentStatus {
   error: string | null;
   worktree_path: string | null;
   pr_url: string | null;
-  push_status: "success" | "failed" | "skipped" | "unverified" | null;
+  // Outcome of the provider-pluggable post-push PR hook (git.post_push_hook).
+  // "failed:<reason>" carries the failure reason (e.g. "failed:exit3").
+  // Optional (like transcript_content_missing) so existing status fixtures that
+  // predate this field still satisfy AgentStatus.
+  pr_hook_status?: "skipped" | "ok" | `failed:${string}` | null;
+  push_status: "success" | "failed" | "skipped" | "unverified" | "diverged" | null;
   local_commit: string | null;
   remote_commit: string | null;
   push_fallback_command: string | null;

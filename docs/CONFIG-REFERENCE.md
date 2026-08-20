@@ -736,6 +736,17 @@ git:
   # {base_url}, {repo_path}, {branch} placeholders. Overrides `provider`.
   # pr_url_template: "{base_url}/{repo_path}/pull-requests/new?source={branch}"
 
+  # Provider-agnostic post-push hook. A shell command run on the HOST after a
+  # verified push (e.g. to open a pull request). kapsis stays provider-neutral —
+  # you supply the command (gh, glab, bitbucket CLI, curl, etc.). Unset = kapsis
+  # just prints PR instructions (default). The command runs via `bash -c` and
+  # receives these environment variables (agent-influenced — quote them, never
+  # eval): KAPSIS_REMOTE_BRANCH, KAPSIS_BASE_BRANCH, KAPSIS_PUSHED_SHA,
+  # KAPSIS_REMOTE_URL. If the command prints a URL on stdout it is captured as the
+  # PR URL. The outcome is recorded in the status file as `pr_hook_status`
+  # (skipped | ok | failed:<reason>); a failed hook is surfaced, never silent.
+  # post_push_hook: 'gh pr create --head "$KAPSIS_REMOTE_BRANCH" --base "$KAPSIS_BASE_BRANCH" --fill'
+
     # Commit message template
     # Available placeholders (substituted at launch time):
     #   {task}      - Task description (from --task or spec filename)

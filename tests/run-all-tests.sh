@@ -48,7 +48,7 @@ echo "test-input-validation.sh test-path-spaces.sh test-dry-run-completeness.sh 
 echo "test-security.sh test-security-no-root.sh test-agent-id-unique.sh test-env-api-keys.sh test-container-libs.sh test-container-plugin-hooks.sh test-ssh-keychain.sh test-keychain-retrieval.sh test-ssh-cache-cleanup.sh test-keychain-platform.sh test-config-security.sh test-network-isolation.sh test-scope-validation.sh test-sanitize-files.sh test-ssh-config-portability.sh test-git-credential-helper.sh test-secret-store-injection.sh test-secret-store.sh test-audit-patterns.sh test-container-status-hooks.sh test-container-gist-hook.sh test-container-all-hooks.sh test-gist-injection-provenance.sh test-host-strip-audit.sh"
             ;;
         git)
-            echo "test-git-new-branch.sh test-git-auto-commit-push.sh test-worktree-isolation.sh test-worktree-cleanup.sh test-push-verification.sh test-git-excludes.sh test-validate-staged-files.sh test-ephemeral-artifact-filtering.sh test-coauthor-fork.sh test-post-container-git.sh test-sanitized-git-objects.sh test-init-git-branch.sh test-post-exit-git.sh test-kapsis-artifact-filter.sh"
+            echo "test-git-new-branch.sh test-git-auto-commit-push.sh test-worktree-isolation.sh test-worktree-cleanup.sh test-push-verification.sh test-git-excludes.sh test-validate-staged-files.sh test-ephemeral-artifact-filtering.sh test-coauthor-fork.sh test-post-container-git.sh test-sanitized-git-objects.sh test-init-git-branch.sh test-post-exit-git.sh test-kapsis-artifact-filter.sh test-worktree-incontainer-git.sh"
             ;;
         cleanup)
             echo "test-cleanup-sandbox.sh test-cleanup-snapshots.sh test-cleanup-conversations.sh test-cleanup-status-lifecycle.sh test-volume-cleanup.sh"

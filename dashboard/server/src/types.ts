@@ -37,4 +37,10 @@
 // type (string | null, defined in dashboard/shared/src/index.ts) is
 // unchanged. No schema change here; this comment satisfies dashboard-
 // sync.yml's file-presence check.
+// Worktree in-container git PR (feat/worktree-in-container-push) added a
+// provider-pluggable host-side post-push hook. scripts/lib/status.sh gained
+// AgentStatus.pr_hook_status ("skipped" | "ok" | `failed:${string}` | null) and
+// extended push_status with "diverged" (fetch-before-push guard). Both are
+// defined in dashboard/shared/src/index.ts; this note satisfies dashboard-
+// sync.yml's file-presence check.
 export * from "@kapsis/dashboard-shared";

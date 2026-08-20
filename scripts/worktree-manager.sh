@@ -442,9 +442,25 @@ create_worktree() {
 # Security measures:
 # - Empty hooks directory (prevents execution of malicious hooks)
 # - Minimal config (no credential helpers, fixed identity)
-# - Read-only objects link (prevents object corruption)
+# - Writable objects dir borrowing the parent DB read-only via an alternate
 # - Isolated refs (agent only sees its own branch)
 #===============================================================================
+
+# Set up the sanitized git objects store as a writable local dir that borrows the
+# parent object DB read-only via objects/info/alternates. This lets in-container
+# `git commit` write new objects locally while existing objects resolve from the
+# (read-only) parent mount. Replaces the old read-only symlink, which made commit
+# fail. $2 is the objects path to borrow (container path at prepare time; the host
+# re-points it via repoint_sanitized_git_objects post-container).
+_prepare_objects_alternate() {
+    local sanitized_dir="$1"
+    local objects_path="$2"
+    rm -f "$sanitized_dir/objects" 2>/dev/null || true   # drop any prior symlink
+    mkdir -p "$sanitized_dir/objects/info" "$sanitized_dir/objects/pack"
+    printf '%s\n' "$objects_path" > "$sanitized_dir/objects/info/alternates"
+    log_debug "Created objects dir + alternate -> $objects_path"
+}
+
 prepare_sanitized_git() {
     local worktree_path="$1"
     local agent_id="$2"
@@ -519,12 +535,14 @@ prepare_sanitized_git() {
     # Create minimal safe config
     create_safe_git_config "$sanitized_dir/config" "$worktree_path" "$agent_id"
 
-    # Create objects symlink pointing to container mount path
-    # The sanitized git will be mounted at $CONTAINER_GIT_PATH
-    # and objects will be mounted at $CONTAINER_OBJECTS_PATH
-    # This symlink allows git to find objects when running inside the container
-    ln -sfn "$CONTAINER_OBJECTS_PATH" "$sanitized_dir/objects"
-    log_debug "Created objects symlink -> $CONTAINER_OBJECTS_PATH"
+    # Objects: writable local dir + a git ALTERNATE borrowing the parent object DB
+    # read-only. A plain symlink to the (read-only) parent objects mount made
+    # in-container `git commit` fail (nowhere to write new objects). With an
+    # alternate, new commit objects land in the writable local objects/ dir while
+    # existing objects are borrowed read-only from $CONTAINER_OBJECTS_PATH.
+    # The host re-points this alternate to the host objects path post-container
+    # (see repoint_sanitized_git_objects).
+    _prepare_objects_alternate "$sanitized_dir" "$CONTAINER_OBJECTS_PATH"
 
     # Create info/exclude with protective patterns (issue #89)
     # This ensures the container's git operations respect our exclude patterns

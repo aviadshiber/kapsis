@@ -56,7 +56,8 @@ _KAPSIS_STATUS_STARTED=""
 _KAPSIS_STATUS_INITIALIZED=false
 
 # Push verification state
-_KAPSIS_PUSH_STATUS=""           # "success", "failed", "skipped", "unverified"
+_KAPSIS_PUSH_STATUS=""           # "success", "failed", "skipped", "unverified", "diverged"
+_KAPSIS_PR_HOOK_STATUS=""        # "skipped", "ok", "failed:<reason>" (post-push PR hook)
 _KAPSIS_PUSH_FALLBACK_CMD=""     # Fallback command for agent recovery when push fails
 _KAPSIS_LOCAL_COMMIT=""     # Local HEAD commit SHA
 _KAPSIS_REMOTE_COMMIT=""    # Remote HEAD commit SHA after push
@@ -268,6 +269,12 @@ status_set_push_info() {
     _KAPSIS_PUSH_STATUS="${1:-unverified}"
     _KAPSIS_LOCAL_COMMIT="${2:-}"
     _KAPSIS_REMOTE_COMMIT="${3:-}"
+}
+
+# Record the outcome of the provider-pluggable post-push PR hook.
+# Arguments: $1 - status ("skipped" | "ok" | "failed:<reason>")
+status_set_pr_hook_info() {
+    _KAPSIS_PR_HOOK_STATUS="${1:-skipped}"
 }
 
 # Set push fallback command for agent recovery
@@ -616,6 +623,9 @@ _status_write() {
     local push_status_json="null"
     [[ -n "$_KAPSIS_PUSH_STATUS" ]] && push_status_json="\"$_KAPSIS_PUSH_STATUS\""
 
+    local pr_hook_status_json="null"
+    [[ -n "$_KAPSIS_PR_HOOK_STATUS" ]] && pr_hook_status_json="\"$(_status_json_escape "$_KAPSIS_PR_HOOK_STATUS")\""
+
     local local_commit_json="null"
     [[ -n "$_KAPSIS_LOCAL_COMMIT" ]] && local_commit_json="\"$_KAPSIS_LOCAL_COMMIT\""
 
@@ -687,6 +697,7 @@ _status_write() {
   "error": ${error_json},
   "worktree_path": ${worktree_json},
   "pr_url": ${pr_url_json},
+  "pr_hook_status": ${pr_hook_status_json},
   "push_status": ${push_status_json},
   "local_commit": ${local_commit_json},
   "remote_commit": ${remote_commit_json},
