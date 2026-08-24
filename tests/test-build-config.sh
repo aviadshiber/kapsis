@@ -305,6 +305,33 @@ test_build_args_yq_arm64_checksum() {
     assert_contains "$args_string" "YQ_SHA256_ARM64=" "Should include YQ_SHA256_ARM64 (previously had no config override at all)"
 }
 
+# Regression: build-profiles omit dependency_managers.yq. The parser must NOT then
+# pass a stale hardcoded YQ_VERSION (previously "4.44.3") while leaving the SHAs
+# empty — that made the Containerfile's pinned 4.53.3 checksums reject the 4.44.3
+# download and broke arm64 profile builds. Profiles without a yq pin must defer to
+# the Containerfile's pinned default (no yq build-args emitted).
+test_build_args_profile_yq_defers_to_containerfile() {
+    log_test "Profile without yq pin must not emit a stale YQ_VERSION build-arg"
+
+    if ! check_yq_installed; then
+        return 0
+    fi
+
+    unset _KAPSIS_BUILD_CONFIG_LOADED
+    source "$BUILD_CONFIG_LIB"
+
+    parse_build_config "$CONFIGS_DIR/build-profiles/full-stack.yaml"
+    generate_build_args
+
+    local args_string
+    args_string=$(printf '%s ' "${BUILD_ARGS[@]}")
+
+    assert_not_contains "$args_string" "YQ_VERSION=" \
+        "profile without yq must NOT pass YQ_VERSION (defer to Containerfile pin)"
+    assert_not_contains "$args_string" "YQ_SHA256_ARM64=" \
+        "profile without yq must NOT pass a (mismatched) arm64 checksum"
+}
+
 test_build_args_for_minimal() {
     log_test "Testing BUILD_ARGS for minimal profile"
 
@@ -551,6 +578,7 @@ main() {
     # Build args tests
     run_test test_build_args_generation
 run_test test_build_args_yq_arm64_checksum
+    run_test test_build_args_profile_yq_defers_to_containerfile
     run_test test_build_args_for_minimal
 
     # Size estimation tests
