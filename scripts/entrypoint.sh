@@ -1935,8 +1935,20 @@ main() {
         protect_dns_files
     fi
 
-    if [[ "$sandbox_mode" == "worktree" ]] || setup_worktree_git; then
-        # Worktree mode: git is already set up by host
+    # Worktree mode needs GIT_DIR exported by setup_worktree_git() so the
+    # in-container agent has working git (status/diff/add/commit). The old
+    # `[[ ==worktree ]] || setup_worktree_git` short-circuited that call away in
+    # worktree mode, leaving GIT_DIR unset and in-container git non-functional.
+    # Run it explicitly whenever we are in worktree mode.
+    local _kapsis_is_worktree=false
+    if [[ "$sandbox_mode" == "worktree" ]]; then
+        setup_worktree_git || log_warn "worktree git setup incomplete; in-container git may be limited"
+        _kapsis_is_worktree=true
+    elif setup_worktree_git; then
+        _kapsis_is_worktree=true
+    fi
+    if [[ "$_kapsis_is_worktree" == "true" ]]; then
+        # Worktree mode: GIT_DIR now points at the sanitized .git-safe.
         log_info "Sandbox mode: worktree"
         log_debug "Setting up worktree mode environment"
 
@@ -2054,4 +2066,7 @@ main() {
     fi
 }
 
-main "$@"
+# Only run main when executed directly (not when sourced by unit tests).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
