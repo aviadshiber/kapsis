@@ -52,8 +52,11 @@ declare -g DEFAULT_OVERLAY_ENABLED="true"
 declare -g DEFAULT_SECRET_STORE_ENABLED="true"
 
 # yq defaults
-declare -g DEFAULT_YQ_VERSION="4.44.3"
-declare -g DEFAULT_YQ_SHA256="a2c097180dd884a8d50c956ee16a9cec070f30a7947cf4ebf87d5f36213e9ed7"
+# Empty by default: when a config doesn't specify yq, defer to the Containerfile's
+# pinned YQ_VERSION + checksums (single source of truth) rather than a hardcoded
+# version here that can drift from the pin and break checksum verification.
+declare -g DEFAULT_YQ_VERSION=""
+declare -g DEFAULT_YQ_SHA256=""
 declare -g DEFAULT_YQ_SHA256_ARM64=""
 
 #===============================================================================
@@ -207,9 +210,21 @@ parse_build_config() {
     fi
 
     # Parse yq settings
-    YQ_VERSION=$(yq -r '.dependency_managers.yq.version // "4.44.3"' "$config_file")
+    # Empty when unset so the Containerfile's pinned yq default (and matching SHAs)
+    # is used, rather than a stale hardcoded version that drifts from the pin.
+    YQ_VERSION=$(yq -r '.dependency_managers.yq.version // ""' "$config_file")
     YQ_SHA256=$(yq -r '.dependency_managers.yq.sha256 // ""' "$config_file")
     YQ_SHA256_ARM64=$(yq -r '.dependency_managers.yq.sha256_arm64 // ""' "$config_file")
+
+    # If a config explicitly pins yq.version, it MUST also pin BOTH checksums.
+    # Otherwise the pinned version is downloaded but verified against the
+    # Containerfile's DEFAULT SHAs (which belong to a different version) — a
+    # cryptic "yq <arch> checksum mismatch" mid-build. Fail fast with guidance.
+    if [[ -n "$YQ_VERSION" ]] && { [[ -z "$YQ_SHA256" ]] || [[ -z "$YQ_SHA256_ARM64" ]]; }; then
+        log_error "dependency_managers.yq.version is pinned ($YQ_VERSION) but sha256/sha256_arm64 is missing in: $config_file"
+        log_error "Pin all three (version + sha256 + sha256_arm64), or none (to use the Containerfile's pinned default)."
+        return 1
+    fi
 
     _generate_build_args
 }
@@ -303,10 +318,17 @@ _generate_build_args() {
         "--build-arg" "ENABLE_OVERLAY=$ENABLE_OVERLAY"
         "--build-arg" "ENABLE_SECRET_STORE=$ENABLE_SECRET_STORE"
         "--build-arg" "CUSTOM_PACKAGES=$CUSTOM_PACKAGES"
-
-        # yq configuration
-        "--build-arg" "YQ_VERSION=$YQ_VERSION"
     )
+
+    # yq: only override the Containerfile's pinned defaults when the config
+    # explicitly sets yq. Every build-profile omits dependency_managers.yq, so a
+    # non-empty version fallback here (previously "4.44.3") passed YQ_VERSION while
+    # the SHAs stayed empty — and the Containerfile's pinned 4.53.3 checksums then
+    # rejected the 4.44.3 download, breaking arm64 profile builds. Deferring to the
+    # Containerfile keeps a single source of truth for the pin.
+    if [[ -n "$YQ_VERSION" ]]; then
+        BUILD_ARGS+=("--build-arg" "YQ_VERSION=$YQ_VERSION")
+    fi
 
     # Only add SHA256 if provided
     if [[ -n "$YQ_SHA256" ]]; then

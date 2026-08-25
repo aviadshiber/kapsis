@@ -303,6 +303,63 @@ test_build_args_yq_arm64_checksum() {
 
     assert_contains "$args_string" "YQ_SHA256_AMD64=" "Should include YQ_SHA256_AMD64"
     assert_contains "$args_string" "YQ_SHA256_ARM64=" "Should include YQ_SHA256_ARM64 (previously had no config override at all)"
+    # Positive branch: when a config explicitly pins yq, YQ_VERSION IS passed.
+    assert_contains "$args_string" "YQ_VERSION=4.53.3" "Should pass YQ_VERSION when the config pins yq"
+}
+
+# Regression: build-profiles omit dependency_managers.yq. The parser must NOT then
+# pass a stale hardcoded YQ_VERSION (previously "4.44.3") while leaving the SHAs
+# empty — that made the Containerfile's pinned 4.53.3 checksums reject the 4.44.3
+# download and broke arm64 profile builds. Profiles without a yq pin must defer to
+# the Containerfile's pinned default (no yq build-args emitted).
+test_build_args_profile_yq_defers_to_containerfile() {
+    log_test "Profile without yq pin must not emit a stale YQ_VERSION build-arg"
+
+    if ! check_yq_installed; then
+        return 0
+    fi
+
+    unset _KAPSIS_BUILD_CONFIG_LOADED
+    source "$BUILD_CONFIG_LIB"
+
+    # parse_build_config regenerates BUILD_ARGS internally (via _generate_build_args).
+    parse_build_config "$CONFIGS_DIR/build-profiles/full-stack.yaml"
+
+    local args_string
+    args_string=$(printf '%s ' "${BUILD_ARGS[@]}")
+
+    # Sanity: BUILD_ARGS is actually populated, so the assert_not_contains checks
+    # below can't pass vacuously on an empty array.
+    assert_contains "$args_string" "ENABLE_JAVA=" \
+        "full-stack should emit ENABLE_JAVA (confirms BUILD_ARGS populated)"
+    assert_not_contains "$args_string" "YQ_VERSION=" \
+        "profile without yq must NOT pass YQ_VERSION (defer to Containerfile pin)"
+    assert_not_contains "$args_string" "YQ_SHA256_ARM64=" \
+        "profile without yq must NOT pass a (mismatched) arm64 checksum"
+}
+
+# A config that pins yq.version WITHOUT both checksums must fail fast, rather than
+# silently downloading that version and verifying it against the Containerfile's
+# default (different-version) SHAs -> mid-build "yq checksum mismatch".
+test_yq_version_without_sha_fails_fast() {
+    log_test "yq.version pinned without matching checksums must fail fast"
+
+    if ! check_yq_installed; then
+        return 0
+    fi
+
+    unset _KAPSIS_BUILD_CONFIG_LOADED
+    source "$BUILD_CONFIG_LIB"
+
+    local tmp_dir tmp_cfg
+    tmp_dir=$(mktemp -d)
+    tmp_cfg="$tmp_dir/cfg.yaml"
+    printf 'dependency_managers:\n  yq:\n    version: "4.99.9"\n' > "$tmp_cfg"
+
+    assert_command_fails "parse_build_config '$tmp_cfg'" \
+        "pinning yq.version without sha256/sha256_arm64 must return non-zero"
+
+    rm -rf "$tmp_dir"
 }
 
 test_build_args_for_minimal() {
@@ -551,6 +608,8 @@ main() {
     # Build args tests
     run_test test_build_args_generation
 run_test test_build_args_yq_arm64_checksum
+    run_test test_build_args_profile_yq_defers_to_containerfile
+    run_test test_yq_version_without_sha_fails_fast
     run_test test_build_args_for_minimal
 
     # Size estimation tests
