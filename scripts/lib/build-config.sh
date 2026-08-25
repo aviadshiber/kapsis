@@ -216,6 +216,16 @@ parse_build_config() {
     YQ_SHA256=$(yq -r '.dependency_managers.yq.sha256 // ""' "$config_file")
     YQ_SHA256_ARM64=$(yq -r '.dependency_managers.yq.sha256_arm64 // ""' "$config_file")
 
+    # If a config explicitly pins yq.version, it MUST also pin BOTH checksums.
+    # Otherwise the pinned version is downloaded but verified against the
+    # Containerfile's DEFAULT SHAs (which belong to a different version) — a
+    # cryptic "yq <arch> checksum mismatch" mid-build. Fail fast with guidance.
+    if [[ -n "$YQ_VERSION" ]] && { [[ -z "$YQ_SHA256" ]] || [[ -z "$YQ_SHA256_ARM64" ]]; }; then
+        log_error "dependency_managers.yq.version is pinned ($YQ_VERSION) but sha256/sha256_arm64 is missing in: $config_file"
+        log_error "Pin all three (version + sha256 + sha256_arm64), or none (to use the Containerfile's pinned default)."
+        return 1
+    fi
+
     _generate_build_args
 }
 

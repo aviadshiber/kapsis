@@ -338,6 +338,30 @@ test_build_args_profile_yq_defers_to_containerfile() {
         "profile without yq must NOT pass a (mismatched) arm64 checksum"
 }
 
+# A config that pins yq.version WITHOUT both checksums must fail fast, rather than
+# silently downloading that version and verifying it against the Containerfile's
+# default (different-version) SHAs -> mid-build "yq checksum mismatch".
+test_yq_version_without_sha_fails_fast() {
+    log_test "yq.version pinned without matching checksums must fail fast"
+
+    if ! check_yq_installed; then
+        return 0
+    fi
+
+    unset _KAPSIS_BUILD_CONFIG_LOADED
+    source "$BUILD_CONFIG_LIB"
+
+    local tmp_dir tmp_cfg
+    tmp_dir=$(mktemp -d)
+    tmp_cfg="$tmp_dir/cfg.yaml"
+    printf 'dependency_managers:\n  yq:\n    version: "4.99.9"\n' > "$tmp_cfg"
+
+    assert_command_fails "parse_build_config '$tmp_cfg'" \
+        "pinning yq.version without sha256/sha256_arm64 must return non-zero"
+
+    rm -rf "$tmp_dir"
+}
+
 test_build_args_for_minimal() {
     log_test "Testing BUILD_ARGS for minimal profile"
 
@@ -585,6 +609,7 @@ main() {
     run_test test_build_args_generation
 run_test test_build_args_yq_arm64_checksum
     run_test test_build_args_profile_yq_defers_to_containerfile
+    run_test test_yq_version_without_sha_fails_fast
     run_test test_build_args_for_minimal
 
     # Size estimation tests
