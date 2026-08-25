@@ -138,6 +138,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Release v3.2.5
 
+## [3.2.6] - 2026-08-25
+
+### Fixed
+- Defer yq to Containerfile pin so --profile builds don't break on arm64 (#468)
+
 ## [Unreleased]
 
 ## [2.28.9] - 2026-05-17
@@ -1173,7 +1178,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.5...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.6...HEAD
+[3.2.6]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.6
 [3.2.5]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.5
 [3.2.4]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.4
 [3.2.3]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.3
