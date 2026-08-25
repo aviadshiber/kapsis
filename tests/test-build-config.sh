@@ -303,6 +303,8 @@ test_build_args_yq_arm64_checksum() {
 
     assert_contains "$args_string" "YQ_SHA256_AMD64=" "Should include YQ_SHA256_AMD64"
     assert_contains "$args_string" "YQ_SHA256_ARM64=" "Should include YQ_SHA256_ARM64 (previously had no config override at all)"
+    # Positive branch: when a config explicitly pins yq, YQ_VERSION IS passed.
+    assert_contains "$args_string" "YQ_VERSION=4.53.3" "Should pass YQ_VERSION when the config pins yq"
 }
 
 # Regression: build-profiles omit dependency_managers.yq. The parser must NOT then
@@ -320,12 +322,16 @@ test_build_args_profile_yq_defers_to_containerfile() {
     unset _KAPSIS_BUILD_CONFIG_LOADED
     source "$BUILD_CONFIG_LIB"
 
+    # parse_build_config regenerates BUILD_ARGS internally (via _generate_build_args).
     parse_build_config "$CONFIGS_DIR/build-profiles/full-stack.yaml"
-    generate_build_args
 
     local args_string
     args_string=$(printf '%s ' "${BUILD_ARGS[@]}")
 
+    # Sanity: BUILD_ARGS is actually populated, so the assert_not_contains checks
+    # below can't pass vacuously on an empty array.
+    assert_contains "$args_string" "ENABLE_JAVA=" \
+        "full-stack should emit ENABLE_JAVA (confirms BUILD_ARGS populated)"
     assert_not_contains "$args_string" "YQ_VERSION=" \
         "profile without yq must NOT pass YQ_VERSION (defer to Containerfile pin)"
     assert_not_contains "$args_string" "YQ_SHA256_ARM64=" \
