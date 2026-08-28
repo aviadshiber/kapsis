@@ -561,6 +561,35 @@ test_ssh_probe_source_integration() {
         "backend should check KAPSIS_SSH_PROBE_PASSED to avoid double probing"
 }
 
+# Regression guard (Issue #409): the launch path and preflight gate must target
+# the machine via ${KAPSIS_PODMAN_MACHINE:-podman-machine-default}, not a bare
+# hardcoded podman-machine-default. Otherwise Kapsis can only run on a machine
+# literally named podman-machine-default, blocking libkrun coexistence.
+test_machine_name_honors_kapsis_podman_machine() {
+    log_test "Testing launch/preflight resolve KAPSIS_PODMAN_MACHINE (Issue #409)"
+
+    local preflight_content backend_content build_content
+    preflight_content=$(cat "$PREFLIGHT_SCRIPT")
+    backend_content=$(cat "$KAPSIS_ROOT/scripts/backends/podman.sh")
+    build_content=$(cat "$KAPSIS_ROOT/scripts/build-image.sh")
+
+    # Each must resolve the machine through the env var …
+    assert_contains "$preflight_content" 'KAPSIS_PODMAN_MACHINE:-podman-machine-default' \
+        "preflight check_podman should resolve KAPSIS_PODMAN_MACHINE"
+    assert_contains "$backend_content" 'KAPSIS_PODMAN_MACHINE:-podman-machine-default' \
+        "backend_validate should resolve KAPSIS_PODMAN_MACHINE"
+    assert_contains "$build_content" 'KAPSIS_PODMAN_MACHINE:-podman-machine-default' \
+        "build-image should resolve KAPSIS_PODMAN_MACHINE"
+
+    # … and must NOT bare-hardcode the machine name in an inspect/start call.
+    assert_not_contains "$preflight_content" 'machine inspect podman-machine-default' \
+        "preflight must not hardcode 'machine inspect podman-machine-default'"
+    assert_not_contains "$backend_content" 'machine inspect podman-machine-default' \
+        "backend must not hardcode 'machine inspect podman-machine-default'"
+    assert_not_contains "$build_content" 'machine inspect podman-machine-default' \
+        "build-image must not hardcode 'machine inspect podman-machine-default'"
+}
+
 # Behavioral: check_podman fails when SSH tunnel is permanently stale
 test_check_podman_fails_on_stale_ssh() {
     log_test "Testing check_podman fails when SSH tunnel is stale"
@@ -811,6 +840,7 @@ main() {
 
     # SSH connectivity tests (Issue #255)
     run_test test_ssh_probe_source_integration
+    run_test test_machine_name_honors_kapsis_podman_machine
     run_test test_check_podman_fails_on_stale_ssh
     run_test test_check_podman_passes_on_healthy_ssh
     run_test test_check_podman_recovers_on_retry

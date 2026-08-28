@@ -317,20 +317,21 @@ _podman_ssh_probe() {
 #   $1 - machine name (default: podman-machine-default)
 #-------------------------------------------------------------------------------
 _kill_vfkit_zombie() {
-    local machine="${1:-podman-machine-default}"
+    local machine="${1:-${KAPSIS_PODMAN_MACHINE:-podman-machine-default}}"
     declare -f log_warn &>/dev/null && log_warn "Killing vfkit/krunkit hypervisor for '$machine' (zombie VM recovery)"
     pkill -9 -f "(vfkit|krunkit).*${machine}" &>/dev/null || true
 
     # Remove stale runtime artefacts left by the hard-killed hypervisor so that
     # the subsequent `podman machine start` does not refuse to start or silently
-    # reuse a stale socket (Issue #297).  Covers applehv (Podman 5.x), qemu
-    # (Podman 4.x), and the legacy flat layout.
+    # reuse a stale socket (Issue #297).  Covers applehv (Podman 5.x), libkrun
+    # (Podman 6.x, Issue #409), qemu (Podman 4.x), and the legacy flat layout.
     # Removed: *.pid  *.sock  *.lock   (runtime-only, safe to delete)
     # Kept:    *.json *.raw *.qcow2 *.ign  (config/disk — must not be deleted)
     local state_base="${XDG_DATA_HOME:-${HOME}/.local/share}/containers/podman/machine"
     local machine_dir
     for machine_dir in \
             "${state_base}/applehv/${machine}" \
+            "${state_base}/libkrun/${machine}" \
             "${state_base}/qemu/${machine}" \
             "${state_base}/${machine}"; do
         if [[ -d "$machine_dir" ]]; then

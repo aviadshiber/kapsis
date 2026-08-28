@@ -69,14 +69,15 @@ check_podman() {
         return 1
     fi
 
-    if ! podman machine inspect podman-machine-default &>/dev/null; then
-        preflight_error "Podman machine 'podman-machine-default' not found"
+    local machine="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
+    if ! podman machine inspect "$machine" &>/dev/null; then
+        preflight_error "Podman machine '$machine' not found"
         preflight_error "  Run: podman machine init"
         return 1
     fi
 
     local machine_state
-    machine_state=$(podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null || echo "unknown")
+    machine_state=$(podman machine inspect "$machine" --format '{{.State}}' 2>/dev/null || echo "unknown")
 
     if [[ "$machine_state" != "running" ]]; then
         preflight_error "Podman machine is not running (state: $machine_state)"

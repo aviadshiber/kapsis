@@ -50,6 +50,20 @@ podman machine init --provider libkrun kapsis-libkrun
 podman machine start kapsis-libkrun
 ```
 
+**Point Kapsis at the new machine.** Kapsis targets the Podman machine named by
+`KAPSIS_PODMAN_MACHINE` (default `podman-machine-default`) across the preflight gate, the launch
+path, the image build, cleanup, and the zombie-VM watchdog. Because the `libkrun` machine has a
+different name, export the variable so every Kapsis code path finds it — otherwise preflight
+fails with *"Podman machine 'podman-machine-default' not found"*:
+
+```bash
+export KAPSIS_PODMAN_MACHINE=kapsis-libkrun          # add to your shell profile / launchd env
+```
+
+The original `applehv` machine (`podman-machine-default`) stays on disk untouched — to roll back,
+`podman machine stop kapsis-libkrun`, `podman machine start podman-machine-default`, and unset
+`KAPSIS_PODMAN_MACHINE`.
+
 **Cost of switching:** images and named volumes (including Kapsis's per-agent Maven/Gradle
 caches and `kapsis-*-status` volumes) live inside the machine's disk, not shared across
 machines. Expect to rebuild the Kapsis base image (`./scripts/build-image.sh`) and warm caches
