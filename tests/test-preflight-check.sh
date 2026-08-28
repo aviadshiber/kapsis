@@ -444,6 +444,7 @@ _create_ssh_mock_podman() {
 
     cat > "$mock_dir/podman" <<MOCK
 #!/usr/bin/env bash
+printf '%s\n' "\$*" >> "$mock_dir/.podman_argv"
 if [[ "\${1:-}" == "machine" ]]; then
     if [[ "\${2:-}" == "inspect" ]]; then
         for arg in "\$@"; do
@@ -581,13 +582,42 @@ test_machine_name_honors_kapsis_podman_machine() {
     assert_contains "$build_content" 'KAPSIS_PODMAN_MACHINE:-podman-machine-default' \
         "build-image should resolve KAPSIS_PODMAN_MACHINE"
 
-    # … and must NOT bare-hardcode the machine name in an inspect/start call.
+    # … and must NOT bare-hardcode the machine name in an inspect OR start call
+    # (guarding both prevents a partial revert of just one call site).
     assert_not_contains "$preflight_content" 'machine inspect podman-machine-default' \
         "preflight must not hardcode 'machine inspect podman-machine-default'"
     assert_not_contains "$backend_content" 'machine inspect podman-machine-default' \
         "backend must not hardcode 'machine inspect podman-machine-default'"
+    assert_not_contains "$backend_content" 'machine start podman-machine-default' \
+        "backend must not hardcode 'machine start podman-machine-default'"
     assert_not_contains "$build_content" 'machine inspect podman-machine-default' \
         "build-image must not hardcode 'machine inspect podman-machine-default'"
+    assert_not_contains "$build_content" 'machine start podman-machine-default' \
+        "build-image must not hardcode 'machine start podman-machine-default'"
+}
+
+# Behavioral (Issue #409): prove check_podman actually threads
+# KAPSIS_PODMAN_MACHINE into the runtime `podman machine inspect` call — a
+# source guard can't catch a scope/typo bug (e.g. inspecting $machin, or a
+# literal still reached at runtime). Reuses the SSH mock, which now logs argv.
+test_check_podman_inspects_machine_from_env() {
+    log_test "Testing check_podman inspects KAPSIS_PODMAN_MACHINE at runtime (Issue #409)"
+
+    local mock_dir
+    mock_dir=$(mktemp -d)
+    _create_ssh_mock_podman "$mock_dir" "succeed"
+    _create_ssh_test_script "$mock_dir" 'export KAPSIS_PODMAN_MACHINE=custom-machine'
+
+    bash "$mock_dir/run-test.sh" >/dev/null 2>&1 || true
+
+    local argv
+    argv=$(cat "$mock_dir/.podman_argv" 2>/dev/null || echo "")
+    rm -rf "$mock_dir"
+
+    assert_contains "$argv" "machine inspect custom-machine" \
+        "check_podman should inspect the machine named by KAPSIS_PODMAN_MACHINE"
+    assert_not_contains "$argv" "inspect podman-machine-default" \
+        "check_podman must not fall back to podman-machine-default when the env var is set"
 }
 
 # Behavioral: check_podman fails when SSH tunnel is permanently stale
@@ -841,6 +871,7 @@ main() {
     # SSH connectivity tests (Issue #255)
     run_test test_ssh_probe_source_integration
     run_test test_machine_name_honors_kapsis_podman_machine
+    run_test test_check_podman_inspects_machine_from_env
     run_test test_check_podman_fails_on_stale_ssh
     run_test test_check_podman_passes_on_healthy_ssh
     run_test test_check_podman_recovers_on_retry

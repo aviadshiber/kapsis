@@ -314,7 +314,7 @@ _podman_ssh_probe() {
 # affected. Called when `podman machine stop` times out or fails.
 #
 # Args:
-#   $1 - machine name (default: podman-machine-default)
+#   $1 - machine name (default: $KAPSIS_PODMAN_MACHINE or podman-machine-default)
 #-------------------------------------------------------------------------------
 _kill_vfkit_zombie() {
     local machine="${1:-${KAPSIS_PODMAN_MACHINE:-podman-machine-default}}"
