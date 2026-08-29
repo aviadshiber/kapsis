@@ -10,7 +10,7 @@
 #   ./launch-agent.sh <project-path> [options]
 #
 # Options:
-#   --agent <name>        Agent shortcut: claude, codex, aider, interactive
+#   --agent <name>        Agent shortcut: claude, codex, gemini, aider, interactive
 #   --config <file>       Config file (overrides --agent)
 #   --task <description>  Inline task description
 #   --spec <file>         Task specification file (markdown)
@@ -246,7 +246,7 @@ Arguments:
   project-path    Path to the project directory to work on
 
 Options:
-  --agent <name>        Agent to use: claude, codex, aider, interactive
+  --agent <name>        Agent to use: claude, codex, gemini, aider, interactive
                         (shortcut for --config configs/<name>.yaml)
   --agent-id <id>       Specify agent ID (for continuing sessions); auto-generated if omitted
   --config <file>       Config file (overrides --agent)
@@ -838,7 +838,7 @@ resolve_config() {
             return
         else
             log_error "Unknown agent: $AGENT_NAME"
-            log_error "Available agents: claude, codex, aider, interactive"
+            log_error "Available agents: claude, codex, gemini, aider, interactive"
             log_error "Or use --config for custom config file"
             exit 1
         fi
@@ -868,7 +868,7 @@ resolve_config() {
 
     log_error "No config file found."
     log_error "Use --agent <name> or --config <file>"
-    log_error "Available agents: claude, codex, aider, interactive"
+    log_error "Available agents: claude, codex, gemini, aider, interactive"
     exit 1
 }
 

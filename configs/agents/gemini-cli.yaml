@@ -1,49 +1,45 @@
-# Google Gemini CLI Agent Profile
-# Official Google CLI for Gemini code generation
+# Google Gemini CLI Agent Profile (build-time)
+# Official Google CLI for Gemini code generation.
 #
 # Build: ./scripts/build-agent-image.sh gemini-cli --profile full-stack
 # Result: kapsis-gemini-cli:latest
 #
-# NOTE: Gemini CLI is TypeScript-based and requires Node.js runtime.
-# No native binary available (as of Jan 2026).
-# See: https://github.com/google-gemini/gemini-cli
+# NOTE: build-agent-image.sh consumes ONLY .name/.install/.dependencies/.description.
+# The runtime command + auth live in the LAUNCH config (configs/gemini.yaml), which
+# is authoritative. The command:/auth: blocks below are documentation kept in sync
+# for humans; they are not read by the build.
+#
+# Gemini CLI is Node.js-based (no native binary). See: https://github.com/google-gemini/gemini-cli
 
 name: gemini-cli
 description: Google Gemini CLI (requires Node.js)
-version: latest
+version: 0.57.0
 
 install:
-  npm: "@google/gemini-cli"
+  # Pinned for reproducible images. Bump deliberately; verify `gemini --help`
+  # inside the built image.
+  npm: "@google/gemini-cli@0.57.0"
 
 dependencies:
   - nodejs >= 18  # Required - no native binary available
+  - git
 
+# Auth (informational — see configs/gemini.yaml for the live wiring).
+# On subscription/OAuth setups there is NO API key: gemini authenticates from
+# ~/.gemini/oauth_creds.json (+ google_accounts.json + google_account_id, Google
+# login), injected as writable copies via the launch config's filesystem.include.
+# GEMINI_API_KEY / GOOGLE_API_KEY passthrough still works if you prefer key auth.
 auth:
-  required:
-    - name: GOOGLE_API_KEY
-      description: "Google API key for Gemini"
-      keychain:
-        macos: "google-api-key"
-        linux: "google-api-key"
   optional:
-    - name: GOOGLE_APPLICATION_CREDENTIALS
-      description: "Path to Google Cloud credentials JSON"
+    - name: GEMINI_API_KEY
+      description: "Gemini API key (alternative to ~/.gemini OAuth session)"
 
-config_mounts:
-  - source: ~/.gemini
-    target: ~/.gemini
-  - source: ~/.config/gcloud
-    target: ~/.config/gcloud
-
-# Gemini CLI command with sandbox mode
-# -s docker: Use Docker/container sandbox for code execution
-command: gemini -s docker
+# Runtime command (informational — authoritative copy in configs/gemini.yaml).
+# `-p` is the non-interactive/headless flag; `--approval-mode yolo` auto-approves
+# tool calls; `--skip-trust` is required for headless runs in untrusted workspaces.
+command: gemini --approval-mode yolo --skip-trust -p
 
 # Hook support
 hooks:
   supported: true
-  types:
-    - tool_call
-    - completion
-    - error
   config_path: ~/.gemini/hooks/

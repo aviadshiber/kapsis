@@ -96,6 +96,10 @@ network:
       # OpenAI (Codex CLI, ChatGPT, GPT API)
       - api.openai.com
       - "*.openai.com"
+      # Codex CLI with ChatGPT-subscription (codex login) auth talks to the
+      # ChatGPT backend, not api.openai.com — required for OAuth-session codex.
+      - chatgpt.com
+      - "*.chatgpt.com"
 
       # Google (Gemini CLI, Vertex AI)
       - generativelanguage.googleapis.com

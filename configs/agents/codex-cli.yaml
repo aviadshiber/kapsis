@@ -1,48 +1,47 @@
-# OpenAI Codex CLI Agent Profile
-# Official OpenAI CLI for code generation
+# OpenAI Codex CLI Agent Profile (build-time)
+# Official OpenAI CLI for code generation.
 #
 # Build: ./scripts/build-agent-image.sh codex-cli --profile full-stack
 # Result: kapsis-codex-cli:latest
 #
-# NOTE: Codex CLI is Node.js-based and requires Node.js runtime.
-# No native binary available (as of Jan 2026).
-# See: https://github.com/openai/codex
+# NOTE: build-agent-image.sh consumes ONLY .name/.install/.dependencies/.description
+# from this file. The runtime command + auth live in the LAUNCH config
+# (configs/codex.yaml), which is authoritative for how the agent is invoked and
+# authenticated. The command:/auth: blocks below are documentation of the current
+# interface, kept in sync for humans; they are not read by the build.
+#
+# Codex CLI is Node.js-based (no native binary). See: https://github.com/openai/codex
 
 name: codex-cli
 description: OpenAI Codex CLI (requires Node.js)
-version: latest
+version: 0.151.0
 
 install:
-  npm: "@openai/codex"
+  # Pinned for reproducible images. Bump deliberately; verify the binary's
+  # `codex exec --help` inside the built image (npm build may differ from Homebrew).
+  npm: "@openai/codex@0.151.0"
 
 dependencies:
   - nodejs >= 18  # Required - no native binary available
   - git
 
+# Auth (informational — see configs/codex.yaml for the live wiring).
+# On subscription/OAuth setups there is NO API key: codex authenticates from
+# ~/.codex/auth.json (ChatGPT login), injected into the container as a writable
+# copy via the launch config's filesystem.include (stage-and-copy path).
+# OPENAI_API_KEY passthrough still works if you prefer key-based auth.
 auth:
-  required:
+  optional:
     - name: OPENAI_API_KEY
-      description: "OpenAI API key for Codex"
-      keychain:
-        macos: "openai-api-key"
-        linux: "openai-api-key"
+      description: "OpenAI API key (alternative to ~/.codex/auth.json OAuth session)"
 
-config_mounts:
-  - source: ~/.codex
-    target: ~/.codex
-
-# Codex CLI command with full-auto approval mode
-# --approval-mode full-auto: Automatically approve all operations
-command: codex --approval-mode full-auto
+# Runtime command (informational — authoritative copy in configs/codex.yaml).
+# `codex exec` is the non-interactive entrypoint; the bypass flag is required
+# because the kapsis container is itself the sandbox (codex's own landlock/seccomp
+# sandbox cannot nest inside it).
+command: codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check
 
 # Hook support
 hooks:
   supported: true
-  types:
-    - exec.pre
-    - exec.post
-    - item.create
-    - item.update
-    - item.delete
-    - completion
-  config_path: ~/.codex/config.yaml
+  config_path: ~/.codex/config.toml
