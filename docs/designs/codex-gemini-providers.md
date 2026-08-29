@@ -87,8 +87,14 @@ each launch config so `parse_config` selects the provider image.
 5. Smoke test in-container; add gemini shortcut test (currently absent).
 
 ## Cross-cutting
-- Verify codex/gemini status-hook adapters fire against the real binaries; fix or document
-  if the assumed hook interfaces are wrong (wrong guess = silent no-op).
+- **KNOWN GAP (status-hook adapters target stale interfaces — deferred to the bot phase).**
+  `inject_codex_hooks` writes `~/.codex/config.yaml`, but codex 0.151 reads `~/.codex/hooks.json`;
+  gemini 0.57 manages hooks via `gemini hooks`. So the status-hook pipeline (and therefore
+  `gist.txt` monitoring) currently does **not** fire for codex/gemini — verified: the
+  `.kapsis/progress.json` seen in smoke runs is the agent following injected *text*
+  instructions, not the hook. This is a silent no-op, not a crash: agent execution,
+  auth, and git workflow are unaffected. Fixing the adapters to the current interfaces
+  is required for the bot phase (which depends on `gist.txt`) and is tracked there.
 - Docs: reconcile CONFIG-REFERENCE / STATUS-TRACKING / ARCHITECTURE / BUILD-CONFIGURATION
   to reflect real launch-time readiness; add this providers doc.
 - CHANGELOG entry.

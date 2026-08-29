@@ -19,9 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Provider images build from `configs/agents/{codex,gemini}-cli.yaml`; launch
   configs `configs/{codex,gemini}.yaml` bind the image, run the correct
   non-interactive command, and inject only the minimal OAuth session files as
-  writable copies (no API key required). New `configs/gemini.yaml`. Verified
-  end-to-end on libkrun in open and filtered network modes. See
-  `docs/designs/codex-gemini-providers.md`.
+  writable copies (no API key required). New `configs/gemini.yaml`. Agent
+  execution, OAuth auth, and git commit verified on libkrun in open and filtered
+  network modes. Known gap: status-hook/gist monitoring does not yet fire for
+  codex/gemini (adapters target stale hook interfaces) — deferred to the bot
+  phase. See `docs/designs/codex-gemini-providers.md`.
 
 ### Fixed
 - Network allowlist: add `chatgpt.com` (Codex ChatGPT-subscription backend) and
