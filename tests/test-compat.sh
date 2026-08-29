@@ -731,6 +731,86 @@ test_kill_vfkit_zombie_pkill_pattern_matches_krunkit() {
     assert_contains "$argv" "podman-machine-krunkit-test" "pkill pattern must still be scoped to the target machine name"
 }
 
+test_kill_vfkit_zombie_cleans_libkrun_state_dir() {
+    log_test "_kill_vfkit_zombie: cleans the libkrun/ state dir (Issue #409)"
+
+    local fake_home
+    fake_home=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-zombie-libkrun.XXXXXX")
+    local d="${fake_home}/.local/share/containers/podman/machine/libkrun/kapsis-libkrun"
+    _zombie_seed_machine_dir "$d"
+
+    pkill() { return 0; }
+    sleep() { return 0; }
+
+    local saved_xdg="${XDG_DATA_HOME:-}"
+    unset XDG_DATA_HOME
+    HOME="$fake_home" _kill_vfkit_zombie "kapsis-libkrun"
+    [[ -n "$saved_xdg" ]] && XDG_DATA_HOME="$saved_xdg" || true
+
+    unset -f pkill sleep
+
+    assert_file_not_exists "${d}/agent.pid"   "libkrun: .pid must be removed"
+    assert_file_not_exists "${d}/api.sock"    "libkrun: .sock must be removed"
+    assert_file_not_exists "${d}/api.lock"    "libkrun: .lock must be removed"
+    assert_file_exists     "${d}/disk.raw"    "libkrun: .raw must be preserved"
+    assert_file_exists     "${d}/config.json" "libkrun: .json must be preserved"
+
+    rm -rf "$fake_home"
+}
+
+test_kill_vfkit_zombie_defaults_to_kapsis_podman_machine() {
+    log_test "_kill_vfkit_zombie: resolves KAPSIS_PODMAN_MACHINE when called without argument (Issue #409)"
+
+    local fake_home
+    fake_home=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-zombie-envdefault.XXXXXX")
+    local base="${fake_home}/.local/share/containers/podman/machine/libkrun"
+    _zombie_seed_machine_dir "${base}/env-machine"
+
+    pkill() { return 0; }
+    sleep() { return 0; }
+
+    local saved_xdg="${XDG_DATA_HOME:-}"
+    unset XDG_DATA_HOME
+    # No machine argument — must fall back to $KAPSIS_PODMAN_MACHINE, not the
+    # bare podman-machine-default literal.
+    HOME="$fake_home" KAPSIS_PODMAN_MACHINE="env-machine" _kill_vfkit_zombie
+    [[ -n "$saved_xdg" ]] && XDG_DATA_HOME="$saved_xdg" || true
+
+    unset -f pkill sleep
+
+    assert_file_not_exists "${base}/env-machine/agent.pid" "env default: .pid of KAPSIS_PODMAN_MACHINE must be removed"
+    assert_file_not_exists "${base}/env-machine/api.sock"  "env default: .sock of KAPSIS_PODMAN_MACHINE must be removed"
+    assert_file_exists     "${base}/env-machine/disk.raw"  "env default: .raw must be preserved"
+
+    rm -rf "$fake_home"
+}
+
+test_kill_vfkit_zombie_rejects_invalid_machine_name() {
+    log_test "_kill_vfkit_zombie: rejects a metachar/traversal machine name without calling pkill (Issue #409)"
+
+    local fake_home pkill_marker rc
+    fake_home=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-zombie-reject.XXXXXX")
+    pkill_marker="${fake_home}/pkill_called"
+    # Seed a state dir that the function WOULD clean if it did not bail out.
+    _zombie_seed_machine_dir "${fake_home}/.local/share/containers/podman/machine/applehv/victim"
+
+    pkill() { touch "$pkill_marker"; return 0; }
+    sleep() { return 0; }
+
+    local saved_xdg="${XDG_DATA_HOME:-}"
+    unset XDG_DATA_HOME
+    rc=0
+    HOME="$fake_home" _kill_vfkit_zombie 'bad;name.*' || rc=$?
+    [[ -n "$saved_xdg" ]] && XDG_DATA_HOME="$saved_xdg" || true
+
+    unset -f pkill sleep
+
+    assert_equals "1" "$rc" "invalid machine name must make _kill_vfkit_zombie return 1"
+    assert_file_not_exists "$pkill_marker" "pkill must NOT be invoked for an invalid machine name"
+
+    rm -rf "$fake_home"
+}
+
 #===============================================================================
 # get_podman_machine_provider() TESTS (Issue #409)
 #===============================================================================
@@ -1086,6 +1166,9 @@ main() {
     run_test test_kill_vfkit_zombie_respects_xdg_data_home
     run_test test_kill_vfkit_zombie_scoped_to_named_machine
     run_test test_kill_vfkit_zombie_pkill_pattern_matches_krunkit
+    run_test test_kill_vfkit_zombie_cleans_libkrun_state_dir
+    run_test test_kill_vfkit_zombie_defaults_to_kapsis_podman_machine
+    run_test test_kill_vfkit_zombie_rejects_invalid_machine_name
 
     # get_podman_machine_provider() tests (Issue #409)
     run_test test_get_podman_machine_provider_libkrun

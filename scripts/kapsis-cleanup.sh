@@ -1454,24 +1454,25 @@ clean_branches() {
 # Returns 1 if collection fails.
 _vm_collect_metrics() {
     local ssh_timeout="${KAPSIS_CLEANUP_VM_SSH_TIMEOUT:-${KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT:-15}}"
+    local machine_name="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
 
     # Inode metrics
     local inode_output
-    inode_output=$(timeout "$ssh_timeout" podman machine ssh -- 'df -i /' 2>/dev/null | tail -1) || {
+    inode_output=$(timeout "$ssh_timeout" podman machine ssh "$machine_name" 'df -i /' 2>/dev/null | tail -1) || {
         log_warn "Failed to collect inode metrics (timeout: ${ssh_timeout}s)"
         return 1
     }
 
     # Disk metrics
     local disk_output
-    disk_output=$(timeout "$ssh_timeout" podman machine ssh -- 'df -h /' 2>/dev/null | tail -1) || {
+    disk_output=$(timeout "$ssh_timeout" podman machine ssh "$machine_name" 'df -h /' 2>/dev/null | tail -1) || {
         log_warn "Failed to collect disk metrics (timeout: ${ssh_timeout}s)"
         return 1
     }
 
     # Journal size
     local journal_output
-    journal_output=$(timeout "$ssh_timeout" podman machine ssh -- 'journalctl --disk-usage' 2>&1 || echo "unknown")
+    journal_output=$(timeout "$ssh_timeout" podman machine ssh "$machine_name" 'journalctl --disk-usage' 2>&1 || echo "unknown")
 
     # Parse inode fields: Filesystem Inodes IUsed IFree IUse% Mounted
     VM_INODE_TOTAL=$(echo "$inode_output" | awk '{print $2}')
@@ -1550,6 +1551,7 @@ _vm_assess_health() {
 _vm_remediate() {
     local vacuum_size="${KAPSIS_CLEANUP_VM_JOURNAL_VACUUM_SIZE:-${KAPSIS_DEFAULT_CLEANUP_VM_JOURNAL_VACUUM_SIZE:-100M}}"
     local ssh_timeout="${KAPSIS_CLEANUP_VM_SSH_TIMEOUT:-${KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT:-15}}"
+    local machine_name="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
 
     # Proactive dangling-layer GC (Issue #421): reclaim <none> build layers
     # as soon as health degrades to WARNING, before pressure turns CRITICAL.
@@ -1573,7 +1575,7 @@ _vm_remediate() {
             clean_images
             # Re-check after cleanup
             local new_inode_pct
-            new_inode_pct=$(timeout "$ssh_timeout" podman machine ssh -- "df -i / | tail -1 | awk '{print \$5}' | tr -d '%'" 2>/dev/null || echo "?")
+            new_inode_pct=$(timeout "$ssh_timeout" podman machine ssh "$machine_name" "df -i / | tail -1 | awk '{print \$5}' | tr -d '%'" 2>/dev/null || echo "?")
             if [[ "$new_inode_pct" == "?" ]]; then
                 log_warn "Failed to re-check inode usage after cleanup"
             else
@@ -1589,7 +1591,7 @@ _vm_remediate() {
             echo -e "  ${CYAN}[DRY-RUN]${NC} Would vacuum journal to ${vacuum_size}"
         else
             local vacuum_result
-            vacuum_result=$(timeout "$ssh_timeout" podman machine ssh -- "sudo journalctl --vacuum-size=${vacuum_size}" 2>&1 || echo "vacuum failed")
+            vacuum_result=$(timeout "$ssh_timeout" podman machine ssh "$machine_name" "sudo journalctl --vacuum-size=${vacuum_size}" 2>&1 || echo "vacuum failed")
             if [[ "$vacuum_result" == *"failed"* ]]; then
                 log_warn "Journal vacuum may have failed: $vacuum_result"
             else
@@ -1614,8 +1616,9 @@ vm_health_check() {
 
     # Check Podman machine is running
     local ssh_timeout="${KAPSIS_CLEANUP_VM_SSH_TIMEOUT:-${KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT:-15}}"
+    local machine_name="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
     local machine_state
-    machine_state=$(timeout "$ssh_timeout" podman machine inspect podman-machine-default --format '{{.State}}' 2>/dev/null || echo "not-found")
+    machine_state=$(timeout "$ssh_timeout" podman machine inspect "$machine_name" --format '{{.State}}' 2>/dev/null || echo "not-found")
     # Trim whitespace and handle unexpected output (e.g., JSON instead of plain value)
     machine_state=$(echo "$machine_state" | tr -d '[:space:]' | tr -d '"')
 

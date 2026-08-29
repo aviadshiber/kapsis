@@ -44,10 +44,11 @@ backend_validate() {
     # Check Podman machine is running (macOS only)
     if is_macos 2>/dev/null || [[ "$(uname)" == "Darwin" ]]; then
         log_debug "Checking Podman machine status..."
-        if ! podman machine inspect podman-machine-default &>/dev/null || \
-           [[ "$(podman machine inspect podman-machine-default --format '{{.State}}')" != "running" ]]; then
-            log_warn "Podman machine is not running. Attempting to start..."
-            podman machine start podman-machine-default || {
+        local machine="${KAPSIS_PODMAN_MACHINE:-podman-machine-default}"
+        if ! podman machine inspect "$machine" &>/dev/null || \
+           [[ "$(podman machine inspect "$machine" --format '{{.State}}')" != "running" ]]; then
+            log_warn "Podman machine '$machine' is not running. Attempting to start..."
+            podman machine start "$machine" || {
                 log_error "Failed to start Podman machine. Please run: podman machine start"
                 return 1
             }
