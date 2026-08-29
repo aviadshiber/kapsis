@@ -495,6 +495,7 @@ configs/
 ├── tool-phase-mapping.yaml    # Tool → phase mapping configuration
 ├── claude.yaml                # Claude Code launch config
 ├── codex.yaml                 # Codex CLI launch config
+├── gemini.yaml                # Gemini CLI launch config
 ├── aider.yaml                 # Aider launch config
 ├── interactive.yaml           # Interactive mode config
 └── agents/                    # Agent profiles (detailed definitions)

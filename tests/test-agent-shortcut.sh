@@ -37,6 +37,38 @@ test_agent_codex() {
     assert_contains "$output" "configs/codex.yaml" "Should use codex.yaml config"
 }
 
+test_agent_gemini() {
+    log_test "Testing --agent gemini"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent gemini --task "test" --dry-run 2>&1) || true
+
+    assert_contains "$output" "GEMINI" "Agent name should be displayed in uppercase"
+    assert_contains "$output" "configs/gemini.yaml" "Should use gemini.yaml config"
+}
+
+test_agent_codex_binds_codex_image() {
+    log_test "Testing --agent codex selects the codex provider image"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent codex --task "test" --dry-run 2>&1) || true
+
+    # Image binding is the linchpin fix: without an image: block in the config,
+    # the codex command would run in kapsis-sandbox (no codex binary).
+    assert_contains "$output" "kapsis-codex-cli" "codex config must select the kapsis-codex-cli image"
+    assert_contains "$output" "codex exec" "codex config must run the non-interactive 'codex exec' command"
+}
+
+test_agent_gemini_binds_gemini_image() {
+    log_test "Testing --agent gemini selects the gemini provider image"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent gemini --task "test" --dry-run 2>&1) || true
+
+    assert_contains "$output" "kapsis-gemini-cli" "gemini config must select the kapsis-gemini-cli image"
+    assert_contains "$output" "skip-trust" "gemini config must pass --skip-trust for headless runs"
+}
+
 test_agent_aider() {
     log_test "Testing --agent aider"
 
@@ -91,6 +123,9 @@ main() {
     # Run tests
     run_test test_agent_claude
     run_test test_agent_codex
+    run_test test_agent_gemini
+    run_test test_agent_codex_binds_codex_image
+    run_test test_agent_gemini_binds_gemini_image
     run_test test_agent_aider
     run_test test_agent_interactive
     run_test test_agent_display_in_banner

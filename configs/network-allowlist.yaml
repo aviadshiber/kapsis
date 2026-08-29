@@ -105,6 +105,12 @@ network:
       - generativelanguage.googleapis.com
       - aiplatform.googleapis.com
       - gemini.google.com
+      # Gemini CLI with a personal Google login uses the Code Assist backend and
+      # Google OAuth token refresh — required for OAuth-session (non-API-key) gemini.
+      - cloudcode-pa.googleapis.com
+      - oauth2.googleapis.com
+      - accounts.google.com
+      - www.googleapis.com
 
       # Amazon (CodeWhisperer, Bedrock)
       - bedrock.amazonaws.com

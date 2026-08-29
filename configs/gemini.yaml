@@ -48,6 +48,35 @@ resources:
   memory: 8g
   cpus: 4
 
+# Network isolation. Gemini with a personal Google login uses the Code Assist
+# backend (cloudcode-pa.googleapis.com) plus Google OAuth token refresh
+# (oauth2.googleapis.com / accounts.google.com); with an API key it uses
+# generativelanguage.googleapis.com. All are allowlisted so `--agent gemini`
+# works in the default filtered mode out of the box. See
+# configs/network-allowlist.yaml for the full reference.
+network:
+  mode: filtered
+  allowlist:
+    ai:
+      - cloudcode-pa.googleapis.com      # Gemini Code Assist (personal login)
+      - generativelanguage.googleapis.com # Gemini API (API-key auth)
+      - aiplatform.googleapis.com
+      - gemini.google.com
+    custom:
+      - oauth2.googleapis.com            # Google OAuth token refresh
+      - accounts.google.com
+      - www.googleapis.com
+    hosts:
+      - github.com
+      - "*.github.com"
+      - gitlab.com
+      - "*.gitlab.com"
+      - bitbucket.org
+      - "*.bitbucket.org"
+    registries:
+      - registry.npmjs.org
+      - "*.npmjs.org"
+
 #===============================================================================
 # SECURITY - Container security hardening
 #===============================================================================

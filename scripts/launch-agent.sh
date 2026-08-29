@@ -690,6 +690,7 @@ validate_inputs() {
     fi
 
     # Backend validation (sources backend file and checks prerequisites)
+    # shellcheck disable=SC1090  # dynamic backend path resolved at runtime
     source "$SCRIPT_DIR/backends/${BACKEND}.sh"
     if ! backend_validate; then
         log_error "Backend '$BACKEND' validation failed"
@@ -3788,6 +3789,7 @@ post_container_worktree() {
         # MUST be sourced (not exec'd or run in subshell) so that status_set_commit_info
         # writes to the same shell's _KAPSIS_COMMIT_STATUS variable, which is read later
         # by status_get_commit_status in the FINAL_EXIT_CODE logic (Issue #256)
+        # shellcheck disable=SC1090  # dynamic post-container hook path from config
         source "$post_container_script"
         # Expose the base branch to the host post-push hook (run_post_push_hook).
         export KAPSIS_BASE_BRANCH="${BASE_BRANCH:-}"
