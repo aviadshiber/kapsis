@@ -318,6 +318,16 @@ _podman_ssh_probe() {
 #-------------------------------------------------------------------------------
 _kill_vfkit_zombie() {
     local machine="${1:-${KAPSIS_PODMAN_MACHINE:-podman-machine-default}}"
+    # Validate the machine name before it reaches the pkill -f regex and the rm
+    # paths below. A crafted name could otherwise broaden the kill pattern (e.g.
+    # '.*' → reap every vfkit/krunkit process, not just this machine's) or
+    # redirect the *.pid/*.sock/*.lock cleanup via '../'. Mirrors the guard in
+    # _podman_machine_restart (podman-health.sh); real Podman machine names are
+    # always [a-zA-Z0-9_-]+, so no legitimate name is rejected (Issue #409).
+    if ! [[ "$machine" =~ ^[a-zA-Z0-9_-]+$ ]]; then
+        declare -f log_error &>/dev/null && log_error "_kill_vfkit_zombie: invalid machine name '$machine' — refusing zombie reap"
+        return 1
+    fi
     declare -f log_warn &>/dev/null && log_warn "Killing vfkit/krunkit hypervisor for '$machine' (zombie VM recovery)"
     pkill -9 -f "(vfkit|krunkit).*${machine}" &>/dev/null || true
 

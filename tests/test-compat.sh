@@ -785,6 +785,32 @@ test_kill_vfkit_zombie_defaults_to_kapsis_podman_machine() {
     rm -rf "$fake_home"
 }
 
+test_kill_vfkit_zombie_rejects_invalid_machine_name() {
+    log_test "_kill_vfkit_zombie: rejects a metachar/traversal machine name without calling pkill (Issue #409)"
+
+    local fake_home pkill_marker rc
+    fake_home=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-zombie-reject.XXXXXX")
+    pkill_marker="${fake_home}/pkill_called"
+    # Seed a state dir that the function WOULD clean if it did not bail out.
+    _zombie_seed_machine_dir "${fake_home}/.local/share/containers/podman/machine/applehv/victim"
+
+    pkill() { touch "$pkill_marker"; return 0; }
+    sleep() { return 0; }
+
+    local saved_xdg="${XDG_DATA_HOME:-}"
+    unset XDG_DATA_HOME
+    rc=0
+    HOME="$fake_home" _kill_vfkit_zombie 'bad;name.*' || rc=$?
+    [[ -n "$saved_xdg" ]] && XDG_DATA_HOME="$saved_xdg" || true
+
+    unset -f pkill sleep
+
+    assert_equals "1" "$rc" "invalid machine name must make _kill_vfkit_zombie return 1"
+    assert_file_not_exists "$pkill_marker" "pkill must NOT be invoked for an invalid machine name"
+
+    rm -rf "$fake_home"
+}
+
 #===============================================================================
 # get_podman_machine_provider() TESTS (Issue #409)
 #===============================================================================
@@ -1142,6 +1168,7 @@ main() {
     run_test test_kill_vfkit_zombie_pkill_pattern_matches_krunkit
     run_test test_kill_vfkit_zombie_cleans_libkrun_state_dir
     run_test test_kill_vfkit_zombie_defaults_to_kapsis_podman_machine
+    run_test test_kill_vfkit_zombie_rejects_invalid_machine_name
 
     # get_podman_machine_provider() tests (Issue #409)
     run_test test_get_podman_machine_provider_libkrun

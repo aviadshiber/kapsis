@@ -297,28 +297,23 @@ test_recover_ssh_tunnel_exhausted_retries_returns_nonzero() {
     _teardown_stubs
 }
 
-test_recover_ssh_tunnel_documents_no_machine_name_validation() {
-    log_test "recover_ssh_tunnel: KAPSIS_PODMAN_MACHINE passed to pkill unsanitized (regression anchor)"
+test_recover_ssh_tunnel_rejects_invalid_machine_name() {
+    log_test "recover_ssh_tunnel: crafted KAPSIS_PODMAN_MACHINE is rejected, not passed to pkill (Issue #409)"
     _setup_stubs
-    # _kill_vfkit_zombie passes KAPSIS_PODMAN_MACHINE to pkill -f without
-    # sanitizing it (unlike _podman_machine_restart in podman-health.sh which
-    # validates against ^[a-zA-Z0-9_-]+$).  This test is a regression anchor:
-    # it verifies the current unsanitized behaviour so that if validation is
-    # added to compat.sh in the future, this test must be updated consciously.
+    # _kill_vfkit_zombie validates the machine name against ^[a-zA-Z0-9_-]+$
+    # (mirroring _podman_machine_restart) before using it in the pkill -f regex
+    # and rm paths. A crafted name must therefore be refused — pkill must NOT be
+    # invoked with the malicious value. This replaces the former regression
+    # anchor that documented the earlier unsanitized behaviour.
     export KAPSIS_PODMAN_MACHINE="bad;nameinjected"
     PODMAN_INFO_EXIT=1   # force probe failure so recovery path runs
     PODMAN_STOP_EXIT=1   # force stop failure so _kill_vfkit_zombie is called
 
     _recover_podman_ssh_tunnel 1 1 0 || true
 
-    # The crafted name must appear verbatim in pkill args, confirming it is
-    # passed through to the OS without sanitization.
-    assert_file_exists "$MARKER_DIR/pkill_called" \
-        "_kill_vfkit_zombie must have been called during recovery"
-    local args
-    args="$(cat "$MARKER_DIR/pkill_args")"
-    assert_contains "$args" "bad;nameinjected" \
-        "machine name is passed to pkill unsanitized (regression anchor for current behaviour)"
+    # The guard must short-circuit before pkill runs: no pkill invocation at all.
+    assert_file_not_exists "$MARKER_DIR/pkill_called" \
+        "_kill_vfkit_zombie must refuse an invalid machine name and never call pkill"
     unset KAPSIS_PODMAN_MACHINE
     _teardown_stubs
 }
@@ -338,6 +333,6 @@ run_test test_recover_ssh_tunnel_broken_attempts_machine_restart
 run_test test_recover_ssh_tunnel_stop_timeout_calls_zombie_killer
 run_test test_recover_ssh_tunnel_start_failure_returns_nonzero
 run_test test_recover_ssh_tunnel_exhausted_retries_returns_nonzero
-run_test test_recover_ssh_tunnel_documents_no_machine_name_validation
+run_test test_recover_ssh_tunnel_rejects_invalid_machine_name
 
 print_summary

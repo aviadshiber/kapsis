@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zombie-VM recovery (`_kill_vfkit_zombie`) now cleans the `libkrun/` machine state dir and
   defaults its target machine to `KAPSIS_PODMAN_MACHINE` (#409)
 
+### Security
+- Validate the machine name against `^[a-zA-Z0-9_-]+$` in `_kill_vfkit_zombie` before it reaches
+  the `pkill -f` pattern and `rm` paths, preventing an over-broad hypervisor kill or path
+  traversal via a crafted `KAPSIS_PODMAN_MACHINE` (mirrors the existing `_podman_machine_restart`
+  guard) (#409)
+
 
 ## [2.35.2] - 2026-06-21
 
