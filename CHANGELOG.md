@@ -6,23 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
+## [3.2.7] - 2026-08-29
 
 ### Fixed
-- Honor `KAPSIS_PODMAN_MACHINE` in the preflight gate, launch path, and image build so
-  Kapsis can run against a non-default Podman machine (e.g. a coexisting `libkrun` machine);
-  previously these paths hardcoded `podman-machine-default` (#409)
+- Honor KAPSIS_PODMAN_MACHINE across launch/preflight/build (#409) (#469)
 
-### Changed
-- Zombie-VM recovery (`_kill_vfkit_zombie`) now cleans the `libkrun/` machine state dir and
-  defaults its target machine to `KAPSIS_PODMAN_MACHINE` (#409)
-
-### Security
-- Validate the machine name against `^[a-zA-Z0-9_-]+$` in `_kill_vfkit_zombie` before it reaches
-  the `pkill -f` pattern and `rm` paths, preventing an over-broad hypervisor kill or path
-  traversal via a crafted `KAPSIS_PODMAN_MACHINE` (mirrors the existing `_podman_machine_restart`
-  guard) (#409)
-
+## [Unreleased]
 
 ## [2.35.2] - 2026-06-21
 
@@ -1196,7 +1185,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.6...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.7...HEAD
+[3.2.7]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.7
 [3.2.6]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.6
 [3.2.5]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.5
 [3.2.4]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.4
