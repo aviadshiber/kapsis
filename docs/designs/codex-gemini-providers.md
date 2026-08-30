@@ -159,9 +159,9 @@ never enter the container. This structurally closes C1/H3 and makes C2 moot.
 - Bot provider-selection + **provider fallback** (extend `model_fallback_chain` →
   `provider_fallback_chain`) and multi-agent orchestration — separate follow-on, fallback first.
 - **Token-exchange proxy** (see Security) — the durable fix for credential blast-radius.
-- **Release/distribution:** add `kapsis-codex-cli`/`kapsis-gemini-cli` to `release.yml`
-  build+push+SBOM so `build-agent-image.sh <agent> --pull` works (today it only builds locally),
-  and an npm-pin bump workflow modeled on `bump-claude-code.yml`.
+- **Release/distribution:** ✅ done — `release.yml` now builds/pushes/SBOM-signs
+  `kapsis-codex-cli`/`kapsis-gemini-cli` to ghcr, so `build-agent-image.sh <agent> --pull`
+  works for them. Still deferred: an npm-pin bump workflow modeled on `bump-claude-code.yml`.
 - **Fail-fast on missing auth:** a missing OAuth file is currently skipped at debug level → the
   provider launches unauthenticated and fails deep in the run. Add a preflight warn/error when
   neither the session file nor an API key is available.

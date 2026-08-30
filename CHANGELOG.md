@@ -14,6 +14,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Release pipeline now builds, pushes, signs, and SBOMs `kapsis-codex-cli` and
+  `kapsis-gemini-cli` to ghcr (default full toolchain, same as `kapsis-claude-cli`),
+  so `build-agent-image.sh codex-cli|gemini-cli --pull` works and the images are
+  distributed like claude's instead of requiring a local build.
 - Codex (OpenAI) and Gemini (Google) as first-class sandboxed agent providers,
   launchable in-container like Claude via `--agent codex` / `--agent gemini`.
   Provider images build from `configs/agents/{codex,gemini}-cli.yaml`; launch
