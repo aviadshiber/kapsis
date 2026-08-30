@@ -11,43 +11,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 - Honor KAPSIS_PODMAN_MACHINE across launch/preflight/build (#409) (#469)
 
-## [Unreleased]
+## [3.3.0] - 2026-08-30
 
 ### Added
-- Release pipeline now builds, pushes, signs, and SBOMs `kapsis-codex-cli` and
-  `kapsis-gemini-cli` to ghcr (default full toolchain, same as `kapsis-claude-cli`),
-  so `build-agent-image.sh codex-cli|gemini-cli --pull` works and the images are
-  distributed like claude's instead of requiring a local build.
-- Codex (OpenAI) and Gemini (Google) as first-class sandboxed agent providers,
-  launchable in-container like Claude via `--agent codex` / `--agent gemini`.
-  Provider images build from `configs/agents/{codex,gemini}-cli.yaml`; launch
-  configs `configs/{codex,gemini}.yaml` bind the image, run the correct
-  non-interactive command, and inject only the minimal OAuth session files as
-  writable copies (no API key required). New `configs/gemini.yaml`. Agent
-  execution, OAuth auth, and git commit verified on libkrun in open and filtered
-  network modes. Known gap: status-hook/gist monitoring does not yet fire for
-  codex/gemini (adapters target stale hook interfaces) — deferred to the bot
-  phase. See `docs/designs/codex-gemini-providers.md`.
+- Codex & Gemini as sandboxed in-container providers (#470)
 
-### Security
-- Codex/Gemini providers inject ONLY the OAuth session file, never `config.toml` /
-  `settings.json` (which can carry MCP `env` secrets + hook commands): codex uses
-  `--ignore-user-config`; gemini omits `settings.json`.
-- Gemini filtered-mode allowlist kept deliberately narrow (`cloudcode-pa.googleapis.com`
-  + `oauth2.googleapis.com` only) because the OAuth token carries broad `cloud-platform`
-  scope — `www.googleapis.com` / `accounts.google.com` are intentionally not allowlisted.
-- `KAPSIS_DEFAULT_IMAGE_KEEP_PATTERNS` now includes `kapsis-codex-cli` / `kapsis-gemini-cli`
-  so `kapsis-cleanup` no longer evicts the provider images (they were being GC'd, forcing
-  repeated ~2 GB rebuilds).
+### Changed
+- Publish codex & gemini provider images to ghcr (#472)
 
-### Fixed
-- Network allowlist: add `chatgpt.com` (Codex ChatGPT-subscription backend) and
-  `cloudcode-pa.googleapis.com` / `oauth2.googleapis.com` (Gemini backend + token refresh)
-  so OAuth-session Codex/Gemini work in filtered mode.
-- Correct stale Codex/Gemini command strings (`codex exec` /
-  `gemini -p --approval-mode yolo --skip-trust`) to match current CLI interfaces.
-- `build-agent-image.sh` records the build profile as a `kapsis.build-profile` image label
-  so a mis-provisioned image (e.g. Java-less `frontend` for a Java target) is detectable.
+## [Unreleased]
 
 ## [2.35.2] - 2026-06-21
 
@@ -1221,7 +1193,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.2.7...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.3.0...HEAD
+[3.3.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.3.0
 [3.2.7]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.7
 [3.2.6]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.6
 [3.2.5]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.5
