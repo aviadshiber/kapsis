@@ -14,8 +14,9 @@ using them as fallbacks and for multi-agent orchestration from the Slack bot (la
 The launch path is already provider-agnostic: `parse_config` reads each config's
 `.agent.command` and runs it generically (`bash -c "$AGENT_COMMAND"` → `exec "$@"` in
 entrypoint), agent-type detection covers claude/codex/gemini/aider, and per-provider
-status-hook adapters existed (`scripts/hooks/agent-adapters/{codex,gemini}-adapter.sh` — later
-found to be dead/wrong and removed; see the status-hook section below).
+status-hook adapters existed (`scripts/hooks/agent-adapters/*.sh` — later found to be
+dead/wrong and removed entirely; the live per-agent parsing now lives in one sourceable
+module, `scripts/hooks/hook-input-parsers.sh`; see the status-hook section below).
 `build-agent-image.sh <name>` already builds `kapsis-<name>:latest` from
 `configs/agents/<name>.yaml` (`.install.npm/.pip/.script`).
 
@@ -157,8 +158,11 @@ never enter the container. This structurally closes C1/H3 and makes C2 moot.
     Gemini hooks also live in `settings.json`, which we intentionally do not inject (secret-bearing).
     So `inject_gemini_hooks` is a no-op and gemini status comes from the **instruction-based gist**
     path (the agent writes `$KAPSIS_GIST_FILE` per injected `GEMINI.md`/`AGENTS.md` guidance).
-  - The obsolete `~/.codex/config.yaml` / `~/.gemini/hooks/*.sh` writers and their dead
-    `agent-adapters/{codex,gemini}-adapter.sh` were removed; status-hook tests updated accordingly.
+  - The obsolete `~/.codex/config.yaml` / `~/.gemini/hooks/*.sh` writers and the entire dead
+    `agent-adapters/` directory were removed; the live per-agent parsers (`json_get` +
+    `parse_{claude,codex,gemini}_input`) were unified into one sourceable module,
+    `scripts/hooks/hook-input-parsers.sh`, which the status hook sources and the tests import
+    directly (no more sed-extraction hack). Status-hook tests updated accordingly.
   - **Security notes (from ensemble review):**
     - `--dangerously-bypass-hook-trust` bypasses only per-hook *review*, NOT the workspace-trust
       gate. Verified via canary: a malicious `/workspace/.codex/hooks.json` does **not** auto-run

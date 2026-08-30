@@ -10,20 +10,21 @@ Kapsis provides real-time status tracking through agent-agnostic hooks that repo
                                   │
     ┌────────────────┬────────────┼────────────┬────────────────┐
     ▼                ▼            ▼            ▼                ▼
-CLAUDE CODE     CODEX CLI    GEMINI CLI    AIDER/OTHER    PYTHON AGENT
-┌──────────┐   ┌──────────┐  ┌──────────┐  ┌──────────┐   ┌──────────┐
-│PostToolUse│   │exec.post │  │tool_call │  │Instruction│   │Direct    │
-│hook       │   │hook      │  │hook      │  │injection +│   │status.py │
-│           │   │          │  │          │  │file monitor│   │import    │
-└─────┬─────┘   └─────┬────┘  └─────┬────┘  └─────┬─────┘   └─────┬────┘
-      │               │            │              │              │
-      ▼               ▼            ▼              ▼              ▼
-    claude-       codex-        gemini-       progress-       status.py
-    adapter.sh    adapter.sh    adapter.sh    monitor.sh
-      │               │            │              │              │
-      └───────────────┴────────────┼──────────────┴──────────────┘
-                                   ▼
-                    kapsis-status-hook.sh
+CLAUDE CODE     CODEX CLI    GEMINI CLI     AIDER/OTHER    PYTHON AGENT
+┌──────────┐   ┌──────────┐  ┌───────────┐  ┌──────────┐   ┌──────────┐
+│PostToolUse│   │PostToolUse│  │ (no hooks │  │Instruction│   │Direct    │
+│hook       │   │hook       │  │  headless)│  │injection +│   │status.py │
+│           │   │(hooks.json)│  │instruction│  │file monitor│   │import    │
+└─────┬─────┘   └─────┬─────┘  │  gist     │  └─────┬─────┘   └─────┬────┘
+      │               │        └─────┬─────┘        │              │
+      │               │              │              │              │
+      ▼               ▼              │              ▼              ▼
+      └───────────────┴──────────────┤        progress-       status.py
+   parse_{claude,codex}_input         │        monitor.sh
+   (hook-input-parsers.sh)            │(gist.txt written by agent)
+      │                               │
+      ▼                               ▼
+   kapsis-status-hook.sh        /kapsis-status/gist.txt
                            │
                            ▼
                     tool-phase-mapping.sh
@@ -38,8 +39,8 @@ CLAUDE CODE     CODEX CLI    GEMINI CLI    AIDER/OTHER    PYTHON AGENT
 | Agent | Hook System | Hook Types | Config Location |
 |-------|-------------|------------|-----------------|
 | Claude Code | Yes | PreToolUse, PostToolUse, Stop | ~/.claude/settings.json |
-| Codex CLI | Yes | exec.pre, exec.post, item.* | ~/.codex/config.yaml |
-| Gemini CLI | Yes | tool_call, completion | ~/.gemini/hooks/ |
+| Codex CLI | Yes | PostToolUse, Stop (Claude-compatible schema) | ~/.codex/hooks.json |
+| Gemini CLI | No (headless hooks don't fire) | N/A | Instruction-based gist (needs `inject_gist: true`) |
 | Aider | No (fallback) | N/A | Instruction injection + monitor |
 | Python | No (direct) | N/A | Import status.py directly |
 
@@ -59,11 +60,12 @@ Container Startup (entrypoint.sh)
             ├─→ Claude Code: ~/.claude/settings.json
             │   (User scope — the only file Claude Code loads at ~/.claude/)
             │
-            ├─→ Codex CLI: ~/.codex/config.yaml
-            │   (Adds exec.post, item.create, completion hooks)
+            ├─→ Codex CLI: ~/.codex/hooks.json
+            │   (Claude-compatible schema: PostToolUse status, Stop; requires the
+            │    launch command's -c features.hooks=true --dangerously-bypass-hook-trust)
             │
-            └─→ Gemini CLI: ~/.gemini/hooks/*.sh
-                (Creates or appends to hook scripts)
+            └─→ Gemini CLI: (no hook file — headless hooks don't fire)
+                (status via instruction-based gist; see below)
 ```
 
 ### Design Decisions
@@ -91,28 +93,32 @@ Container Startup (entrypoint.sh)
 }
 ```
 
-**Codex CLI** - Merges hooks into `config.yaml`:
+**Codex CLI** - Merges hooks into `~/.codex/hooks.json` (the same Claude-compatible
+schema as above — codex ≥0.15x reads `hooks.json`, not `config.yaml`, and delivers a
+Claude-compatible stdin payload, so codex reuses `parse_claude_input`). The launch
+command must pass `-c features.hooks=true --dangerously-bypass-hook-trust` for the hooks
+to be enabled and run unattended:
 
-```yaml
-hooks:
-  exec.post:
-    - /opt/kapsis/hooks/kapsis-status-hook.sh
-  item.create:
-    - /opt/kapsis/hooks/kapsis-status-hook.sh
-  item.update:
-    - /opt/kapsis/hooks/kapsis-status-hook.sh
-  completion:
-    - /opt/kapsis/hooks/kapsis-stop-hook.sh
+```json
+{
+  "hooks": {
+    "PostToolUse": [{
+      "matcher": "*",
+      "hooks": [{"type": "command", "command": "/opt/kapsis/hooks/kapsis-status-hook.sh", "timeout": 5}]
+    }],
+    "Stop": [{
+      "hooks": [{"type": "command", "command": "/opt/kapsis/hooks/kapsis-stop-hook.sh", "timeout": 5}]
+    }]
+  }
+}
 ```
 
-**Gemini CLI** - Creates or appends to shell script hooks:
-
-```bash
-# ~/.gemini/hooks/post-tool.sh
-#!/usr/bin/env bash
-# Kapsis status tracking
-"/opt/kapsis/hooks/kapsis-status-hook.sh" "$@" || true
-```
+**Gemini CLI** - No hook injection. Gemini hooks do not fire in headless (`gemini -p`)
+mode (verified empirically), and its hooks live in `settings.json` which Kapsis does not
+inject (secret-bearing). Gemini reports progress via the **instruction-based gist** path
+instead: the agent writes `$KAPSIS_GIST_FILE` per the injected `GEMINI.md`/`AGENTS.md`
+guidance. This requires `agent.inject_gist: true` (the Slack bot sets it); otherwise a
+gemini run emits no status signal.
 
 ## Tool-to-Phase Mapping
 
@@ -491,7 +497,7 @@ The dashboard renders transcripts in the per-agent **Conversation** tab.
 | `scripts/hooks/kapsis-status-hook.sh` | Universal hook for all agents |
 | `scripts/hooks/kapsis-stop-hook.sh` | Completion hook |
 | `scripts/hooks/tool-phase-mapping.sh` | Tool → phase mapping (loads YAML config) |
-| `scripts/hooks/kapsis-status-hook.sh` (`parse_{claude,codex,gemini}_input`) | Per-agent hook-payload parsers (runtime path; codex reuses the Claude parser) |
+| `scripts/hooks/hook-input-parsers.sh` (`parse_{claude,codex,gemini}_input`) | Per-agent hook-payload parsers, sourced by `kapsis-status-hook.sh` (runtime path; codex reuses the Claude parser) |
 | `configs/tool-phase-mapping.yaml` | Tool → phase mapping configuration |
 | `scripts/kapsis-recovery-action.sh` | Determine recovery action from `error_type` (Issue #262) |
 | `scripts/lib/transcript.sh` | Conversation transcript persistence (Issue #390) |

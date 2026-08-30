@@ -44,9 +44,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Gemini status tracking is instruction-based, not hook-based: Gemini hooks do not
   fire in headless (`gemini -p`) mode (verified empirically), so `inject_gemini_hooks`
   is now a no-op and Gemini reports progress via the injected gist instructions.
-- Removed the dead, wrong-format `agent-adapters/{codex,gemini}-adapter.sh` and the
-  obsolete `~/.gemini/hooks/*.sh` writer; added a source-guard to `kapsis-status-hook.sh`
-  so its parsers are unit-testable. Status-hook tests updated to the real interfaces.
+- Unified per-agent hook-input parsing into ONE canonical, sourceable module,
+  `scripts/hooks/hook-input-parsers.sh` (`json_get` + `parse_{claude,codex,gemini}_input`),
+  which `kapsis-status-hook.sh` sources and the unit tests import directly (no more
+  sed-extraction hack). The entire dead `agent-adapters/` directory (including the last
+  survivor, `claude-adapter.sh`) and the obsolete `~/.gemini/hooks/*.sh` writer were removed.
+- Factored the duplicated Claude/Codex jq injection into one `_inject_json_hooks` helper so
+  the "gist must fire before status" ordering invariant lives in exactly one place; Claude
+  opts into attribution, Codex does not (hooks.json output shape unchanged).
 
 ## [2.35.2] - 2026-06-21
 

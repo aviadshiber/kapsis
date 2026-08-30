@@ -489,7 +489,7 @@ scripts/hooks/               # See STATUS-TRACKING.md for details
 ├── kapsis-status-hook.sh      # Universal hook for all agents
 ├── kapsis-stop-hook.sh        # Completion hook
 ├── tool-phase-mapping.sh      # Tool → phase mapping
-└── agent-adapters/            # claude-adapter.sh (codex/gemini parse in kapsis-status-hook.sh)
+└── hook-input-parsers.sh      # Per-agent payload parsers (claude/codex/gemini), sourced by the status hook
 
 configs/
 ├── tool-phase-mapping.yaml    # Tool → phase mapping configuration

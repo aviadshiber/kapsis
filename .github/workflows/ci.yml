@@ -293,7 +293,6 @@ jobs:
         run: |
           chmod +x ./scripts/lib/config-verifier.sh
           chmod +x ./scripts/hooks/*.sh 2>/dev/null || true
-          chmod +x ./scripts/hooks/agent-adapters/*.sh 2>/dev/null || true
 
           # Run config verifier with pattern matching tests
           ./scripts/lib/config-verifier.sh --all --test

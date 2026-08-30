@@ -47,54 +47,65 @@ STATUS_HOOK="${KAPSIS_HOOK_DIR}/kapsis-status-hook.sh"
 STOP_HOOK="${KAPSIS_HOOK_DIR}/kapsis-stop-hook.sh"
 
 #===============================================================================
-# Claude Code Hook Injection (JSON-based)
+# Shared JSON Hook Injection (Claude settings.json + Codex hooks.json)
 #===============================================================================
 
-inject_claude_hooks() {
-    local settings_dir="${HOME}/.claude"
-    local settings_local="${settings_dir}/settings.json"
+# _inject_json_hooks <target_file> [with_attribution]
+#
+# Both Claude (~/.claude/settings.json) and Codex (~/.codex/hooks.json) use the
+# SAME Claude-compatible hook schema, so the PostToolUse (gist-before-status
+# ordering) + Stop merge program lives here ONCE. The "gist must fire before the
+# status hook" invariant therefore has a single home.
+#
+#   $1 target_file       - JSON file to merge hooks into (seeded if missing/empty).
+#   $2 with_attribution  - "true" to also merge Claude Code native attribution
+#                          templates from KAPSIS_ATTRIBUTION_COMMIT/PR (Claude
+#                          only). Codex passes "false"/omits, so no .attribution
+#                          key is ever written to hooks.json (output shape
+#                          unchanged). Attribution is still conditional on the env
+#                          vars being *defined* (empty string = valid "disable").
+_inject_json_hooks() {
+    local target_file="$1"
+    local with_attribution="${2:-false}"
 
-    # Ensure directory exists
-    mkdir -p "$settings_dir"
-
-    # Create base file if missing OR empty (a 0-byte file makes jq emit nothing and
-    # clobber it to empty — same trap as the codex injector; -s covers both).
-    if [[ ! -s "$settings_local" ]]; then
-        echo '{}' > "$settings_local"
-        chmod 600 "$settings_local"
-        log_debug "Created empty settings.json"
+    if ! command -v jq &>/dev/null; then
+        log_warn "jq not found - cannot inject hooks into $target_file"
+        return 1
     fi
 
-    # Check if jq is available
-    if ! command -v jq &>/dev/null; then
-        log_warn "jq not found - cannot inject Claude hooks"
-        return 1
+    mkdir -p "$(dirname "$target_file")"
+
+    # Seed when missing OR empty: jq on a 0-byte file yields empty output and would
+    # silently clobber it to empty (log_success but no hooks written). -s covers both.
+    [[ -s "$target_file" ]] || { echo '{}' > "$target_file"; chmod 600 "$target_file"; }
+
+    # Determine whether to inject gist hook (opt-in, file must exist and be executable)
+    local gist_hook="${KAPSIS_HOOK_DIR}/kapsis-gist-hook.sh"
+    local inject_gist="${KAPSIS_INJECT_GIST:-false}"
+    if [[ "$inject_gist" == "true" && ! -x "$gist_hook" ]]; then
+        log_error "Gist hook not found or not executable: $gist_hook -- KAPSIS_INJECT_GIST=true but gist hook will NOT be injected"
+        inject_gist="false"
+    fi
+
+    # Attribution: only merge when the caller opts in AND the env vars are defined
+    # (set — including the empty string, which is a valid "disable" per Claude
+    # Code's spec). When unset, leave any existing user-configured attribution
+    # untouched. Codex passes with_attribution=false, so both flags stay false and
+    # the attribution branches below are skipped entirely.
+    local attr_commit_set="false"
+    local attr_pr_set="false"
+    if [[ "$with_attribution" == "true" ]]; then
+        [[ -n "${KAPSIS_ATTRIBUTION_COMMIT+x}" ]] && attr_commit_set="true"
+        [[ -n "${KAPSIS_ATTRIBUTION_PR+x}" ]] && attr_pr_set="true"
     fi
 
     # Inject hooks using jq (merge, don't overwrite)
     local tmp_file
     tmp_file=$(mktemp)
-
-    # Determine whether to inject gist hook (opt-in, file must exist and be executable)
-    local GIST_HOOK="${KAPSIS_HOOK_DIR}/kapsis-gist-hook.sh"
-    local inject_gist="${KAPSIS_INJECT_GIST:-false}"
-    if [[ "$inject_gist" == "true" && ! -x "$GIST_HOOK" ]]; then
-        log_error "Gist hook not found or not executable: $GIST_HOOK -- KAPSIS_INJECT_GIST=true but gist hook will NOT be injected"
-        inject_gist="false"
-    fi
-
-    # Attribution: only merge when the env vars are defined (set — including the
-    # empty string, which is a valid "disable" per Claude Code's spec). When
-    # unset, leave any existing user-configured attribution untouched.
-    local attr_commit_set="false"
-    local attr_pr_set="false"
-    [[ -n "${KAPSIS_ATTRIBUTION_COMMIT+x}" ]] && attr_commit_set="true"
-    [[ -n "${KAPSIS_ATTRIBUTION_PR+x}" ]] && attr_pr_set="true"
-
     if jq \
         --arg status_hook "$STATUS_HOOK" \
         --arg stop_hook "$STOP_HOOK" \
-        --arg gist_hook "$GIST_HOOK" \
+        --arg gist_hook "$gist_hook" \
         --arg inject_gist "$inject_gist" \
         --arg attr_commit "${KAPSIS_ATTRIBUTION_COMMIT:-}" \
         --arg attr_pr "${KAPSIS_ATTRIBUTION_PR:-}" \
@@ -147,20 +158,32 @@ inject_claude_hooks() {
             .attribution //= {} |
             .attribution.pr = $attr_pr
         else . end
-    ' "$settings_local" > "$tmp_file" 2>/dev/null; then
-        mv "$tmp_file" "$settings_local"
-        chmod 600 "$settings_local"
-        log_success "Claude Code hooks injected (merged with existing)"
+    ' "$target_file" > "$tmp_file" 2>/dev/null; then
+        mv "$tmp_file" "$target_file"
+        chmod 600 "$target_file"
         return 0
     else
         rm -f "$tmp_file"
-        log_warn "Failed to inject Claude hooks - JSON parsing error"
+        log_warn "Failed to inject hooks into $target_file - JSON parsing error"
         return 1
     fi
 }
 
 #===============================================================================
-# Codex CLI Hook Injection (YAML-based)
+# Claude Code Hook Injection (~/.claude/settings.json, with attribution)
+#===============================================================================
+
+inject_claude_hooks() {
+    if _inject_json_hooks "${HOME}/.claude/settings.json" "true"; then
+        log_success "Claude Code hooks injected (merged with existing)"
+        return 0
+    fi
+    log_warn "Failed to inject Claude hooks"
+    return 1
+}
+
+#===============================================================================
+# Codex CLI Hook Injection (~/.codex/hooks.json, no attribution)
 #===============================================================================
 
 inject_codex_hooks() {
@@ -169,63 +192,20 @@ inject_codex_hooks() {
     # the SAME stdin payload field names (tool_name, tool_input, tool_response) as
     # Claude Code. So we inject the identical status/stop/gist hooks Claude gets,
     # into hooks.json instead of ~/.claude/settings.json, and codex runs are parsed
-    # by the Claude parser (see parse_codex_input -> parse_claude_input).
+    # by the Claude parser (see parse_codex_input -> parse_claude_input). We do NOT
+    # write attribution (that is a Claude-only settings key).
     #
     # NOTE: the launch command (configs/codex.yaml) must pass
     #   -c features.hooks=true --dangerously-bypass-hook-trust
     # so hooks are enabled and run unattended (config.toml is not injected, so the
     # feature flag has to come from the command line; trust bypass is required for
     # automation). Empirically verified: without the flag, hooks do NOT fire.
-    local hooks_file="${HOME}/.codex/hooks.json"
-    mkdir -p "${HOME}/.codex"
-
-    if ! command -v jq &>/dev/null; then
-        log_warn "jq not found - cannot inject Codex hooks"
-        return 1
-    fi
-
-    # Seed when missing OR empty: jq on a 0-byte file yields empty output and would
-    # silently clobber it to empty (log_success but no hooks written). -s covers both.
-    [[ -s "$hooks_file" ]] || { echo '{}' > "$hooks_file"; chmod 600 "$hooks_file"; }
-
-    local GIST_HOOK="${KAPSIS_HOOK_DIR}/kapsis-gist-hook.sh"
-    local inject_gist="${KAPSIS_INJECT_GIST:-false}"
-    if [[ "$inject_gist" == "true" && ! -x "$GIST_HOOK" ]]; then
-        log_error "Gist hook not found/executable: $GIST_HOOK -- disabling gist injection for codex"
-        inject_gist="false"
-    fi
-
-    local tmp_file
-    tmp_file=$(mktemp)
-    if jq \
-        --arg status_hook "$STATUS_HOOK" \
-        --arg stop_hook "$STOP_HOOK" \
-        --arg gist_hook "$GIST_HOOK" \
-        --arg inject_gist "$inject_gist" \
-        '
-        .hooks //= {} |
-        .hooks.PostToolUse //= [] |
-        if $inject_gist == "true"
-           and ([.hooks.PostToolUse[].hooks[]? | select(.command == $gist_hook)] | length) == 0
-        then .hooks.PostToolUse += [{"matcher":"*","hooks":[{"type":"command","command":$gist_hook,"timeout":10}]}]
-        else . end |
-        if ([.hooks.PostToolUse[].hooks[]? | select(.command == $status_hook)] | length) == 0
-        then .hooks.PostToolUse += [{"matcher":"*","hooks":[{"type":"command","command":$status_hook,"timeout":5}]}]
-        else . end |
-        .hooks.Stop //= [] |
-        if ([.hooks.Stop[].hooks[]? | select(.command == $stop_hook)] | length) == 0
-        then .hooks.Stop += [{"hooks":[{"type":"command","command":$stop_hook,"timeout":5}]}]
-        else . end
-    ' "$hooks_file" > "$tmp_file" 2>/dev/null; then
-        mv "$tmp_file" "$hooks_file"
-        chmod 600 "$hooks_file"
+    if _inject_json_hooks "${HOME}/.codex/hooks.json" "false"; then
         log_success "Codex CLI hooks injected (~/.codex/hooks.json, Claude-compatible schema)"
         return 0
-    else
-        rm -f "$tmp_file"
-        log_warn "Failed to inject Codex hooks - JSON parsing error"
-        return 1
     fi
+    log_warn "Failed to inject Codex hooks"
+    return 1
 }
 
 #===============================================================================

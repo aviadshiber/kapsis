@@ -158,24 +158,25 @@ test_bash_command_mapping() {
 }
 
 #===============================================================================
-# Test: Claude Adapter
+# Test: Claude Parser
 #===============================================================================
-test_claude_adapter_parsing() {
-    source "$HOOKS_DIR/agent-adapters/claude-adapter.sh"
+test_claude_input_parsing() {
+    # Canonical parser lives in the sourceable hook-input-parsers.sh module.
+    # Claude Code sends the tool name under `tool_name` (the parser reads that key).
+    source "$HOOKS_DIR/hook-input-parsers.sh"
 
-    # Test Read tool parsing
-    local read_input='{"tool":"Read","tool_input":{"file_path":"/workspace/src/main.py"}}'
-    local result
-    result=$(parse_claude_hook_input "$read_input")
-
-    local tool_name
+    # Test Read tool parsing (file_path)
+    local read_input='{"tool_name":"Read","tool_input":{"file_path":"/workspace/src/main.py"}}'
+    local result tool_name file_path
+    result=$(parse_claude_input "$read_input")
     tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name', ''))")
+    file_path=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('file_path', ''))")
     assert_equals "$tool_name" "Read" "Parse Read tool"
+    assert_equals "$file_path" "/workspace/src/main.py" "Parse Read file_path"
 
-    # Test Bash tool parsing
-    local bash_input='{"tool":"Bash","tool_input":{"command":"npm test"}}'
-    result=$(parse_claude_hook_input "$bash_input")
-
+    # Test Bash tool parsing (command)
+    local bash_input='{"tool_name":"Bash","tool_input":{"command":"npm test"}}'
+    result=$(parse_claude_input "$bash_input")
     tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name', ''))")
     local command
     command=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('command', ''))")
@@ -184,20 +185,12 @@ test_claude_adapter_parsing() {
 }
 
 #===============================================================================
-# Test: Codex Adapter
+# Test: Codex Parser
 #===============================================================================
 test_codex_input_parsing() {
     # Codex delivers a Claude-compatible payload; parse_codex_input delegates to the
-    # Claude parser. Extract just the parser functions (avoid the hook script's
-    # top-level set -e / agent-id exit side effects).
-    local hk="$HOOKS_DIR/kapsis-status-hook.sh"
-    # shellcheck disable=SC1090  # sourcing extracted functions via process substitution
-    { source <(sed -n '/^json_get()/,/^}/p' "$hk")
-      source <(sed -n '/^parse_claude_input()/,/^}/p' "$hk")
-      source <(sed -n '/^parse_codex_input()/,/^}/p' "$hk"); }
-    # Guard: sed range ends at the first column-0 '}'; if a body ever adds one, extraction
-    # truncates and silently sources a broken function. Fail loudly instead.
-    assert_true "declare -F parse_codex_input >/dev/null 2>&1" "parse_codex_input extracted intact (sed not truncated)"
+    # Claude parser. Both live in the sourceable hook-input-parsers.sh module.
+    source "$HOOKS_DIR/hook-input-parsers.sh"
 
     local input='{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"npm install"}}'
     local result tool_name command
@@ -216,17 +209,13 @@ test_codex_input_parsing() {
 }
 
 #===============================================================================
-# Test: Gemini Adapter
+# Test: Gemini Parser
 #===============================================================================
 test_gemini_input_parsing() {
     # Gemini hooks don't fire headless (so this parser is only exercised interactively),
     # but keep it correct: real AfterTool payload uses tool_name/tool_input with
-    # snake_case built-in tool names.
-    local hk="$HOOKS_DIR/kapsis-status-hook.sh"
-    # shellcheck disable=SC1090  # sourcing extracted functions via process substitution
-    { source <(sed -n '/^json_get()/,/^}/p' "$hk")
-      source <(sed -n '/^parse_gemini_input()/,/^}/p' "$hk"); }
-    assert_true "declare -F parse_gemini_input >/dev/null 2>&1" "parse_gemini_input extracted intact (sed not truncated)"
+    # snake_case built-in tool names. Parser lives in hook-input-parsers.sh.
+    source "$HOOKS_DIR/hook-input-parsers.sh"
 
     local input='{"hook_event_name":"AfterTool","tool_name":"run_shell_command","tool_input":{"command":"ls -la"}}'
     local result tool_name command
@@ -1542,13 +1531,13 @@ run_tests() {
     run_test test_config_bash_patterns
     run_test test_bash_command_mapping
 
-    log_info "=== Claude Adapter ==="
-    run_test test_claude_adapter_parsing
+    log_info "=== Claude Parser ==="
+    run_test test_claude_input_parsing
 
-    log_info "=== Codex Adapter ==="
+    log_info "=== Codex Parser ==="
     run_test test_codex_input_parsing
 
-    log_info "=== Gemini Adapter ==="
+    log_info "=== Gemini Parser ==="
     run_test test_gemini_input_parsing
 
     log_info "=== Progress Monitor ==="

@@ -60,6 +60,12 @@ if [[ -f "$SCRIPT_DIR/tool-phase-mapping.sh" ]]; then
     source "$SCRIPT_DIR/tool-phase-mapping.sh"
 fi
 
+# Per-agent hook-input parsers (json_get + parse_{claude,codex,gemini}_input).
+# Canonical, sourceable module shared with the unit tests.
+if [[ -f "$SCRIPT_DIR/hook-input-parsers.sh" ]]; then
+    source "$SCRIPT_DIR/hook-input-parsers.sh"
+fi
+
 #===============================================================================
 # Logging Functions
 #===============================================================================
@@ -77,38 +83,6 @@ log_info() {
 
 log_error() {
     echo "[KAPSIS-HOOK] ERROR: $*" >&2
-}
-
-#===============================================================================
-# JSON Parsing Functions
-#===============================================================================
-
-# Extract a field from JSON using python3 (always available in container)
-json_get() {
-    local json="$1"
-    local field="$2"
-    local default="${3:-}"
-
-    local value
-    value=$(echo "$json" | python3 -c "
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    # Handle nested fields like 'tool_input.command'
-    keys = '$field'.split('.')
-    result = data
-    for key in keys:
-        if isinstance(result, dict):
-            result = result.get(key, '')
-        else:
-            result = ''
-            break
-    print(result if result is not None else '')
-except Exception as e:
-    print('')
-" 2>/dev/null) || value="$default"
-
-    echo "${value:-$default}"
 }
 
 #===============================================================================
@@ -157,100 +131,23 @@ print(json.dumps(state))
 }
 
 #===============================================================================
-# Agent Adapters
-#===============================================================================
-
-# Parse Claude Code hook input
-parse_claude_input() {
-    local input="$1"
-
-    local tool_name
-    tool_name=$(json_get "$input" "tool_name" "unknown")
-
-    # Extract command for Bash tool
-    local command=""
-    if [[ "$tool_name" == "Bash" ]]; then
-        command=$(json_get "$input" "tool_input.command" "")
-    fi
-
-    # Extract file path for file tools
-    local file_path=""
-    if [[ "$tool_name" =~ ^(Read|Edit|Write|Glob|Grep)$ ]]; then
-        file_path=$(json_get "$input" "tool_input.file_path" "")
-        [[ -z "$file_path" ]] && file_path=$(json_get "$input" "tool_input.path" "")
-    fi
-
-    echo "{\"tool_name\": \"$tool_name\", \"command\": \"$command\", \"file_path\": \"$file_path\"}"
-}
-
-# Parse Codex CLI hook input.
-# Codex (>=0.15x) delivers a Claude-Code-compatible payload on stdin (same field
-# names: tool_name, tool_input.command, tool_input.file_path, tool_response), so we
-# reuse the Claude parser. ONE value differs: codex reports ALL file edits with
-# tool_name "apply_patch" (not Write/Edit), which the Claude parser would leave
-# uncategorized ("other", weight 1) instead of "implementing" (weight 5). Normalize
-# it to "Edit" so category, status message, and decision logging all work. (Its
-# tool_input is a patch blob, not {file_path}, so per-file granularity isn't available.)
-parse_codex_input() {
-    local input="$1"
-    local tool_name
-    tool_name=$(json_get "$input" "tool_name" "unknown")
-    if [[ "$tool_name" == "apply_patch" ]]; then
-        # Re-label apply_patch -> Edit for the Claude parser + downstream mapping.
-        input=$(echo "$input" | python3 -c "
-import json, sys
-try:
-    d = json.load(sys.stdin)
-    d['tool_name'] = 'Edit'
-    print(json.dumps(d))
-except Exception:
-    print('$input')
-" 2>/dev/null) || true
-    fi
-    parse_claude_input "$input"
-}
-
-# Parse Gemini CLI hook input.
-# NOTE: Gemini hooks do NOT fire in Kapsis's headless (`gemini -p`) mode, so this
-# parser is effectively unused there — Gemini status comes from the instruction-based
-# gist path. It is kept correct for the interactive case only. Gemini's AfterTool
-# payload uses Claude-compatible envelope fields (tool_name, tool_input) but
-# snake_case built-in tool names (run_shell_command / write_file / read_file / ...).
-parse_gemini_input() {
-    local input="$1"
-
-    local tool_name
-    tool_name=$(json_get "$input" "tool_name" "unknown")
-
-    local command=""
-    local file_path=""
-    case "$tool_name" in
-        run_shell_command|execute_code|run_command)
-            tool_name="Bash"
-            command=$(json_get "$input" "tool_input.command" "")
-            [[ -z "$command" ]] && command=$(json_get "$input" "tool_input.code" "")
-            ;;
-        read_file|read_many_files|view_file)
-            tool_name="Read"
-            file_path=$(json_get "$input" "tool_input.file_path" "")
-            [[ -z "$file_path" ]] && file_path=$(json_get "$input" "tool_input.path" "")
-            ;;
-        write_file|replace|edit_file)
-            tool_name="Edit"
-            file_path=$(json_get "$input" "tool_input.file_path" "")
-            [[ -z "$file_path" ]] && file_path=$(json_get "$input" "tool_input.path" "")
-            ;;
-        search_file_content|glob|grep)
-            tool_name="Grep"
-            ;;
-    esac
-
-    echo "{\"tool_name\": \"$tool_name\", \"command\": \"$command\", \"file_path\": \"$file_path\"}"
-}
-
-#===============================================================================
 # Progress Calculation
 #===============================================================================
+
+# Emit the five tool counts (exploring implementing building testing other) as a
+# single space-separated line. One python3 call instead of five near-identical
+# one-liners; falls back to all-zero on malformed state.
+_state_tool_counts() {
+    echo "$1" | python3 -c "
+import json, sys
+try:
+    tc = json.load(sys.stdin).get('tool_counts', {})
+except Exception:
+    tc = {}
+print(tc.get('exploring',0), tc.get('implementing',0),
+      tc.get('building',0), tc.get('testing',0), tc.get('other',0))
+" 2>/dev/null || echo "0 0 0 0 0"
+}
 
 # Calculate progress based on tool activity
 calculate_progress() {
@@ -260,13 +157,9 @@ calculate_progress() {
     local base_progress=25
     local max_progress=90
 
-    # Get tool counts
+    # Get tool counts (single python3 call, split into fields)
     local exploring implementing building testing other
-    exploring=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_counts',{}).get('exploring',0))" 2>/dev/null || echo 0)
-    implementing=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_counts',{}).get('implementing',0))" 2>/dev/null || echo 0)
-    building=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_counts',{}).get('building',0))" 2>/dev/null || echo 0)
-    testing=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_counts',{}).get('testing',0))" 2>/dev/null || echo 0)
-    other=$(echo "$state" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_counts',{}).get('other',0))" 2>/dev/null || echo 0)
+    read -r exploring implementing building testing other <<< "$(_state_tool_counts "$state")"
 
     # Calculate activity score (weighted by importance)
     local activity_score
@@ -407,12 +300,21 @@ main() {
     state=$(load_state)
     state=$(increment_tool_count "$state" "$category")
 
-    # Update last tool in state
-    state=$(echo "$state" | python3 -c "
-import json, sys
-state = json.load(sys.stdin)
-state['last_tool'] = '$tool_name'
-state['last_update'] = '$(date -u +%Y-%m-%dT%H:%M:%SZ)'
+    # Update last tool in state. Pass values via the environment (never
+    # string-interpolated into the -c body) — $tool_name derives from the agent's
+    # payload and is attacker-influenceable; interpolating it risked a python
+    # syntax error that would blank the state. Same hardening as log_decision().
+    state=$(echo "$state" | \
+        KAPSIS_LAST_TOOL="$tool_name" \
+        KAPSIS_LAST_UPDATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        python3 -c "
+import json, os, sys
+try:
+    state = json.load(sys.stdin)
+except Exception:
+    state = {}
+state['last_tool'] = os.environ.get('KAPSIS_LAST_TOOL', '')
+state['last_update'] = os.environ.get('KAPSIS_LAST_UPDATE', '')
 print(json.dumps(state))
 " 2>/dev/null)
 
