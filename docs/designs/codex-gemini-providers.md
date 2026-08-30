@@ -14,7 +14,8 @@ using them as fallbacks and for multi-agent orchestration from the Slack bot (la
 The launch path is already provider-agnostic: `parse_config` reads each config's
 `.agent.command` and runs it generically (`bash -c "$AGENT_COMMAND"` → `exec "$@"` in
 entrypoint), agent-type detection covers claude/codex/gemini/aider, and per-provider
-status-hook adapters exist (`scripts/hooks/agent-adapters/{codex,gemini}-adapter.sh`).
+status-hook adapters existed (`scripts/hooks/agent-adapters/{codex,gemini}-adapter.sh` — later
+found to be dead/wrong and removed; see the status-hook section below).
 `build-agent-image.sh <name>` already builds `kapsis-<name>:latest` from
 `configs/agents/<name>.yaml` (`.install.npm/.pip/.script`).
 
@@ -158,6 +159,22 @@ never enter the container. This structurally closes C1/H3 and makes C2 moot.
     path (the agent writes `$KAPSIS_GIST_FILE` per injected `GEMINI.md`/`AGENTS.md` guidance).
   - The obsolete `~/.codex/config.yaml` / `~/.gemini/hooks/*.sh` writers and their dead
     `agent-adapters/{codex,gemini}-adapter.sh` were removed; status-hook tests updated accordingly.
+  - **Security notes (from ensemble review):**
+    - `--dangerously-bypass-hook-trust` bypasses only per-hook *review*, NOT the workspace-trust
+      gate. Verified via canary: a malicious `/workspace/.codex/hooks.json` does **not** auto-run
+      (untrusted workspace). Note this flag disables a control that only exists on codex — it is
+      *not* parity with Claude (Claude has no hook-trust gate), though net exposure is small since
+      both run only kapsis-authored hooks from a writable file the agent could already rewrite.
+    - Gemini's no-op means it also loses the independent **audit trail** (`audit_log_event` fires
+      inside the status hook's `main()`), not just the progress bar. The instruction-based gist is
+      agent-controlled and thus tamperable — a prompt-injected gemini agent can omit/falsify it.
+      An independent audit path for gemini (e.g. shell-level command logging) is a follow-up.
+    - `log_decision` was hardened against command-injection (agent tool text was interpolated into
+      `python3 -c`); this PR makes codex hooks fire, which is what made that path reachable.
+  - **Upgrade sequencing (split-brain):** the codex command flags live in `configs/codex.yaml`
+    (host, immediate on upgrade) but the injector runs **inside the image** (needs rebuild). An old
+    `kapsis-codex-cli` image + new flags = inert no-op. So this fix requires BOTH a host upgrade
+    AND a codex/gemini image refresh (new release tag → `--pull`); merge alone republishes nothing.
 
 ## Deferred (explicitly out of scope for this branch)
 - Full `configs/agents/` ↔ `configs/` schema unification.

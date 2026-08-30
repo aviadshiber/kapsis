@@ -491,9 +491,7 @@ The dashboard renders transcripts in the per-agent **Conversation** tab.
 | `scripts/hooks/kapsis-status-hook.sh` | Universal hook for all agents |
 | `scripts/hooks/kapsis-stop-hook.sh` | Completion hook |
 | `scripts/hooks/tool-phase-mapping.sh` | Tool → phase mapping (loads YAML config) |
-| `scripts/hooks/agent-adapters/claude-adapter.sh` | Parse Claude Code hook format |
-| `scripts/hooks/agent-adapters/codex-adapter.sh` | Parse Codex CLI hook format |
-| `scripts/hooks/agent-adapters/gemini-adapter.sh` | Parse Gemini CLI hook format |
+| `scripts/hooks/kapsis-status-hook.sh` (`parse_{claude,codex,gemini}_input`) | Per-agent hook-payload parsers (runtime path; codex reuses the Claude parser) |
 | `configs/tool-phase-mapping.yaml` | Tool → phase mapping configuration |
 | `scripts/kapsis-recovery-action.sh` | Determine recovery action from `error_type` (Issue #262) |
 | `scripts/lib/transcript.sh` | Conversation transcript persistence (Issue #390) |

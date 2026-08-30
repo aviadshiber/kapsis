@@ -186,9 +186,28 @@ parse_claude_input() {
 # Parse Codex CLI hook input.
 # Codex (>=0.15x) delivers a Claude-Code-compatible payload on stdin (same field
 # names: tool_name, tool_input.command, tool_input.file_path, tool_response), so we
-# reuse the Claude parser verbatim rather than the old (imagined) exec.* format.
+# reuse the Claude parser. ONE value differs: codex reports ALL file edits with
+# tool_name "apply_patch" (not Write/Edit), which the Claude parser would leave
+# uncategorized ("other", weight 1) instead of "implementing" (weight 5). Normalize
+# it to "Edit" so category, status message, and decision logging all work. (Its
+# tool_input is a patch blob, not {file_path}, so per-file granularity isn't available.)
 parse_codex_input() {
-    parse_claude_input "$1"
+    local input="$1"
+    local tool_name
+    tool_name=$(json_get "$input" "tool_name" "unknown")
+    if [[ "$tool_name" == "apply_patch" ]]; then
+        # Re-label apply_patch -> Edit for the Claude parser + downstream mapping.
+        input=$(echo "$input" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    d['tool_name'] = 'Edit'
+    print(json.dumps(d))
+except Exception:
+    print('$input')
+" 2>/dev/null) || true
+    fi
+    parse_claude_input "$input"
 }
 
 # Parse Gemini CLI hook input.
@@ -305,25 +324,36 @@ log_decision() {
     esac
 
     if [[ "$is_major" == "true" ]]; then
-        # Append to decisions file
-        local decision="{\"timestamp\": \"$timestamp\", \"type\": \"$decision_type\", \"tool\": \"$tool_name\", \"description\": \"$description\"}"
-
-        if [[ -f "$decisions_file" ]]; then
-            # Append to existing decisions
-            python3 -c "
-import json, sys
+        # Build + append the decision entirely in Python, with all values passed via
+        # the ENVIRONMENT (never string-interpolated into the -c body). $description
+        # derives from the agent's tool_input.command — attacker-influenceable in this
+        # threat model — so interpolating it into python source (or an echo'd JSON
+        # literal) was a code-injection / JSON-corruption vector. os.environ values are
+        # data, never code. Python also handles create-or-append uniformly.
+        KAPSIS_DEC_FILE="$decisions_file" \
+        KAPSIS_DEC_TS="$timestamp" \
+        KAPSIS_DEC_TYPE="$decision_type" \
+        KAPSIS_DEC_TOOL="$tool_name" \
+        KAPSIS_DEC_DESC="$description" \
+        python3 -c "
+import json, os
+path = os.environ['KAPSIS_DEC_FILE']
 try:
-    with open('$decisions_file', 'r') as f:
+    with open(path) as f:
         data = json.load(f)
-except:
+    if not isinstance(data, dict) or not isinstance(data.get('decisions'), list):
+        data = {'decisions': []}
+except Exception:
     data = {'decisions': []}
-data['decisions'].append($decision)
-with open('$decisions_file', 'w') as f:
+data['decisions'].append({
+    'timestamp':   os.environ.get('KAPSIS_DEC_TS', ''),
+    'type':        os.environ.get('KAPSIS_DEC_TYPE', ''),
+    'tool':        os.environ.get('KAPSIS_DEC_TOOL', ''),
+    'description': os.environ.get('KAPSIS_DEC_DESC', ''),
+})
+with open(path, 'w') as f:
     json.dump(data, f, indent=2)
 " 2>/dev/null || true
-        else
-            echo "{\"decisions\": [$decision]}" > "$decisions_file"
-        fi
     fi
 }
 

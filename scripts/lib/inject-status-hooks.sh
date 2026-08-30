@@ -57,8 +57,9 @@ inject_claude_hooks() {
     # Ensure directory exists
     mkdir -p "$settings_dir"
 
-    # Create base file if missing
-    if [[ ! -f "$settings_local" ]]; then
+    # Create base file if missing OR empty (a 0-byte file makes jq emit nothing and
+    # clobber it to empty — same trap as the codex injector; -s covers both).
+    if [[ ! -s "$settings_local" ]]; then
         echo '{}' > "$settings_local"
         chmod 600 "$settings_local"
         log_debug "Created empty settings.json"
@@ -183,7 +184,9 @@ inject_codex_hooks() {
         return 1
     fi
 
-    [[ -f "$hooks_file" ]] || { echo '{}' > "$hooks_file"; chmod 600 "$hooks_file"; }
+    # Seed when missing OR empty: jq on a 0-byte file yields empty output and would
+    # silently clobber it to empty (log_success but no hooks written). -s covers both.
+    [[ -s "$hooks_file" ]] || { echo '{}' > "$hooks_file"; chmod 600 "$hooks_file"; }
 
     local GIST_HOOK="${KAPSIS_HOOK_DIR}/kapsis-gist-hook.sh"
     local inject_gist="${KAPSIS_INJECT_GIST:-false}"
@@ -244,6 +247,12 @@ inject_gemini_hooks() {
     # intentionally a no-op; do not resurrect the old ~/.gemini/hooks/*.sh writer —
     # Gemini never read that path and the scripts silently no-op'd.
     log_info "Gemini CLI: hooks do not fire in headless mode — status via instruction-based gist (no hook injection)"
+    # Gemini's ONLY status channel is the instruction-based gist, gated on KAPSIS_INJECT_GIST.
+    # If it's off, a gemini run emits no progress signal at all (no hooks, no gist). Warn so a
+    # default-config gemini run isn't a silent status black hole. (The Slack bot sets it true.)
+    if [[ "${KAPSIS_INJECT_GIST:-false}" != "true" ]]; then
+        log_warn "Gemini has NO status/progress signal with KAPSIS_INJECT_GIST=false (hooks don't fire headless). Set agent.inject_gist: true to get progress via gist.txt."
+    fi
     return 0
 }
 

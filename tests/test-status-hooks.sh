@@ -195,6 +195,9 @@ test_codex_input_parsing() {
     { source <(sed -n '/^json_get()/,/^}/p' "$hk")
       source <(sed -n '/^parse_claude_input()/,/^}/p' "$hk")
       source <(sed -n '/^parse_codex_input()/,/^}/p' "$hk"); }
+    # Guard: sed range ends at the first column-0 '}'; if a body ever adds one, extraction
+    # truncates and silently sources a broken function. Fail loudly instead.
+    assert_true "declare -F parse_codex_input >/dev/null 2>&1" "parse_codex_input extracted intact (sed not truncated)"
 
     local input='{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"npm install"}}'
     local result tool_name command
@@ -204,10 +207,12 @@ test_codex_input_parsing() {
     assert_equals "$tool_name" "Bash" "Codex PostToolUse Bash parsed as Bash"
     assert_equals "$command" "npm install" "Codex Bash command extracted"
 
-    local winput='{"hook_event_name":"PostToolUse","tool_name":"Write","tool_input":{"file_path":"/workspace/src/new.py"}}'
+    # Codex reports ALL file edits with tool_name "apply_patch" (NOT Write/Edit).
+    # parse_codex_input must re-label it to Edit so it categorizes as "implementing".
+    local winput='{"hook_event_name":"PostToolUse","tool_name":"apply_patch","tool_input":{"patch":"*** Update File: x.py"}}'
     result=$(parse_codex_input "$winput")
     tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name',''))")
-    assert_equals "$tool_name" "Write" "Codex Write parsed as Write"
+    assert_equals "$tool_name" "Edit" "Codex apply_patch re-labeled to Edit (so it maps to 'implementing', not 'other')"
 }
 
 #===============================================================================
@@ -221,6 +226,7 @@ test_gemini_input_parsing() {
     # shellcheck disable=SC1090  # sourcing extracted functions via process substitution
     { source <(sed -n '/^json_get()/,/^}/p' "$hk")
       source <(sed -n '/^parse_gemini_input()/,/^}/p' "$hk"); }
+    assert_true "declare -F parse_gemini_input >/dev/null 2>&1" "parse_gemini_input extracted intact (sed not truncated)"
 
     local input='{"hook_event_name":"AfterTool","tool_name":"run_shell_command","tool_input":{"command":"ls -la"}}'
     local result tool_name command
@@ -576,6 +582,35 @@ test_inject_gemini_is_noop() {
     assert_false "[[ -f '$TEST_HOME/.gemini/settings.json' ]]" "must NOT write gemini settings.json (secret-bearing)"
 
     cleanup_inject_test_env
+}
+
+test_status_hook_main_runs_when_executed() {
+    # Runtime-path guard: the source-guard [[ BASH_SOURCE == $0 ]] must NOT prevent main()
+    # from running when the hook is executed as a command (how agents invoke it). If it did,
+    # hooks would silently no-op — the exact bug this whole effort fixes. Execute the hook
+    # with a VALID agent id (empty id short-circuits before main) and assert main ran.
+    setup_inject_test_env
+    local aid="test-mainguard"
+    local state="/tmp/kapsis-hook-state-${aid}.json"
+    rm -f "$state"
+
+    echo '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}' \
+      | KAPSIS_STATUS_AGENT_ID="$aid" KAPSIS_AGENT_TYPE="claude-cli" \
+        bash "$HOOKS_DIR/kapsis-status-hook.sh" >/dev/null 2>&1 || true
+
+    assert_file_exists "$state" "main() ran (state file written) — source-guard did not break the executed-hook path"
+    rm -f "$state"
+    cleanup_inject_test_env
+}
+
+test_codex_config_has_hook_flags() {
+    # Config-regression guard: the codex launch command must keep the flags that ENABLE
+    # hooks. Dropping either silently re-breaks codex status (a pure config revert of the fix).
+    local cfg="$KAPSIS_ROOT/configs/codex.yaml"
+    local cmd
+    cmd=$(yq -r '.agent.command' "$cfg" 2>/dev/null)
+    assert_contains "$cmd" "features.hooks=true" "codex command must enable the hooks feature"
+    assert_contains "$cmd" "dangerously-bypass-hook-trust" "codex command must bypass hook trust for unattended runs"
 }
 
 test_inject_skips_without_agent_id() {
@@ -1539,6 +1574,8 @@ run_tests() {
     run_test test_inject_codex_merges_with_existing
     run_test test_inject_codex_idempotent
     run_test test_inject_gemini_is_noop
+    run_test test_status_hook_main_runs_when_executed
+    run_test test_codex_config_has_hook_flags
     run_test test_inject_skips_without_agent_id
     run_test test_inject_hook_path_uses_kapsis_home
 

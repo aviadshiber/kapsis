@@ -21,12 +21,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- `log_decision` (kapsis-status-hook.sh) no longer string-interpolates the agent's
+  (attacker-influenceable) tool command into a `python3 -c` body or an echoed JSON
+  literal — a code-injection / JSON-corruption vector that this change makes live for
+  codex. Values are now passed via the environment and serialized with `json.dumps`.
+
 ### Fixed
 - Codex status hooks now fire: `inject_codex_hooks` writes `~/.codex/hooks.json`
   (Claude-compatible schema) instead of the obsolete `~/.codex/config.yaml`, and the
   codex launch command enables them with `-c features.hooks=true
   --dangerously-bypass-hook-trust`. Codex hook payloads are Claude-compatible, so
   `parse_codex_input` delegates to the Claude parser.
+- Codex reports file edits with tool_name `apply_patch` (not Write/Edit);
+  `parse_codex_input` now re-labels it to `Edit` (and `apply_patch` maps to
+  `implementing`) so codex edit activity is categorized/weighted correctly instead of
+  falling to `other`.
+- Injectors seed the hooks file when empty (not just missing) — a 0-byte file made jq
+  emit nothing and silently clobber it.
 
 ### Changed
 - Gemini status tracking is instruction-based, not hook-based: Gemini hooks do not

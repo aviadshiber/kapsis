@@ -69,6 +69,7 @@ patterns:
     - "Edit"
     - "Write"
     - "NotebookEdit"
+    - "apply_patch"   # Codex CLI's file-edit tool (its PostToolUse tool_name for edits)
     # Bash file modification commands
     - "Bash(mkdir *)"
     - "Bash(cp *)"
