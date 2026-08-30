@@ -630,14 +630,12 @@ COPY scripts/lib/ssh-config-compat.sh /opt/kapsis/lib/ssh-config-compat.sh
 COPY scripts/lib/compat.sh /opt/kapsis/lib/compat.sh
 
 # Create hooks directory and copy status tracking hooks
-RUN mkdir -p /opt/kapsis/hooks/agent-adapters
+RUN mkdir -p /opt/kapsis/hooks
 COPY scripts/hooks/kapsis-status-hook.sh /opt/kapsis/hooks/kapsis-status-hook.sh
 COPY scripts/hooks/kapsis-stop-hook.sh /opt/kapsis/hooks/kapsis-stop-hook.sh
 COPY scripts/hooks/kapsis-gist-hook.sh /opt/kapsis/hooks/kapsis-gist-hook.sh
 COPY scripts/hooks/tool-phase-mapping.sh /opt/kapsis/hooks/tool-phase-mapping.sh
-COPY scripts/hooks/agent-adapters/claude-adapter.sh /opt/kapsis/hooks/agent-adapters/claude-adapter.sh
-COPY scripts/hooks/agent-adapters/codex-adapter.sh /opt/kapsis/hooks/agent-adapters/codex-adapter.sh
-COPY scripts/hooks/agent-adapters/gemini-adapter.sh /opt/kapsis/hooks/agent-adapters/gemini-adapter.sh
+COPY scripts/hooks/hook-input-parsers.sh /opt/kapsis/hooks/hook-input-parsers.sh
 
 # Copy entrypoint and helper scripts
 COPY scripts/entrypoint.sh /opt/kapsis/entrypoint.sh
@@ -652,7 +650,7 @@ RUN mkdir -p /opt/kapsis/agents && chown ${USER_ID}:${GROUP_ID} /opt/kapsis/agen
 
 # Make all scripts executable and readable
 RUN chmod 755 /opt/kapsis/*.sh /opt/kapsis/kapsis-ss-inject /opt/kapsis/git-credential-keyring /opt/kapsis/lib/*.sh /opt/kapsis/lib/status.py && \
-    chmod 755 /opt/kapsis/hooks/*.sh /opt/kapsis/hooks/agent-adapters/*.sh && \
+    chmod 755 /opt/kapsis/hooks/*.sh && \
     chmod 644 /opt/kapsis/maven/settings.xml /opt/kapsis/lib/progress-instructions.md && \
     ln -sf /opt/kapsis/kapsis-ss-inject /usr/local/bin/kapsis-ss-inject && \
     ln -sf /opt/kapsis/git-credential-keyring /usr/local/bin/git-credential-keyring

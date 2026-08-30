@@ -14,7 +14,9 @@ using them as fallbacks and for multi-agent orchestration from the Slack bot (la
 The launch path is already provider-agnostic: `parse_config` reads each config's
 `.agent.command` and runs it generically (`bash -c "$AGENT_COMMAND"` → `exec "$@"` in
 entrypoint), agent-type detection covers claude/codex/gemini/aider, and per-provider
-status-hook adapters exist (`scripts/hooks/agent-adapters/{codex,gemini}-adapter.sh`).
+status-hook adapters existed (`scripts/hooks/agent-adapters/*.sh` — later found to be
+dead/wrong and removed entirely; the live per-agent parsing now lives in one sourceable
+module, `scripts/hooks/hook-input-parsers.sh`; see the status-hook section below).
 `build-agent-image.sh <name>` already builds `kapsis-<name>:latest` from
 `configs/agents/<name>.yaml` (`.install.npm/.pip/.script`).
 
@@ -144,15 +146,39 @@ to a localhost proxy that attaches short-lived tokens (or makes the call itself)
 never enter the container. This structurally closes C1/H3 and makes C2 moot.
 
 ## Cross-cutting
-- **KNOWN GAP (status-hook adapters target stale interfaces — deferred to the bot phase).**
-  `inject_codex_hooks` writes `~/.codex/config.yaml`, but codex 0.151 reads `~/.codex/hooks.json`
-  (or an inline `[hooks]` table in `config.toml`); gemini 0.57 manages hooks via `settings.json` /
-  the `gemini hooks` surface. So the status-hook pipeline (and therefore `gist.txt` monitoring)
-  currently does **not** fire for codex/gemini — verified: the `.kapsis/progress.json` seen in
-  smoke runs is the agent following injected *text* instructions, not the hook. Silent no-op, not a
-  crash: agent execution, auth, and git workflow are unaffected. Fixing the adapters (and the
-  existing status-hook tests, which currently assert the stale `config.yaml`/`~/.gemini/hooks`
-  interface and will need updating) is required for the bot phase (which depends on `gist.txt`).
+- **Status-hook tracking (RESOLVED for codex; instruction-based for gemini).**
+  - **Codex:** `inject_codex_hooks` now writes `~/.codex/hooks.json` (Claude-compatible schema:
+    `PostToolUse`→status, `Stop`→stop, + gist hook when enabled), and the launch command adds
+    `-c features.hooks=true --dangerously-bypass-hook-trust` (config.toml is not injected, so the
+    feature flag comes from the CLI; trust bypass is required for unattended runs). Codex's payload
+    is Claude-compatible, so `parse_codex_input` delegates to the Claude parser. Verified: the
+    injector writes the correct file in-container, and codex fires hooks headlessly with this recipe.
+  - **Gemini:** hooks do **not** fire in headless (`gemini -p`) mode — verified empirically
+    (correct event names, `previewFeatures` on, workspace trusted, real tool call → zero hooks).
+    Gemini hooks also live in `settings.json`, which we intentionally do not inject (secret-bearing).
+    So `inject_gemini_hooks` is a no-op and gemini status comes from the **instruction-based gist**
+    path (the agent writes `$KAPSIS_GIST_FILE` per injected `GEMINI.md`/`AGENTS.md` guidance).
+  - The obsolete `~/.codex/config.yaml` / `~/.gemini/hooks/*.sh` writers and the entire dead
+    `agent-adapters/` directory were removed; the live per-agent parsers (`json_get` +
+    `parse_{claude,codex,gemini}_input`) were unified into one sourceable module,
+    `scripts/hooks/hook-input-parsers.sh`, which the status hook sources and the tests import
+    directly (no more sed-extraction hack). Status-hook tests updated accordingly.
+  - **Security notes (from ensemble review):**
+    - `--dangerously-bypass-hook-trust` bypasses only per-hook *review*, NOT the workspace-trust
+      gate. Verified via canary: a malicious `/workspace/.codex/hooks.json` does **not** auto-run
+      (untrusted workspace). Note this flag disables a control that only exists on codex — it is
+      *not* parity with Claude (Claude has no hook-trust gate), though net exposure is small since
+      both run only kapsis-authored hooks from a writable file the agent could already rewrite.
+    - Gemini's no-op means it also loses the independent **audit trail** (`audit_log_event` fires
+      inside the status hook's `main()`), not just the progress bar. The instruction-based gist is
+      agent-controlled and thus tamperable — a prompt-injected gemini agent can omit/falsify it.
+      An independent audit path for gemini (e.g. shell-level command logging) is a follow-up.
+    - `log_decision` was hardened against command-injection (agent tool text was interpolated into
+      `python3 -c`); this PR makes codex hooks fire, which is what made that path reachable.
+  - **Upgrade sequencing (split-brain):** the codex command flags live in `configs/codex.yaml`
+    (host, immediate on upgrade) but the injector runs **inside the image** (needs rebuild). An old
+    `kapsis-codex-cli` image + new flags = inert no-op. So this fix requires BOTH a host upgrade
+    AND a codex/gemini image refresh (new release tag → `--pull`); merge alone republishes nothing.
 
 ## Deferred (explicitly out of scope for this branch)
 - Full `configs/agents/` ↔ `configs/` schema unification.

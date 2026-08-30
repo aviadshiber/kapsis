@@ -7,8 +7,8 @@
 #
 # Supported agents:
 #   - Claude Code: ~/.claude/settings.json (JSON, merged by Claude)
-#   - Codex CLI: ~/.codex/config.yaml (YAML, merged hooks section)
-#   - Gemini CLI: ~/.gemini/hooks/*.sh (Shell scripts in hooks directory)
+#   - Codex CLI: ~/.codex/hooks.json (JSON, Claude-compatible schema/payload)
+#   - Gemini CLI: no hooks (they do not fire headless) — instruction-based gist
 #
 # Usage: Called automatically by entrypoint.sh for supported agents
 #        Or call directly: ./inject-status-hooks.sh [agent-type]
@@ -47,53 +47,65 @@ STATUS_HOOK="${KAPSIS_HOOK_DIR}/kapsis-status-hook.sh"
 STOP_HOOK="${KAPSIS_HOOK_DIR}/kapsis-stop-hook.sh"
 
 #===============================================================================
-# Claude Code Hook Injection (JSON-based)
+# Shared JSON Hook Injection (Claude settings.json + Codex hooks.json)
 #===============================================================================
 
-inject_claude_hooks() {
-    local settings_dir="${HOME}/.claude"
-    local settings_local="${settings_dir}/settings.json"
+# _inject_json_hooks <target_file> [with_attribution]
+#
+# Both Claude (~/.claude/settings.json) and Codex (~/.codex/hooks.json) use the
+# SAME Claude-compatible hook schema, so the PostToolUse (gist-before-status
+# ordering) + Stop merge program lives here ONCE. The "gist must fire before the
+# status hook" invariant therefore has a single home.
+#
+#   $1 target_file       - JSON file to merge hooks into (seeded if missing/empty).
+#   $2 with_attribution  - "true" to also merge Claude Code native attribution
+#                          templates from KAPSIS_ATTRIBUTION_COMMIT/PR (Claude
+#                          only). Codex passes "false"/omits, so no .attribution
+#                          key is ever written to hooks.json (output shape
+#                          unchanged). Attribution is still conditional on the env
+#                          vars being *defined* (empty string = valid "disable").
+_inject_json_hooks() {
+    local target_file="$1"
+    local with_attribution="${2:-false}"
 
-    # Ensure directory exists
-    mkdir -p "$settings_dir"
-
-    # Create base file if missing
-    if [[ ! -f "$settings_local" ]]; then
-        echo '{}' > "$settings_local"
-        chmod 600 "$settings_local"
-        log_debug "Created empty settings.json"
+    if ! command -v jq &>/dev/null; then
+        log_warn "jq not found - cannot inject hooks into $target_file"
+        return 1
     fi
 
-    # Check if jq is available
-    if ! command -v jq &>/dev/null; then
-        log_warn "jq not found - cannot inject Claude hooks"
-        return 1
+    mkdir -p "$(dirname "$target_file")"
+
+    # Seed when missing OR empty: jq on a 0-byte file yields empty output and would
+    # silently clobber it to empty (log_success but no hooks written). -s covers both.
+    [[ -s "$target_file" ]] || { echo '{}' > "$target_file"; chmod 600 "$target_file"; }
+
+    # Determine whether to inject gist hook (opt-in, file must exist and be executable)
+    local gist_hook="${KAPSIS_HOOK_DIR}/kapsis-gist-hook.sh"
+    local inject_gist="${KAPSIS_INJECT_GIST:-false}"
+    if [[ "$inject_gist" == "true" && ! -x "$gist_hook" ]]; then
+        log_error "Gist hook not found or not executable: $gist_hook -- KAPSIS_INJECT_GIST=true but gist hook will NOT be injected"
+        inject_gist="false"
+    fi
+
+    # Attribution: only merge when the caller opts in AND the env vars are defined
+    # (set — including the empty string, which is a valid "disable" per Claude
+    # Code's spec). When unset, leave any existing user-configured attribution
+    # untouched. Codex passes with_attribution=false, so both flags stay false and
+    # the attribution branches below are skipped entirely.
+    local attr_commit_set="false"
+    local attr_pr_set="false"
+    if [[ "$with_attribution" == "true" ]]; then
+        [[ -n "${KAPSIS_ATTRIBUTION_COMMIT+x}" ]] && attr_commit_set="true"
+        [[ -n "${KAPSIS_ATTRIBUTION_PR+x}" ]] && attr_pr_set="true"
     fi
 
     # Inject hooks using jq (merge, don't overwrite)
     local tmp_file
     tmp_file=$(mktemp)
-
-    # Determine whether to inject gist hook (opt-in, file must exist and be executable)
-    local GIST_HOOK="${KAPSIS_HOOK_DIR}/kapsis-gist-hook.sh"
-    local inject_gist="${KAPSIS_INJECT_GIST:-false}"
-    if [[ "$inject_gist" == "true" && ! -x "$GIST_HOOK" ]]; then
-        log_error "Gist hook not found or not executable: $GIST_HOOK -- KAPSIS_INJECT_GIST=true but gist hook will NOT be injected"
-        inject_gist="false"
-    fi
-
-    # Attribution: only merge when the env vars are defined (set — including the
-    # empty string, which is a valid "disable" per Claude Code's spec). When
-    # unset, leave any existing user-configured attribution untouched.
-    local attr_commit_set="false"
-    local attr_pr_set="false"
-    [[ -n "${KAPSIS_ATTRIBUTION_COMMIT+x}" ]] && attr_commit_set="true"
-    [[ -n "${KAPSIS_ATTRIBUTION_PR+x}" ]] && attr_pr_set="true"
-
     if jq \
         --arg status_hook "$STATUS_HOOK" \
         --arg stop_hook "$STOP_HOOK" \
-        --arg gist_hook "$GIST_HOOK" \
+        --arg gist_hook "$gist_hook" \
         --arg inject_gist "$inject_gist" \
         --arg attr_commit "${KAPSIS_ATTRIBUTION_COMMIT:-}" \
         --arg attr_pr "${KAPSIS_ATTRIBUTION_PR:-}" \
@@ -146,72 +158,54 @@ inject_claude_hooks() {
             .attribution //= {} |
             .attribution.pr = $attr_pr
         else . end
-    ' "$settings_local" > "$tmp_file" 2>/dev/null; then
-        mv "$tmp_file" "$settings_local"
-        chmod 600 "$settings_local"
-        log_success "Claude Code hooks injected (merged with existing)"
+    ' "$target_file" > "$tmp_file" 2>/dev/null; then
+        mv "$tmp_file" "$target_file"
+        chmod 600 "$target_file"
         return 0
     else
         rm -f "$tmp_file"
-        log_warn "Failed to inject Claude hooks - JSON parsing error"
+        log_warn "Failed to inject hooks into $target_file - JSON parsing error"
         return 1
     fi
 }
 
 #===============================================================================
-# Codex CLI Hook Injection (YAML-based)
+# Claude Code Hook Injection (~/.claude/settings.json, with attribution)
+#===============================================================================
+
+inject_claude_hooks() {
+    if _inject_json_hooks "${HOME}/.claude/settings.json" "true"; then
+        log_success "Claude Code hooks injected (merged with existing)"
+        return 0
+    fi
+    log_warn "Failed to inject Claude hooks"
+    return 1
+}
+
+#===============================================================================
+# Codex CLI Hook Injection (~/.codex/hooks.json, no attribution)
 #===============================================================================
 
 inject_codex_hooks() {
-    local config_dir="${HOME}/.codex"
-    local config_file="${config_dir}/config.yaml"
-
-    # Ensure directory exists
-    mkdir -p "$config_dir"
-
-    # Check if yq is available (required dependency)
-    if ! command -v yq &>/dev/null; then
-        log_error "yq is required but not installed - cannot inject Codex hooks"
-        return 1
-    fi
-
-    # Create base file if missing
-    if [[ ! -f "$config_file" ]]; then
-        echo '# Codex CLI configuration' > "$config_file"
-        log_debug "Created empty config.yaml"
-    fi
-
-    # Check if hooks already exist using yq
-    local existing_hooks
-    existing_hooks=$(yq eval '.hooks."exec.post" // []' "$config_file" 2>/dev/null || echo "[]")
-
-    # Check if our hook is already present
-    if echo "$existing_hooks" | grep -q "$STATUS_HOOK"; then
-        log_debug "Codex hooks already present"
+    # Codex CLI (>=0.15x) uses a Claude-Code-compatible hook system: JSON at
+    # ~/.codex/hooks.json with the SAME event names (PostToolUse, Stop, ...) and
+    # the SAME stdin payload field names (tool_name, tool_input, tool_response) as
+    # Claude Code. So we inject the identical status/stop/gist hooks Claude gets,
+    # into hooks.json instead of ~/.claude/settings.json, and codex runs are parsed
+    # by the Claude parser (see parse_codex_input -> parse_claude_input). We do NOT
+    # write attribution (that is a Claude-only settings key).
+    #
+    # NOTE: the launch command (configs/codex.yaml) must pass
+    #   -c features.hooks=true --dangerously-bypass-hook-trust
+    # so hooks are enabled and run unattended (config.toml is not injected, so the
+    # feature flag has to come from the command line; trust bypass is required for
+    # automation). Empirically verified: without the flag, hooks do NOT fire.
+    if _inject_json_hooks "${HOME}/.codex/hooks.json" "false"; then
+        log_success "Codex CLI hooks injected (~/.codex/hooks.json, Claude-compatible schema)"
         return 0
     fi
-
-    # Inject hooks using yq (merge, don't overwrite)
-    local tmp_file
-    tmp_file=$(mktemp)
-
-    if yq eval --inplace "
-        .hooks.\"exec.post\" = (.hooks.\"exec.post\" // []) + [\"$STATUS_HOOK\"] |
-        .hooks.\"item.create\" = (.hooks.\"item.create\" // []) + [\"$STATUS_HOOK\"] |
-        .hooks.\"item.update\" = (.hooks.\"item.update\" // []) + [\"$STATUS_HOOK\"] |
-        .hooks.completion = (.hooks.completion // []) + [\"$STOP_HOOK\"] |
-        .hooks.\"exec.post\" |= unique |
-        .hooks.\"item.create\" |= unique |
-        .hooks.\"item.update\" |= unique |
-        .hooks.completion |= unique
-    " "$config_file" 2>/dev/null; then
-        chmod 600 "$config_file"
-        log_success "Codex CLI hooks injected (merged with existing)"
-        return 0
-    else
-        log_warn "Failed to inject Codex hooks - YAML parsing error"
-        return 1
-    fi
+    log_warn "Failed to inject Codex hooks"
+    return 1
 }
 
 #===============================================================================
@@ -219,59 +213,26 @@ inject_codex_hooks() {
 #===============================================================================
 
 inject_gemini_hooks() {
-    local hooks_dir="${HOME}/.gemini/hooks"
-
-    # Ensure directory exists
-    mkdir -p "$hooks_dir"
-
-    # Create post-tool hook wrapper (idempotent - check if already has our hook)
-    local post_tool_hook="${hooks_dir}/post-tool.sh"
-    if [[ -f "$post_tool_hook" ]] && grep -q "$STATUS_HOOK" "$post_tool_hook" 2>/dev/null; then
-        log_debug "Gemini post-tool hook already present"
-    else
-        # Append to existing or create new
-        if [[ -f "$post_tool_hook" ]]; then
-            # Append our hook call
-            {
-                echo ""
-                echo "# Kapsis status tracking"
-                echo "\"$STATUS_HOOK\" \"\$@\" || true"
-            } >> "$post_tool_hook"
-        else
-            # Create new
-            cat > "$post_tool_hook" << EOF
-#!/usr/bin/env bash
-# Gemini CLI post-tool hook
-# Kapsis status tracking
-"$STATUS_HOOK" "\$@" || true
-EOF
-        fi
-        chmod +x "$post_tool_hook"
+    # Gemini CLI hooks live in ~/.gemini/settings.json (.hooks, events BeforeTool/
+    # AfterTool/AfterAgent, gated behind general.previewFeatures). CRUCIALLY, they
+    # do NOT fire in headless non-interactive mode (`gemini -p`), which is how Kapsis
+    # runs it — verified empirically (previewFeatures on, workspace trusted, real
+    # tool call → zero hooks fired). We also deliberately do NOT inject settings.json
+    # (it can carry the user's mcpServers/env secrets — see configs/gemini.yaml).
+    #
+    # So there is no reliable hook surface for headless Gemini. Status/progress for
+    # Gemini therefore comes from the INSTRUCTION-BASED gist path instead: the agent
+    # writes $KAPSIS_GIST_FILE per the injected gist/AGENTS(GEMINI).md instructions
+    # (see inject_gist_instructions / inject_progress_instructions). This function is
+    # intentionally a no-op; do not resurrect the old ~/.gemini/hooks/*.sh writer —
+    # Gemini never read that path and the scripts silently no-op'd.
+    log_info "Gemini CLI: hooks do not fire in headless mode — status via instruction-based gist (no hook injection)"
+    # Gemini's ONLY status channel is the instruction-based gist, gated on KAPSIS_INJECT_GIST.
+    # If it's off, a gemini run emits no progress signal at all (no hooks, no gist). Warn so a
+    # default-config gemini run isn't a silent status black hole. (The Slack bot sets it true.)
+    if [[ "${KAPSIS_INJECT_GIST:-false}" != "true" ]]; then
+        log_warn "Gemini has NO status/progress signal with KAPSIS_INJECT_GIST=false (hooks don't fire headless). Set agent.inject_gist: true to get progress via gist.txt."
     fi
-
-    # Create completion hook wrapper
-    local completion_hook="${hooks_dir}/completion.sh"
-    if [[ -f "$completion_hook" ]] && grep -q "$STOP_HOOK" "$completion_hook" 2>/dev/null; then
-        log_debug "Gemini completion hook already present"
-    else
-        if [[ -f "$completion_hook" ]]; then
-            {
-                echo ""
-                echo "# Kapsis status tracking"
-                echo "\"$STOP_HOOK\" \"\$@\" || true"
-            } >> "$completion_hook"
-        else
-            cat > "$completion_hook" << EOF
-#!/usr/bin/env bash
-# Gemini CLI completion hook
-# Kapsis status tracking
-"$STOP_HOOK" "\$@" || true
-EOF
-        fi
-        chmod +x "$completion_hook"
-    fi
-
-    log_success "Gemini CLI hooks injected"
     return 0
 }
 

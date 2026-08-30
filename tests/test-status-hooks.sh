@@ -158,24 +158,25 @@ test_bash_command_mapping() {
 }
 
 #===============================================================================
-# Test: Claude Adapter
+# Test: Claude Parser
 #===============================================================================
-test_claude_adapter_parsing() {
-    source "$HOOKS_DIR/agent-adapters/claude-adapter.sh"
+test_claude_input_parsing() {
+    # Canonical parser lives in the sourceable hook-input-parsers.sh module.
+    # Claude Code sends the tool name under `tool_name` (the parser reads that key).
+    source "$HOOKS_DIR/hook-input-parsers.sh"
 
-    # Test Read tool parsing
-    local read_input='{"tool":"Read","tool_input":{"file_path":"/workspace/src/main.py"}}'
-    local result
-    result=$(parse_claude_hook_input "$read_input")
-
-    local tool_name
+    # Test Read tool parsing (file_path)
+    local read_input='{"tool_name":"Read","tool_input":{"file_path":"/workspace/src/main.py"}}'
+    local result tool_name file_path
+    result=$(parse_claude_input "$read_input")
     tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name', ''))")
+    file_path=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('file_path', ''))")
     assert_equals "$tool_name" "Read" "Parse Read tool"
+    assert_equals "$file_path" "/workspace/src/main.py" "Parse Read file_path"
 
-    # Test Bash tool parsing
-    local bash_input='{"tool":"Bash","tool_input":{"command":"npm test"}}'
-    result=$(parse_claude_hook_input "$bash_input")
-
+    # Test Bash tool parsing (command)
+    local bash_input='{"tool_name":"Bash","tool_input":{"command":"npm test"}}'
+    result=$(parse_claude_input "$bash_input")
     tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name', ''))")
     local command
     command=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('command', ''))")
@@ -184,49 +185,50 @@ test_claude_adapter_parsing() {
 }
 
 #===============================================================================
-# Test: Codex Adapter
+# Test: Codex Parser
 #===============================================================================
-test_codex_adapter_parsing() {
-    source "$HOOKS_DIR/agent-adapters/codex-adapter.sh"
+test_codex_input_parsing() {
+    # Codex delivers a Claude-compatible payload; parse_codex_input delegates to the
+    # Claude parser. Both live in the sourceable hook-input-parsers.sh module.
+    source "$HOOKS_DIR/hook-input-parsers.sh"
 
-    # Test exec.post parsing
-    local exec_input='{"type":"exec.post","command":"npm install","exit_code":0}'
-    local result
-    result=$(parse_codex_hook_input "$exec_input")
+    local input='{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"npm install"}}'
+    local result tool_name command
+    result=$(parse_codex_input "$input")
+    tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name',''))")
+    command=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('command',''))")
+    assert_equals "$tool_name" "Bash" "Codex PostToolUse Bash parsed as Bash"
+    assert_equals "$command" "npm install" "Codex Bash command extracted"
 
-    local tool_name
-    tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name', ''))")
-    assert_equals "$tool_name" "Bash" "Parse exec.post as Bash"
-
-    # Test item.create parsing
-    local create_input='{"type":"item.create","item_type":"file","path":"/workspace/src/new.py"}'
-    result=$(parse_codex_hook_input "$create_input")
-
-    tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name', ''))")
-    assert_equals "$tool_name" "Write" "Parse item.create as Write"
+    # Codex reports ALL file edits with tool_name "apply_patch" (NOT Write/Edit).
+    # parse_codex_input must re-label it to Edit so it categorizes as "implementing".
+    local winput='{"hook_event_name":"PostToolUse","tool_name":"apply_patch","tool_input":{"patch":"*** Update File: x.py"}}'
+    result=$(parse_codex_input "$winput")
+    tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name',''))")
+    assert_equals "$tool_name" "Edit" "Codex apply_patch re-labeled to Edit (so it maps to 'implementing', not 'other')"
 }
 
 #===============================================================================
-# Test: Gemini Adapter
+# Test: Gemini Parser
 #===============================================================================
-test_gemini_adapter_parsing() {
-    source "$HOOKS_DIR/agent-adapters/gemini-adapter.sh"
+test_gemini_input_parsing() {
+    # Gemini hooks don't fire headless (so this parser is only exercised interactively),
+    # but keep it correct: real AfterTool payload uses tool_name/tool_input with
+    # snake_case built-in tool names. Parser lives in hook-input-parsers.sh.
+    source "$HOOKS_DIR/hook-input-parsers.sh"
 
-    # Test tool_call parsing
-    local tool_input='{"event":"tool_call","function_call":{"name":"execute_code","args":{"code":"ls -la"}}}'
-    local result
-    result=$(parse_gemini_hook_input "$tool_input")
+    local input='{"hook_event_name":"AfterTool","tool_name":"run_shell_command","tool_input":{"command":"ls -la"}}'
+    local result tool_name command
+    result=$(parse_gemini_input "$input")
+    tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name',''))")
+    command=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('command',''))")
+    assert_equals "$tool_name" "Bash" "Gemini run_shell_command mapped to Bash"
+    assert_equals "$command" "ls -la" "Gemini shell command extracted"
 
-    local tool_name
-    tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name', ''))")
-    assert_equals "$tool_name" "Bash" "Parse execute_code as Bash"
-
-    # Test completion event
-    local completion_input='{"event":"completion","status":"success"}'
-    result=$(parse_gemini_hook_input "$completion_input")
-
-    tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name', ''))")
-    assert_equals "$tool_name" "Stop" "Parse completion as Stop"
+    local winput='{"hook_event_name":"AfterTool","tool_name":"write_file","tool_input":{"file_path":"/workspace/x.py"}}'
+    result=$(parse_gemini_input "$winput")
+    tool_name=$(echo "$result" | python3 -c "import json,sys; print(json.load(sys.stdin).get('tool_name',''))")
+    assert_equals "$tool_name" "Edit" "Gemini write_file mapped to Edit"
 }
 
 #===============================================================================
@@ -493,156 +495,111 @@ test_inject_claude_gist_disabled_when_hook_missing() {
     cleanup_inject_test_env
 }
 
-test_inject_codex_creates_config_if_missing() {
-    # Requires mikefarah/yq (supports eval --inplace); skip if only Python yq available
-    if ! echo 'x: 1' | yq eval '.x' 2>/dev/null | grep -q '^1'; then
-        return 0
-    fi
-
+test_inject_codex_creates_hooks_json_if_missing() {
     setup_inject_test_env
     export KAPSIS_STATUS_AGENT_ID="test-agent-4"
 
-    # Verify .codex directory doesn't exist
     assert_false "[[ -d '$TEST_HOME/.codex' ]]" "codex dir should not exist initially"
 
-    # Run injection
     source "$LIB_DIR/inject-status-hooks.sh"
     inject_codex_hooks >/dev/null 2>&1
 
-    # Verify config.yaml was created
-    assert_file_exists "$TEST_HOME/.codex/config.yaml" "config.yaml should be created"
+    # Codex >=0.15x reads ~/.codex/hooks.json (Claude-compatible schema), NOT config.yaml.
+    assert_file_exists "$TEST_HOME/.codex/hooks.json" "hooks.json should be created"
+    assert_false "[[ -f '$TEST_HOME/.codex/config.yaml' ]]" "must NOT write the obsolete config.yaml"
 
-    # Verify it contains our hooks
-    local content
-    content=$(cat "$TEST_HOME/.codex/config.yaml")
-    assert_contains "$content" "exec.post" "Should contain exec.post hook"
-    assert_contains "$content" "kapsis-status-hook.sh" "Should contain status hook"
-    assert_contains "$content" "completion" "Should contain completion hook"
+    # PostToolUse -> status hook, Stop -> stop hook, in the Claude-compatible shape.
+    local status_evt stop_evt
+    status_evt=$(jq -r '[.hooks.PostToolUse[].hooks[]?.command] | map(select(test("kapsis-status-hook.sh"))) | length' "$TEST_HOME/.codex/hooks.json")
+    stop_evt=$(jq -r '[.hooks.Stop[].hooks[]?.command] | map(select(test("kapsis-stop-hook.sh"))) | length' "$TEST_HOME/.codex/hooks.json")
+    assert_equals "1" "$status_evt" "PostToolUse should contain the status hook"
+    assert_equals "1" "$stop_evt" "Stop should contain the stop hook"
 
     cleanup_inject_test_env
 }
 
 test_inject_codex_merges_with_existing() {
-    # Requires mikefarah/yq (supports eval --inplace); skip if only Python yq available
-    if ! echo 'x: 1' | yq eval '.x' 2>/dev/null | grep -q '^1'; then
-        return 0
-    fi
-
     setup_inject_test_env
     export KAPSIS_STATUS_AGENT_ID="test-agent-5"
 
-    # Create existing config with user hooks
+    # Pre-existing user hook in the real (JSON) format.
     mkdir -p "$TEST_HOME/.codex"
-    cat > "$TEST_HOME/.codex/config.yaml" << 'EOF'
-# Codex CLI configuration
-hooks:
-  exec.post:
-    - /user/my-hook.sh
+    cat > "$TEST_HOME/.codex/hooks.json" << 'EOF'
+{ "hooks": { "PostToolUse": [ { "matcher": "*", "hooks": [ { "type": "command", "command": "/user/my-hook.sh", "timeout": 5 } ] } ] } }
 EOF
 
-    # Run injection
     source "$LIB_DIR/inject-status-hooks.sh"
     inject_codex_hooks >/dev/null 2>&1
 
-    # Verify user hooks are preserved
     local content
-    content=$(cat "$TEST_HOME/.codex/config.yaml")
+    content=$(cat "$TEST_HOME/.codex/hooks.json")
     assert_contains "$content" "/user/my-hook.sh" "User hook should be preserved"
-    assert_contains "$content" "kapsis-status-hook.sh" "Kapsis hook should be added"
+    assert_contains "$content" "kapsis-status-hook.sh" "Kapsis status hook should be added"
 
     cleanup_inject_test_env
 }
 
 test_inject_codex_idempotent() {
-    # Requires mikefarah/yq (supports eval --inplace); skip if only Python yq available
-    if ! echo 'x: 1' | yq eval '.x' 2>/dev/null | grep -q '^1'; then
-        return 0
-    fi
-
     setup_inject_test_env
     export KAPSIS_STATUS_AGENT_ID="test-agent-6"
 
-    # Run injection twice
     source "$LIB_DIR/inject-status-hooks.sh"
     inject_codex_hooks >/dev/null 2>&1
     inject_codex_hooks >/dev/null 2>&1
 
-    # Verify hooks are not duplicated (yq unique should handle this)
+    # Double injection must not duplicate the status hook entry.
     local hook_count
-    hook_count=$(yq eval '.hooks."exec.post" | length' "$TEST_HOME/.codex/config.yaml")
-    assert_equals "1" "$hook_count" "Should have exactly 1 exec.post hook after double injection"
+    hook_count=$(jq -r '[.hooks.PostToolUse[].hooks[]?.command] | map(select(test("kapsis-status-hook.sh"))) | length' "$TEST_HOME/.codex/hooks.json")
+    assert_equals "1" "$hook_count" "Should have exactly 1 status hook after double injection"
 
     cleanup_inject_test_env
 }
 
-test_inject_gemini_creates_hooks_dir() {
+test_inject_gemini_is_noop() {
+    # Gemini hooks do not fire in headless mode, so injection is intentionally a no-op
+    # (status comes from the instruction-based gist path). Guard against the old broken
+    # ~/.gemini/hooks/*.sh writer being resurrected.
     setup_inject_test_env
     export KAPSIS_STATUS_AGENT_ID="test-agent-7"
 
-    # Verify .gemini directory doesn't exist
-    assert_false "[[ -d '$TEST_HOME/.gemini' ]]" "gemini dir should not exist initially"
-
-    # Run injection
     source "$LIB_DIR/inject-status-hooks.sh"
     inject_gemini_hooks >/dev/null 2>&1
+    local rc=$?
 
-    # Verify hook scripts were created
-    assert_file_exists "$TEST_HOME/.gemini/hooks/post-tool.sh" "post-tool.sh should be created"
-    assert_file_exists "$TEST_HOME/.gemini/hooks/completion.sh" "completion.sh should be created"
-
-    # Verify they are executable
-    assert_true "[[ -x '$TEST_HOME/.gemini/hooks/post-tool.sh' ]]" "post-tool.sh should be executable"
-    assert_true "[[ -x '$TEST_HOME/.gemini/hooks/completion.sh' ]]" "completion.sh should be executable"
-
-    # Verify content
-    local content
-    content=$(cat "$TEST_HOME/.gemini/hooks/post-tool.sh")
-    assert_contains "$content" "kapsis-status-hook.sh" "Should contain status hook"
+    assert_equals "0" "$rc" "inject_gemini_hooks should succeed as a no-op"
+    assert_false "[[ -d '$TEST_HOME/.gemini/hooks' ]]" "must NOT create the obsolete ~/.gemini/hooks dir"
+    assert_false "[[ -f '$TEST_HOME/.gemini/settings.json' ]]" "must NOT write gemini settings.json (secret-bearing)"
 
     cleanup_inject_test_env
 }
 
-test_inject_gemini_appends_to_existing() {
+test_status_hook_main_runs_when_executed() {
+    # Runtime-path guard: the source-guard [[ BASH_SOURCE == $0 ]] must NOT prevent main()
+    # from running when the hook is executed as a command (how agents invoke it). If it did,
+    # hooks would silently no-op — the exact bug this whole effort fixes. Execute the hook
+    # with a VALID agent id (empty id short-circuits before main) and assert main ran.
     setup_inject_test_env
-    export KAPSIS_STATUS_AGENT_ID="test-agent-8"
+    local aid="test-mainguard"
+    local state="/tmp/kapsis-hook-state-${aid}.json"
+    rm -f "$state"
 
-    # Create existing hook script
-    mkdir -p "$TEST_HOME/.gemini/hooks"
-    cat > "$TEST_HOME/.gemini/hooks/post-tool.sh" << 'EOF'
-#!/usr/bin/env bash
-# User's existing hook
-echo "User hook running"
-EOF
-    chmod +x "$TEST_HOME/.gemini/hooks/post-tool.sh"
+    echo '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"command":"ls"}}' \
+      | KAPSIS_STATUS_AGENT_ID="$aid" KAPSIS_AGENT_TYPE="claude-cli" \
+        bash "$HOOKS_DIR/kapsis-status-hook.sh" >/dev/null 2>&1 || true
 
-    # Run injection
-    source "$LIB_DIR/inject-status-hooks.sh"
-    inject_gemini_hooks >/dev/null 2>&1
-
-    # Verify user content is preserved
-    local content
-    content=$(cat "$TEST_HOME/.gemini/hooks/post-tool.sh")
-    assert_contains "$content" "User hook running" "User content should be preserved"
-    assert_contains "$content" "kapsis-status-hook.sh" "Kapsis hook should be appended"
-
+    assert_file_exists "$state" "main() ran (state file written) — source-guard did not break the executed-hook path"
+    rm -f "$state"
     cleanup_inject_test_env
 }
 
-test_inject_gemini_idempotent() {
-    setup_inject_test_env
-    export KAPSIS_STATUS_AGENT_ID="test-agent-9"
-
-    # Run injection twice
-    source "$LIB_DIR/inject-status-hooks.sh"
-    inject_gemini_hooks >/dev/null 2>&1
-    inject_gemini_hooks >/dev/null 2>&1
-
-    # Count occurrences of our hook in the file
-    local hook_count
-    hook_count=$(grep -c "kapsis-status-hook.sh" "$TEST_HOME/.gemini/hooks/post-tool.sh" || echo "0")
-    assert_equals "1" "$hook_count" "Should have exactly 1 status hook reference after double injection"
-
-    cleanup_inject_test_env
+test_codex_config_has_hook_flags() {
+    # Config-regression guard: the codex launch command must keep the flags that ENABLE
+    # hooks. Dropping either silently re-breaks codex status (a pure config revert of the fix).
+    local cfg="$KAPSIS_ROOT/configs/codex.yaml"
+    local cmd
+    cmd=$(yq -r '.agent.command' "$cfg" 2>/dev/null)
+    assert_contains "$cmd" "features.hooks=true" "codex command must enable the hooks feature"
+    assert_contains "$cmd" "dangerously-bypass-hook-trust" "codex command must bypass hook trust for unattended runs"
 }
 
 test_inject_skips_without_agent_id() {
@@ -1574,14 +1531,14 @@ run_tests() {
     run_test test_config_bash_patterns
     run_test test_bash_command_mapping
 
-    log_info "=== Claude Adapter ==="
-    run_test test_claude_adapter_parsing
+    log_info "=== Claude Parser ==="
+    run_test test_claude_input_parsing
 
-    log_info "=== Codex Adapter ==="
-    run_test test_codex_adapter_parsing
+    log_info "=== Codex Parser ==="
+    run_test test_codex_input_parsing
 
-    log_info "=== Gemini Adapter ==="
-    run_test test_gemini_adapter_parsing
+    log_info "=== Gemini Parser ==="
+    run_test test_gemini_input_parsing
 
     log_info "=== Progress Monitor ==="
     run_test test_progress_scaling
@@ -1602,12 +1559,12 @@ run_tests() {
     run_test test_inject_claude_idempotent
     run_test test_inject_claude_with_gist_enabled
     run_test test_inject_claude_gist_disabled_when_hook_missing
-    run_test test_inject_codex_creates_config_if_missing
+    run_test test_inject_codex_creates_hooks_json_if_missing
     run_test test_inject_codex_merges_with_existing
     run_test test_inject_codex_idempotent
-    run_test test_inject_gemini_creates_hooks_dir
-    run_test test_inject_gemini_appends_to_existing
-    run_test test_inject_gemini_idempotent
+    run_test test_inject_gemini_is_noop
+    run_test test_status_hook_main_runs_when_executed
+    run_test test_codex_config_has_hook_flags
     run_test test_inject_skips_without_agent_id
     run_test test_inject_hook_path_uses_kapsis_home
 

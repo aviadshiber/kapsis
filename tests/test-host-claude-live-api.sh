@@ -82,6 +82,7 @@ setup_real_env() {
     mkdir -p "$KAPSIS_ROOT/hooks"
     cp "$HOOKS_SRC/kapsis-gist-hook.sh"   "$KAPSIS_ROOT/hooks/"
     cp "$HOOKS_SRC/kapsis-status-hook.sh" "$KAPSIS_ROOT/hooks/"
+    cp "$HOOKS_SRC/hook-input-parsers.sh" "$KAPSIS_ROOT/hooks/"  # sourced by kapsis-status-hook.sh
     cp "$HOOKS_SRC/kapsis-stop-hook.sh"   "$KAPSIS_ROOT/hooks/"
     chmod +x "$KAPSIS_ROOT/hooks/"*.sh
 }

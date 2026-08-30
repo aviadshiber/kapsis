@@ -1316,8 +1316,8 @@ gemini-cli|Gemini CLI"
 # Installs Kapsis status tracking hooks for supported agents.
 # Uses inject-status-hooks.sh which handles:
 #   - Claude Code: JSON merge into ~/.claude/settings.json
-#   - Codex CLI: YAML merge into ~/.codex/config.yaml
-#   - Gemini CLI: Shell scripts in ~/.gemini/hooks/
+#   - Codex CLI: JSON merge into ~/.codex/hooks.json (Claude-compatible schema)
+#   - Gemini CLI: no hooks (they don't fire headless) — instruction-based gist
 #
 # All injection is merge-based to preserve user's existing configuration.
 # Runs inside container with CoW, so host config is never modified.

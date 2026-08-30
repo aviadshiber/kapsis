@@ -202,10 +202,12 @@ get_agent_hook_config_path() {
             echo "${HOME}/.claude/settings.json"
             ;;
         "$AGENT_TYPE_CODEX_CLI")
-            echo "${HOME}/.codex/kapsis-hooks.yaml"
+            echo "${HOME}/.codex/hooks.json"
             ;;
         "$AGENT_TYPE_GEMINI_CLI")
-            echo "${HOME}/.gemini/hooks"
+            # Gemini hooks don't fire headless — no hook file is written (status is
+            # instruction-based). See inject_gemini_hooks in inject-status-hooks.sh.
+            echo ""
             ;;
         *)
             echo ""
@@ -226,10 +228,13 @@ get_agent_hook_types() {
             echo "PreToolUse PostToolUse Stop"
             ;;
         "$AGENT_TYPE_CODEX_CLI")
-            echo "exec.pre exec.post item.create item.update item.delete completion"
+            # Claude-compatible event names (codex hooks.json); we use PostToolUse + Stop.
+            echo "PreToolUse PostToolUse Stop"
             ;;
         "$AGENT_TYPE_GEMINI_CLI")
-            echo "tool_call completion error"
+            # Real gemini events (BeforeTool/AfterTool/AfterAgent) — but hooks don't fire
+            # headless, so these are informational only.
+            echo "BeforeTool AfterTool AfterAgent"
             ;;
         *)
             echo ""

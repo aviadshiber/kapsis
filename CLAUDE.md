@@ -59,7 +59,7 @@ kapsis/
 │       ├── kapsis-stop-hook.sh
 │       ├── prepush-orchestrator.sh
 │       ├── tool-phase-mapping.sh
-│       ├── agent-adapters/     # Agent-specific adapters (claude, codex, gemini)
+│       ├── hook-input-parsers.sh  # per-agent payload parsers (claude/codex/gemini), sourced by kapsis-status-hook.sh
 │       ├── precommit/          # Pre-commit hooks (check-tests, run-tests, spellcheck)
 │       └── prepush/            # Pre-push hooks (check-docs, create-pr, pr-comments, unbiased-review)
 ├── configs/
