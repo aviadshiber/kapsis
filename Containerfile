@@ -636,8 +636,6 @@ COPY scripts/hooks/kapsis-stop-hook.sh /opt/kapsis/hooks/kapsis-stop-hook.sh
 COPY scripts/hooks/kapsis-gist-hook.sh /opt/kapsis/hooks/kapsis-gist-hook.sh
 COPY scripts/hooks/tool-phase-mapping.sh /opt/kapsis/hooks/tool-phase-mapping.sh
 COPY scripts/hooks/agent-adapters/claude-adapter.sh /opt/kapsis/hooks/agent-adapters/claude-adapter.sh
-COPY scripts/hooks/agent-adapters/codex-adapter.sh /opt/kapsis/hooks/agent-adapters/codex-adapter.sh
-COPY scripts/hooks/agent-adapters/gemini-adapter.sh /opt/kapsis/hooks/agent-adapters/gemini-adapter.sh
 
 # Copy entrypoint and helper scripts
 COPY scripts/entrypoint.sh /opt/kapsis/entrypoint.sh
