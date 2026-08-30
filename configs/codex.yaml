@@ -23,9 +23,14 @@ agent:
   #                          / execution primitives into a prompt-injectable sandbox.
   #                          Auth is unaffected — it still reads CODEX_HOME/auth.json.
   #  - `--skip-git-repo-check` : allow running when /workspace isn't a git repo yet.
+  #  - `-c features.hooks=true --dangerously-bypass-hook-trust`
+  #                        : enable + trust Kapsis's status hooks (~/.codex/hooks.json).
+  #                          Because --ignore-user-config skips config.toml, the feature
+  #                          flag must come from the CLI; trust bypass is required for an
+  #                          unattended run. Without these, status hooks do NOT fire.
   # KAPSIS_INJECTED_TASK_SPEC is set by entrypoint.sh when status injection appends
   # progress/gist guidance to a writable copy of the spec; falls back to /task-spec.md.
-  command: "codex exec --dangerously-bypass-approvals-and-sandbox --ignore-user-config --skip-git-repo-check \"$(cat \"${KAPSIS_INJECTED_TASK_SPEC:-/task-spec.md}\")\""
+  command: "codex exec --dangerously-bypass-approvals-and-sandbox --ignore-user-config --dangerously-bypass-hook-trust -c features.hooks=true --skip-git-repo-check \"$(cat \"${KAPSIS_INJECTED_TASK_SPEC:-/task-spec.md}\")\""
   workdir: /workspace
 
 filesystem:

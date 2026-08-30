@@ -144,15 +144,20 @@ to a localhost proxy that attaches short-lived tokens (or makes the call itself)
 never enter the container. This structurally closes C1/H3 and makes C2 moot.
 
 ## Cross-cutting
-- **KNOWN GAP (status-hook adapters target stale interfaces — deferred to the bot phase).**
-  `inject_codex_hooks` writes `~/.codex/config.yaml`, but codex 0.151 reads `~/.codex/hooks.json`
-  (or an inline `[hooks]` table in `config.toml`); gemini 0.57 manages hooks via `settings.json` /
-  the `gemini hooks` surface. So the status-hook pipeline (and therefore `gist.txt` monitoring)
-  currently does **not** fire for codex/gemini — verified: the `.kapsis/progress.json` seen in
-  smoke runs is the agent following injected *text* instructions, not the hook. Silent no-op, not a
-  crash: agent execution, auth, and git workflow are unaffected. Fixing the adapters (and the
-  existing status-hook tests, which currently assert the stale `config.yaml`/`~/.gemini/hooks`
-  interface and will need updating) is required for the bot phase (which depends on `gist.txt`).
+- **Status-hook tracking (RESOLVED for codex; instruction-based for gemini).**
+  - **Codex:** `inject_codex_hooks` now writes `~/.codex/hooks.json` (Claude-compatible schema:
+    `PostToolUse`→status, `Stop`→stop, + gist hook when enabled), and the launch command adds
+    `-c features.hooks=true --dangerously-bypass-hook-trust` (config.toml is not injected, so the
+    feature flag comes from the CLI; trust bypass is required for unattended runs). Codex's payload
+    is Claude-compatible, so `parse_codex_input` delegates to the Claude parser. Verified: the
+    injector writes the correct file in-container, and codex fires hooks headlessly with this recipe.
+  - **Gemini:** hooks do **not** fire in headless (`gemini -p`) mode — verified empirically
+    (correct event names, `previewFeatures` on, workspace trusted, real tool call → zero hooks).
+    Gemini hooks also live in `settings.json`, which we intentionally do not inject (secret-bearing).
+    So `inject_gemini_hooks` is a no-op and gemini status comes from the **instruction-based gist**
+    path (the agent writes `$KAPSIS_GIST_FILE` per injected `GEMINI.md`/`AGENTS.md` guidance).
+  - The obsolete `~/.codex/config.yaml` / `~/.gemini/hooks/*.sh` writers and their dead
+    `agent-adapters/{codex,gemini}-adapter.sh` were removed; status-hook tests updated accordingly.
 
 ## Deferred (explicitly out of scope for this branch)
 - Full `configs/agents/` ↔ `configs/` schema unification.

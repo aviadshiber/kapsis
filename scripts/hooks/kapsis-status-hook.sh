@@ -183,45 +183,45 @@ parse_claude_input() {
     echo "{\"tool_name\": \"$tool_name\", \"command\": \"$command\", \"file_path\": \"$file_path\"}"
 }
 
-# Parse Codex CLI hook input
+# Parse Codex CLI hook input.
+# Codex (>=0.15x) delivers a Claude-Code-compatible payload on stdin (same field
+# names: tool_name, tool_input.command, tool_input.file_path, tool_response), so we
+# reuse the Claude parser verbatim rather than the old (imagined) exec.* format.
 parse_codex_input() {
-    local input="$1"
-
-    local tool_name="exec"
-    local command
-    command=$(json_get "$input" "command" "")
-    [[ -z "$command" ]] && command=$(json_get "$input" "exec.command" "")
-
-    echo "{\"tool_name\": \"$tool_name\", \"command\": \"$command\", \"file_path\": \"\"}"
+    parse_claude_input "$1"
 }
 
-# Parse Gemini CLI hook input
+# Parse Gemini CLI hook input.
+# NOTE: Gemini hooks do NOT fire in Kapsis's headless (`gemini -p`) mode, so this
+# parser is effectively unused there — Gemini status comes from the instruction-based
+# gist path. It is kept correct for the interactive case only. Gemini's AfterTool
+# payload uses Claude-compatible envelope fields (tool_name, tool_input) but
+# snake_case built-in tool names (run_shell_command / write_file / read_file / ...).
 parse_gemini_input() {
     local input="$1"
 
     local tool_name
-    tool_name=$(json_get "$input" "function_call.name" "")
-    [[ -z "$tool_name" ]] && tool_name=$(json_get "$input" "tool_call.name" "unknown")
+    tool_name=$(json_get "$input" "tool_name" "unknown")
 
     local command=""
     local file_path=""
-
-    # Map Gemini tool names to common patterns
     case "$tool_name" in
-        execute_code|run_command)
+        run_shell_command|execute_code|run_command)
             tool_name="Bash"
-            command=$(json_get "$input" "function_call.args.code" "")
-            [[ -z "$command" ]] && command=$(json_get "$input" "function_call.args.command" "")
+            command=$(json_get "$input" "tool_input.command" "")
+            [[ -z "$command" ]] && command=$(json_get "$input" "tool_input.code" "")
             ;;
-        read_file|view_file)
+        read_file|read_many_files|view_file)
             tool_name="Read"
-            file_path=$(json_get "$input" "function_call.args.path" "")
+            file_path=$(json_get "$input" "tool_input.file_path" "")
+            [[ -z "$file_path" ]] && file_path=$(json_get "$input" "tool_input.path" "")
             ;;
-        write_file|edit_file)
+        write_file|replace|edit_file)
             tool_name="Edit"
-            file_path=$(json_get "$input" "function_call.args.path" "")
+            file_path=$(json_get "$input" "tool_input.file_path" "")
+            [[ -z "$file_path" ]] && file_path=$(json_get "$input" "tool_input.path" "")
             ;;
-        search_files)
+        search_file_content|glob|grep)
             tool_name="Grep"
             ;;
     esac
@@ -458,5 +458,7 @@ print(json.dumps(state))
     echo "{}"
 }
 
-# Run main function
-main "$@"
+# Run main function only when executed directly (not when sourced for unit tests).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi

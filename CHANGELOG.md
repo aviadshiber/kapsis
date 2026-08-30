@@ -21,6 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- Codex status hooks now fire: `inject_codex_hooks` writes `~/.codex/hooks.json`
+  (Claude-compatible schema) instead of the obsolete `~/.codex/config.yaml`, and the
+  codex launch command enables them with `-c features.hooks=true
+  --dangerously-bypass-hook-trust`. Codex hook payloads are Claude-compatible, so
+  `parse_codex_input` delegates to the Claude parser.
+
+### Changed
+- Gemini status tracking is instruction-based, not hook-based: Gemini hooks do not
+  fire in headless (`gemini -p`) mode (verified empirically), so `inject_gemini_hooks`
+  is now a no-op and Gemini reports progress via the injected gist instructions.
+- Removed the dead, wrong-format `agent-adapters/{codex,gemini}-adapter.sh` and the
+  obsolete `~/.gemini/hooks/*.sh` writer; added a source-guard to `kapsis-status-hook.sh`
+  so its parsers are unit-testable. Status-hook tests updated to the real interfaces.
+
 ## [2.35.2] - 2026-06-21
 
 ### Fixed

@@ -7,8 +7,8 @@
 #
 # Supported agents:
 #   - Claude Code: ~/.claude/settings.json (JSON, merged by Claude)
-#   - Codex CLI: ~/.codex/config.yaml (YAML, merged hooks section)
-#   - Gemini CLI: ~/.gemini/hooks/*.sh (Shell scripts in hooks directory)
+#   - Codex CLI: ~/.codex/hooks.json (JSON, Claude-compatible schema/payload)
+#   - Gemini CLI: no hooks (they do not fire headless) — instruction-based gist
 #
 # Usage: Called automatically by entrypoint.sh for supported agents
 #        Or call directly: ./inject-status-hooks.sh [agent-type]
@@ -163,53 +163,64 @@ inject_claude_hooks() {
 #===============================================================================
 
 inject_codex_hooks() {
-    local config_dir="${HOME}/.codex"
-    local config_file="${config_dir}/config.yaml"
+    # Codex CLI (>=0.15x) uses a Claude-Code-compatible hook system: JSON at
+    # ~/.codex/hooks.json with the SAME event names (PostToolUse, Stop, ...) and
+    # the SAME stdin payload field names (tool_name, tool_input, tool_response) as
+    # Claude Code. So we inject the identical status/stop/gist hooks Claude gets,
+    # into hooks.json instead of ~/.claude/settings.json, and codex runs are parsed
+    # by the Claude parser (see parse_codex_input -> parse_claude_input).
+    #
+    # NOTE: the launch command (configs/codex.yaml) must pass
+    #   -c features.hooks=true --dangerously-bypass-hook-trust
+    # so hooks are enabled and run unattended (config.toml is not injected, so the
+    # feature flag has to come from the command line; trust bypass is required for
+    # automation). Empirically verified: without the flag, hooks do NOT fire.
+    local hooks_file="${HOME}/.codex/hooks.json"
+    mkdir -p "${HOME}/.codex"
 
-    # Ensure directory exists
-    mkdir -p "$config_dir"
-
-    # Check if yq is available (required dependency)
-    if ! command -v yq &>/dev/null; then
-        log_error "yq is required but not installed - cannot inject Codex hooks"
+    if ! command -v jq &>/dev/null; then
+        log_warn "jq not found - cannot inject Codex hooks"
         return 1
     fi
 
-    # Create base file if missing
-    if [[ ! -f "$config_file" ]]; then
-        echo '# Codex CLI configuration' > "$config_file"
-        log_debug "Created empty config.yaml"
+    [[ -f "$hooks_file" ]] || { echo '{}' > "$hooks_file"; chmod 600 "$hooks_file"; }
+
+    local GIST_HOOK="${KAPSIS_HOOK_DIR}/kapsis-gist-hook.sh"
+    local inject_gist="${KAPSIS_INJECT_GIST:-false}"
+    if [[ "$inject_gist" == "true" && ! -x "$GIST_HOOK" ]]; then
+        log_error "Gist hook not found/executable: $GIST_HOOK -- disabling gist injection for codex"
+        inject_gist="false"
     fi
 
-    # Check if hooks already exist using yq
-    local existing_hooks
-    existing_hooks=$(yq eval '.hooks."exec.post" // []' "$config_file" 2>/dev/null || echo "[]")
-
-    # Check if our hook is already present
-    if echo "$existing_hooks" | grep -q "$STATUS_HOOK"; then
-        log_debug "Codex hooks already present"
-        return 0
-    fi
-
-    # Inject hooks using yq (merge, don't overwrite)
     local tmp_file
     tmp_file=$(mktemp)
-
-    if yq eval --inplace "
-        .hooks.\"exec.post\" = (.hooks.\"exec.post\" // []) + [\"$STATUS_HOOK\"] |
-        .hooks.\"item.create\" = (.hooks.\"item.create\" // []) + [\"$STATUS_HOOK\"] |
-        .hooks.\"item.update\" = (.hooks.\"item.update\" // []) + [\"$STATUS_HOOK\"] |
-        .hooks.completion = (.hooks.completion // []) + [\"$STOP_HOOK\"] |
-        .hooks.\"exec.post\" |= unique |
-        .hooks.\"item.create\" |= unique |
-        .hooks.\"item.update\" |= unique |
-        .hooks.completion |= unique
-    " "$config_file" 2>/dev/null; then
-        chmod 600 "$config_file"
-        log_success "Codex CLI hooks injected (merged with existing)"
+    if jq \
+        --arg status_hook "$STATUS_HOOK" \
+        --arg stop_hook "$STOP_HOOK" \
+        --arg gist_hook "$GIST_HOOK" \
+        --arg inject_gist "$inject_gist" \
+        '
+        .hooks //= {} |
+        .hooks.PostToolUse //= [] |
+        if $inject_gist == "true"
+           and ([.hooks.PostToolUse[].hooks[]? | select(.command == $gist_hook)] | length) == 0
+        then .hooks.PostToolUse += [{"matcher":"*","hooks":[{"type":"command","command":$gist_hook,"timeout":10}]}]
+        else . end |
+        if ([.hooks.PostToolUse[].hooks[]? | select(.command == $status_hook)] | length) == 0
+        then .hooks.PostToolUse += [{"matcher":"*","hooks":[{"type":"command","command":$status_hook,"timeout":5}]}]
+        else . end |
+        .hooks.Stop //= [] |
+        if ([.hooks.Stop[].hooks[]? | select(.command == $stop_hook)] | length) == 0
+        then .hooks.Stop += [{"hooks":[{"type":"command","command":$stop_hook,"timeout":5}]}]
+        else . end
+    ' "$hooks_file" > "$tmp_file" 2>/dev/null; then
+        mv "$tmp_file" "$hooks_file"
+        chmod 600 "$hooks_file"
+        log_success "Codex CLI hooks injected (~/.codex/hooks.json, Claude-compatible schema)"
         return 0
     else
-        log_warn "Failed to inject Codex hooks - YAML parsing error"
+        rm -f "$tmp_file"
+        log_warn "Failed to inject Codex hooks - JSON parsing error"
         return 1
     fi
 }
@@ -219,59 +230,20 @@ inject_codex_hooks() {
 #===============================================================================
 
 inject_gemini_hooks() {
-    local hooks_dir="${HOME}/.gemini/hooks"
-
-    # Ensure directory exists
-    mkdir -p "$hooks_dir"
-
-    # Create post-tool hook wrapper (idempotent - check if already has our hook)
-    local post_tool_hook="${hooks_dir}/post-tool.sh"
-    if [[ -f "$post_tool_hook" ]] && grep -q "$STATUS_HOOK" "$post_tool_hook" 2>/dev/null; then
-        log_debug "Gemini post-tool hook already present"
-    else
-        # Append to existing or create new
-        if [[ -f "$post_tool_hook" ]]; then
-            # Append our hook call
-            {
-                echo ""
-                echo "# Kapsis status tracking"
-                echo "\"$STATUS_HOOK\" \"\$@\" || true"
-            } >> "$post_tool_hook"
-        else
-            # Create new
-            cat > "$post_tool_hook" << EOF
-#!/usr/bin/env bash
-# Gemini CLI post-tool hook
-# Kapsis status tracking
-"$STATUS_HOOK" "\$@" || true
-EOF
-        fi
-        chmod +x "$post_tool_hook"
-    fi
-
-    # Create completion hook wrapper
-    local completion_hook="${hooks_dir}/completion.sh"
-    if [[ -f "$completion_hook" ]] && grep -q "$STOP_HOOK" "$completion_hook" 2>/dev/null; then
-        log_debug "Gemini completion hook already present"
-    else
-        if [[ -f "$completion_hook" ]]; then
-            {
-                echo ""
-                echo "# Kapsis status tracking"
-                echo "\"$STOP_HOOK\" \"\$@\" || true"
-            } >> "$completion_hook"
-        else
-            cat > "$completion_hook" << EOF
-#!/usr/bin/env bash
-# Gemini CLI completion hook
-# Kapsis status tracking
-"$STOP_HOOK" "\$@" || true
-EOF
-        fi
-        chmod +x "$completion_hook"
-    fi
-
-    log_success "Gemini CLI hooks injected"
+    # Gemini CLI hooks live in ~/.gemini/settings.json (.hooks, events BeforeTool/
+    # AfterTool/AfterAgent, gated behind general.previewFeatures). CRUCIALLY, they
+    # do NOT fire in headless non-interactive mode (`gemini -p`), which is how Kapsis
+    # runs it — verified empirically (previewFeatures on, workspace trusted, real
+    # tool call → zero hooks fired). We also deliberately do NOT inject settings.json
+    # (it can carry the user's mcpServers/env secrets — see configs/gemini.yaml).
+    #
+    # So there is no reliable hook surface for headless Gemini. Status/progress for
+    # Gemini therefore comes from the INSTRUCTION-BASED gist path instead: the agent
+    # writes $KAPSIS_GIST_FILE per the injected gist/AGENTS(GEMINI).md instructions
+    # (see inject_gist_instructions / inject_progress_instructions). This function is
+    # intentionally a no-op; do not resurrect the old ~/.gemini/hooks/*.sh writer —
+    # Gemini never read that path and the scripts silently no-op'd.
+    log_info "Gemini CLI: hooks do not fire in headless mode — status via instruction-based gist (no hook injection)"
     return 0
 }
 
