@@ -16,6 +16,7 @@
 
 name: gemini-cli
 description: Google Gemini CLI (requires Node.js)
+version: 0.57.0  # keep equal to the install.npm pin below
 
 install:
   # Pinned for reproducible images. Bump deliberately, then re-verify `gemini --help`

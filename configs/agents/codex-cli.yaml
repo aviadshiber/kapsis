@@ -11,6 +11,7 @@
 
 name: codex-cli
 description: OpenAI Codex CLI (requires Node.js)
+version: 0.151.0  # keep equal to the install.npm pin below
 
 install:
   # Pinned for reproducible images. Bump deliberately, then re-verify
