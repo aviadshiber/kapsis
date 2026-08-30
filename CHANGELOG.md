@@ -19,39 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - Publish codex & gemini provider images to ghcr (#472)
 
-## [Unreleased]
-
-### Security
-- `log_decision` (kapsis-status-hook.sh) no longer string-interpolates the agent's
-  (attacker-influenceable) tool command into a `python3 -c` body or an echoed JSON
-  literal — a code-injection / JSON-corruption vector that this change makes live for
-  codex. Values are now passed via the environment and serialized with `json.dumps`.
+## [3.3.1] - 2026-08-30
 
 ### Fixed
-- Codex status hooks now fire: `inject_codex_hooks` writes `~/.codex/hooks.json`
-  (Claude-compatible schema) instead of the obsolete `~/.codex/config.yaml`, and the
-  codex launch command enables them with `-c features.hooks=true
-  --dangerously-bypass-hook-trust`. Codex hook payloads are Claude-compatible, so
-  `parse_codex_input` delegates to the Claude parser.
-- Codex reports file edits with tool_name `apply_patch` (not Write/Edit);
-  `parse_codex_input` now re-labels it to `Edit` (and `apply_patch` maps to
-  `implementing`) so codex edit activity is categorized/weighted correctly instead of
-  falling to `other`.
-- Injectors seed the hooks file when empty (not just missing) — a 0-byte file made jq
-  emit nothing and silently clobber it.
+- Codex hooks fire (hooks.json); gemini via instruction-based gist (#473)
 
-### Changed
-- Gemini status tracking is instruction-based, not hook-based: Gemini hooks do not
-  fire in headless (`gemini -p`) mode (verified empirically), so `inject_gemini_hooks`
-  is now a no-op and Gemini reports progress via the injected gist instructions.
-- Unified per-agent hook-input parsing into ONE canonical, sourceable module,
-  `scripts/hooks/hook-input-parsers.sh` (`json_get` + `parse_{claude,codex,gemini}_input`),
-  which `kapsis-status-hook.sh` sources and the unit tests import directly (no more
-  sed-extraction hack). The entire dead `agent-adapters/` directory (including the last
-  survivor, `claude-adapter.sh`) and the obsolete `~/.gemini/hooks/*.sh` writer were removed.
-- Factored the duplicated Claude/Codex jq injection into one `_inject_json_hooks` helper so
-  the "gist must fire before status" ordering invariant lives in exactly one place; Claude
-  opts into attribution, Codex does not (hooks.json output shape unchanged).
+## [Unreleased]
 
 ## [2.35.2] - 2026-06-21
 
@@ -1225,7 +1198,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.3.0...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.3.1...HEAD
+[3.3.1]: https://github.com/aviadshiber/kapsis/releases/tag/v3.3.1
 [3.3.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.3.0
 [3.2.7]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.7
 [3.2.6]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.6
