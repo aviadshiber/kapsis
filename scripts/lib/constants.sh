@@ -317,7 +317,7 @@ readonly KAPSIS_DEFAULT_CLEANUP_VM_SSH_TIMEOUT=15
 # Default protects long-lived service images that must survive cleanup.
 # Override via the KAPSIS_IMAGE_KEEP_PATTERNS env var; set it explicitly
 # empty (KAPSIS_IMAGE_KEEP_PATTERNS='') to disable protection.
-readonly KAPSIS_DEFAULT_IMAGE_KEEP_PATTERNS='(^|/)(kapsis-slack-bot|kapsis-claude-cli|kapsis-sandbox)(:|$)'
+readonly KAPSIS_DEFAULT_IMAGE_KEEP_PATTERNS='(^|/)(kapsis-slack-bot|kapsis-claude-cli|kapsis-codex-cli|kapsis-gemini-cli|kapsis-sandbox)(:|$)'
 
 #===============================================================================
 # SSH PROBE DEFAULTS (Issue #255)

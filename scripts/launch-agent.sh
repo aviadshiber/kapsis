@@ -10,7 +10,7 @@
 #   ./launch-agent.sh <project-path> [options]
 #
 # Options:
-#   --agent <name>        Agent shortcut: claude, codex, aider, interactive
+#   --agent <name>        Agent shortcut: claude, codex, gemini, aider, interactive
 #   --config <file>       Config file (overrides --agent)
 #   --task <description>  Inline task description
 #   --spec <file>         Task specification file (markdown)
@@ -246,7 +246,7 @@ Arguments:
   project-path    Path to the project directory to work on
 
 Options:
-  --agent <name>        Agent to use: claude, codex, aider, interactive
+  --agent <name>        Agent to use: claude, codex, gemini, aider, interactive
                         (shortcut for --config configs/<name>.yaml)
   --agent-id <id>       Specify agent ID (for continuing sessions); auto-generated if omitted
   --config <file>       Config file (overrides --agent)
@@ -690,6 +690,7 @@ validate_inputs() {
     fi
 
     # Backend validation (sources backend file and checks prerequisites)
+    # shellcheck disable=SC1090  # dynamic backend path resolved at runtime
     source "$SCRIPT_DIR/backends/${BACKEND}.sh"
     if ! backend_validate; then
         log_error "Backend '$BACKEND' validation failed"
@@ -838,7 +839,7 @@ resolve_config() {
             return
         else
             log_error "Unknown agent: $AGENT_NAME"
-            log_error "Available agents: claude, codex, aider, interactive"
+            log_error "Available agents: claude, codex, gemini, aider, interactive"
             log_error "Or use --config for custom config file"
             exit 1
         fi
@@ -868,7 +869,7 @@ resolve_config() {
 
     log_error "No config file found."
     log_error "Use --agent <name> or --config <file>"
-    log_error "Available agents: claude, codex, aider, interactive"
+    log_error "Available agents: claude, codex, gemini, aider, interactive"
     exit 1
 }
 
@@ -3788,6 +3789,7 @@ post_container_worktree() {
         # MUST be sourced (not exec'd or run in subshell) so that status_set_commit_info
         # writes to the same shell's _KAPSIS_COMMIT_STATUS variable, which is read later
         # by status_get_commit_status in the FINAL_EXIT_CODE logic (Issue #256)
+        # shellcheck disable=SC1090  # dynamic post-container hook path from config
         source "$post_container_script"
         # Expose the base branch to the host post-push hook (run_post_push_hook).
         export KAPSIS_BASE_BRANCH="${BASE_BRANCH:-}"

@@ -459,6 +459,7 @@ $CONTAINER_RUNTIME build \
     "${BUILD_ARGS[@]}" \
     --label "kapsis.agent=$AGENT_NAME" \
     --label "kapsis.profile=$AGENT_PROFILE" \
+    --label "kapsis.build-profile=${BUILD_PROFILE:-default}" \
     -t "$IMAGE_NAME" \
     -f Containerfile .
 
