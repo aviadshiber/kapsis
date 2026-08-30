@@ -1,0 +1,396 @@
+#!/usr/bin/env bash
+#===============================================================================
+# Kapsis Status Hook - Universal PostToolUse Hook for AI Agents
+#
+# This hook receives tool execution events from AI coding agents (Claude Code,
+# Codex CLI, Gemini CLI) and updates the Kapsis status file with progress.
+#
+# Supported agents:
+# - Claude Code: Receives JSON via stdin with tool_name, tool_input, tool_result
+# - Codex CLI: Receives JSON via stdin with exec command and result
+# - Gemini CLI: Receives JSON via stdin with tool_call information
+#
+# Usage:
+#   This script is called automatically by the agent's hook system.
+#   It reads JSON from stdin and outputs JSON to stdout.
+#
+# Environment Variables:
+#   KAPSIS_AGENT_TYPE     - Agent type (claude-cli, codex-cli, gemini-cli)
+#   KAPSIS_STATUS_PROJECT - Project name for status file
+#   KAPSIS_STATUS_AGENT_ID - Agent ID for status file
+#   KAPSIS_HOME           - Kapsis installation directory (default: /opt/kapsis)
+#   KAPSIS_DEBUG          - Enable debug logging
+#===============================================================================
+
+set -euo pipefail
+
+# Configuration
+KAPSIS_HOME="${KAPSIS_HOME:-/opt/kapsis}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Validate agent_id format (defense-in-depth for file path safety)
+_validate_agent_id() {
+    local agent_id="$1"
+    [[ "$agent_id" =~ ^[a-zA-Z0-9_-]+$ ]]
+}
+
+# Validate agent_id - skip status tracking if invalid or missing
+_safe_agent_id="${KAPSIS_STATUS_AGENT_ID:-}"
+if [[ -z "$_safe_agent_id" ]]; then
+    # No agent_id set - status tracking disabled, output empty JSON and exit
+    echo "{}"
+    exit 0
+fi
+if ! _validate_agent_id "$_safe_agent_id"; then
+    echo "[KAPSIS-HOOK] Error: Invalid agent_id format '$_safe_agent_id' - skipping status update" >&2
+    echo "{}"
+    exit 0
+fi
+
+STATE_FILE="/tmp/kapsis-hook-state-${_safe_agent_id}.json"
+
+# Source dependencies
+if [[ -f "$KAPSIS_HOME/lib/status.sh" ]]; then
+    source "$KAPSIS_HOME/lib/status.sh"
+elif [[ -f "$SCRIPT_DIR/../lib/status.sh" ]]; then
+    source "$SCRIPT_DIR/../lib/status.sh"
+fi
+
+if [[ -f "$SCRIPT_DIR/tool-phase-mapping.sh" ]]; then
+    source "$SCRIPT_DIR/tool-phase-mapping.sh"
+fi
+
+# Per-agent hook-input parsers (json_get + parse_{claude,codex,gemini}_input).
+# Canonical, sourceable module shared with the unit tests.
+if [[ -f "$SCRIPT_DIR/hook-input-parsers.sh" ]]; then
+    source "$SCRIPT_DIR/hook-input-parsers.sh"
+fi
+
+#===============================================================================
+# Logging Functions
+#===============================================================================
+
+log_debug() {
+    # Use explicit return to avoid non-zero exit code when KAPSIS_DEBUG is unset,
+    # which would trigger set -e in calling functions.
+    [[ -z "${KAPSIS_DEBUG:-}" ]] && return 0
+    echo "[KAPSIS-HOOK] DEBUG: $*" >&2
+}
+
+log_info() {
+    echo "[KAPSIS-HOOK] $*" >&2
+}
+
+log_error() {
+    echo "[KAPSIS-HOOK] ERROR: $*" >&2
+}
+
+#===============================================================================
+# State Management
+#===============================================================================
+
+# Initialize or load hook state (tool counts, last update time)
+load_state() {
+    if [[ -f "$STATE_FILE" ]]; then
+        cat "$STATE_FILE"
+    else
+        echo '{
+            "tool_counts": {
+                "exploring": 0,
+                "implementing": 0,
+                "building": 0,
+                "testing": 0,
+                "other": 0
+            },
+            "last_tool": "",
+            "last_update": ""
+        }'
+    fi
+}
+
+save_state() {
+    local state="$1"
+    echo "$state" > "$STATE_FILE"
+}
+
+# Update tool counts in state
+increment_tool_count() {
+    local state="$1"
+    local category="$2"
+
+    echo "$state" | python3 -c "
+import json, sys
+state = json.load(sys.stdin)
+category = '$category'
+if category in state.get('tool_counts', {}):
+    state['tool_counts'][category] = state['tool_counts'].get(category, 0) + 1
+else:
+    state['tool_counts']['other'] = state['tool_counts'].get('other', 0) + 1
+print(json.dumps(state))
+" 2>/dev/null
+}
+
+#===============================================================================
+# Progress Calculation
+#===============================================================================
+
+# Emit the five tool counts (exploring implementing building testing other) as a
+# single space-separated line. One python3 call instead of five near-identical
+# one-liners; falls back to all-zero on malformed state.
+_state_tool_counts() {
+    echo "$1" | python3 -c "
+import json, sys
+try:
+    tc = json.load(sys.stdin).get('tool_counts', {})
+except Exception:
+    tc = {}
+print(tc.get('exploring',0), tc.get('implementing',0),
+      tc.get('building',0), tc.get('testing',0), tc.get('other',0))
+" 2>/dev/null || echo "0 0 0 0 0"
+}
+
+# Calculate progress based on tool activity
+calculate_progress() {
+    local state="$1"
+
+    # Base progress (25%) + activity-based progress (up to 65%)
+    local base_progress=25
+    local max_progress=90
+
+    # Get tool counts (single python3 call, split into fields)
+    local exploring implementing building testing other
+    read -r exploring implementing building testing other <<< "$(_state_tool_counts "$state")"
+
+    # Calculate activity score (weighted by importance)
+    local activity_score
+    activity_score=$(( exploring * 2 + implementing * 5 + building * 8 + testing * 10 + other * 1 ))
+
+    # Cap activity contribution at 65%
+    local activity_progress
+    (( activity_score > 65 )) && activity_score=65
+    activity_progress=$activity_score
+
+    # Calculate final progress
+    local progress
+    progress=$(( base_progress + activity_progress ))
+    (( progress > max_progress )) && progress=$max_progress
+
+    echo "$progress"
+}
+
+#===============================================================================
+# Decision Logging
+#===============================================================================
+
+# Log major decisions (new file creation, significant refactors)
+log_decision() {
+    local tool_name="$1"
+    local description="$2"
+    local file_path="${3:-}"
+
+    local decisions_file="/kapsis-status/decisions-${_safe_agent_id}.json"
+    local timestamp
+    timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Determine if this is a major decision
+    local is_major=false
+    local decision_type=""
+
+    case "$tool_name" in
+        Write)
+            is_major=true
+            decision_type="file_creation"
+            ;;
+        Edit)
+            # Major if significant file types
+            if [[ "$file_path" =~ \.(java|py|go|ts|js|rs)$ ]]; then
+                is_major=true
+                decision_type="code_modification"
+            fi
+            ;;
+        Bash)
+            if [[ "$description" =~ (mvn|gradle|npm|cargo).*build|test ]]; then
+                is_major=true
+                decision_type="build_test"
+            fi
+            ;;
+    esac
+
+    if [[ "$is_major" == "true" ]]; then
+        # Build + append the decision entirely in Python, with all values passed via
+        # the ENVIRONMENT (never string-interpolated into the -c body). $description
+        # derives from the agent's tool_input.command — attacker-influenceable in this
+        # threat model — so interpolating it into python source (or an echo'd JSON
+        # literal) was a code-injection / JSON-corruption vector. os.environ values are
+        # data, never code. Python also handles create-or-append uniformly.
+        KAPSIS_DEC_FILE="$decisions_file" \
+        KAPSIS_DEC_TS="$timestamp" \
+        KAPSIS_DEC_TYPE="$decision_type" \
+        KAPSIS_DEC_TOOL="$tool_name" \
+        KAPSIS_DEC_DESC="$description" \
+        python3 -c "
+import json, os
+path = os.environ['KAPSIS_DEC_FILE']
+try:
+    with open(path) as f:
+        data = json.load(f)
+    if not isinstance(data, dict) or not isinstance(data.get('decisions'), list):
+        data = {'decisions': []}
+except Exception:
+    data = {'decisions': []}
+data['decisions'].append({
+    'timestamp':   os.environ.get('KAPSIS_DEC_TS', ''),
+    'type':        os.environ.get('KAPSIS_DEC_TYPE', ''),
+    'tool':        os.environ.get('KAPSIS_DEC_TOOL', ''),
+    'description': os.environ.get('KAPSIS_DEC_DESC', ''),
+})
+with open(path, 'w') as f:
+    json.dump(data, f, indent=2)
+" 2>/dev/null || true
+    fi
+}
+
+#===============================================================================
+# Main Function
+#===============================================================================
+
+main() {
+    # Read input from stdin
+    local input
+    input=$(cat)
+
+    log_debug "Received input: ${input:0:200}..."
+
+    # Detect agent type
+    local agent_type="${KAPSIS_AGENT_TYPE:-claude-cli}"
+
+    # Parse input based on agent type
+    local parsed
+    case "$agent_type" in
+        claude|claude-cli)
+            parsed=$(parse_claude_input "$input")
+            ;;
+        codex|codex-cli)
+            parsed=$(parse_codex_input "$input")
+            ;;
+        gemini|gemini-cli)
+            parsed=$(parse_gemini_input "$input")
+            ;;
+        *)
+            # Default to Claude format
+            parsed=$(parse_claude_input "$input")
+            ;;
+    esac
+
+    local tool_name command file_path
+    tool_name=$(json_get "$parsed" "tool_name" "unknown")
+    command=$(json_get "$parsed" "command" "")
+    file_path=$(json_get "$parsed" "file_path" "")
+
+    log_debug "Parsed: tool=$tool_name, command=${command:0:50}..., file=$file_path"
+
+    # Map tool to category
+    local category
+    category=$(map_tool_to_category "$tool_name" "$command")
+
+    log_debug "Category: $category"
+
+    # Load and update state
+    local state
+    state=$(load_state)
+    state=$(increment_tool_count "$state" "$category")
+
+    # Update last tool in state. Pass values via the environment (never
+    # string-interpolated into the -c body) — $tool_name derives from the agent's
+    # payload and is attacker-influenceable; interpolating it risked a python
+    # syntax error that would blank the state. Same hardening as log_decision().
+    state=$(echo "$state" | \
+        KAPSIS_LAST_TOOL="$tool_name" \
+        KAPSIS_LAST_UPDATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        python3 -c "
+import json, os, sys
+try:
+    state = json.load(sys.stdin)
+except Exception:
+    state = {}
+state['last_tool'] = os.environ.get('KAPSIS_LAST_TOOL', '')
+state['last_update'] = os.environ.get('KAPSIS_LAST_UPDATE', '')
+print(json.dumps(state))
+" 2>/dev/null)
+
+    save_state "$state"
+
+    # Calculate progress
+    local progress
+    progress=$(calculate_progress "$state")
+
+    # Generate status message
+    local message
+    case "$category" in
+        exploring)
+            message="Exploring codebase"
+            [[ -n "$file_path" ]] && message="Reading $file_path"
+            ;;
+        implementing)
+            message="Implementing changes"
+            [[ -n "$file_path" ]] && message="Editing $file_path"
+            ;;
+        building)
+            message="Building project"
+            ;;
+        testing)
+            message="Running tests"
+            ;;
+        *)
+            message="Working..."
+            ;;
+    esac
+
+    # Update Kapsis status
+    if [[ -n "${KAPSIS_STATUS_PROJECT:-}" && -n "${KAPSIS_STATUS_AGENT_ID:-}" ]]; then
+        if type status_reinit_from_env &>/dev/null; then
+            status_reinit_from_env
+
+            # Read agent gist from signaling file (if present)
+            # Agent can update $KAPSIS_GIST_FILE with activity summary
+            if type status_read_gist_file &>/dev/null; then
+                status_read_gist_file
+            fi
+
+            status_phase "running" "$progress" "$message"
+            log_debug "Updated status: running $progress% - $message"
+        fi
+    fi
+
+    # Log decision if significant
+    log_decision "$tool_name" "${command:-$file_path}" "$file_path"
+
+    # Audit logging (if enabled)
+    if [[ "${KAPSIS_AUDIT_ENABLED:-false}" == "true" ]]; then
+        if [[ -f "$KAPSIS_HOME/lib/audit.sh" ]]; then
+            source "$KAPSIS_HOME/lib/audit.sh"
+            source "$KAPSIS_HOME/lib/audit-patterns.sh"
+            # NOTE: The || true guards below intentionally suppress ALL failures
+            # (not just the audit_check_patterns exit-1 case) — including
+            # disk-full or permission errors. This hook runs under set -e and
+            # its robustness contract requires that it never break the agent:
+            # it must always reach the final `echo "{}"` below. Audit logging
+            # is best-effort here; do NOT narrow these guards.
+            if [[ "${_KAPSIS_AUDIT_INITIALIZED:-false}" != "true" ]]; then
+                audit_init "$_safe_agent_id" \
+                           "${KAPSIS_STATUS_PROJECT:-unknown}" \
+                           "${KAPSIS_AGENT_TYPE:-claude-cli}" || true
+            fi
+            audit_log_event "auto" "$tool_name" \
+                "{\"command\":\"$(json_escape_string "${command:0:1000}")\",\"file_path\":\"$(json_escape_string "$file_path")\",\"category\":\"$category\"}" || true
+        fi
+    fi
+
+    # Output empty JSON (required by hook system)
+    echo "{}"
+}
+
+# Run main function only when executed directly (not when sourced for unit tests).
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main "$@"
+fi
