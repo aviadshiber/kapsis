@@ -69,6 +69,58 @@ test_agent_gemini_binds_gemini_image() {
     assert_contains "$output" "skip-trust" "gemini config must pass --skip-trust for headless runs"
 }
 
+test_agent_codex_stages_only_oauth_file() {
+    log_test "Testing --agent codex stages ONLY the OAuth session file (security regression guard)"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent codex --task "test" --dry-run 2>&1) || true
+
+    assert_contains "$output" ".codex/auth.json" "must stage the OAuth session file"
+    # Whole-dir mount was the pre-PR behavior and leaks history/sqlite/other-agent
+    # state into the sandbox. Assert the directory-mount pattern is absent (a bare
+    # ".codex" substring would false-match inside ".codex/auth.json").
+    assert_not_contains "$output" ":/kapsis-staging/.codex:" "must NOT mount the whole ~/.codex directory"
+    # config.toml can carry MCP secrets + hook commands — must not be injected.
+    assert_not_contains "$output" ".codex/config.toml" "must NOT inject codex config.toml (use --ignore-user-config)"
+    assert_contains "$output" "ignore-user-config" "codex command must pass --ignore-user-config"
+}
+
+test_agent_codex_allowlists_chatgpt_backend() {
+    log_test "Testing --agent codex filtered-mode allowlist includes the ChatGPT backend"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent codex --task "test" --dry-run 2>&1) || true
+
+    # Without this the ChatGPT-subscription auth breaks in the default filtered mode.
+    # Assert the effective per-config allowlist, not the reference file.
+    assert_contains "$output" "chatgpt.com" "codex filtered mode must allowlist the ChatGPT backend"
+}
+
+test_agent_gemini_stages_only_oauth_files() {
+    log_test "Testing --agent gemini stages ONLY the OAuth session files (security regression guard)"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent gemini --task "test" --dry-run 2>&1) || true
+
+    assert_contains "$output" ".gemini/oauth_creds.json" "must stage the OAuth session file"
+    assert_not_contains "$output" ":/kapsis-staging/.gemini:" "must NOT mount the whole ~/.gemini directory"
+    # settings.json can carry mcpServers (env secrets) + hook commands — must not be injected.
+    assert_not_contains "$output" ".gemini/settings.json" "must NOT inject gemini settings.json"
+}
+
+test_agent_gemini_allowlist_is_narrow() {
+    log_test "Testing --agent gemini allowlist is narrow (no broad Google API host)"
+
+    local output
+    output=$("$LAUNCH_SCRIPT" "$TEST_PROJECT" --agent gemini --task "test" --dry-run 2>&1) || true
+
+    assert_contains "$output" "cloudcode-pa.googleapis.com" "gemini must allowlist the Code Assist backend"
+    assert_contains "$output" "oauth2.googleapis.com" "gemini must allowlist the OAuth token endpoint"
+    # The OAuth token carries broad cloud-platform scope; a generic Google API host
+    # would be an exfil channel. Guard against it being re-added.
+    assert_not_contains "$output" "www.googleapis.com" "gemini must NOT allowlist the broad www.googleapis.com host"
+}
+
 test_agent_aider() {
     log_test "Testing --agent aider"
 
@@ -126,6 +178,10 @@ main() {
     run_test test_agent_gemini
     run_test test_agent_codex_binds_codex_image
     run_test test_agent_gemini_binds_gemini_image
+    run_test test_agent_codex_stages_only_oauth_file
+    run_test test_agent_codex_allowlists_chatgpt_backend
+    run_test test_agent_gemini_stages_only_oauth_files
+    run_test test_agent_gemini_allowlist_is_narrow
     run_test test_agent_aider
     run_test test_agent_interactive
     run_test test_agent_display_in_banner

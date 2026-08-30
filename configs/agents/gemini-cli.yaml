@@ -1,45 +1,31 @@
-# Google Gemini CLI Agent Profile (build-time)
+# Google Gemini CLI Agent Profile (BUILD-TIME ONLY)
 # Official Google CLI for Gemini code generation.
 #
 # Build: ./scripts/build-agent-image.sh gemini-cli --profile full-stack
 # Result: kapsis-gemini-cli:latest
 #
-# NOTE: build-agent-image.sh consumes ONLY .name/.install/.dependencies/.description.
-# The runtime command + auth live in the LAUNCH config (configs/gemini.yaml), which
-# is authoritative. The command:/auth: blocks below are documentation kept in sync
-# for humans; they are not read by the build.
+# build-agent-image.sh consumes ONLY .name / .install / .dependencies / .description
+# from this file. The RUNTIME command, auth, network, and hook wiring live in the
+# authoritative launch config → configs/gemini.yaml. Do not duplicate those here;
+# copies drift. Gemini is Node.js-based (no native binary).
+# https://github.com/google-gemini/gemini-cli
 #
-# Gemini CLI is Node.js-based (no native binary). See: https://github.com/google-gemini/gemini-cli
+# Auth note: Gemini "Login with Google" for personal free/Pro/Ultra tiers was
+# deprecated by Google on 2026-06-18 — only org-backed Code Assist Standard/Enterprise
+# OAuth or a GEMINI_API_KEY still work headless. See configs/gemini.yaml.
 
 name: gemini-cli
 description: Google Gemini CLI (requires Node.js)
-version: 0.57.0
 
 install:
-  # Pinned for reproducible images. Bump deliberately; verify `gemini --help`
-  # inside the built image.
+  # Pinned for reproducible images. Bump deliberately, then re-verify `gemini --help`
+  # inside the built image and re-run the smoke test.
   npm: "@google/gemini-cli@0.57.0"
 
 dependencies:
   - nodejs >= 18  # Required - no native binary available
   - git
 
-# Auth (informational — see configs/gemini.yaml for the live wiring).
-# On subscription/OAuth setups there is NO API key: gemini authenticates from
-# ~/.gemini/oauth_creds.json (+ google_accounts.json + google_account_id, Google
-# login), injected as writable copies via the launch config's filesystem.include.
-# GEMINI_API_KEY / GOOGLE_API_KEY passthrough still works if you prefer key auth.
-auth:
-  optional:
-    - name: GEMINI_API_KEY
-      description: "Gemini API key (alternative to ~/.gemini OAuth session)"
-
-# Runtime command (informational — authoritative copy in configs/gemini.yaml).
-# `-p` is the non-interactive/headless flag; `--approval-mode yolo` auto-approves
-# tool calls; `--skip-trust` is required for headless runs in untrusted workspaces.
-command: gemini --approval-mode yolo --skip-trust -p
-
-# Hook support
-hooks:
-  supported: true
-  config_path: ~/.gemini/hooks/
+# Runtime command — AUTHORITATIVE copy lives in configs/gemini.yaml. Mirrored here only
+# to satisfy the agent-profile convention (build does not read it). Keep in sync.
+command: "gemini --approval-mode yolo --skip-trust -p"

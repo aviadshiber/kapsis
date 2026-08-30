@@ -25,12 +25,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   codex/gemini (adapters target stale hook interfaces) — deferred to the bot
   phase. See `docs/designs/codex-gemini-providers.md`.
 
+### Security
+- Codex/Gemini providers inject ONLY the OAuth session file, never `config.toml` /
+  `settings.json` (which can carry MCP `env` secrets + hook commands): codex uses
+  `--ignore-user-config`; gemini omits `settings.json`.
+- Gemini filtered-mode allowlist kept deliberately narrow (`cloudcode-pa.googleapis.com`
+  + `oauth2.googleapis.com` only) because the OAuth token carries broad `cloud-platform`
+  scope — `www.googleapis.com` / `accounts.google.com` are intentionally not allowlisted.
+- `KAPSIS_DEFAULT_IMAGE_KEEP_PATTERNS` now includes `kapsis-codex-cli` / `kapsis-gemini-cli`
+  so `kapsis-cleanup` no longer evicts the provider images (they were being GC'd, forcing
+  repeated ~2 GB rebuilds).
+
 ### Fixed
 - Network allowlist: add `chatgpt.com` (Codex ChatGPT-subscription backend) and
-  `cloudcode-pa.googleapis.com` / `oauth2.googleapis.com` (Gemini personal-login
-  backend + token refresh) so OAuth-session Codex/Gemini work in filtered mode.
+  `cloudcode-pa.googleapis.com` / `oauth2.googleapis.com` (Gemini backend + token refresh)
+  so OAuth-session Codex/Gemini work in filtered mode.
 - Correct stale Codex/Gemini command strings (`codex exec` /
   `gemini -p --approval-mode yolo --skip-trust`) to match current CLI interfaces.
+- `build-agent-image.sh` records the build profile as a `kapsis.build-profile` image label
+  so a mis-provisioned image (e.g. Java-less `frontend` for a Java target) is detectable.
 
 ## [2.35.2] - 2026-06-21
 

@@ -25,13 +25,13 @@ agent:
 filesystem:
   # OAuth/subscription auth: inject ONLY the minimal Gemini session files, as
   # writable copies (stage-and-copy path), so gemini can refresh its access token
-  # mid-run. Do NOT include the whole ~/.gemini — it holds history, projects, and
-  # other state that must not enter the sandbox.
+  # mid-run. Do NOT include ~/.gemini/settings.json — it can hold `mcpServers`
+  # (with `env` secrets) and hook COMMANDS, which must not enter a prompt-injectable
+  # sandbox. Do NOT include the whole ~/.gemini — it holds history/projects/skills.
   include:
-    - ~/.gemini/oauth_creds.json       # Google-login OAuth session
+    - ~/.gemini/oauth_creds.json       # Google-login OAuth session (access+refresh)
     - ~/.gemini/google_accounts.json   # active account selection
     - ~/.gemini/google_account_id      # active account id
-    - ~/.gemini/settings.json          # model/settings (no secrets required)
     - ~/.gitconfig
     - ~/.ssh
     - ~/.zshrc
@@ -48,24 +48,21 @@ resources:
   memory: 8g
   cpus: 4
 
-# Network isolation. Gemini with a personal Google login uses the Code Assist
-# backend (cloudcode-pa.googleapis.com) plus Google OAuth token refresh
-# (oauth2.googleapis.com / accounts.google.com); with an API key it uses
-# generativelanguage.googleapis.com. All are allowlisted so `--agent gemini`
-# works in the default filtered mode out of the box. See
-# configs/network-allowlist.yaml for the full reference.
+# Network isolation. Gemini (Code Assist OAuth login) uses the Code Assist backend
+# (cloudcode-pa.googleapis.com) plus Google OAuth token refresh (oauth2.googleapis.com);
+# with an API key it uses generativelanguage.googleapis.com. The allowlist is kept
+# DELIBERATELY NARROW — the OAuth token carries broad `cloud-platform` scope, so a
+# generic Google API host (www.googleapis.com) or the OAuth consent host
+# (accounts.google.com) would be an exfil channel for a prompt-injected agent and is
+# intentionally NOT allowlisted. See docs/designs/codex-gemini-providers.md (Security).
 network:
   mode: filtered
   allowlist:
     ai:
-      - cloudcode-pa.googleapis.com      # Gemini Code Assist (personal login)
+      - cloudcode-pa.googleapis.com       # Gemini Code Assist (OAuth login) backend
       - generativelanguage.googleapis.com # Gemini API (API-key auth)
-      - aiplatform.googleapis.com
-      - gemini.google.com
     custom:
-      - oauth2.googleapis.com            # Google OAuth token refresh
-      - accounts.google.com
-      - www.googleapis.com
+      - oauth2.googleapis.com             # Google OAuth token refresh endpoint
     hosts:
       - github.com
       - "*.github.com"

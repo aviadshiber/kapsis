@@ -17,28 +17,34 @@ agent:
   #  - `--dangerously-bypass-approvals-and-sandbox`
   #                        : REQUIRED in-container — the kapsis container IS the sandbox,
   #                          so Codex's own landlock/seccomp sandbox must not try to nest.
+  #  - `--ignore-user-config` : do NOT load ~/.codex/config.toml inside the sandbox.
+  #                          config.toml can hold [mcp_servers] with `env` secrets and
+  #                          hook COMMANDS; injecting it would smuggle unrelated secrets
+  #                          / execution primitives into a prompt-injectable sandbox.
+  #                          Auth is unaffected — it still reads CODEX_HOME/auth.json.
   #  - `--skip-git-repo-check` : allow running when /workspace isn't a git repo yet.
   # KAPSIS_INJECTED_TASK_SPEC is set by entrypoint.sh when status injection appends
   # progress/gist guidance to a writable copy of the spec; falls back to /task-spec.md.
-  command: "codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check \"$(cat \"${KAPSIS_INJECTED_TASK_SPEC:-/task-spec.md}\")\""
+  command: "codex exec --dangerously-bypass-approvals-and-sandbox --ignore-user-config --skip-git-repo-check \"$(cat \"${KAPSIS_INJECTED_TASK_SPEC:-/task-spec.md}\")\""
   workdir: /workspace
 
 filesystem:
-  # OAuth/subscription auth: inject ONLY the minimal Codex session files, as
-  # writable copies (stage-and-copy path), so codex can refresh its access token
-  # mid-run. Do NOT include the whole ~/.codex — it holds history, sqlite, and
-  # other agents' state that must not enter the sandbox.
+  # OAuth/subscription auth: inject ONLY the Codex OAuth session file, as a writable
+  # copy (stage-and-copy path), so codex can refresh its access token mid-run. Do NOT
+  # include config.toml (see --ignore-user-config above) or the whole ~/.codex (it
+  # holds history, sqlite, and other agents' state that must not enter the sandbox).
   include:
     - ~/.codex/auth.json     # ChatGPT-login OAuth session (or API-key record)
-    - ~/.codex/config.toml   # model/profile/settings (no secrets required)
     - ~/.gitconfig
     - ~/.ssh
     - ~/.zshrc
 
 environment:
-  # If you use API-key auth instead of the OAuth session file, export OPENAI_API_KEY
-  # on the host and it will pass through. OAuth-file injection above needs no env.
+  # If you use API-key auth instead of the OAuth session file, export CODEX_API_KEY
+  # (the official automation env var; OPENAI_API_KEY is a legacy fallback) on the host
+  # and it will pass through. OAuth-file injection above needs no env.
   passthrough:
+    - CODEX_API_KEY
     - OPENAI_API_KEY
   set:
     MAVEN_OPTS: "-Xmx4g -XX:+UseG1GC"

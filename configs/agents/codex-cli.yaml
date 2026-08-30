@@ -1,47 +1,26 @@
-# OpenAI Codex CLI Agent Profile (build-time)
+# OpenAI Codex CLI Agent Profile (BUILD-TIME ONLY)
 # Official OpenAI CLI for code generation.
 #
 # Build: ./scripts/build-agent-image.sh codex-cli --profile full-stack
 # Result: kapsis-codex-cli:latest
 #
-# NOTE: build-agent-image.sh consumes ONLY .name/.install/.dependencies/.description
-# from this file. The runtime command + auth live in the LAUNCH config
-# (configs/codex.yaml), which is authoritative for how the agent is invoked and
-# authenticated. The command:/auth: blocks below are documentation of the current
-# interface, kept in sync for humans; they are not read by the build.
-#
-# Codex CLI is Node.js-based (no native binary). See: https://github.com/openai/codex
+# build-agent-image.sh consumes ONLY .name / .install / .dependencies / .description
+# from this file. The RUNTIME command, auth, network, and hook wiring live in the
+# authoritative launch config → configs/codex.yaml. Do not duplicate those here;
+# copies drift. Codex is Node.js-based (no native binary). https://github.com/openai/codex
 
 name: codex-cli
 description: OpenAI Codex CLI (requires Node.js)
-version: 0.151.0
 
 install:
-  # Pinned for reproducible images. Bump deliberately; verify the binary's
-  # `codex exec --help` inside the built image (npm build may differ from Homebrew).
+  # Pinned for reproducible images. Bump deliberately, then re-verify
+  # `codex exec --help` inside the built image and re-run the smoke test.
   npm: "@openai/codex@0.151.0"
 
 dependencies:
   - nodejs >= 18  # Required - no native binary available
   - git
 
-# Auth (informational — see configs/codex.yaml for the live wiring).
-# On subscription/OAuth setups there is NO API key: codex authenticates from
-# ~/.codex/auth.json (ChatGPT login), injected into the container as a writable
-# copy via the launch config's filesystem.include (stage-and-copy path).
-# OPENAI_API_KEY passthrough still works if you prefer key-based auth.
-auth:
-  optional:
-    - name: OPENAI_API_KEY
-      description: "OpenAI API key (alternative to ~/.codex/auth.json OAuth session)"
-
-# Runtime command (informational — authoritative copy in configs/codex.yaml).
-# `codex exec` is the non-interactive entrypoint; the bypass flag is required
-# because the kapsis container is itself the sandbox (codex's own landlock/seccomp
-# sandbox cannot nest inside it).
-command: codex exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check
-
-# Hook support
-hooks:
-  supported: true
-  config_path: ~/.codex/config.toml
+# Runtime command — AUTHORITATIVE copy lives in configs/codex.yaml. Mirrored here only
+# to satisfy the agent-profile convention (build does not read it). Keep in sync.
+command: "codex exec --dangerously-bypass-approvals-and-sandbox --ignore-user-config --skip-git-repo-check"
