@@ -107,17 +107,21 @@ jobs:
           chmod +x ./scripts/build-image.sh ./scripts/lib/*.sh
           ./scripts/build-image.sh --name kapsis-sandbox --tag "${VERSION}"
 
-      - name: Build claude-cli agent image
+      - name: Build agent images (claude-cli, codex-cli, gemini-cli)
         run: |
           chmod +x ./scripts/build-agent-image.sh
+          # No --profile → default build-config (java+node+python+maven), the same
+          # full toolchain claude-cli uses, so codex/gemini can build Java repos too.
           ./scripts/build-agent-image.sh claude-cli
+          ./scripts/build-agent-image.sh codex-cli
+          ./scripts/build-agent-image.sh gemini-cli
 
       - name: Tag and push images to ghcr.io
         env:
           VERSION: ${{ needs.validate.outputs.version }}
           REGISTRY: ghcr.io/${{ github.repository_owner }}
         run: |
-          for IMAGE in kapsis-sandbox kapsis-claude-cli; do
+          for IMAGE in kapsis-sandbox kapsis-claude-cli kapsis-codex-cli kapsis-gemini-cli; do
             LOCAL_TAG="${IMAGE}:latest"
             if [[ "${IMAGE}" == "kapsis-sandbox" ]]; then
               LOCAL_TAG="${IMAGE}:${VERSION}"
@@ -204,7 +208,7 @@ jobs:
           set -euo pipefail
           mkdir -p sboms
 
-          for IMAGE in kapsis-sandbox kapsis-claude-cli; do
+          for IMAGE in kapsis-sandbox kapsis-claude-cli kapsis-codex-cli kapsis-gemini-cli; do
             IMAGE_REF="${REGISTRY}/${IMAGE}:${VERSION}"
             SBOM_FILE="sboms/${IMAGE}-${VERSION}-sbom.spdx.json"
 
@@ -403,7 +407,9 @@ jobs:
         run: |
           sha256sum "kapsis-${VERSION}.tar.gz" kapsis-dashboard-* kapsis-ctl-* \
             "kapsis-sandbox-${VERSION}-sbom.spdx.json" \
-            "kapsis-claude-cli-${VERSION}-sbom.spdx.json" > checksums.sha256
+            "kapsis-claude-cli-${VERSION}-sbom.spdx.json" \
+            "kapsis-codex-cli-${VERSION}-sbom.spdx.json" \
+            "kapsis-gemini-cli-${VERSION}-sbom.spdx.json" > checksums.sha256
 
           echo "Generated checksums:"
           cat checksums.sha256
@@ -495,6 +501,8 @@ jobs:
             echo '```bash'
             echo "podman pull ghcr.io/${{ github.repository_owner }}/kapsis-sandbox:${VERSION}"
             echo "podman pull ghcr.io/${{ github.repository_owner }}/kapsis-claude-cli:${VERSION}"
+            echo "podman pull ghcr.io/${{ github.repository_owner }}/kapsis-codex-cli:${VERSION}"
+            echo "podman pull ghcr.io/${{ github.repository_owner }}/kapsis-gemini-cli:${VERSION}"
             echo '```'
             echo ""
 
@@ -565,6 +573,8 @@ jobs:
             kapsis-ctl-darwin-x64
             kapsis-sandbox-${{ needs.validate.outputs.version }}-sbom.spdx.json
             kapsis-claude-cli-${{ needs.validate.outputs.version }}-sbom.spdx.json
+            kapsis-codex-cli-${{ needs.validate.outputs.version }}-sbom.spdx.json
+            kapsis-gemini-cli-${{ needs.validate.outputs.version }}-sbom.spdx.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
