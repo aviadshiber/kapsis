@@ -312,6 +312,76 @@ test_known_hosts_generation() {
     cleanup_test_environment
 }
 
+#===============================================================================
+# PORT-AWARE SSH-KEYSCAN TESTS (generic port-22 gap fix)
+#
+# No network dependency — ssh-keyscan is mocked via a temp bin dir prepended
+# to PATH, following this file's existing pattern of running network-adjacent
+# assertions inside a subshell so a sourced `set -euo pipefail` (from
+# ssh-keychain.sh itself) can't tear down the outer test runner.
+#===============================================================================
+
+test_ssh_parse_host_port_defaults_to_22() {
+    log_test "ssh_parse_host_port: bare host defaults to port 22"
+
+    source "$SSH_KEYCHAIN_SCRIPT"
+    ssh_parse_host_port "git.example.com"
+
+    assert_equals "git.example.com" "$SSH_PARSED_HOST" "Host should parse correctly"
+    assert_equals "22" "$SSH_PARSED_PORT" "Port should default to 22"
+}
+
+test_ssh_parse_host_port_extracts_custom_port() {
+    log_test "ssh_parse_host_port: host:port form extracts the port"
+
+    source "$SSH_KEYCHAIN_SCRIPT"
+    ssh_parse_host_port "git.example.com:2222"
+
+    assert_equals "git.example.com" "$SSH_PARSED_HOST" "Host should parse correctly"
+    assert_equals "2222" "$SSH_PARSED_PORT" "Port should be extracted from host:port"
+}
+
+test_ssh_parse_host_port_explicit_override_wins() {
+    log_test "ssh_parse_host_port: explicit port arg overrides host:port suffix"
+
+    source "$SSH_KEYCHAIN_SCRIPT"
+    ssh_parse_host_port "git.example.com:2222" "3333"
+
+    assert_equals "3333" "$SSH_PARSED_PORT" "Explicit port override should win"
+}
+
+test_keyscan_invoked_with_port_flag() {
+    log_test "ssh_verify_and_cache_keys: invokes ssh-keyscan with -p <port> for a non-default port"
+
+    setup_test_environment
+
+    local mock_bin_dir capture_file
+    mock_bin_dir=$(mktemp -d "${TMPDIR:-/tmp}/kapsis-ssh-mock-bin.XXXXXX")
+    capture_file="$mock_bin_dir/keyscan-args.txt"
+
+    cat > "$mock_bin_dir/ssh-keyscan" <<EOF
+#!/usr/bin/env bash
+echo "\$@" > "$capture_file"
+echo "git.example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl"
+EOF
+    chmod +x "$mock_bin_dir/ssh-keyscan"
+
+    (
+        export PATH="$mock_bin_dir:$PATH"
+        source "$SSH_KEYCHAIN_SCRIPT"
+        ssh_verify_and_cache_keys "git.example.com:2222" >/dev/null 2>&1 || true
+    )
+
+    assert_file_exists "$capture_file" "Mock ssh-keyscan should have been invoked"
+    local captured_args
+    captured_args=$(cat "$capture_file")
+    assert_contains "$captured_args" "-p 2222" "ssh-keyscan should be invoked with -p 2222"
+    assert_contains "$captured_args" "git.example.com" "ssh-keyscan should target the bare host (port passed via -p, not host suffix)"
+
+    rm -rf "$mock_bin_dir"
+    cleanup_test_environment
+}
+
 test_key_ttl_expiration() {
     log_test "Cache TTL expiration logic"
 
@@ -487,5 +557,11 @@ run_test test_no_secrets_in_output
 
 # Integration
 run_test test_known_hosts_generation
+
+# Port-aware ssh-keyscan (generic port-22 gap fix)
+run_test test_ssh_parse_host_port_defaults_to_22
+run_test test_ssh_parse_host_port_extracts_custom_port
+run_test test_ssh_parse_host_port_explicit_override_wins
+run_test test_keyscan_invoked_with_port_flag
 
 print_summary

@@ -955,6 +955,12 @@ parse_config() {
         # Optional; auto-detection for public hosts is unaffected either way.
         GIT_PROVIDER=$(yq -r '.git.provider // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
         GIT_PR_URL_TEMPLATE=$(yq -r '.git.pr_url_template // ""' "$CONFIG_FILE" 2>/dev/null || echo "")
+        GIT_TRANSPORT_POLICY=$(yq -r '.git.transport_policy // "inherit"' "$CONFIG_FILE" 2>/dev/null || echo "inherit")
+        # FIX-7: validate against the single source of truth in constants.sh
+        if [[ ! " $KAPSIS_GIT_TRANSPORT_POLICIES " =~ [[:space:]]${GIT_TRANSPORT_POLICY}[[:space:]] ]]; then
+            log_error "Invalid git.transport_policy '$GIT_TRANSPORT_POLICY' (expected one of: $KAPSIS_GIT_TRANSPORT_POLICIES)"
+            exit 1
+        fi
 
         # Parse fork workflow settings
         GIT_FORK_ENABLED=$(yq -r '.git.fork_workflow.enabled // "false"' "$CONFIG_FILE")
@@ -998,6 +1004,13 @@ parse_config() {
 
         # Parse SSH host verification list
         SSH_VERIFY_HOSTS=$(yq -r '.ssh.verify_hosts[]' "$CONFIG_FILE" 2>/dev/null || echo "")
+
+        # Parse declarative SSH identities (deploy keys). Metadata only — the
+        # key material itself is fetched host-side in generate_env_vars() via
+        # query_secret_store_with_fallbacks(), never through yq.
+        # Output format per line: host|port|user|identity_file|strict|key_service|key_account|key_encoding
+        # KAPSIS_YQ_SSH_IDENTITIES_EXPR is defined in scripts/lib/constants.sh
+        SSH_IDENTITIES=$(yq "$KAPSIS_YQ_SSH_IDENTITIES_EXPR" "$CONFIG_FILE" 2>/dev/null || echo "")
 
         # Parse Claude agent config whitelisting (include-only)
         # When set, only matching hooks/MCP servers are kept in the container
@@ -1963,6 +1976,31 @@ generate_ssh_known_hosts() {
 declare -a ENV_VARS=()
 declare -a SECRET_ENV_VARS=()
 
+# ssh.identities key transport helper (extracted for unit testability —
+# see tests/test-ssh-identities.sh for host-side encoding=raw/base64 tests).
+#
+# The container ALWAYS `base64 -d`s the transported KAPSIS_SSH_IDKEY_<n>_B64
+# value, so this function must always return base64(rawkey), single-line:
+#   encoding=raw    -> $1 IS the raw key material; base64-encode it here.
+#   encoding=base64 -> $1 is ALREADY base64(rawkey) (some secret stores, e.g.
+#                       macOS `security -w`, corrupt multi-line values on
+#                       retrieval — the documented workaround is to
+#                       pre-encode before storing); pass it through
+#                       unchanged (no double base64-encoding), only
+#                       stripping a trailing newline the store may add.
+# Args: $1 = fetched secret value, $2 = encoding ("raw" or "base64")
+ssh_identity_key_transport_value() {
+    local secret_value="$1"
+    local encoding="$2"
+    if [[ "$encoding" == "base64" ]]; then
+        printf '%s' "$secret_value" | tr -d '\n'
+    else
+        # Portable across GNU/BSD base64; do NOT rely on `-w0` (GNU-only,
+        # errors on macOS's base64).
+        printf '%s' "$secret_value" | base64 | tr -d '\n'
+    fi
+}
+
 generate_env_vars() {
     ENV_VARS=()
     SECRET_ENV_VARS=()
@@ -2176,6 +2214,121 @@ generate_env_vars() {
         done <<< "$ENV_KEYCHAIN"
     fi
 
+    # Process declarative SSH identities (deploy keys, Issue: ssh.identities)
+    #
+    # Key transport MUST be base64: secrets reach the container via --env-file
+    # (SECRET_ENV_VARS), which is line-oriented VAR=val and cannot carry a
+    # multi-line value — a raw private key would be truncated at the first
+    # newline. So: fetch key host-side -> base64 (forced single-line, since
+    # GNU `base64 -w0` is not portable to the BSD `base64` on macOS hosts) ->
+    # pass via env-file -> container `base64 -d` -> write file.
+    #
+    # KAPSIS_SSH_IDENTITIES (metadata, -e, no key material) is comma-separated
+    # "host|port|user|identity_file|strict" entries. The index `n` of each
+    # entry (0-based, in list order) is the SAME index used for its paired
+    # KAPSIS_SSH_IDKEY_<n>_B64 env var (SECRET_ENV_VARS / env-file only) — the
+    # container reconstructs pairing purely by position, so the index MUST
+    # advance in lockstep with appending to the metadata list. A missing
+    # secret is therefore fail-loud (exit 1), never silently skipped, to avoid
+    # desynchronizing that index.
+    local SSH_IDENTITIES_META=""
+    if [[ -n "${SSH_IDENTITIES:-}" ]]; then
+        log_info "Resolving SSH identities from system keychain..."
+        local ssh_id_idx=0
+        while IFS='|' read -r ssh_host ssh_port ssh_user ssh_identity_file ssh_strict ssh_key_service ssh_key_account ssh_key_encoding; do
+            [[ -z "$ssh_host" ]] && continue
+
+            # Expand variables in account (e.g., ${USER}) — same semantics as
+            # environment.keychain account fallback expansion above.
+            if [[ -n "$ssh_key_account" ]]; then
+                ssh_key_account="${ssh_key_account//\$\{USER\}/${USER}}"
+                ssh_key_account="${ssh_key_account//\$USER/${USER}}"
+                ssh_key_account="${ssh_key_account//\$\{HOME\}/${HOME}}"
+                ssh_key_account="${ssh_key_account//\$HOME/${HOME}}"
+                ssh_key_account="${ssh_key_account//\$\{LOGNAME\}/${LOGNAME:-$USER}}"
+                ssh_key_account="${ssh_key_account//\$LOGNAME/${LOGNAME:-$USER}}"
+            fi
+
+            # --- Host-side validation (defense in depth; re-validated in-container) ---
+            if [[ ! "$ssh_host" =~ ^[A-Za-z0-9._-]+$ ]]; then
+                log_error "ssh.identities: invalid host '$ssh_host' (allowed: letters, digits, dot, underscore, hyphen)"
+                exit 1
+            fi
+            if [[ ! "$ssh_port" =~ ^[0-9]+$ ]] || (( ssh_port < 1 || ssh_port > 65535 )); then
+                log_error "ssh.identities: invalid port '$ssh_port' for host '$ssh_host' (must be 1-65535)"
+                exit 1
+            fi
+            case "$ssh_strict" in
+                accept-new|yes|no) : ;;
+                *)
+                    log_error "ssh.identities: invalid strict_host_key_checking '$ssh_strict' for host '$ssh_host' (must be accept-new, yes, or no)"
+                    exit 1
+                    ;;
+            esac
+            # user is optional — only validate when non-empty. Reject the
+            # metadata delimiters (',' field separator, '|' entry separator)
+            # and newlines, which would desync the container's index<->key
+            # pairing (KAPSIS_SSH_IDKEY_<n>_B64).
+            if [[ -n "$ssh_user" ]] && [[ ! "$ssh_user" =~ ^[A-Za-z0-9._-]+$ ]]; then
+                log_error "ssh.identities: invalid user '$ssh_user' for host '$ssh_host' (allowed: letters, digits, dot, underscore, hyphen)"
+                exit 1
+            fi
+            if [[ -z "$ssh_key_service" ]]; then
+                log_error "ssh.identities: missing required key.service for host '$ssh_host'"
+                exit 1
+            fi
+            # Default encoding to "raw" if unset (yq expr already defaults this,
+            # but guard here too in case the metadata line was hand-assembled).
+            ssh_key_encoding="${ssh_key_encoding:-raw}"
+            case "$ssh_key_encoding" in
+                raw|base64) : ;;
+                *)
+                    log_error "ssh.identities: invalid key.encoding '$ssh_key_encoding' for host '$ssh_host' (must be raw or base64)"
+                    exit 1
+                    ;;
+            esac
+            if [[ -n "$ssh_identity_file" ]]; then
+                # Allowlist path chars only (implicitly rejects ',' '|' newline/space
+                # etc. that would break the comma/pipe-delimited transport); the
+                # separate '..' check guards traversal (can't be a charset rule).
+                if [[ ! "$ssh_identity_file" =~ ^[A-Za-z0-9._/~-]+$ ]] || [[ "$ssh_identity_file" == *".."* ]]; then
+                    log_error "ssh.identities: invalid identity_file path for host '$ssh_host' (allowed chars: A-Za-z0-9 . _ / ~ -; no '..')"
+                    exit 1
+                fi
+            else
+                # Default: ~/.ssh/kapsis_id_<sanitized-host>. Literal tilde is
+                # intentional — this is a container-side path expanded later by
+                # entrypoint.sh/ssh-identities.sh (mirrors how KAPSIS_CREDENTIAL_FILES
+                # paths carry a literal '~' for in-container expansion), not a
+                # host-side path to expand here.
+                local ssh_sanitized_host="${ssh_host//[^A-Za-z0-9_-]/_}"
+                # shellcheck disable=SC2088
+                ssh_identity_file="~/.ssh/kapsis_id_${ssh_sanitized_host}"
+            fi
+
+            # --- Fetch key material host-side (never via yq, never logged) ---
+            local ssh_key_value
+            if ! ssh_key_value=$(query_secret_store_with_fallbacks "$ssh_key_service" "$ssh_key_account" "SSH_IDENTITY_${ssh_id_idx}"); then
+                log_error "ssh.identities: secret not found for host '$ssh_host' (service: $ssh_key_service) — aborting to avoid index desync"
+                exit 1
+            fi
+
+            # Transport encoding — see ssh_identity_key_transport_value() for
+            # the raw-vs-base64 contract (unit-tested independently).
+            local ssh_key_b64
+            ssh_key_b64=$(ssh_identity_key_transport_value "$ssh_key_value" "$ssh_key_encoding")
+            SECRET_ENV_VARS+=("KAPSIS_SSH_IDKEY_${ssh_id_idx}_B64=${ssh_key_b64}")
+
+            SSH_IDENTITIES_META="${SSH_IDENTITIES_META:+${SSH_IDENTITIES_META},}${ssh_host}|${ssh_port}|${ssh_user}|${ssh_identity_file}|${ssh_strict}"
+            log_success "Loaded SSH identity for host '$ssh_host' (service: $ssh_key_service)"
+
+            ((ssh_id_idx++)) || true
+        done <<< "$SSH_IDENTITIES"
+    fi
+    if [[ -n "$SSH_IDENTITIES_META" ]]; then
+        ENV_VARS+=("-e" "KAPSIS_SSH_IDENTITIES=${SSH_IDENTITIES_META}")
+    fi
+
     # Pass credential file injection metadata to entrypoint (agent-agnostic)
     # This is metadata about file paths, not the secrets themselves
     if [[ -n "$CREDENTIAL_FILES" ]]; then
@@ -2197,6 +2350,7 @@ generate_env_vars() {
     if [[ -n "$GIT_CREDENTIAL_MAP" ]]; then
         ENV_VARS+=("-e" "KAPSIS_GIT_CREDENTIAL_MAP_DATA=${GIT_CREDENTIAL_MAP}")
     fi
+    ENV_VARS+=("-e" "KAPSIS_GIT_TRANSPORT_POLICY=${GIT_TRANSPORT_POLICY:-inherit}")
 
     # Set explicit environment variables (non-secrets)
     ENV_VARS+=("-e" "KAPSIS_AGENT_ID=${AGENT_ID}")
@@ -2437,6 +2591,20 @@ write_secrets_env_file() {
     umask 0077
     if ! SECRETS_ENV_FILE=$(mktemp "${TMPDIR:-/tmp}/kapsis-secrets-XXXXXX" 2>/dev/null); then
         umask "$old_umask"
+        # SSH deploy key material (KAPSIS_SSH_IDKEY_*_B64) must NEVER be
+        # inlined as a `-e` flag — that would expose it on the host process
+        # argv/`ps` output (and any `bash -x` trace). Note: `--env-file`
+        # values still show up in `podman inspect .Config.Env` just like
+        # `-e` does, so the env-file mechanism protects against argv/ps
+        # exposure only, not `podman inspect`. Fail closed instead of
+        # degrading.
+        local secret_entry
+        for secret_entry in "${SECRET_ENV_VARS[@]}"; do
+            if [[ "$secret_entry" == KAPSIS_SSH_IDKEY_*_B64=* ]]; then
+                log_error "Cannot create secrets env-file in /tmp - aborting launch (SSH identity key material must never be passed via inline -e flags)"
+                exit 1
+            fi
+        done
         log_warn "Cannot create secrets env-file in /tmp - falling back to inline env vars"
         log_warn "Secrets may be visible in debug traces (bash -x) or process listings"
         # Fallback: add secrets as inline -e flags (current behavior)

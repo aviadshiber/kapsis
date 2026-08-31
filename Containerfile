@@ -627,6 +627,7 @@ COPY scripts/lib/dns-filter.sh /opt/kapsis/lib/dns-filter.sh
 COPY scripts/lib/git-remote-utils.sh /opt/kapsis/lib/git-remote-utils.sh
 COPY scripts/lib/atomic-copy.sh /opt/kapsis/lib/atomic-copy.sh
 COPY scripts/lib/ssh-config-compat.sh /opt/kapsis/lib/ssh-config-compat.sh
+COPY scripts/lib/ssh-identities.sh /opt/kapsis/lib/ssh-identities.sh
 COPY scripts/lib/compat.sh /opt/kapsis/lib/compat.sh
 
 # Create hooks directory and copy status tracking hooks

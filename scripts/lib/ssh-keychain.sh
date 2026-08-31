@@ -310,20 +310,50 @@ ssh_get_official_fingerprints() {
     esac
 }
 
+# Parse "host" or "host:port" into separate host/port. Port defaults to 22
+# when not specified either way. An explicit $2 (--port style arg) takes
+# precedence over a ":port" suffix embedded in $1.
+# Sets globals SSH_PARSED_HOST / SSH_PARSED_PORT (avoids subshell + multiple
+# return values; callers should treat these as immediately-consumed scratch
+# vars, not persistent state).
+# Args: $1 = "host" or "host:port", $2 = optional port override
+ssh_parse_host_port() {
+    local input="$1"
+    local port_override="${2:-}"
+
+    if [[ "$input" == *:* ]]; then
+        SSH_PARSED_HOST="${input%%:*}"
+        SSH_PARSED_PORT="${input##*:}"
+    else
+        SSH_PARSED_HOST="$input"
+        SSH_PARSED_PORT="22"
+    fi
+
+    if [[ -n "$port_override" ]]; then
+        SSH_PARSED_PORT="$port_override"
+    fi
+}
+
 # TOFU: Trust On First Use for enterprise hosts
 # Scans key, shows fingerprint, asks for confirmation
-# Args: $1 = hostname
+# Args: $1 = hostname (or "host:port"), $2 = optional port (default 22)
 ssh_tofu_verify() {
-    local host="$1"
+    local raw_host="$1"
+    local port_arg="${2:-}"
+    local host port
     local key_data fingerprint response
+
+    ssh_parse_host_port "$raw_host" "$port_arg"
+    host="$SSH_PARSED_HOST"
+    port="$SSH_PARSED_PORT"
 
     echo "Enterprise host detected: $host" >&2
     echo "No official fingerprint source available." >&2
     echo "" >&2
 
-    # Fetch key
-    key_data=$(ssh-keyscan -t ed25519,rsa,ecdsa "$host" 2>/dev/null) || {
-        echo "ERROR: Could not scan SSH key for $host" >&2
+    # Fetch key (port-aware — Issue: generic port-22 gap in ssh-keyscan calls)
+    key_data=$(ssh-keyscan -t ed25519,rsa,ecdsa -p "$port" "$host" 2>/dev/null) || {
+        echo "ERROR: Could not scan SSH key for $host:$port" >&2
         return 1
     }
 
@@ -428,31 +458,37 @@ ssh_verify_key() {
 # ==============================================================================
 
 # Verify and cache SSH keys for known providers
-# Args: $@ = list of hosts (default: github.com gitlab.com bitbucket.org)
+# Args: $@ = list of hosts (default: github.com gitlab.com bitbucket.org).
+#       Each entry may be "host" or "host:port" (port defaults to 22).
 ssh_verify_and_cache_keys() {
     local hosts=("${@:-github.com gitlab.com bitbucket.org}")
-    local host key_data cached_key
+    local host_entry host port key_data cached_key
     local verified_keys=()
 
-    for host in "${hosts[@]}"; do
-        echo "Verifying SSH host key for $host..." >&2
+    for host_entry in "${hosts[@]}"; do
+        ssh_parse_host_port "$host_entry"
+        host="$SSH_PARSED_HOST"
+        port="$SSH_PARSED_PORT"
 
-        # Check cache first
+        echo "Verifying SSH host key for $host:$port..." >&2
+
+        # Check cache first (cache is keyed by hostname only, not port —
+        # a host's key fingerprint doesn't change with the port it's reached on)
         if cached_key=$(ssh_keychain_get "$host" 2>/dev/null); then
             echo "  Using cached key from Keychain" >&2
             verified_keys+=("$cached_key")
             continue
         fi
 
-        # Fetch key via ssh-keyscan
+        # Fetch key via ssh-keyscan (port-aware — Issue: generic port-22 gap)
         echo "  Fetching key via ssh-keyscan..." >&2
-        key_data=$(ssh-keyscan -t ed25519,rsa,ecdsa "$host" 2>/dev/null) || {
-            echo "  WARNING: Could not scan SSH key for $host" >&2
+        key_data=$(ssh-keyscan -t ed25519,rsa,ecdsa -p "$port" "$host" 2>/dev/null) || {
+            echo "  WARNING: Could not scan SSH key for $host:$port" >&2
             continue
         }
 
         if [[ -z "$key_data" ]]; then
-            echo "  WARNING: No SSH key returned for $host" >&2
+            echo "  WARNING: No SSH key returned for $host:$port" >&2
             continue
         fi
 
@@ -469,14 +505,14 @@ ssh_verify_and_cache_keys() {
             verified_keys+=("$key_data")
         else
             # No official fingerprints - try TOFU for enterprise hosts
-            if tofu_result=$(ssh_tofu_verify "$host"); then
+            if tofu_result=$(ssh_tofu_verify "$host" "$port"); then
                 echo "  ✓ Key trusted via TOFU" >&2
                 if ssh_keychain_set "$host" "$tofu_result"; then
                     echo "  ✓ Cached in Keychain" >&2
                 fi
                 verified_keys+=("$tofu_result")
             else
-                echo "  ✗ Key verification FAILED - skipping $host" >&2
+                echo "  ✗ Key verification FAILED - skipping $host:$port" >&2
             fi
         fi
     done
@@ -545,7 +581,7 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             ;;
         generate)
             if [[ -z "${2:-}" ]]; then
-                echo "Usage: $0 generate <output-file> [hosts...]" >&2
+                echo "Usage: $0 generate <output-file> [hosts...]  (each host may be 'host' or 'host:port', default port 22)" >&2
                 exit 1
             fi
             ssh_generate_known_hosts "$2" "${@:3}"
@@ -553,10 +589,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
         add-host)
             # Interactive mode to add enterprise/custom host
             if [[ -z "${2:-}" ]]; then
-                echo "Usage: $0 add-host <hostname>" >&2
+                echo "Usage: $0 add-host <hostname> [port]  (default port 22)" >&2
                 exit 1
             fi
-            SSH_TOFU_ENABLED=true ssh_tofu_verify "$2"
+            SSH_TOFU_ENABLED=true ssh_tofu_verify "$2" "${3:-}"
             ;;
         list-hosts)
             # List configured custom hosts
@@ -579,8 +615,9 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
             echo ""
             echo "Commands:"
             echo "  verify [hosts...]           Verify and cache SSH keys for known providers"
+            echo "                              (each host may be 'host' or 'host:port', default port 22)"
             echo "  generate <file> [hosts...]  Generate known_hosts file"
-            echo "  add-host <hostname>         Add enterprise/custom host (interactive TOFU)"
+            echo "  add-host <hostname> [port]  Add enterprise/custom host (interactive TOFU, default port 22)"
             echo "  list-hosts                  List configured custom hosts"
             echo "  clear [hosts...]            Clear cached keys from Keychain"
             echo ""

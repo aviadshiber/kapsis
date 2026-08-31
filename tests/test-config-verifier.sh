@@ -214,7 +214,7 @@ test_tpm_bad_version_format_fails() {
     local fixture="$FIXTURE_DIR/tool-phase-mapping.yaml"
     _write_valid_tpm "$fixture"
     # Break just the version
-    sed -i 's/version: "1.0"/version: "v1"/' "$fixture"
+    perl -0pi -e 's/version: "1\.0"/version: "v1"/' "$fixture"
 
     run_verifier "$fixture"
     assert_equals 1 "$CAPTURED_EXIT_CODE" "Invalid version format must exit 1"
@@ -230,7 +230,7 @@ test_tpm_bad_phase_range_fails() {
     local fixture="$FIXTURE_DIR/tool-phase-mapping.yaml"
     _write_valid_tpm "$fixture"
     # min > max
-    sed -i 's/exploring: \[0, 30\]/exploring: [50, 10]/' "$fixture"
+    perl -0pi -e 's/exploring: \[0, 30\]/exploring: [50, 10]/' "$fixture"
 
     run_verifier "$fixture"
     assert_equals 1 "$CAPTURED_EXIT_CODE" "Invalid phase range must exit 1"
@@ -245,7 +245,7 @@ test_tpm_bad_default_category_fails() {
 
     local fixture="$FIXTURE_DIR/tool-phase-mapping.yaml"
     _write_valid_tpm "$fixture"
-    sed -i 's/default_category: other/default_category: nonsense/' "$fixture"
+    perl -0pi -e 's/default_category: other/default_category: nonsense/' "$fixture"
 
     run_verifier "$fixture"
     assert_equals 1 "$CAPTURED_EXIT_CODE" "Unknown default_category must exit 1"
@@ -314,6 +314,209 @@ EOF
     assert_equals 1 "$CAPTURED_EXIT_CODE" "Non-bool auto_push must exit 1"
     assert_contains "$CAPTURED_STDOUT" "Invalid git.auto_push.enabled" \
         "Must flag invalid boolean"
+}
+
+test_launch_git_transport_policy_enum() {
+    log_test "validate_launch_config: git.transport_policy must be known value"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+git:
+  transport_policy: managed_https
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 0 "$CAPTURED_EXIT_CODE" "Known git.transport_policy must pass"
+    assert_contains "$CAPTURED_STDOUT" "Valid git.transport_policy: managed_https" \
+        "Must accept managed_https transport policy"
+
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+git:
+  transport_policy: passwordless_magic
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "Unknown git.transport_policy must fail"
+    assert_contains "$CAPTURED_STDOUT" "Invalid git.transport_policy" \
+        "Must flag invalid transport policy"
+}
+
+test_launch_git_transport_policy_empty_string_rejected() {
+    log_test "validate_launch_config: explicit empty git.transport_policy must fail (consistent with launch-agent.sh exit 1)"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+git:
+  transport_policy: ""
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "Explicit empty-string git.transport_policy must fail verification (matches launch-agent.sh runtime behavior)"
+    assert_contains "$CAPTURED_STDOUT" "Invalid git.transport_policy" \
+        "Must flag explicit empty-string transport policy"
+
+    # An omitted field must still pass — only the explicit "" case is rejected.
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+git: {}
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 0 "$CAPTURED_EXIT_CODE" "Omitted git.transport_policy must still pass (defaults to inherit downstream)"
+}
+
+test_launch_ssh_identities_valid_passes() {
+    log_test "validate_launch_config: valid ssh.identities passes"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+ssh:
+  identities:
+    - host: git.example.com
+      port: 2222
+      user: git
+      strict_host_key_checking: accept-new
+      key:
+        service: my-deploy-key
+        account: ${USER}
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 0 "$CAPTURED_EXIT_CODE" "Valid ssh.identities must exit 0"
+    assert_contains "$CAPTURED_STDOUT" "Valid ssh.identities[0].host: git.example.com" \
+        "Must confirm valid host"
+    assert_contains "$CAPTURED_STDOUT" "Valid ssh.identities[0].port: 2222" \
+        "Must confirm valid port"
+    assert_contains "$CAPTURED_STDOUT" "Valid ssh.identities[0].strict_host_key_checking: accept-new" \
+        "Must confirm valid strict mode"
+    assert_contains "$CAPTURED_STDOUT" "Has ssh.identities[0].key.service" \
+        "Must confirm key.service present"
+}
+
+test_launch_ssh_identities_bad_host_fails() {
+    log_test "validate_launch_config: ssh.identities bad host fails"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+ssh:
+  identities:
+    - host: "git example.com/evil"
+      key:
+        service: my-deploy-key
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "Bad ssh.identities host must exit 1"
+    assert_contains "$CAPTURED_STDOUT" "Invalid ssh.identities[0].host" \
+        "Must flag invalid host"
+}
+
+test_launch_ssh_identities_bad_port_fails() {
+    log_test "validate_launch_config: ssh.identities bad port fails"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+ssh:
+  identities:
+    - host: git.example.com
+      port: 99999
+      key:
+        service: my-deploy-key
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "Bad ssh.identities port must exit 1"
+    assert_contains "$CAPTURED_STDOUT" "Invalid ssh.identities[0].port" \
+        "Must flag invalid port"
+}
+
+test_launch_ssh_identities_bad_strict_fails() {
+    log_test "validate_launch_config: ssh.identities bad strict_host_key_checking fails"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+ssh:
+  identities:
+    - host: git.example.com
+      strict_host_key_checking: maybe
+      key:
+        service: my-deploy-key
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "Bad ssh.identities strict mode must exit 1"
+    assert_contains "$CAPTURED_STDOUT" "Invalid ssh.identities[0].strict_host_key_checking" \
+        "Must flag invalid strict mode"
+}
+
+test_launch_ssh_identities_missing_key_service_fails() {
+    log_test "validate_launch_config: ssh.identities missing key.service fails"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+ssh:
+  identities:
+    - host: git.example.com
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "Missing ssh.identities key.service must exit 1"
+    assert_contains "$CAPTURED_STDOUT" "Missing required field: ssh.identities[0].key.service" \
+        "Must flag missing key.service"
+}
+
+test_launch_ssh_identities_bad_encoding_fails() {
+    log_test "validate_launch_config: ssh.identities bad key.encoding fails"
+    setup_fixture_dir
+    trap teardown_fixture_dir RETURN
+
+    local fixture="$FIXTURE_DIR/launch.yaml"
+    cat > "$fixture" <<'EOF'
+agent:
+  command: claude
+ssh:
+  identities:
+    - host: git.example.com
+      key:
+        service: my-deploy-key
+        encoding: gzip
+EOF
+
+    run_verifier "$fixture"
+    assert_equals 1 "$CAPTURED_EXIT_CODE" "Bad ssh.identities key.encoding must exit 1"
+    assert_contains "$CAPTURED_STDOUT" "Invalid ssh.identities[0].key.encoding" \
+        "Must flag invalid key.encoding"
 }
 
 test_launch_userns_accepts_known_good_values() {
@@ -714,6 +917,14 @@ main() {
     run_test test_launch_valid_passes
     run_test test_launch_missing_agent_command_fails
     run_test test_launch_bad_auto_push_fails
+    run_test test_launch_git_transport_policy_enum
+    run_test test_launch_git_transport_policy_empty_string_rejected
+    run_test test_launch_ssh_identities_valid_passes
+    run_test test_launch_ssh_identities_bad_host_fails
+    run_test test_launch_ssh_identities_bad_port_fails
+    run_test test_launch_ssh_identities_bad_strict_fails
+    run_test test_launch_ssh_identities_missing_key_service_fails
+    run_test test_launch_ssh_identities_bad_encoding_fails
     run_test test_launch_lsp_missing_command_fails
     run_test test_launch_liveness_timeout_below_minimum_fails
     run_test test_launch_vm_valid_passes

@@ -190,6 +190,24 @@ readonly KAPSIS_GIT_EXCLUDE_PATTERNS="# Kapsis internal files
 /.git-objects/"
 
 #===============================================================================
+# GIT TRANSPORT POLICY (FIX-7: single source of truth)
+#
+# Valid values for git.transport_policy:
+# - inherit:       use whatever git credentials/config already exist (default)
+# - managed_https: generate a minimal, isolated gitconfig (see
+#                  setup_managed_git_config() in entrypoint.sh)
+# - ssh:           rely on ssh.identities / inherited SSH agent for transport
+#
+# Referenced by launch-agent.sh (parse+validate) and config-verifier.sh
+# (verify) so the valid set can't drift between the two. entrypoint.sh's
+# dispatch `case` statement stays a literal case (needed for CPS-free bash
+# dispatch), but its branches must match this set — see the comment there.
+#===============================================================================
+
+# Space-separated for validation, same convention as KAPSIS_SUPPORTED_BACKENDS
+readonly KAPSIS_GIT_TRANSPORT_POLICIES="inherit managed_https ssh"
+
+#===============================================================================
 # SECRET STORE INJECTION
 #
 # Controls how keychain secrets are injected into containers.
@@ -217,6 +235,31 @@ readonly KAPSIS_SECRET_STORE_DEFAULT_INJECT_TO="secret_store"
 # Requires KAPSIS_INJECT_DEFAULT env var to be set before calling yq.
 # shellcheck disable=SC2016
 readonly KAPSIS_YQ_KEYCHAIN_EXPR='.environment.keychain // {} | to_entries | .[] | .value.account |= (select(kind == "seq") | join(",")) // .value.account | .key + "|" + .value.service + "|" + (.value.account // "") + "|" + (.value.inject_to_file // "") + "|" + (.value.mode // "0600") + "|" + (.value.inject_to // strenv(KAPSIS_INJECT_DEFAULT)) + "|" + (.value.keyring_collection // "") + "|" + (.value.keyring_profile // "") + "|" + (.value.git_credential_for // "") + "|" + ((.value.inject_file_template // "") | @base64)'
+
+#===============================================================================
+# SSH IDENTITIES (generic declarative deploy keys)
+#
+# Lets a config declare one or more SSH identities (deploy keys) sourced from
+# the host secret store (macOS keychain / Linux secret-tool). kapsis fetches
+# each key host-side and materializes it inside the container as a proper
+# SSH identity file + a generated, non-destructive ~/.ssh/config Include
+# stanza + port-aware known_hosts. Provider-agnostic: no hostnames are
+# hardcoded here.
+#
+# yq expression emits ONE metadata line per identity — the key MATERIAL is
+# deliberately excluded (only key.service/key.account, fetched separately
+# host-side via query_secret_store_with_fallbacks). Mirrors the style of
+# KAPSIS_YQ_KEYCHAIN_EXPR above.
+#
+# Output format per line (8 fields):
+#   host|port|user|identity_file|strict|key_service|key_account|key_encoding
+# Defaults applied by yq: port=22, strict=accept-new, key_encoding=raw.
+# user/identity_file default to "" (identity_file default path is computed
+# by the caller, since it depends on the sanitized host).
+#===============================================================================
+
+# shellcheck disable=SC2016
+readonly KAPSIS_YQ_SSH_IDENTITIES_EXPR='.ssh.identities // [] | .[] | ((.host // "") | to_string) + "|" + ((.port // 22) | to_string) + "|" + ((.user // "") | to_string) + "|" + ((.identity_file // "") | to_string) + "|" + ((.strict_host_key_checking // "accept-new") | to_string) + "|" + ((.key.service // "") | to_string) + "|" + ((.key.account // "") | to_string) + "|" + ((.key.encoding // "raw") | to_string)'
 
 #===============================================================================
 # FILE SANITIZATION CONSTANTS

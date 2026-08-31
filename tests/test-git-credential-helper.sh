@@ -10,7 +10,9 @@
 #   - Silent exit for unmapped hosts and missing map files
 #   - store/erase operations are no-ops
 #   - Port stripping from host:port
+#   - Non-HTTPS protocols and malformed hosts are rejected
 #   - Entrypoint patching replaces macOS credential helpers
+#   - Managed HTTPS mode uses a generated container gitconfig
 #   - Entrypoint patching preserves non-credential config
 #   - Idempotent patching
 #   - Graceful degradation when secret-tool is missing
@@ -260,6 +262,56 @@ MOCK
     assert_contains "$output" "username=gluser" "Should return gitlab user for gitlab.com"
     assert_contains "$output" "password=gitlab-password" "Should return gitlab password"
     assert_not_contains "$output" "ghuser" "Should not return github user"
+}
+
+test_rejects_non_https_protocols() {
+    log_test "git-credential-keyring: rejects non-HTTPS protocols"
+
+    local map_file="$TEST_TEMP_DIR/cred-map-non-https"
+    cat > "$map_file" <<'EOF'
+git.example.com|git-service|testuser||
+EOF
+
+    local mock_bin="$TEST_TEMP_DIR/mock-bin-non-https"
+    mkdir -p "$mock_bin"
+    cat > "$mock_bin/secret-tool" <<'MOCK'
+#!/bin/bash
+echo "should-not-be-returned"
+exit 0
+MOCK
+    chmod +x "$mock_bin/secret-tool"
+
+    local output
+    output=$(printf 'protocol=ssh\nhost=git.example.com\n\n' | \
+        PATH="$mock_bin:$PATH" KAPSIS_GIT_CREDENTIAL_MAP="$map_file" \
+        bash "$HELPER_SCRIPT" get 2>/dev/null)
+
+    assert_equals "" "$output" "Should not return credentials for SSH remotes"
+}
+
+test_rejects_malformed_hosts() {
+    log_test "git-credential-keyring: rejects malformed hosts"
+
+    local map_file="$TEST_TEMP_DIR/cred-map-malformed"
+    cat > "$map_file" <<'EOF'
+git.example.com|git-service|testuser||
+EOF
+
+    local mock_bin="$TEST_TEMP_DIR/mock-bin-malformed"
+    mkdir -p "$mock_bin"
+    cat > "$mock_bin/secret-tool" <<'MOCK'
+#!/bin/bash
+echo "should-not-be-returned"
+exit 0
+MOCK
+    chmod +x "$mock_bin/secret-tool"
+
+    local output
+    output=$(printf 'protocol=https\nhost=testuser@git.example.com\n\n' | \
+        PATH="$mock_bin:$PATH" KAPSIS_GIT_CREDENTIAL_MAP="$map_file" \
+        bash "$HELPER_SCRIPT" get 2>/dev/null)
+
+    assert_equals "" "$output" "Should not return credentials for host values with userinfo"
 }
 
 #===============================================================================
@@ -524,6 +576,29 @@ test_launch_agent_has_git_credential_map() {
         "launch-agent.sh should track GIT_CREDENTIAL_MAP"
 }
 
+test_launch_agent_has_git_transport_policy() {
+    log_test "launch-agent.sh parses git.transport_policy"
+
+    local launch_script="$KAPSIS_ROOT/scripts/launch-agent.sh"
+    local content
+    content=$(cat "$launch_script")
+
+    assert_contains "$content" ".git.transport_policy" \
+        "launch-agent.sh should parse git.transport_policy"
+    assert_contains "$content" "KAPSIS_GIT_TRANSPORT_POLICY" \
+        "launch-agent.sh should pass KAPSIS_GIT_TRANSPORT_POLICY"
+    # FIX-7: the valid-policy set is now a single source of truth
+    # (KAPSIS_GIT_TRANSPORT_POLICIES in scripts/lib/constants.sh), referenced
+    # here rather than hardcoded inline as "managed_https|ssh".
+    assert_contains "$content" "KAPSIS_GIT_TRANSPORT_POLICIES" \
+        "launch-agent.sh should validate against the shared KAPSIS_GIT_TRANSPORT_POLICIES constant"
+
+    local constants_content
+    constants_content=$(cat "$KAPSIS_ROOT/scripts/lib/constants.sh")
+    assert_contains "$constants_content" "managed_https" \
+        "constants.sh should define managed_https as a supported transport policy"
+}
+
 test_entrypoint_has_credential_helper_patching() {
     log_test "entrypoint.sh has patch_git_credential_helpers function"
 
@@ -535,6 +610,143 @@ test_entrypoint_has_credential_helper_patching() {
         "entrypoint.sh should read KAPSIS_GIT_CREDENTIAL_MAP_DATA"
     assert_contains "$(cat "$entrypoint_script")" "osxkeychain" \
         "entrypoint.sh should handle osxkeychain replacement"
+}
+
+test_entrypoint_has_managed_git_config() {
+    log_test "entrypoint.sh has managed HTTPS git config"
+
+    local entrypoint_script="$KAPSIS_ROOT/scripts/entrypoint.sh"
+    local content
+    content=$(cat "$entrypoint_script")
+
+    assert_contains "$content" "setup_managed_git_config" \
+        "entrypoint.sh should define managed git config setup"
+    assert_contains "$content" "gitconfig-managed" \
+        "entrypoint.sh should write a generated managed gitconfig"
+    assert_contains "$content" "GIT_CONFIG_GLOBAL" \
+        "entrypoint.sh should export GIT_CONFIG_GLOBAL"
+    assert_contains "$content" "GIT_CONFIG_NOSYSTEM" \
+        "entrypoint.sh should disable system gitconfig in managed mode"
+    assert_contains "$content" "GIT_TERMINAL_PROMPT" \
+        "entrypoint.sh should disable interactive credential prompts"
+    assert_contains "$content" "helper =" \
+        "entrypoint.sh should clear inherited credential helper chain"
+}
+
+test_setup_managed_git_config_writes_minimal_global_config() {
+    log_test "setup_managed_git_config writes minimal global gitconfig"
+
+    local managed_home="$TEST_TEMP_DIR/managed-home"
+    mkdir -p "$managed_home"
+
+    local output
+    output=$(
+        export HOME="$managed_home"
+        export KAPSIS_HOME="$KAPSIS_ROOT/scripts"
+        export KAPSIS_LOG_DIR="$TEST_TEMP_DIR/logs"
+        source "$KAPSIS_ROOT/scripts/entrypoint.sh"
+
+        printf '%s\n' \
+            '[user]' \
+            '    name = Test User' \
+            '    email = test@example.com' \
+            '[url "ssh://git@git.example.com:2222/"]' \
+            '    insteadOf = https://git.example.com/scm/' \
+            '[credential]' \
+            '    helper = /Users/tester/.config/git-helper.sh' \
+            > "$HOME/.gitconfig"
+
+        find_git_credential_helper() { echo /opt/kapsis/git-credential-keyring; }
+
+        export KAPSIS_GIT_TRANSPORT_POLICY=managed_https
+        export KAPSIS_GIT_CREDENTIAL_MAP_DATA='git.example.com|git-service|testuser||'
+        setup_managed_git_config >/dev/null 2>&1
+
+        printf 'global=%s\n' "$GIT_CONFIG_GLOBAL"
+        printf 'email=%s\n' "$(git config --global --get user.email)"
+        printf 'root_helper=<%s>\n' "$(git config --global --get credential.helper)"
+        printf 'host_helper=%s\n' "$(git config --global --get credential.https://git.example.com.helper)"
+        if git config --global --get-regexp '^url\..*\.insteadof$' >/dev/null; then
+            printf 'has_rewrite=true\n'
+        else
+            printf 'has_rewrite=false\n'
+        fi
+    )
+
+    assert_contains "$output" "global=$managed_home/.kapsis/gitconfig-managed" \
+        "Should export generated gitconfig as GIT_CONFIG_GLOBAL"
+    assert_contains "$output" "email=test@example.com" \
+        "Should copy safe user.email"
+    assert_contains "$output" "root_helper=<>" \
+        "Should clear inherited root credential helper chain"
+    assert_contains "$output" "host_helper=/opt/kapsis/git-credential-keyring" \
+        "Should register helper for mapped HTTPS host"
+    assert_contains "$output" "has_rewrite=false" \
+        "Should not inherit HTTPS-to-SSH rewrites"
+}
+
+test_setup_managed_git_config_preserves_disabled_hooks_path() {
+    log_test "setup_managed_git_config preserves core.hooksPath when KAPSIS_DISABLE_HOOKS=true (FIX-2)"
+
+    local managed_home="$TEST_TEMP_DIR/managed-home-hooks"
+    mkdir -p "$managed_home"
+
+    local output
+    output=$(
+        export HOME="$managed_home"
+        export KAPSIS_HOME="$KAPSIS_ROOT/scripts"
+        export KAPSIS_LOG_DIR="$TEST_TEMP_DIR/logs"
+        source "$KAPSIS_ROOT/scripts/entrypoint.sh"
+
+        export KAPSIS_DISABLE_HOOKS=true
+        configure_git_hooks >/dev/null 2>&1
+
+        find_git_credential_helper() { echo /opt/kapsis/git-credential-keyring; }
+
+        export KAPSIS_GIT_TRANSPORT_POLICY=managed_https
+        export KAPSIS_GIT_CREDENTIAL_MAP_DATA='git.example.com|git-service|testuser||'
+        setup_managed_git_config >/dev/null 2>&1
+
+        printf 'hooksPath=%s\n' "$(git config --global --get core.hooksPath)"
+    )
+
+    assert_contains "$output" "hooksPath=/dev/null" \
+        "core.hooksPath set by KAPSIS_DISABLE_HOOKS should survive into the managed config"
+}
+
+test_setup_managed_git_config_writes_special_char_values_via_git_config() {
+    log_test "setup_managed_git_config uses git config to write values (FIX-1: safe quoting)"
+
+    local managed_home="$TEST_TEMP_DIR/managed-home-quoting"
+    mkdir -p "$managed_home"
+
+    local output
+    output=$(
+        export HOME="$managed_home"
+        export KAPSIS_HOME="$KAPSIS_ROOT/scripts"
+        export KAPSIS_LOG_DIR="$TEST_TEMP_DIR/logs"
+        source "$KAPSIS_ROOT/scripts/entrypoint.sh"
+
+        printf '%s\n' \
+            '[user]' \
+            '    name = "Foo \"Bar\" \\ Baz"' \
+            '    email = test@example.com' \
+            > "$HOME/.gitconfig"
+
+        find_git_credential_helper() { echo /opt/kapsis/git-credential-keyring; }
+
+        export KAPSIS_GIT_TRANSPORT_POLICY=managed_https
+        export KAPSIS_GIT_CREDENTIAL_MAP_DATA='git.example.com|git-service|testuser||'
+        setup_managed_git_config >/dev/null 2>&1
+
+        printf 'name=%s\n' "$(git config --global --get user.name)"
+        printf 'email=%s\n' "$(git config --global --get user.email)"
+    )
+
+    assert_contains "$output" 'name=Foo "Bar" \ Baz' \
+        "Value with embedded quote/backslash should round-trip intact via 'git config' write"
+    assert_contains "$output" "email=test@example.com" \
+        "user.email should still be copied when user.name has special characters"
 }
 
 test_containerfile_includes_credential_helper() {
@@ -569,6 +781,8 @@ main() {
     run_test test_no_credential_leakage_on_failure
     run_test test_99designs_keyring_path
     run_test test_multi_host_map_returns_correct_credentials
+    run_test test_rejects_non_https_protocols
+    run_test test_rejects_malformed_hosts
 
     # Entrypoint patching tests
     run_test test_replaces_osxkeychain_helper
@@ -582,7 +796,12 @@ main() {
     run_test test_git_credential_for_in_yq_pipeline
     run_test test_git_credential_for_hostname_validation
     run_test test_launch_agent_has_git_credential_map
+    run_test test_launch_agent_has_git_transport_policy
     run_test test_entrypoint_has_credential_helper_patching
+    run_test test_entrypoint_has_managed_git_config
+    run_test test_setup_managed_git_config_writes_minimal_global_config
+    run_test test_setup_managed_git_config_preserves_disabled_hooks_path
+    run_test test_setup_managed_git_config_writes_special_char_values_via_git_config
     run_test test_containerfile_includes_credential_helper
 
     # Summary
