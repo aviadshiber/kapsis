@@ -247,9 +247,11 @@ environment:
   #              'keyring_profile' is the container-side D-Bus key.
   #              Only meaningful when keyring_collection is also set.
   #   git_credential_for: (optional) Git hostname this credential serves.
-  #              When set, registers a container-native git credential helper
-  #              that returns this credential for the specified host.
-  #              Replaces macOS-specific helpers (osxkeychain) automatically.
+  #              When set, maps a Git hostname to this keyring credential.
+  #              In git.transport_policy: managed_https, Kapsis registers the
+  #              helper in a generated minimal container Git config. In the
+  #              default inherit mode, Kapsis preserves legacy behavior by
+  #              patching known host-only helpers in the staged ~/.gitconfig copy.
   #              Value must be a hostname (e.g., "github.com"). Issue #188.
   keychain:
     # Example: Token stored in container secret store (default behavior)
@@ -735,6 +737,16 @@ git:
   # Escape hatch for any other provider — full URL template with
   # {base_url}, {repo_path}, {branch} placeholders. Overrides `provider`.
   # pr_url_template: "{base_url}/{repo_path}/pull-requests/new?source={branch}"
+
+  # Container git transport policy.
+  #   inherit: default; preserve existing behavior and patch known host-only
+  #            credential helpers in the staged ~/.gitconfig copy.
+  #   managed_https: use a Kapsis-generated minimal Git config in the container.
+  #            This avoids host url.*.insteadOf rewrites, includeIf blocks,
+  #            custom helpers, and other host-only Git settings.
+  #   ssh: leave container Git transport/config untouched; use this when SSH
+  #            keys or SSH_AUTH_SOCK are explicitly mounted/forwarded.
+  # transport_policy: inherit
 
   # Provider-agnostic post-push hook. A shell command run on the HOST after a
   # verified push (e.g. to open a pull request). kapsis stays provider-neutral —
@@ -1320,9 +1332,12 @@ environment:
 
 ### Git Credential Helper (`git_credential_for`)
 
-When host `~/.gitconfig` is mounted into containers, macOS-specific credential helpers (like `osxkeychain`) don't work in Linux containers. The `git_credential_for` field bridges this gap by registering a container-native git credential helper that reads from the gnome-keyring.
+When host `~/.gitconfig` is mounted into containers, macOS-specific credential helpers (like `osxkeychain`) and host-only URL rewrites may not work in Linux containers. The `git_credential_for` field maps a Git host to a keyring-backed credential, and `git.transport_policy` controls how the container applies that mapping.
 
 ```yaml
+git:
+  transport_policy: managed_https
+
 environment:
   keychain:
     BITBUCKET_TOKEN:
@@ -1341,8 +1356,14 @@ environment:
 **How it works:**
 1. At launch, Kapsis builds a host-to-keyring map from entries with `git_credential_for`
 2. The map is passed to the container as `KAPSIS_GIT_CREDENTIAL_MAP_DATA`
-3. The entrypoint writes the map file and replaces any macOS credential helpers in `~/.gitconfig` with the container-native `git-credential-keyring`
-4. When git needs credentials for a host, the helper looks up the matching keyring entry
+3. In `git.transport_policy: managed_https`, the entrypoint writes a generated `~/.kapsis/gitconfig-managed` file and exports it via `GIT_CONFIG_GLOBAL`
+4. The managed config clears inherited credential helpers, enables `credential.useHttpPath`, and registers `git-credential-keyring` only for mapped HTTPS hosts
+5. The container also sets `GIT_CONFIG_NOSYSTEM=1` and `GIT_TERMINAL_PROMPT=0`
+6. When git needs credentials for a mapped HTTPS host, the helper looks up the matching keyring entry
+
+`managed_https` does not mutate the staged host `~/.gitconfig` copy. It also avoids host `url.*.insteadOf` rewrites, `includeIf` blocks, aliases, custom helpers, and other host-only Git configuration in the container. Safe identity fields such as `user.name`, `user.email`, and `init.defaultBranch` are copied into the generated config when present.
+
+The default `git.transport_policy: inherit` preserves legacy behavior: Kapsis patches known host-only credential helpers in the staged `~/.gitconfig` copy. Use `git.transport_policy: ssh` when the container should rely on explicitly mounted SSH keys or a forwarded `SSH_AUTH_SOCK`.
 
 **Both keyring paths are supported:**
 - With `keyring_collection`: Uses `secret-tool lookup profile <key>` (99designs/keyring compat)
@@ -1350,7 +1371,7 @@ environment:
 
 **The value is a hostname** (e.g., `github.com`, `git.example.com`). Only alphanumeric characters, dots, hyphens, and underscores are allowed.
 
-**Without `git_credential_for`:** The secret is injected into the keyring but not registered as a git credential helper. Git operations requiring auth must use alternative methods (e.g., `bkt` CLI).
+**Without `git_credential_for`:** The secret is injected into the keyring but not registered as a git credential helper. Git operations requiring auth must use alternative methods (e.g., a provider CLI).
 
 See: [Issue #188](https://github.com/aviadshiber/kapsis/issues/188)
 
@@ -1560,6 +1581,150 @@ ssh:
 - Fingerprints are cached securely in system keychain (not plain files)
 - Container cannot modify known_hosts (mounted read-only)
 - If verification fails, git push will fail (fail-secure)
+
+## SSH Identities (Deploy Keys)
+
+A generic, provider-agnostic way to declare one or more SSH identities (deploy
+keys) sourced from the host secret store (macOS Keychain / Linux secret-tool).
+kapsis materializes each key inside the container as a proper SSH identity
+file, a generated `~/.ssh/config` stanza, and a port-aware `known_hosts`
+entry. Nothing here is provider-specific — declare any host, including
+non-standard ports.
+
+Applies independently of `git.transport_policy` (like `ssh.verify_hosts`).
+
+### Schema
+
+`ssh.identities` is a list under the top-level `ssh:` block, sibling of
+`ssh.verify_hosts`:
+
+| Field | Required | Default | Description |
+|-------|----------|---------|--------------|
+| `host` | Yes | — | Hostname only. Must match `^[A-Za-z0-9._-]+$`. |
+| `port` | No | `22` | Integer, `1`-`65535`. |
+| `user` | No | (unset) | SSH `User`. Omitted from the generated stanza if unset. |
+| `identity_file` | No | `~/.ssh/kapsis_id_<sanitized-host>` | Container path for the materialized key. No `..`, newlines, `,`, or `|` (the last two are metadata delimiters and would desync the index<->key pairing). |
+| `strict_host_key_checking` | No | `accept-new` | One of `accept-new`, `yes`, `no`. |
+| `key.service` | Yes | — | Secret store service name (keychain / secret-tool). |
+| `key.account` | No | (unset) | Secret store account. Supports the same `${USER}`/`${HOME}`/`${LOGNAME}` fallback expansion as `environment.keychain.account`. |
+| `key.encoding` | No | `raw` | One of `raw`, `base64`. See "Secret Encoding" below. |
+
+### Secret Encoding (`key.encoding`)
+
+Some secret stores hex-corrupt any value that contains newlines when it is
+retrieved (an empirically observed limitation of macOS's `security -w`
+command-line retrieval, not something kapsis controls) — so a multi-line
+private key cannot be stored raw in those stores. The generic, documented
+workaround is:
+
+1. Pre-encode the key yourself before storing it: `base64(rawkey)` (produces
+   a single line, safe for any secret store).
+2. Set `key.encoding: base64` so kapsis knows the value it fetches from the
+   secret store is **already** base64, and must not be re-encoded.
+
+Semantics (the container side never changes — it always does exactly one
+`base64 -d` on the transported value):
+
+| `key.encoding` | Fetched secret is... | Host-side pre-processing |
+|----------------|-----------------------|---------------------------|
+| `raw` (default) | The raw key material (may be multi-line/binary) | Host base64-encodes it before transport |
+| `base64` | Already `base64(rawkey)` (single line) | Host passes it through unchanged — **not** re-encoded |
+
+Invalid values (anything other than `raw`/`base64`) fail config validation
+and abort the launch.
+
+### Worked Example
+
+```yaml
+ssh:
+  identities:
+    - host: git.example.com
+      port: 2222
+      user: git
+      strict_host_key_checking: accept-new
+      key:
+        service: my-deploy-key
+        account: ${USER}
+    - host: git.example.com
+      port: 2222
+      key:
+        service: my-other-deploy-key
+        encoding: base64  # secret store already holds base64(rawkey)
+```
+
+Host-side setup (macOS example — store the deploy key once):
+
+```bash
+security add-generic-password -s my-deploy-key -a "$USER" -w "$(cat ~/.ssh/my_deploy_key)"
+```
+
+At launch, kapsis fetches the key via the same
+`query_secret_store_with_fallbacks` mechanism used for `environment.keychain`,
+and generates (inside the container) an SSH config stanza equivalent to:
+
+```
+Host git.example.com
+    HostName git.example.com
+    Port 2222
+    User git
+    IdentityFile ~/.ssh/kapsis_id_git_example_com
+    IdentitiesOnly yes
+    StrictHostKeyChecking accept-new
+    UserKnownHostsFile ~/.ssh/known_hosts
+```
+
+### Key Transport (base64, never a raw env var)
+
+`--env-file` (used for `SECRET_ENV_VARS`) is line-oriented `VAR=value` and
+cannot carry a multi-line value — a raw private key would be truncated at the
+first newline. So the key never crosses that boundary as raw text:
+
+1. **Host-side**: `launch-agent.sh` fetches the key from the secret store. If
+   `key.encoding` is `raw` (default), it base64-encodes it (forced
+   single-line — `base64 | tr -d '\n'`, since GNU's `base64 -w0` flag doesn't
+   exist on macOS's BSD `base64`); if `key.encoding` is `base64`, the fetched
+   value is already `base64(rawkey)` and is passed through unchanged (only a
+   trailing-newline strip, never a second `base64` pass). Either way the
+   result is written to the env-file as `KAPSIS_SSH_IDKEY_<n>_B64=<base64>`.
+   This env var is **never** passed via `-e`.
+2. **Metadata** (`host|port|user|identity_file|strict`, no key material) is
+   passed via `-e KAPSIS_SSH_IDENTITIES=...` — safe, since it contains no
+   secrets.
+3. **In-container**: `ssh-identities.sh`'s `setup_ssh_identities()` reads
+   `KAPSIS_SSH_IDKEY_<n>_B64`, `base64 -d`s it, and writes the identity file
+   (0600, parent dir 0700, `umask 0077` during the write). A decode failure
+   is fail-loud (logged, that identity skipped) — never a partial key file.
+4. All `KAPSIS_SSH_IDKEY_*_B64` and `KAPSIS_SSH_IDENTITIES` env vars are
+   unset before the agent process starts, on every code path.
+
+### No-Clobber `~/.ssh/config`
+
+kapsis never overwrites a staged or personal `~/.ssh/config`. Instead:
+
+- Generated stanzas are written to `~/.ssh/kapsis_identities` (0600).
+- `~/.ssh/config` gets `Include ~/.ssh/kapsis_identities` prepended as its
+  **first line** — created (0600) if the file doesn't exist yet, and skipped
+  if the Include is already present (idempotent; re-running never duplicates
+  it).
+- The deploy key wins over a stale/personal key because the kapsis `Include`
+  is prepended as the **first** line of `~/.ssh/config`, and OpenSSH applies
+  first-match-wins per option, per `Host` block — so the generated
+  `Port`/`User`/`StrictHostKeyChecking`/`IdentityFile` for a matching `Host`
+  are locked in before a later, separately-matched personal `Host` block is
+  even considered. `IdentitiesOnly yes` is a separate, additive restriction:
+  it stops ssh from also offering keys loaded in `ssh-agent` for this `Host`
+  block — it does not exclude an `IdentityFile` from a later block (first
+  match already won, so that later block is never reached for this host).
+
+### Port-Aware `known_hosts`
+
+Best-effort `ssh-keyscan -t ed25519,rsa,ecdsa -p <port> <host>` is run for
+each identity, deduplicated by the `[host]:port` known_hosts key form when
+`port != 22` (or bare `host` at port 22). Failure is non-fatal — the
+identity's `strict_host_key_checking: accept-new` default covers first use.
+This also fixes a generic port-22 gap in `scripts/lib/ssh-keychain.sh`'s
+`ssh-keyscan` calls, which previously never passed `-p` — that fix benefits
+`ssh.verify_hosts` too (host entries there can now be `host:port`).
 
 ## Environment Variable Substitution
 

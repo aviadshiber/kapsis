@@ -20,6 +20,10 @@ set -euo pipefail
 _CONFIG_VERIFIER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 KAPSIS_ROOT="${KAPSIS_ROOT:-$(cd "$_CONFIG_VERIFIER_DIR/../.." && pwd)}"
 
+# FIX-7: KAPSIS_GIT_TRANSPORT_POLICIES single source of truth
+# shellcheck source=./constants.sh
+source "$_CONFIG_VERIFIER_DIR/constants.sh"
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -323,6 +327,111 @@ validate_launch_config() {
         else
             log_error "Invalid git.auto_push.enabled: $auto_push_enabled (must be true/false)"
         fi
+    fi
+
+    # Validate git.transport_policy if present.
+    # NOTE: use "// \"null\"" (not "// \"\"") so a *missing* field ("null" in
+    # jq/yq falls back to the literal string "null") stays distinguishable
+    # from an *explicit* empty string ("" is truthy in jq, so it passes
+    # through unchanged). Missing is valid (defaults to inherit downstream);
+    # an explicit "" is NOT — launch-agent.sh exit 1's on it (FIX-7's
+    # KAPSIS_GIT_TRANSPORT_POLICIES check has no empty-string member), so the
+    # verifier must flag it too rather than silently skip it as before.
+    local transport_policy
+    transport_policy=$(yq -r '.git.transport_policy // "null"' "$config_file" 2>/dev/null)
+    if [[ "$transport_policy" == "null" ]]; then
+        : # field omitted entirely — nothing to validate, defaults to inherit
+    elif [[ -z "$transport_policy" ]]; then
+        log_error "Invalid git.transport_policy: '' (empty string is not a valid value; use inherit, managed_https, ssh, or omit the field)"
+    else
+        if [[ " $KAPSIS_GIT_TRANSPORT_POLICIES " =~ [[:space:]]${transport_policy}[[:space:]] ]]; then
+            log_pass "Valid git.transport_policy: $transport_policy"
+        else
+            log_error "Invalid git.transport_policy: $transport_policy (must be one of: $KAPSIS_GIT_TRANSPORT_POLICIES)"
+        fi
+    fi
+
+    # Validate ssh.identities if present (generic declarative deploy keys).
+    # Each entry: host (regex), port (range, if present), strict_host_key_checking
+    # (enum, if present), key.service (required), key.encoding (enum raw|base64,
+    # if present; defaults to raw). No key material is ever touched here —
+    # validation is purely structural.
+    local ssh_identities_count
+    ssh_identities_count=$(yq -r '.ssh.identities // [] | length' "$config_file" 2>/dev/null || echo "0")
+    if [[ "$ssh_identities_count" =~ ^[0-9]+$ && "$ssh_identities_count" -gt 0 ]]; then
+        local ssh_id_i
+        for (( ssh_id_i = 0; ssh_id_i < ssh_identities_count; ssh_id_i++ )); do
+            local id_host id_port id_strict id_key_service id_key_encoding id_user id_identity_file
+            id_host=$(yq -r ".ssh.identities[$ssh_id_i].host // \"\"" "$config_file" 2>/dev/null)
+            id_port=$(yq -r ".ssh.identities[$ssh_id_i].port // \"\"" "$config_file" 2>/dev/null)
+            id_strict=$(yq -r ".ssh.identities[$ssh_id_i].strict_host_key_checking // \"\"" "$config_file" 2>/dev/null)
+            id_key_service=$(yq -r ".ssh.identities[$ssh_id_i].key.service // \"\"" "$config_file" 2>/dev/null)
+            id_key_encoding=$(yq -r ".ssh.identities[$ssh_id_i].key.encoding // \"\"" "$config_file" 2>/dev/null)
+            id_user=$(yq -r ".ssh.identities[$ssh_id_i].user // \"\"" "$config_file" 2>/dev/null)
+            id_identity_file=$(yq -r ".ssh.identities[$ssh_id_i].identity_file // \"\"" "$config_file" 2>/dev/null)
+
+            if [[ -n "$id_host" && "$id_host" =~ ^[A-Za-z0-9._-]+$ ]]; then
+                log_pass "Valid ssh.identities[$ssh_id_i].host: $id_host"
+            else
+                log_error "Invalid ssh.identities[$ssh_id_i].host: '$id_host' (must match ^[A-Za-z0-9._-]+\$)"
+            fi
+
+            if [[ -n "$id_port" ]]; then
+                if [[ "$id_port" =~ ^[0-9]+$ ]] && (( id_port >= 1 && id_port <= 65535 )); then
+                    log_pass "Valid ssh.identities[$ssh_id_i].port: $id_port"
+                else
+                    log_error "Invalid ssh.identities[$ssh_id_i].port: '$id_port' (must be 1-65535)"
+                fi
+            fi
+
+            if [[ -n "$id_strict" ]]; then
+                case "$id_strict" in
+                    accept-new|yes|no)
+                        log_pass "Valid ssh.identities[$ssh_id_i].strict_host_key_checking: $id_strict"
+                        ;;
+                    *)
+                        log_error "Invalid ssh.identities[$ssh_id_i].strict_host_key_checking: '$id_strict' (must be accept-new, yes, or no)"
+                        ;;
+                esac
+            fi
+
+            if [[ -n "$id_key_service" ]]; then
+                log_pass "Has ssh.identities[$ssh_id_i].key.service"
+            else
+                log_error "Missing required field: ssh.identities[$ssh_id_i].key.service"
+            fi
+
+            if [[ -n "$id_key_encoding" ]]; then
+                case "$id_key_encoding" in
+                    raw|base64)
+                        log_pass "Valid ssh.identities[$ssh_id_i].key.encoding: $id_key_encoding"
+                        ;;
+                    *)
+                        log_error "Invalid ssh.identities[$ssh_id_i].key.encoding: '$id_key_encoding' (must be raw or base64)"
+                        ;;
+                esac
+            fi
+
+            # user is optional — only validate when non-empty. Reject the
+            # metadata delimiters (',' field separator, '|' entry separator)
+            # that would desync the container's index<->key pairing if they
+            # slipped past validation into KAPSIS_SSH_IDENTITIES.
+            if [[ -n "$id_user" ]]; then
+                if [[ "$id_user" =~ ^[A-Za-z0-9._-]+$ ]]; then
+                    log_pass "Valid ssh.identities[$ssh_id_i].user: $id_user"
+                else
+                    log_error "Invalid ssh.identities[$ssh_id_i].user: '$id_user' (allowed: letters, digits, dot, underscore, hyphen)"
+                fi
+            fi
+
+            if [[ -n "$id_identity_file" ]]; then
+                if [[ ! "$id_identity_file" =~ ^[A-Za-z0-9._/~-]+$ ]] || [[ "$id_identity_file" == *".."* ]]; then
+                    log_error "Invalid ssh.identities[$ssh_id_i].identity_file: allowed chars A-Za-z0-9 . _ / ~ -; no '..'"
+                else
+                    log_pass "Valid ssh.identities[$ssh_id_i].identity_file: $id_identity_file"
+                fi
+            fi
+        done
     fi
 
     # Validate agent.inject_gist if present
