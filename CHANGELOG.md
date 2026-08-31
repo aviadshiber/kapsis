@@ -6,35 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 
-## [Unreleased]
-
-### Added
-- Generic, provider-agnostic `ssh.identities` config block: declare deploy
-  keys sourced from the host secret store (macOS Keychain / Linux
-  secret-tool), and kapsis materializes them in-container as proper SSH
-  identity files, a generated non-destructive `~/.ssh/config` Include
-  stanza, and port-aware `known_hosts`. Key material is transported as
-  base64 through the env-file only, never as a raw `-e` value, and is
-  unset in-container after use. New `scripts/lib/ssh-identities.sh`;
-  validated by `config-verifier.sh`. See docs/CONFIG-REFERENCE.md.
-  Supports optional `key.encoding: raw` (default) | `base64` for secret
-  stores that corrupt multi-line values on retrieval — the operator
-  pre-encodes the key as `base64(rawkey)` and sets `encoding: base64` so
-  kapsis passes it through host-side instead of re-encoding it.
-- `git.transport_policy: managed_https` config option: generates a minimal,
-  isolated container gitconfig (copying only `user.name`/`user.email`/
-  `init.defaultBranch`/`core.hooksPath` from the host) instead of inheriting
-  the full host gitconfig, with the credential helper cleared and re-wired
-  per mapped HTTPS host via the existing git-credential-keyring bridge
-  (Issue #188). Validated by `config-verifier.sh`; see
-  docs/CONFIG-REFERENCE.md.
+## [3.3.2] - 2026-08-31
 
 ### Fixed
-- `scripts/lib/ssh-keychain.sh`'s `ssh-keyscan` calls (in `generate` /
-  `add-host`) now support a port other than 22 — hosts can be given as
-  `host:port` (or `add-host <host> <port>`), and non-default-port keys are
-  stored under the `[host]:port` known_hosts form. Backward compatible
-  (bare host still defaults to port 22).
+- Add managed container git transport policy (#471)
+
+## [Unreleased]
 
 ## [3.2.7] - 2026-08-29
 
@@ -1226,7 +1203,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Setup and installation guide
 - Contributing guidelines
 
-[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.3.1...HEAD
+[Unreleased]: https://github.com/aviadshiber/kapsis/compare/v3.3.2...HEAD
+[3.3.2]: https://github.com/aviadshiber/kapsis/releases/tag/v3.3.2
 [3.3.1]: https://github.com/aviadshiber/kapsis/releases/tag/v3.3.1
 [3.3.0]: https://github.com/aviadshiber/kapsis/releases/tag/v3.3.0
 [3.2.7]: https://github.com/aviadshiber/kapsis/releases/tag/v3.2.7
