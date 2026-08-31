@@ -166,6 +166,8 @@ environment:
     # GIT_TOKEN:
     #   service: "my-git-token"
     #   account: "${USER}"
+    #   inject_to: "secret_store"
+    #   git_credential_for: "git.example.com"
 
 #===============================================================================
 # RESOURCE LIMITS
@@ -287,6 +289,15 @@ liveness:
 # GIT WORKFLOW (Auto-Push to Branch for PR Review)
 #===============================================================================
 git:
+  # Container git transport policy.
+  #   inherit: default; preserve existing behavior and patch known host-only
+  #            credential helpers in the staged ~/.gitconfig copy.
+  #   managed_https: use a Kapsis-generated minimal Git config in the container.
+  #            This avoids host url.*.insteadOf rewrites and host-only helpers.
+  #   ssh: leave container Git transport/config untouched; use explicit SSH
+  #            key mounts or SSH_AUTH_SOCK forwarding.
+  # transport_policy: inherit
+
   # Enable git auto-push workflow (requires --branch flag at launch)
   auto_push:
     enabled: true
@@ -352,6 +363,25 @@ ssh:
     - gitlab.com
     - bitbucket.org
     # - git.company.com  # Enterprise host (run add-host first!)
+
+  # Declarative SSH identities (deploy keys), sourced from the host secret
+  # store (macOS Keychain / Linux secret-tool). kapsis fetches each key
+  # host-side, transports it into the container as base64 (never a raw
+  # env var), and materializes a proper identity file + a generated,
+  # non-destructive ~/.ssh/config Include stanza + port-aware known_hosts.
+  # See docs/CONFIG-REFERENCE.md for the full schema.
+  # identities:
+  #   - host: git.example.com          # required, hostname only
+  #     port: 2222                     # optional, default 22
+  #     user: git                      # optional
+  #     identity_file: ~/.ssh/id_example  # optional, default ~/.ssh/kapsis_id_<sanitized-host>
+  #     strict_host_key_checking: accept-new  # optional: accept-new (default) | yes | no
+  #     key:                           # required — generic secret source
+  #       service: my-deploy-key       # required (keychain/secret-tool service name)
+  #       account: ${USER}             # optional (same fallback semantics as environment.keychain)
+  #       encoding: base64             # optional: raw (default) | base64 — set to base64 if the
+  #                                    #   secret store already holds base64(rawkey) (workaround for
+  #                                    #   stores that corrupt multi-line values on retrieval)
 
 #===============================================================================
 # CONTAINER IMAGE
