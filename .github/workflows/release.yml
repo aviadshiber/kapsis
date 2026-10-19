@@ -41,7 +41,7 @@ jobs:
       version: ${{ steps.version.outputs.version }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Determine version
         id: version
@@ -60,7 +60,7 @@ jobs:
     needs: validate
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y shellcheck jq
@@ -81,7 +81,7 @@ jobs:
     needs: validate
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Install dependencies
         run: |
@@ -148,7 +148,7 @@ jobs:
       id-token: write     # keyless OIDC signing via Sigstore Fulcio
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Install cosign
         run: |
@@ -249,7 +249,7 @@ jobs:
           ls -la sboms/
 
       - name: Upload SBOMs as workflow artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: sboms
           path: sboms/*.spdx.json
@@ -289,8 +289,8 @@ jobs:
       VERSION: ${{ needs.validate.outputs.version }}
       OUT_NAME: kapsis-ctl-${{ matrix.target }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
-      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:
           go-version-file: cmd/kapsis-ctl/go.mod
           # No go.sum — stdlib-only module (mirrors ci.yml's go-build job).
@@ -320,7 +320,7 @@ jobs:
             echo "::error::binary arch mismatch: expected pattern '$expect' for target '${{ matrix.target }}', got: $out"
             exit 1
           fi
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
         with:
           name: ${{ env.OUT_NAME }}
           path: bin/${{ env.OUT_NAME }}
@@ -333,7 +333,7 @@ jobs:
     needs: [validate, test, sign-and-attest, compile-dashboard, compile-ctl]
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
 
       - name: Create source tarball
         env:
@@ -346,20 +346,20 @@ jobs:
           rm -rf "kapsis-${VERSION}"
 
       - name: Download dashboard binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: kapsis-dashboard-*
           path: dashboard-artifacts
           merge-multiple: true
 
       - name: Download SBOMs
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           name: sboms
           path: .
 
       - name: Download kapsis-ctl binaries
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: kapsis-ctl-*
           path: ctl-artifacts
@@ -555,7 +555,7 @@ jobs:
           cat release_notes.md
 
       - name: Create Release
-        uses: softprops/action-gh-release@718ea10b132b3b2eba29c1007bb80653f286566b  # v2
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64  # v2
         with:
           tag_name: v${{ needs.validate.outputs.version }}
           name: Kapsis v${{ needs.validate.outputs.version }}
@@ -601,14 +601,14 @@ jobs:
       - name: Generate GitHub App token
         id: app-token
         if: steps.check-app.outputs.configured == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1  # v2
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510  # v2
         with:
           app-id: ${{ secrets.RELEASE_APP_ID }}
           private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
 
       - name: Checkout code
         if: steps.check-app.outputs.configured == 'true'
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
         with:
           ref: main
           # Use GitHub App token to bypass branch protection when pushing
@@ -626,7 +626,7 @@ jobs:
         # GitHub App isn't configured (in which case every consuming step
         # would skip anyway).
         if: steps.check-app.outputs.configured == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: kapsis-dashboard-*
           path: dashboard-artifacts
@@ -642,7 +642,7 @@ jobs:
       - name: Download kapsis-ctl binaries (for local SHA256 computation)
         # Same TOCTOU-closing rationale as the dashboard download above.
         if: steps.check-app.outputs.configured == 'true'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
         with:
           pattern: kapsis-ctl-*
           path: ctl-artifacts
@@ -1152,7 +1152,7 @@ jobs:
     if: needs.update-packages.result == 'success'
     steps:
       - name: Checkout code
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v6
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v6
         with:
           ref: main
           # Need to fetch the updated formula from main
